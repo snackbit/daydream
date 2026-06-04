@@ -1,0 +1,30 @@
+{
+  "name": "@daydream/ffmpeg",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run --exclude 'dist/**'",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.3.0"
+  },
+  "devDependencies": {
+    "@daydream/eslint-config": "workspace:*",
+    "@daydream/tsconfig": "workspace:*",
+    "@types/node": "25.9.1",
+    "eslint": "9.39.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

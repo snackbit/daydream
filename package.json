@@ -1,0 +1,21 @@
+{
+  "name": "daydream",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "yarn@4.16.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "yarn workspace @daydream/desktop tauri:dev",
+    "lint": "yarn workspace @daydream/desktop lint && yarn workspace @daydream/shared lint && yarn workspace @daydream/ffmpeg lint",
+    "lint:fix": "yarn workspace @daydream/desktop lint:fix && yarn workspace @daydream/shared lint:fix && yarn workspace @daydream/ffmpeg lint:fix",
+    "test": "yarn workspace @daydream/desktop test && yarn workspace @daydream/shared test && yarn workspace @daydream/ffmpeg test",
+    "typecheck": "yarn workspace @daydream/desktop typecheck && yarn workspace @daydream/shared typecheck && yarn workspace @daydream/ffmpeg typecheck"
+  },
+  "devDependencies": {
+    "@daydream/eslint-config": "workspace:*",
+    "@daydream/tsconfig": "workspace:*"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "@daydream/tsconfig/node",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true
+  },
+  "include": [
+    "vite.config.ts",
+    "scripts/**/*.mjs"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@daydream/tsconfig",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./base.json",
+    "./node": "./node.json",
+    "./react": "./react.json"
+  }
+}

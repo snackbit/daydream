@@ -1,0 +1,12 @@
+{
+  "extends": "@daydream/tsconfig/base",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
