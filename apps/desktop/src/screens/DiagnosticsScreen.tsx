@@ -3,8 +3,8 @@ import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
 
-function formatValue(value: string | null): string {
-  return value && value.length > 0 ? value : 'Unavailable';
+function formatValue(value: string | null, emptyValue: string): string {
+  return value && value.length > 0 ? value : emptyValue;
 }
 
 export function DiagnosticsScreen() {
@@ -108,6 +108,7 @@ export function DiagnosticsScreen() {
             />
             <DiagnosticRow
               label="Error"
+              emptyValue="None"
               value={diagnostics?.ffmpeg.error ?? null}
             />
           </dl>
@@ -146,6 +147,7 @@ export function DiagnosticsScreen() {
             />
             <DiagnosticRow
               label="Error"
+              emptyValue="None"
               value={diagnostics?.database.error ?? null}
             />
           </dl>
@@ -176,16 +178,21 @@ export function DiagnosticsScreen() {
 }
 
 interface DiagnosticRowProps {
+  emptyValue?: string;
   label: string;
   value: string | null;
 }
 
-function DiagnosticRow({ label, value }: DiagnosticRowProps) {
+function DiagnosticRow({
+  emptyValue = 'Unavailable',
+  label,
+  value,
+}: DiagnosticRowProps) {
   return (
-    <div className="grid grid-cols-[8rem_1fr] gap-3">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 font-mono text-xs break-words">
-        {formatValue(value)}
+    <div className="grid min-h-5 grid-cols-[8rem_1fr] items-baseline gap-3">
+      <dt className="text-muted-foreground text-sm leading-5">{label}</dt>
+      <dd className="min-w-0 font-mono text-xs leading-5 break-words">
+        {formatValue(value, emptyValue)}
       </dd>
     </div>
   );
