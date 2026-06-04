@@ -76,7 +76,20 @@ milestone-style plan.
    - If the active milestone lacks a required stop boundary, refine the
      milestone before crossing that boundary.
 
-9. Validate at the correct layer.
+9. Reconcile downstream gates at gate closeout.
+   - Before calling a gate complete, compare the gate's implementation
+     decisions, new constraints, and discovered facts against all upcoming
+     gates, milestone contract sections, risks, validation requirements,
+     success criteria, and assumptions.
+   - Update the milestone doc when future gate deliverables, contracts, stop
+     boundaries, validation requirements, or success criteria are now
+     inaccurate.
+   - Keep detailed evidence and rationale in the scratchpad.
+   - Do not hide contract-impacting changes only in scratchpad notes.
+   - If no downstream changes are needed, record that explicitly in the
+     scratchpad.
+
+10. Validate at the correct layer.
    - Use focused tests for the behavior changed.
    - Prefer the repository quality gates from `README.md` and `AGENTS.md`:
      `COREPACK_HOME=/tmp/corepack corepack yarn lint`,
@@ -92,6 +105,8 @@ milestone-style plan.
 - Confirm the milestone doc is decision-complete before execution starts.
 - Confirm gate checklist items are implementation or validation outcomes.
 - Confirm the scratchpad reflects current findings and validation evidence.
+- Confirm completed gates reconciled implementation findings against downstream
+  gates and updated the milestone doc where future work changed.
 - Confirm required privacy, config, storage, packaging, and native-permission
   surfaces were reviewed when runtime assumptions change.
 - Confirm completion notes do not claim done while required wiring is still
@@ -106,3 +121,5 @@ milestone-style plan.
   current.
 - Hiding important privacy, scope, storage, or permission rules in scratchpad
   notes instead of the milestone body.
+- Completing a gate without correcting later gates after implementation changed
+  their assumptions, contracts, or validation requirements.

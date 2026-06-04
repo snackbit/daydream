@@ -297,8 +297,8 @@ Expected tables:
   - `recording_id`
   - `segment_index`
   - `file_path`
-  - `started_at`
-  - `ended_at`
+  - `started_at_ms`
+  - `ended_at_ms`
   - `duration_ms`
   - `state`
   - `video_stream_index`
@@ -306,16 +306,16 @@ Expected tables:
   - `microphone_audio_stream_index`
   - `ffmpeg_exit_code`
   - `error_code`
-  - `created_at`
-  - `updated_at`
+  - `created_at_ms`
+  - `updated_at_ms`
 - `recorder_scenes`
   - `id`
   - `name`
   - `canvas_width`
   - `canvas_height`
   - `layout_mode`
-  - `created_at`
-  - `updated_at`
+  - `created_at_ms`
+  - `updated_at_ms`
 - `recorder_scene_sources`
   - `id`
   - `scene_id`
@@ -332,13 +332,15 @@ Expected tables:
   - `crop_bottom`
   - `z_index`
   - `preserve_aspect_ratio`
-  - `created_at`
-  - `updated_at`
+  - `created_at_ms`
+  - `updated_at_ms`
 
-Existing tables may be extended where needed:
+Existing table changes:
 
-- `recordings` may gain recorder-state, active-scene, output-root, or backend
-  metadata columns if storage helpers need them.
+- `recordings` includes `active_scene_id` and `output_root`.
+- `recordings.quality_label` accepts `balanced-ocr`.
+- `recorder_scenes` are reusable scene layouts.
+- `recordings.active_scene_id` links a recording to the active scene.
 - `recording_tracks` may be reused for stream-level records when that avoids
   duplication, but segment-level stream indexes must remain queryable.
 
@@ -406,15 +408,15 @@ Exit Criteria:
 
 ## Gate C: Recorder State Machine and File Layout
 
-- [ ] Implement the Rust recorder manager as Tauri managed state.
-- [ ] Enforce one active recording at a time.
-- [ ] Implement lifecycle transitions for start, pause, resume, stop, error,
+- [x] Implement the Rust recorder manager as Tauri managed state.
+- [x] Enforce one active recording at a time.
+- [x] Implement lifecycle transitions for start, pause, resume, stop, error,
   cleanup, and app shutdown.
-- [ ] Generate recording directories under
+- [x] Generate recording directories under
   `<app_data_dir>/recordings/{recordingId}/segments`.
-- [ ] Generate deterministic segment file names.
-- [ ] Wire lifecycle transitions to SQLite recording and segment writes.
-- [ ] Add tests for valid transitions, invalid transitions, cleanup behavior,
+- [x] Generate deterministic segment file names.
+- [x] Wire lifecycle transitions to SQLite recording and segment writes.
+- [x] Add tests for valid transitions, invalid transitions, cleanup behavior,
   segment numbering, and file path generation.
 
 Exit Criteria:
@@ -549,8 +551,9 @@ Exit Criteria:
 - [ ] Verify Diagnostics reports portal, PipeWire, FFmpeg, desktop audio, and
   microphone status.
 - [ ] Verify no raw private capture content appears in logs.
-- [ ] Update the scratchpad validation log with command results, manual smoke
-  notes, residual risks, and follow-up candidates.
+- [ ] Update the scratchpad validation log and gate reconciliation log with
+  command results, manual smoke notes, residual risks, and follow-up
+  candidates.
 
 Exit Criteria:
 

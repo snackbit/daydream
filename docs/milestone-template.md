@@ -73,6 +73,10 @@ Before a milestone is approved for execution:
   guidance in its own section when it matters.
 - Put evolving notes, dead ends, benchmark findings, and open questions in the
   scratchpad, not in the main gate checklist.
+- Reconcile completed gates against upcoming gates. If implementation changes
+  downstream deliverables, contracts, stop boundaries, validation, success
+  criteria, risks, or assumptions, update the milestone doc before calling the
+  gate complete.
 - Update checklist state as work completes. Do not leave completed work
   unticked.
 
@@ -125,6 +129,23 @@ stable.
 - If a gate changes contracts, permissions, storage, deletion, processing
   eligibility, or state transitions, it should include at least one explicit
   testing task somewhere in the milestone.
+- Completed gate checklists SHOULD NOT be rewritten except for checkbox state or
+  narrowly needed corrections. Downstream changes belong in upcoming gates,
+  contract sections, risks, validation, or assumptions.
+
+## Gate Feedback Rules
+
+Gate implementation can materially change later gates. Treat downstream
+correction as part of gate implementation, not optional cleanup.
+
+- At gate closeout, compare implementation decisions, new constraints, and
+  discovered facts against upcoming gates, contract sections, risks, validation
+  requirements, success criteria, and assumptions.
+- Update the milestone doc when a scratchpad finding changes future
+  implementation requirements.
+- Keep evidence and rationale in the scratchpad, but keep contract-impacting
+  changes in the milestone doc.
+- If no downstream changes are needed, record that result in the scratchpad.
 
 ## Stop Boundaries
 
@@ -157,6 +178,7 @@ Good scratchpad content:
 - terminology decisions
 - open questions and risk watchlists
 - gate notes and implementation findings
+- gate reconciliation notes
 - validation log
 - deferred follow-up candidates
 
@@ -294,6 +316,11 @@ state transitions, add or update the relevant tests in the correct layer.
 ## Findings
 
 - <evidence, references, inventories, or implementation notes>
+
+## Gate Reconciliation Log
+
+- Gate <X>: <downstream sections reviewed; milestone doc changes made, or no
+  downstream changes needed>
 
 ## Validation Log
 

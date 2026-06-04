@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- Gate B complete.
-- Gate C is the next implementation gate.
+- Gate C complete.
+- Gate D is the next implementation gate.
 
 ## Locked Decisions
 
@@ -87,6 +87,8 @@
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate B.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate C.
 
 ## Gate Notes
 
@@ -106,6 +108,29 @@
   expanded quality-label check and new recorder metadata columns.
 - Gate B makes the Rust storage module public so future recorder gates can call
   storage helpers without dead-code warnings before command wiring exists.
+- Gate C implements the recorder lifecycle manager internally and registers it
+  as Tauri managed state.
+- Gate C wires `getRecorderStatus` to the manager and `saveRecorderScene` to
+  SQLite storage.
+- Gate C intentionally keeps public `startRecording`, `pauseRecording`,
+  `resumeRecording`, and `stopRecording` returning
+  `recorder_backend_not_implemented` until capture backends exist.
+- Gate C creates segment directories and persists deterministic segment paths,
+  but does not create empty MKV files.
+
+## Gate Reconciliation Log
+
+- Gate A: reviewed Gates B-I, command contracts, and validation requirements.
+  No milestone changes needed because command names and typed placeholder
+  behavior already match the M1 contract.
+- Gate B: reviewed Gates C-I, Storage Format, Recording Lifecycle Contract,
+  Testing and Validation, and Expected Deliverables. Updated the milestone body
+  to reflect concrete schema decisions: `_ms` timestamp columns,
+  `recordings.active_scene_id`, `recordings.output_root`, reusable
+  `recorder_scenes`, and `balanced-ocr` quality labels.
+- Gate C: reviewed Gates D-I after keeping public lifecycle commands
+  unavailable. No milestone changes needed because source discovery, FFmpeg,
+  and UX gates still own making public capture controls usable.
 
 ## Risk Watchlist
 
