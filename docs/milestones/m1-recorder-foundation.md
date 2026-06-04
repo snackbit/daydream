@@ -1,0 +1,634 @@
+# Milestone M1: Recorder Foundation
+
+## Goal
+
+Deliver the first real recording foundation for Daydream: a local-first
+Linux/KDE Wayland recorder that exposes stable domain contracts, lets the user
+select and arrange monitor sources, records desktop and microphone audio as
+separate tracks, writes pause/resume segments to local storage, persists
+metadata in SQLite, and surfaces backend health in the app.
+
+## Summary
+
+- This milestone turns the Capture placeholder into a working recorder
+  workspace backed by Rust/Tauri commands.
+- The capture backend uses xdg-desktop-portal and PipeWire for screen capture,
+  then FFmpeg for encoding and muxing MKV segment files.
+- The first target platform is Linux/KDE Wayland on the current development
+  machine, with platform-specific code isolated behind recorder interfaces.
+- Processing work remains out of scope: OCR, transcription, VLM inference,
+  indexing, daily digest generation, and timeline playback are not implemented
+  in M1.
+- This is the right boundary because downstream recall features need durable,
+  privacy-conscious recordings with timestamps, source layout metadata, and
+  separate audio tracks before they can process anything accurately.
+
+## Inputs
+
+- `AGENTS.md`
+- `README.md`
+- `docs/milestone-template.md`
+- `.agents/runbooks/planning.md`
+- Current Tauri app under `apps/desktop`
+- Current Rust SQLite storage under `apps/desktop/src-tauri/src/storage.rs`
+- Current diagnostics command under
+  `apps/desktop/src-tauri/src/diagnostics.rs`
+- Current development FFmpeg resolver under `packages/ffmpeg`
+- xdg-desktop-portal ScreenCast interface reference:
+  <https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html>
+- FFmpeg device reference:
+  <https://www.ffmpeg.org/ffmpeg-devices.html>
+
+## Locked Decisions
+
+- Milestone artifacts:
+  - `docs/milestones/m1-recorder-foundation.md`
+  - `docs/milestones/m1-recorder-foundation-scratchpad.md`
+- The first implementation target is Linux/KDE Wayland.
+- The primary capture architecture is portal bridge plus FFmpeg:
+  - xdg-desktop-portal ScreenCast obtains monitor streams.
+  - PipeWire carries screen frames from the portal.
+  - Rust owns frame intake and scene composition.
+  - FFmpeg owns encoding and muxing.
+- Privileged `kmsgrab` is not the primary path for M1.
+- The app requests persistent portal permission where available with
+  `persist_mode=2`, stores restore tokens as sensitive local metadata, and
+  falls back to the KDE chooser when a restore token is missing, expired, or
+  rejected.
+- The first visual source type is monitor capture only.
+- Multi-monitor support is required from the first implementation.
+- Multiple selected monitors are composed into one video canvas.
+- The default canvas layout is automatic horizontal placement.
+- Scene layout storage uses canonical absolute canvas pixels. The UI may show
+  percentages, but persisted source-of-truth values are absolute pixels.
+- The scene editor follows an OBS Studio-style interaction model:
+  - move sources on a canvas
+  - resize sources
+  - crop sources
+  - preserve-aspect-ratio toggle
+  - source list with selection state
+- Cursor capture is embedded in the video stream when the portal supports it.
+- Recording output is one MKV file per segment.
+- A recording can contain multiple segment files.
+- Pause/resume creates a new segment file under the same recording.
+- Each segment contains separate streams for:
+  - composed screen video
+  - desktop audio
+  - microphone audio
+- The default frame rate is `1 FPS`.
+- The default video encoding profile is balanced H.264 with `yuv444p` output.
+- The app records video, desktop audio, and microphone audio from the first
+  backend implementation.
+- Desktop audio defaults to the default Pulse/PipeWire sink monitor and can be
+  overridden by source ID.
+- Microphone audio defaults to the default Pulse/PipeWire source and can be
+  overridden by source ID.
+- The app supports one active recording at a time.
+- The recorder API exposes these commands to the frontend:
+  - `getRecorderStatus`
+  - `getCaptureSources`
+  - `getAudioSources`
+  - `saveRecorderScene`
+  - `startRecording`
+  - `pauseRecording`
+  - `resumeRecording`
+  - `stopRecording`
+- If implementation needs a separate portal-selection command, it must be named
+  explicitly and kept inside the recorder command namespace. It may not leak
+  portal-specific session details into React state.
+- Default recording files live under
+  `<app_data_dir>/recordings/{recordingId}/segments`.
+- SQLite schema M1 uses segments plus scenes:
+  - recordings remain the parent entity
+  - recording segments represent pause/resume output files
+  - scene records represent capture canvas configuration
+  - scene source records represent selected monitor placement and crop state
+- SQLite access remains Rust-owned. React uses typed Tauri commands only.
+- Diagnostics must include recorder backend health:
+  - portal availability
+  - ScreenCast version and source/cursor capabilities
+  - PipeWire availability
+  - selected FFmpeg path and capability summary
+  - default desktop audio source ID
+  - default microphone source ID
+- The FFmpeg binary remains configurable.
+- M1 may use the system FFmpeg as a development bridge only when the bundled
+  binary lacks required capabilities. The milestone is not complete until the
+  app reports the selected FFmpeg path and the capability gap is documented.
+- M1 does not ship a final installer-level FFmpeg packaging solution. It must
+  leave a concrete follow-up if the development bridge is still required.
+- The app must not log raw frames, raw audio, OCR-like text, transcripts,
+  focused window titles, or private recording content.
+- Recording must be visible and user-controlled. No hidden background capture is
+  introduced in M1.
+
+## Success Criteria
+
+The milestone is successful when:
+
+- The Capture screen can discover available monitor and audio sources.
+- The user can arrange selected monitors in an interactive canvas editor.
+- The user can start, pause, resume, and stop one active recording.
+- The app writes MKV segment files under the recording directory.
+- Each recorded segment contains a composed video stream plus separate desktop
+  and microphone audio streams when those inputs are available.
+- Recording, segment, track, scene, and source metadata are persisted in SQLite.
+- Diagnostics shows whether portal, PipeWire, FFmpeg, desktop audio, and mic
+  inputs are usable.
+- Permission denial, unavailable portal, unavailable audio, unavailable FFmpeg,
+  and invalid lifecycle transitions return typed user-facing errors.
+- No captured private content is logged by default.
+- The final validation gate records real command results and manual smoke-test
+  notes in the scratchpad.
+
+## Scope
+
+- Recorder domain contracts and TypeScript/Rust IPC payloads.
+- Rust recorder state machine for idle, selecting, recording, paused, stopping,
+  error, and unavailable states.
+- SQLite migration and storage helpers for scenes and segments.
+- Linux/KDE Wayland ScreenCast portal integration.
+- PipeWire frame intake for portal monitor streams.
+- Compositor for selected monitor streams into one video canvas.
+- FFmpeg argument building and process lifecycle for MKV segment output.
+- Pulse/PipeWire audio source discovery and FFmpeg audio input mapping.
+- Capture screen UI with status, controls, source selectors, and scene editor.
+- Recorder diagnostics in the existing Diagnostics screen.
+- Focused Rust and TypeScript tests for contracts, lifecycle, storage, FFmpeg
+  args, layout math, and error states.
+- Manual end-to-end recording validation on the development machine.
+
+## Non-Goals
+
+- OCR, UI text extraction, Whisper transcription, VLM inference, embeddings,
+  LLM digest generation, and task/todo extraction.
+- Timeline playback, searchable annotations, and daily digest UI.
+- Scissors/redaction implementation.
+- Keyboard/mouse activity instrumentation.
+- Focused-window or open-window metadata capture.
+- Cross-platform capture backends for Windows or macOS.
+- Final application installer packaging.
+- Final vendored FFmpeg distribution policy.
+- Privileged `kmsgrab` capture fallback.
+- Remote model or sync features.
+
+## Definitions and Ownership Rules
+
+- Recording: a user-controlled capture session that may contain one or more
+  segment files.
+- Segment: a continuous MKV output file produced between start and stop, or
+  between resume and pause/stop.
+- Scene: the canvas configuration used to compose selected monitor streams.
+- Scene source: one selected monitor within a scene, including source identity,
+  placement, size, crop, z-order, and aspect-ratio behavior.
+- Capture source: a monitor source exposed through the ScreenCast portal.
+- Audio source: a Pulse/PipeWire input source or sink monitor selectable for
+  desktop or microphone capture.
+- Recorder status: the typed state returned to React. It is the source of truth
+  for buttons, warnings, and current recording metadata.
+- Backend health: capability and availability data surfaced through
+  Diagnostics. It must not contain private screen/audio content.
+- React owns presentation and transient edit state.
+- Rust owns native capture, FFmpeg lifecycle, SQLite writes, filesystem paths,
+  and recorder lifecycle validation.
+- SQLite owns durable recorder metadata.
+- MKV files own encoded media payloads.
+
+## Architectural Invariants
+
+- Native integrations stay behind recorder modules; UI code does not talk to
+  portal, PipeWire, Pulse, FFmpeg, or SQLite directly.
+- All Tauri command payloads are serializable, typed, and mirrored in shared
+  TypeScript contracts where practical.
+- Every recording segment has a stable recording ID, segment ID, file path,
+  start timestamp, and eventual end timestamp or failure state.
+- Recording and segment timestamps use a monotonic runtime source for duration
+  math and wall-clock timestamps for user display.
+- Segment file names are deterministic within a recording directory.
+- FFmpeg child processes are killed or awaited on lifecycle transitions and app
+  shutdown.
+- Pause, stop, and failure paths finalize or mark segment records so processing
+  jobs can later avoid partial or failed files.
+- Source layout math is deterministic and testable without a live portal.
+- The app may degrade when desktop audio or microphone input is unavailable,
+  but it must surface that state before recording starts.
+- Recorder errors use typed categories so the UI can distinguish permission,
+  dependency, lifecycle, filesystem, audio, video, and encoder failures.
+
+## Public API and Config Changes
+
+The recorder command surface is stable for M1:
+
+- `getRecorderStatus() -> RecorderStatus`
+- `getCaptureSources() -> CaptureSourceList`
+- `getAudioSources() -> AudioSourceList`
+- `saveRecorderScene(input: SaveRecorderSceneInput) -> RecorderScene`
+- `startRecording(input: StartRecordingInput) -> RecorderStatus`
+- `pauseRecording(input: PauseRecordingInput) -> RecorderStatus`
+- `resumeRecording(input: ResumeRecordingInput) -> RecorderStatus`
+- `stopRecording(input: StopRecordingInput) -> RecorderStatus`
+
+The API must include these domain payloads:
+
+- `RecorderStatus`
+- `RecorderState`
+- `RecorderError`
+- `CaptureSource`
+- `CaptureSourceSelection`
+- `AudioSource`
+- `AudioSourceRole`
+- `RecorderScene`
+- `RecorderSceneSource`
+- `CanvasRect`
+- `CropRect`
+- `StartRecordingInput`
+- `PauseRecordingInput`
+- `ResumeRecordingInput`
+- `StopRecordingInput`
+- `RecorderSegment`
+- `RecorderBackendHealth`
+
+Config behavior:
+
+- `DAYDREAM_FFMPEG_PATH` remains accepted in development.
+- The selected FFmpeg path is visible in Diagnostics.
+- Audio source overrides are stored as source IDs, not display labels.
+- Scene layout values are stored as absolute pixels.
+- The default scene is generated from selected monitor dimensions with
+  horizontal layout and no crop.
+
+## Native Permission Requirements
+
+- The Linux ScreenCast portal is the user-facing permission boundary for monitor
+  capture.
+- The implementation requests monitor sources with multi-selection enabled.
+- The implementation requests cursor embedding when available.
+- The implementation requests restore-token behavior where KDE portal supports
+  it.
+- A denied or closed portal chooser returns a permission error and does not
+  create a recording row.
+- An invalid restore token falls back to the chooser without crashing.
+- Pulse/PipeWire audio source discovery reads local server metadata.
+- Missing desktop or microphone input is surfaced as degraded backend health and
+  as a preflight warning in the Capture screen.
+
+## Privacy and Deletion Contract
+
+- M1 records sensitive media, so all logs and diagnostics must avoid raw screen,
+  audio, OCR-like text, transcripts, prompts, and private content.
+- Diagnostics may report source IDs, source roles, capability flags, file paths,
+  and dependency versions.
+- Recording files are local-only under the app data directory by default.
+- M1 does not implement deletion or redaction, but schema and segment metadata
+  must be compatible with later deletion and redaction eligibility work.
+- Failed or partial segment records must be distinguishable from valid segments
+  so later processing does not consume unsafe files.
+- Portal restore tokens are stored as sensitive local metadata and are not shown
+  in the UI.
+
+## Storage Format
+
+SQLite migration M1 adds explicit segment and scene storage.
+
+Expected tables:
+
+- `recording_segments`
+  - `id`
+  - `recording_id`
+  - `segment_index`
+  - `file_path`
+  - `started_at`
+  - `ended_at`
+  - `duration_ms`
+  - `state`
+  - `video_stream_index`
+  - `desktop_audio_stream_index`
+  - `microphone_audio_stream_index`
+  - `ffmpeg_exit_code`
+  - `error_code`
+  - `created_at`
+  - `updated_at`
+- `recorder_scenes`
+  - `id`
+  - `name`
+  - `canvas_width`
+  - `canvas_height`
+  - `layout_mode`
+  - `created_at`
+  - `updated_at`
+- `recorder_scene_sources`
+  - `id`
+  - `scene_id`
+  - `source_id`
+  - `source_kind`
+  - `display_name`
+  - `x`
+  - `y`
+  - `width`
+  - `height`
+  - `crop_left`
+  - `crop_top`
+  - `crop_right`
+  - `crop_bottom`
+  - `z_index`
+  - `preserve_aspect_ratio`
+  - `created_at`
+  - `updated_at`
+
+Existing tables may be extended where needed:
+
+- `recordings` may gain recorder-state, active-scene, output-root, or backend
+  metadata columns if storage helpers need them.
+- `recording_tracks` may be reused for stream-level records when that avoids
+  duplication, but segment-level stream indexes must remain queryable.
+
+Migration stop boundary:
+
+- Schema edits and embedded migrations happen in the same implementation gate.
+- Migration tests must run with `cargo test --manifest-path
+  apps/desktop/src-tauri/Cargo.toml`.
+- No migration may depend on React or frontend code.
+
+## Recording Lifecycle Contract
+
+- `idle -> recording` starts a new recording and segment.
+- `recording -> paused` finalizes the current segment.
+- `paused -> recording` starts a new segment for the same recording.
+- `recording -> idle` stops and finalizes the current recording.
+- `paused -> idle` stops the recording without creating a new segment.
+- `error -> idle` is allowed only after cleanup has run and the status reports
+  the last error.
+- Starting while recording or paused returns a lifecycle error.
+- Pausing while idle returns a lifecycle error.
+- Resuming while idle returns a lifecycle error.
+- Stopping while idle is idempotent and returns idle status.
+- App shutdown while recording or paused attempts cleanup and marks any active
+  segment with a terminal state.
+
+## Gate A: Recorder Contracts and Command Surface
+
+- [ ] Add shared recorder domain types for status, state, errors, sources,
+  scenes, layout, audio roles, segments, and command inputs.
+- [ ] Add Rust recorder domain types that serialize to the shared frontend
+  contract shape.
+- [ ] Register recorder Tauri commands with typed placeholder implementations
+  that compile and return realistic unavailable or idle responses.
+- [ ] Add Tauri capability entries required for the recorder commands.
+- [ ] Add TypeScript command client helpers for every recorder command.
+- [ ] Add tests for command payload typing, lifecycle error shape, and frontend
+  client behavior.
+
+Exit Criteria:
+
+- All M1 command names exist and are callable through the Tauri command layer.
+- No real native capture is started in Gate A.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passes.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` passes.
+
+## Gate B: SQLite Recorder Schema and Storage Helpers
+
+- [ ] Add embedded SQLite migration for `recording_segments`,
+  `recorder_scenes`, and `recorder_scene_sources`.
+- [ ] Update storage initialization so existing databases migrate cleanly to the
+  M1 schema.
+- [ ] Add storage helpers for creating recordings, scenes, scene sources, and
+  recording segments.
+- [ ] Add storage helpers for finalizing, failing, and listing segment records.
+- [ ] Add constraints that prevent duplicate segment indexes per recording.
+- [ ] Add tests for fresh database migration, existing database migration,
+  segment lifecycle writes, scene persistence, and constraint behavior.
+
+Exit Criteria:
+
+- SQLite v2 schema is explicit and tested.
+- React still has no direct SQLite access.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` passes.
+
+## Gate C: Recorder State Machine and File Layout
+
+- [ ] Implement the Rust recorder manager as Tauri managed state.
+- [ ] Enforce one active recording at a time.
+- [ ] Implement lifecycle transitions for start, pause, resume, stop, error,
+  cleanup, and app shutdown.
+- [ ] Generate recording directories under
+  `<app_data_dir>/recordings/{recordingId}/segments`.
+- [ ] Generate deterministic segment file names.
+- [ ] Wire lifecycle transitions to SQLite recording and segment writes.
+- [ ] Add tests for valid transitions, invalid transitions, cleanup behavior,
+  segment numbering, and file path generation.
+
+Exit Criteria:
+
+- Recorder status reflects the current lifecycle state and active segment.
+- Invalid lifecycle calls return typed errors.
+- Segment metadata remains durable across pause/resume/stop.
+
+## Gate D: Portal and Audio Source Discovery
+
+- [ ] Implement Linux ScreenCast portal capability probing.
+- [ ] Implement monitor source selection with multiple-source support.
+- [ ] Implement restore-token storage and chooser fallback behavior.
+- [ ] Normalize portal monitor streams into recorder capture source records.
+- [ ] Implement Pulse/PipeWire audio source discovery.
+- [ ] Map default sink monitor to the desktop audio role.
+- [ ] Map default source to the microphone audio role.
+- [ ] Surface portal, PipeWire, desktop audio, and microphone availability in
+  recorder status and Diagnostics.
+- [ ] Add tests for capability parsing, restore-token failure handling, audio
+  source role mapping, and unavailable dependency errors.
+
+Exit Criteria:
+
+- The Capture screen can list monitor and audio candidates without starting a
+  recording.
+- Denied portal permission and missing audio inputs return typed degraded or
+  error states.
+- Portal session details do not leak into React state beyond stable source IDs
+  and display-safe metadata.
+
+## Gate E: Scene Layout and Interactive Editor
+
+- [ ] Add deterministic default horizontal layout generation for selected
+  monitor dimensions.
+- [ ] Implement canvas layout math for move, resize, crop, z-order, and
+  preserve-aspect-ratio behavior.
+- [ ] Persist scene edits through `saveRecorderScene`.
+- [ ] Replace the Capture placeholder with a recorder workspace.
+- [ ] Add status header, start/pause/resume/stop controls, source list, audio
+  selectors, FPS display, quality preset display, and scene canvas.
+- [ ] Implement OBS Studio-style pointer interactions for moving and resizing
+  scene sources.
+- [ ] Add crop controls that persist absolute pixel crop values.
+- [ ] Add tests for layout math, scene persistence client behavior, and critical
+  UI states.
+
+Exit Criteria:
+
+- A user can create and edit a multi-monitor scene before recording.
+- Persisted scene values are absolute pixels.
+- UI state derives button availability from `RecorderStatus`.
+
+## Gate F: FFmpeg Segment Writer and Audio Tracks
+
+- [ ] Implement FFmpeg capability probing for the selected binary.
+- [ ] Implement FFmpeg argument builder for one MKV segment with H.264
+  `yuv444p`, `1 FPS`, desktop audio, and microphone audio.
+- [ ] Implement configurable FFmpeg path selection with `DAYDREAM_FFMPEG_PATH`
+  support.
+- [ ] Start and stop FFmpeg child processes from the recorder manager.
+- [ ] Pipe or feed composed video frames into FFmpeg without logging frame
+  content.
+- [ ] Attach desktop and microphone audio inputs as separate FFmpeg streams.
+- [ ] Persist segment stream indexes and FFmpeg exit status in SQLite.
+- [ ] Add tests for FFmpeg args, selected binary reporting, process failure
+  handling, and stream-index metadata.
+
+Exit Criteria:
+
+- The selected FFmpeg binary and capability summary are visible in Diagnostics.
+- A synthetic or controlled video input can produce a valid MKV segment in test
+  or manual validation.
+- FFmpeg failures mark the active segment failed and return typed recorder
+  errors.
+
+## Gate G: PipeWire Frame Intake and Compositor
+
+- [ ] Implement PipeWire connection handling for portal monitor streams.
+- [ ] Decode or map supported portal frame formats into compositor inputs.
+- [ ] Composite selected monitor streams into the configured scene canvas.
+- [ ] Apply source placement, crop, scale, z-order, and cursor embedding
+  behavior.
+- [ ] Pace composed frames at the configured `1 FPS` default.
+- [ ] Feed composed frames to the FFmpeg segment writer.
+- [ ] Add tests for compositor math, frame pacing decisions, unsupported format
+  errors, and multi-monitor composition metadata.
+
+Exit Criteria:
+
+- Multiple selected monitor streams can be represented as one composed video
+  canvas.
+- The compositor path handles unsupported frame formats with typed errors.
+- Frame content is not logged.
+
+## Gate H: End-to-End Recorder UX and Diagnostics
+
+- [ ] Connect the Capture screen to real recorder commands.
+- [ ] Show backend readiness, degraded audio states, dependency failures, and
+  lifecycle errors in user-facing UI.
+- [ ] Keep recording controls disabled or warning-gated when required sources
+  are unavailable.
+- [ ] Extend Diagnostics with recorder backend health rows.
+- [ ] Add status refresh behavior that stays accurate during start, pause,
+  resume, stop, and failure.
+- [ ] Add UI tests for recorder status rendering, disabled controls, lifecycle
+  actions, and diagnostics rendering.
+
+Exit Criteria:
+
+- The user can operate the recorder from the app without terminal commands.
+- Diagnostics distinguishes unavailable, degraded, and available backend states.
+- The UI does not display portal restore tokens or private captured content.
+
+## Gate I: Validation and Launch Readiness
+
+- [ ] Run JavaScript lint fix.
+- [ ] Run JavaScript lint.
+- [ ] Run TypeScript typecheck.
+- [ ] Run JavaScript tests.
+- [ ] Run Rust tests.
+- [ ] Run the desktop frontend build.
+- [ ] Run a manual Tauri dev smoke test.
+- [ ] Record a short multi-monitor segment with desktop and microphone audio
+  enabled when available.
+- [ ] Pause and resume once, then stop.
+- [ ] Verify the recording directory contains multiple MKV segment files.
+- [ ] Verify each complete segment has the expected video, desktop audio, and
+  microphone streams with `ffprobe`.
+- [ ] Verify SQLite contains matching recording, segment, scene, and track
+  metadata.
+- [ ] Verify Diagnostics reports portal, PipeWire, FFmpeg, desktop audio, and
+  microphone status.
+- [ ] Verify no raw private capture content appears in logs.
+- [ ] Update the scratchpad validation log with command results, manual smoke
+  notes, residual risks, and follow-up candidates.
+
+Exit Criteria:
+
+- Required automated gates pass or documented environmental blockers are
+  recorded in the scratchpad.
+- Manual recording smoke test succeeds on Linux/KDE Wayland or a specific
+  native blocker is documented with evidence.
+- M1 residual risks are narrow enough for the next milestone to proceed.
+
+## Testing and Validation
+
+Required validation:
+
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint:fix`
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop build`
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+
+Manual validation:
+
+- `COREPACK_HOME=/tmp/corepack corepack yarn dev`
+- Start a short recording from the Capture screen.
+- Pause, resume, and stop.
+- Inspect MKV streams with the selected FFmpeg/FFprobe tooling.
+- Inspect Diagnostics for recorder backend health.
+- Inspect the app logs for absence of private raw capture content.
+
+Suggested native diagnostics:
+
+- `gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop`
+- `pactl info`
+- `pactl list sources short`
+- `pw-cli --version`
+- `<selected-ffmpeg> -devices`
+- `<selected-ffmpeg> -formats`
+
+## Dependencies and Risks
+
+- Portal behavior can vary between desktop environments and portal backend
+  versions.
+- KDE restore-token behavior must be validated against real chooser flows.
+- PipeWire frame formats may require support for SHM, DMA-BUF, or format
+  conversion paths.
+- The bundled `ffmpeg-static` binary may lack required Linux capture or audio
+  capabilities, so M1 may need the system FFmpeg as a development bridge.
+- Multi-monitor composition can increase CPU and memory pressure even at 1 FPS.
+- Desktop audio source names and defaults can change while the app is running.
+- Microphone permission and Pulse/PipeWire routing failures must not silently
+  produce misleading complete recordings.
+- Full-day storage behavior is not validated in M1; short smoke recordings are
+  the M1 completion bar.
+
+## Assumptions
+
+- The current development environment is Linux/KDE Wayland.
+- xdg-desktop-portal and xdg-desktop-portal-kde are installed.
+- PipeWire and pipewire-pulse are installed.
+- Pulse-compatible FFmpeg audio input is available through the selected FFmpeg
+  binary.
+- The first implementation can target monitor streams only.
+- Absolute pixel layout values are sufficient for later OCR frame extraction and
+  timeline provenance.
+- The current SQLite app-data database may already exist and must migrate
+  forward without manual deletion.
+
+## Expected Deliverables
+
+- Recorder domain contract types in Rust and TypeScript.
+- Registered Tauri recorder commands.
+- SQLite v2 recorder schema and tests.
+- Recorder manager with lifecycle enforcement.
+- Portal monitor source discovery and restore-token fallback.
+- Audio source discovery and desktop/mic role mapping.
+- Scene layout storage and interactive Capture screen editor.
+- FFmpeg segment writer with H.264 `yuv444p` MKV output.
+- PipeWire compositor path for selected monitor streams.
+- Recorder backend health in Diagnostics.
+- Automated tests for the critical contracts and lifecycle behavior.
+- Scratchpad validation log for final command results and manual smoke tests.
