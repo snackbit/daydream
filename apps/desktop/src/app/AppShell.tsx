@@ -42,10 +42,6 @@ export function AppShell() {
             );
           })}
         </nav>
-
-        <div className="text-muted-foreground border-t p-3 text-xs">
-          Linux / Wayland first. Capture is not implemented yet.
-        </div>
       </aside>
 
       <div className="flex min-h-0 flex-col overflow-auto">
