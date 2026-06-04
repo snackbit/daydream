@@ -37,3 +37,5 @@ export interface DaydreamDiagnostics {
   storage: StorageDiagnostics;
   system: SystemDiagnostics;
 }
+
+export * from './recorder.js';

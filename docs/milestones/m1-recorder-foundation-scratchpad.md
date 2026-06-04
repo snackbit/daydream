@@ -2,9 +2,8 @@
 
 ## Current Status
 
-- Planning.
-- Milestone body is intended to be the implementation contract.
-- No M1 implementation work has started from this artifact.
+- Gate A complete.
+- Gate B is the next implementation gate.
 
 ## Locked Decisions
 
@@ -82,7 +81,20 @@
 
 ## Validation Log
 
-- Not started.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed.
+
+## Gate Notes
+
+- Gate A exposes camelCase recorder invoke names through Tauri command `rename`
+  attributes while keeping Rust functions snake_case.
+- Gate A stubs return typed serialized recorder errors with category
+  `unavailable` and code `recorder_backend_not_implemented`.
+- No custom Tauri capability entries were required for app-local commands in
+  this scaffold; the recorder commands compile and are registered in the app
+  invoke handler.
 
 ## Risk Watchlist
 

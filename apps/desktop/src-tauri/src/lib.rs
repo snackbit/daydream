@@ -1,4 +1,5 @@
 mod diagnostics;
+pub mod recorder;
 mod storage;
 
 use tauri::Manager;
@@ -13,7 +14,17 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![diagnostics::get_diagnostics])
+        .invoke_handler(tauri::generate_handler![
+            diagnostics::get_diagnostics,
+            recorder::get_recorder_status,
+            recorder::get_capture_sources,
+            recorder::get_audio_sources,
+            recorder::save_recorder_scene,
+            recorder::start_recording,
+            recorder::pause_recording,
+            recorder::resume_recording,
+            recorder::stop_recording,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -367,15 +367,15 @@ Migration stop boundary:
 
 ## Gate A: Recorder Contracts and Command Surface
 
-- [ ] Add shared recorder domain types for status, state, errors, sources,
+- [x] Add shared recorder domain types for status, state, errors, sources,
   scenes, layout, audio roles, segments, and command inputs.
-- [ ] Add Rust recorder domain types that serialize to the shared frontend
+- [x] Add Rust recorder domain types that serialize to the shared frontend
   contract shape.
-- [ ] Register recorder Tauri commands with typed placeholder implementations
+- [x] Register recorder Tauri commands with typed placeholder implementations
   that compile and return realistic unavailable or idle responses.
-- [ ] Add Tauri capability entries required for the recorder commands.
-- [ ] Add TypeScript command client helpers for every recorder command.
-- [ ] Add tests for command payload typing, lifecycle error shape, and frontend
+- [x] Verify Tauri capability entries required for the recorder commands.
+- [x] Add TypeScript command client helpers for every recorder command.
+- [x] Add tests for command payload typing, lifecycle error shape, and frontend
   client behavior.
 
 Exit Criteria:
