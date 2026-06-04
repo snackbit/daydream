@@ -387,15 +387,15 @@ Exit Criteria:
 
 ## Gate B: SQLite Recorder Schema and Storage Helpers
 
-- [ ] Add embedded SQLite migration for `recording_segments`,
+- [x] Add embedded SQLite migration for `recording_segments`,
   `recorder_scenes`, and `recorder_scene_sources`.
-- [ ] Update storage initialization so existing databases migrate cleanly to the
+- [x] Update storage initialization so existing databases migrate cleanly to the
   M1 schema.
-- [ ] Add storage helpers for creating recordings, scenes, scene sources, and
+- [x] Add storage helpers for creating recordings, scenes, scene sources, and
   recording segments.
-- [ ] Add storage helpers for finalizing, failing, and listing segment records.
-- [ ] Add constraints that prevent duplicate segment indexes per recording.
-- [ ] Add tests for fresh database migration, existing database migration,
+- [x] Add storage helpers for finalizing, failing, and listing segment records.
+- [x] Add constraints that prevent duplicate segment indexes per recording.
+- [x] Add tests for fresh database migration, existing database migration,
   segment lifecycle writes, scene persistence, and constraint behavior.
 
 Exit Criteria:

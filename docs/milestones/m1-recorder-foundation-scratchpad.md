@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- Gate A complete.
-- Gate B is the next implementation gate.
+- Gate B complete.
+- Gate C is the next implementation gate.
 
 ## Locked Decisions
 
@@ -85,6 +85,8 @@
 - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed.
 - `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate B.
 
 ## Gate Notes
 
@@ -95,6 +97,15 @@
 - No custom Tauri capability entries were required for app-local commands in
   this scaffold; the recorder commands compile and are registered in the app
   invoke handler.
+- Gate B uses `_ms` timestamp columns for new recorder tables.
+- Gate B stores recorder scenes as reusable global layouts.
+- Gate B minimally extends `recordings` with `active_scene_id` and
+  `output_root`.
+- Gate B updates `recordings.quality_label` to accept `balanced-ocr`.
+- Gate B preserves existing v1 child rows while rebuilding `recordings` for the
+  expanded quality-label check and new recorder metadata columns.
+- Gate B makes the Rust storage module public so future recorder gates can call
+  storage helpers without dead-code warnings before command wiring exists.
 
 ## Risk Watchlist
 

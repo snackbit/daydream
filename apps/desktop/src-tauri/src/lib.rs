@@ -1,6 +1,6 @@
 mod diagnostics;
 pub mod recorder;
-mod storage;
+pub mod storage;
 
 use tauri::Manager;
 
