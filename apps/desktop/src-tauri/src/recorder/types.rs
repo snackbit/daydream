@@ -65,11 +65,13 @@ pub enum CaptureSourceKind {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureSource {
     pub(crate) display_name: String,
-    pub(crate) height: u32,
+    pub(crate) height: Option<u32>,
     pub(crate) id: String,
     pub(crate) kind: CaptureSourceKind,
+    pub(crate) logical_height: Option<u32>,
+    pub(crate) logical_width: Option<u32>,
     pub(crate) scale_factor: Option<f64>,
-    pub(crate) width: u32,
+    pub(crate) width: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

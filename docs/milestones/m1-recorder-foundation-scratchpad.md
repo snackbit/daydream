@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- Gate C complete.
-- Gate D is the next implementation gate.
+- Gate D complete.
+- Gate E is the next implementation gate.
 
 ## Locked Decisions
 
@@ -93,6 +93,11 @@
   Gate C concurrent-start hardening.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate C recorder module split.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate D with 34 Rust tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate D.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate D.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate D.
 
 ## Gate Notes
 
@@ -126,6 +131,19 @@
 - Gate C cleanup split the recorder module into focused files for contracts,
   commands, lifecycle management, storage mapping, errors, and tests before
   Gate D adds portal and audio discovery.
+- Gate D uses target-scoped Linux dependencies for ScreenCast and Pulse/PipeWire
+  discovery so macOS/Windows builds keep a platform fallback path.
+- Gate D adds `selectCaptureSources` as the only command allowed to show the
+  ScreenCast chooser; `getCaptureSources` stays read-only.
+- Gate D stores ScreenCast restore tokens in SQLite as backend-only sensitive
+  metadata. Tokens are not exposed through React contracts, diagnostics, or
+  logs.
+- Gate D keeps `startRecording`, `pauseRecording`, `resumeRecording`, and
+  `stopRecording` returning `recorder_backend_not_implemented` until the FFmpeg
+  and capture-runtime gates wire real media output.
+- Gate D treats portal stream size as logical compositor size, not pixel size.
+  `CaptureSource.width` and `CaptureSource.height` stay null until a later
+  PipeWire/capture-runtime gate can prove actual frame pixel dimensions.
 
 ## Gate Reconciliation Log
 
@@ -146,6 +164,9 @@
 - Gate C module split: reviewed Gates D-I after separating recorder code into
   submodules. No milestone changes needed; the split preserves the public
   recorder command surface and creates clearer landing spots for Gate D code.
+- Gate D: reviewed Gates E-I after adding explicit portal selection and audio
+  discovery. Updated the milestone API to make `selectCaptureSources` a locked
+  command and clarify that `getCaptureSources` is read-only cache access.
 
 ## Risk Watchlist
 

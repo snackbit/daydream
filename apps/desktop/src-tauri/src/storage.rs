@@ -11,12 +11,13 @@ use serde::Serialize;
 use tauri::Manager;
 
 const DATABASE_FILE_NAME: &str = "daydream.sqlite3";
-const CORE_TABLES: [&str; 8] = [
+const CORE_TABLES: [&str; 9] = [
     "recordings",
     "recording_tracks",
     "recording_segments",
     "recorder_scenes",
     "recorder_scene_sources",
+    "recorder_portal_restore_tokens",
     "redactions",
     "capture_events",
     "processing_jobs",
@@ -242,6 +243,16 @@ pub struct RecordingSegmentRow {
     pub started_at_ms: i64,
     pub state: String,
     pub video_stream_index: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortalRestoreTokenRow {
+    pub created_at_ms: i64,
+    pub id: String,
+    pub last_used_at_ms: Option<i64>,
+    pub portal: String,
+    pub token: String,
+    pub updated_at_ms: i64,
 }
 
 pub fn create_recording(
@@ -602,6 +613,77 @@ pub fn list_recording_segments(
     rows.collect()
 }
 
+pub fn get_portal_restore_token(
+    connection: &Connection,
+    id: &str,
+) -> rusqlite::Result<Option<PortalRestoreTokenRow>> {
+    match connection.query_row(
+        r#"
+        SELECT
+            id,
+            portal,
+            token,
+            created_at_ms,
+            updated_at_ms,
+            last_used_at_ms
+        FROM recorder_portal_restore_tokens
+        WHERE id = ?1
+        "#,
+        [id],
+        portal_restore_token_from_row,
+    ) {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn upsert_portal_restore_token(
+    connection: &Connection,
+    id: &str,
+    portal: &str,
+    token: &str,
+    timestamp_ms: i64,
+) -> rusqlite::Result<PortalRestoreTokenRow> {
+    connection.execute(
+        r#"
+        INSERT INTO recorder_portal_restore_tokens (
+            id,
+            portal,
+            token,
+            created_at_ms,
+            updated_at_ms,
+            last_used_at_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?4, ?4)
+        ON CONFLICT(id) DO UPDATE SET
+            portal = excluded.portal,
+            token = excluded.token,
+            updated_at_ms = excluded.updated_at_ms,
+            last_used_at_ms = excluded.last_used_at_ms
+        "#,
+        params![id, portal, token, timestamp_ms],
+    )?;
+
+    get_portal_restore_token(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
+pub fn mark_portal_restore_token_used(
+    connection: &Connection,
+    id: &str,
+    timestamp_ms: i64,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        r#"
+        UPDATE recorder_portal_restore_tokens
+        SET last_used_at_ms = ?2
+        WHERE id = ?1
+        "#,
+        params![id, timestamp_ms],
+    )?;
+
+    Ok(())
+}
+
 fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
     let connection = Connection::open(path)?;
     enable_connection_pragmas(&connection)?;
@@ -732,6 +814,19 @@ fn recording_segment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recor
         microphone_audio_stream_index: row.get(10)?,
         ffmpeg_exit_code: row.get(11)?,
         error_code: row.get(12)?,
+    })
+}
+
+fn portal_restore_token_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<PortalRestoreTokenRow> {
+    Ok(PortalRestoreTokenRow {
+        id: row.get(0)?,
+        portal: row.get(1)?,
+        token: row.get(2)?,
+        created_at_ms: row.get(3)?,
+        updated_at_ms: row.get(4)?,
+        last_used_at_ms: row.get(5)?,
     })
 }
 
@@ -1007,6 +1102,18 @@ fn migrations() -> Migrations<'static> {
         CREATE INDEX idx_recorder_scene_sources_scene_z ON recorder_scene_sources(scene_id, z_index);
         "#,
         ),
+        M::up(
+            r#"
+        CREATE TABLE recorder_portal_restore_tokens (
+            id TEXT PRIMARY KEY NOT NULL,
+            portal TEXT NOT NULL CHECK (portal IN ('linux-screencast')),
+            token TEXT NOT NULL CHECK (length(token) > 0),
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+            last_used_at_ms INTEGER CHECK (last_used_at_ms IS NULL OR last_used_at_ms >= created_at_ms)
+        );
+        "#,
+        ),
     ])
 }
 
@@ -1025,9 +1132,10 @@ mod tests {
         apply_migrations, collect_database_diagnostics_from_connection, create_recording,
         create_recording_segment, enable_connection_pragmas, fail_recording_segment,
         finalize_recording_segment, get_recorder_scene, get_recording, list_recording_segments,
-        migrations, save_recorder_scene, AppStorage, CreateRecordingInput,
-        CreateRecordingSegmentInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
-        SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
+        mark_portal_restore_token_used, migrations, save_recorder_scene,
+        upsert_portal_restore_token, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput,
+        FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
+        SaveRecorderSceneSourceInput,
     };
 
     fn migrated_memory_connection() -> Connection {
@@ -1045,12 +1153,13 @@ mod tests {
             collect_database_diagnostics_from_connection(&connection)
                 .expect("collect database diagnostics");
 
-        assert_eq!(schema_version, 2);
+        assert_eq!(schema_version, 3);
         assert_eq!(table_counts["recordings"], 0);
         assert_eq!(table_counts["recording_tracks"], 0);
         assert_eq!(table_counts["recording_segments"], 0);
         assert_eq!(table_counts["recorder_scenes"], 0);
         assert_eq!(table_counts["recorder_scene_sources"], 0);
+        assert_eq!(table_counts["recorder_portal_restore_tokens"], 0);
         assert_eq!(table_counts["redactions"], 0);
         assert_eq!(table_counts["capture_events"], 0);
         assert_eq!(table_counts["processing_jobs"], 0);
@@ -1183,7 +1292,7 @@ mod tests {
                 .expect("collect database diagnostics");
         let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-        assert_eq!(schema_version, 2);
+        assert_eq!(schema_version, 3);
         assert_eq!(table_counts["recordings"], 1);
         assert_eq!(migrated.quality_label, "ocr");
         assert_eq!(migrated.active_scene_id, None);
@@ -1522,6 +1631,49 @@ mod tests {
         .expect_err("duplicate segment index should fail");
 
         assert!(error.to_string().contains("UNIQUE constraint failed"));
+    }
+
+    #[test]
+    fn portal_restore_token_helpers_keep_token_backend_only() {
+        let connection = migrated_memory_connection();
+
+        let first = upsert_portal_restore_token(
+            &connection,
+            "linux-screencast-monitor",
+            "linux-screencast",
+            "token-1",
+            10,
+        )
+        .expect("insert restore token");
+
+        assert_eq!(first.token, "token-1");
+        assert_eq!(first.created_at_ms, 10);
+        assert_eq!(first.updated_at_ms, 10);
+        assert_eq!(first.last_used_at_ms, Some(10));
+
+        let second = upsert_portal_restore_token(
+            &connection,
+            "linux-screencast-monitor",
+            "linux-screencast",
+            "token-2",
+            20,
+        )
+        .expect("update restore token");
+
+        assert_eq!(second.token, "token-2");
+        assert_eq!(second.created_at_ms, 10);
+        assert_eq!(second.updated_at_ms, 20);
+        assert_eq!(second.last_used_at_ms, Some(20));
+
+        mark_portal_restore_token_used(&connection, "linux-screencast-monitor", 30)
+            .expect("mark restore token used");
+
+        let restored = super::get_portal_restore_token(&connection, "linux-screencast-monitor")
+            .expect("read restore token")
+            .expect("restore token exists");
+
+        assert_eq!(restored.token, "token-2");
+        assert_eq!(restored.last_used_at_ms, Some(30));
     }
 
     #[test]

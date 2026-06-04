@@ -1,3 +1,5 @@
+import type { RecorderBackendHealth } from './recorder.js';
+
 export interface AppDiagnostics {
   identifier: string;
   name: string;
@@ -34,6 +36,7 @@ export interface DaydreamDiagnostics {
   app: AppDiagnostics;
   database: DatabaseDiagnostics;
   ffmpeg: FfmpegDiagnostics;
+  recorder: RecorderBackendHealth;
   storage: StorageDiagnostics;
   system: SystemDiagnostics;
 }

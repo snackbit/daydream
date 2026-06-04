@@ -15,6 +15,7 @@ import {
   pauseRecording,
   resumeRecording,
   saveRecorderScene,
+  selectCaptureSources,
   startRecording,
   stopRecording,
 } from './recorder-client';
@@ -44,10 +45,12 @@ test('recorder read helpers use locked camelCase command names', async () => {
   invokeMock.mockResolvedValue({ sources: [] });
 
   await getCaptureSources();
+  await selectCaptureSources();
   await getAudioSources();
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'getCaptureSources');
-  expect(invokeMock).toHaveBeenNthCalledWith(2, 'getAudioSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(2, 'selectCaptureSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(3, 'getAudioSources');
 });
 
 test('getRecorderStatus uses locked camelCase command name', async () => {

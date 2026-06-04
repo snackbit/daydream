@@ -2,8 +2,10 @@ use rusqlite::Error as SqliteError;
 
 use super::types::{RecorderError, RecorderErrorCategory};
 
+#[allow(dead_code)]
 const RECORDER_BACKEND_NOT_IMPLEMENTED: &str = "recorder_backend_not_implemented";
 
+#[allow(dead_code)]
 pub(crate) fn unavailable_error() -> RecorderError {
     RecorderError {
         category: RecorderErrorCategory::Unavailable,
@@ -19,6 +21,33 @@ pub(crate) fn lifecycle_error(code: &str, message: &str) -> RecorderError {
         code: code.to_string(),
         details: None,
         message: message.to_string(),
+    }
+}
+
+pub(crate) fn permission_error(code: &str, message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Permission,
+        code: code.to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
+pub(crate) fn audio_error(message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Audio,
+        code: "recorder_audio_discovery_failed".to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
+pub(crate) fn dependency_error(code: &str, message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Dependency,
+        code: code.to_string(),
+        details: None,
+        message: message.into(),
     }
 }
 

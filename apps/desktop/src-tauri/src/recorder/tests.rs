@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::json;
+use tauri::Manager as _;
 use uuid::Uuid;
 
 use super::commands::{pause_recording, resume_recording, start_recording, stop_recording};
@@ -13,10 +14,10 @@ use super::errors::unavailable_error;
 use super::manager::RecorderManager;
 use super::storage_mapping::save_recorder_scene_for_storage;
 use super::types::{
-    CanvasRect, CaptureSourceKind, CropRect, PauseRecordingInput, RecorderErrorCategory,
-    RecorderQualityPreset, RecorderScene, RecorderSceneLayoutMode, RecorderSceneSource,
-    RecorderState, ResumeRecordingInput, SaveRecorderSceneInput, StartRecordingInput,
-    StopRecordingInput,
+    CanvasRect, CaptureSource, CaptureSourceKind, CropRect, PauseRecordingInput,
+    RecorderErrorCategory, RecorderQualityPreset, RecorderScene, RecorderSceneLayoutMode,
+    RecorderSceneSource, RecorderState, ResumeRecordingInput, SaveRecorderSceneInput,
+    StartRecordingInput, StopRecordingInput,
 };
 use crate::storage;
 
@@ -331,27 +332,71 @@ fn manager_rejects_missing_scene_before_creating_recording() {
 }
 
 #[test]
-fn public_lifecycle_command_still_returns_unavailable() {
+fn manager_caches_selected_capture_sources() {
+    let manager = RecorderManager::new(test_app_data_dir());
+
+    let selected = manager
+        .set_capture_sources(vec![CaptureSource {
+            display_name: "Monitor 1".to_string(),
+            height: Some(1440),
+            id: "monitor-1".to_string(),
+            kind: CaptureSourceKind::Monitor,
+            logical_height: None,
+            logical_width: None,
+            scale_factor: None,
+            width: Some(2560),
+        }])
+        .expect("set capture sources");
+    let cached = manager.capture_sources().expect("read capture sources");
+
+    assert_eq!(selected, cached);
+    assert_eq!(cached.sources[0].id, "monitor-1");
+}
+
+#[test]
+fn public_lifecycle_commands_remain_unavailable_until_capture_backend_exists() {
+    let app = tauri::test::mock_app();
+    let app_data_dir = test_app_data_dir();
+    app.manage(test_storage());
+    app.manage(RecorderManager::new(app_data_dir.clone()));
+
     let scene_id = Uuid::now_v7().to_string();
-    let start_error = start_recording(start_input(&scene_id))
-        .expect_err("public start should remain unavailable");
-    let pause_error = pause_recording(PauseRecordingInput {
-        recording_id: Uuid::now_v7().to_string(),
-    })
+    let start_error = start_recording(
+        start_input(&scene_id),
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    )
+    .expect_err("public start should remain unavailable");
+    let pause_error = pause_recording(
+        PauseRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    )
     .expect_err("public pause should remain unavailable");
-    let resume_error = resume_recording(ResumeRecordingInput {
-        recording_id: Uuid::now_v7().to_string(),
-    })
+    let resume_error = resume_recording(
+        ResumeRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    )
     .expect_err("public resume should remain unavailable");
-    let stop_error = stop_recording(StopRecordingInput {
-        recording_id: Uuid::now_v7().to_string(),
-    })
+    let stop_error = stop_recording(
+        StopRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    )
     .expect_err("public stop should remain unavailable");
 
     assert_eq!(start_error.code, "recorder_backend_not_implemented");
     assert_eq!(pause_error.code, "recorder_backend_not_implemented");
     assert_eq!(resume_error.code, "recorder_backend_not_implemented");
     assert_eq!(stop_error.code, "recorder_backend_not_implemented");
+    let _ = fs::remove_dir_all(app_data_dir);
 }
 
 fn test_storage() -> storage::AppStorage {

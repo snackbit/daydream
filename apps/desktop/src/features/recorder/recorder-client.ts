@@ -19,6 +19,10 @@ export async function getCaptureSources(): Promise<CaptureSourceList> {
   return invoke<CaptureSourceList>('getCaptureSources');
 }
 
+export async function selectCaptureSources(): Promise<CaptureSourceList> {
+  return invoke<CaptureSourceList>('selectCaptureSources');
+}
+
 export async function getAudioSources(): Promise<AudioSourceList> {
   return invoke<AudioSourceList>('getAudioSources');
 }

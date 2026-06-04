@@ -42,11 +42,13 @@ export type CaptureSourceKind = 'monitor';
 
 export interface CaptureSource {
   displayName: string;
-  height: number;
+  height: number | null;
   id: string;
   kind: CaptureSourceKind;
+  logicalHeight: number | null;
+  logicalWidth: number | null;
   scaleFactor: number | null;
-  width: number;
+  width: number | null;
 }
 
 export interface CaptureSourceList {

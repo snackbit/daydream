@@ -15,8 +15,9 @@ use crate::storage::{
 use super::errors::{filesystem_error, lifecycle_error, scene_or_storage_error, storage_error};
 use super::storage_mapping::quality_preset_as_storage_label;
 use super::types::{
-    RecorderAudioHealth, RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError,
-    RecorderFfmpegHealth, RecorderPortalHealth, RecorderState, RecorderStatus, StartRecordingInput,
+    CaptureSource, CaptureSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
+    RecorderBackendHealth, RecorderError, RecorderFfmpegHealth, RecorderPortalHealth,
+    RecorderState, RecorderStatus, StartRecordingInput,
 };
 
 #[derive(Debug)]
@@ -28,6 +29,7 @@ pub struct RecorderManager {
 #[derive(Debug)]
 struct RecorderRuntime {
     active: Option<ActiveRecording>,
+    capture_sources: Vec<CaptureSource>,
     status: RecorderStatus,
 }
 
@@ -52,6 +54,7 @@ impl RecorderManager {
             app_data_dir,
             inner: Mutex::new(RecorderRuntime {
                 active: None,
+                capture_sources: Vec::new(),
                 status: idle_status(now_ms()),
             }),
         }
@@ -59,6 +62,34 @@ impl RecorderManager {
 
     pub fn status(&self) -> Result<RecorderStatus, RecorderError> {
         Ok(self.lock_runtime()?.status.clone())
+    }
+
+    pub fn status_with_backend_health(
+        &self,
+        backend_health: RecorderBackendHealth,
+        timestamp_ms: u64,
+    ) -> Result<RecorderStatus, RecorderError> {
+        let mut runtime = self.lock_runtime()?;
+        runtime.status.backend_health = backend_health;
+        runtime.status.updated_at_ms = timestamp_ms;
+
+        Ok(runtime.status.clone())
+    }
+
+    pub fn capture_sources(&self) -> Result<CaptureSourceList, RecorderError> {
+        Ok(CaptureSourceList {
+            sources: self.lock_runtime()?.capture_sources.clone(),
+        })
+    }
+
+    pub fn set_capture_sources(
+        &self,
+        sources: Vec<CaptureSource>,
+    ) -> Result<CaptureSourceList, RecorderError> {
+        let mut runtime = self.lock_runtime()?;
+        runtime.capture_sources = sources.clone();
+
+        Ok(CaptureSourceList { sources })
     }
 
     pub fn start_internal(
@@ -337,7 +368,7 @@ fn idle_status(updated_at_ms: u64) -> RecorderStatus {
     }
 }
 
-fn unavailable_backend_health() -> RecorderBackendHealth {
+pub(crate) fn unavailable_backend_health() -> RecorderBackendHealth {
     RecorderBackendHealth {
         desktop_audio: RecorderAudioHealth {
             available: false,

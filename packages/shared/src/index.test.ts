@@ -30,6 +30,34 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
       source: 'unconfigured',
       versionLine: null,
     },
+    recorder: {
+      desktopAudio: {
+        available: false,
+        defaultSourceId: null,
+        error: 'not implemented',
+      },
+      ffmpeg: {
+        available: false,
+        error: 'not implemented',
+        path: null,
+      },
+      microphone: {
+        available: false,
+        defaultSourceId: null,
+        error: 'not implemented',
+      },
+      pipewire: {
+        available: false,
+        error: 'not implemented',
+      },
+      portal: {
+        available: false,
+        cursorModes: [],
+        error: 'not implemented',
+        screenCastVersion: null,
+        sourceTypes: [],
+      },
+    },
     storage: {
       appDataDir: null,
     },

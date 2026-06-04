@@ -4,6 +4,7 @@ use crate::storage::AppStorage;
 
 use super::errors::unavailable_error;
 use super::manager::{now_ms, RecorderManager};
+use super::platform;
 use super::storage_mapping::save_recorder_scene_for_storage;
 use super::types::{
     AudioSourceList, CaptureSourceList, PauseRecordingInput, RecorderError, RecorderScene,
@@ -11,18 +12,27 @@ use super::types::{
     StopRecordingInput,
 };
 
-pub fn get_recorder_status(
+pub async fn get_recorder_status(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    manager.status()
+    manager.status_with_backend_health(platform::collect_backend_health().await, now_ms())
 }
 
-pub fn get_capture_sources() -> Result<CaptureSourceList, RecorderError> {
-    Err(unavailable_error())
+pub fn get_capture_sources(
+    manager: State<'_, RecorderManager>,
+) -> Result<CaptureSourceList, RecorderError> {
+    platform::get_capture_sources(&manager)
 }
 
-pub fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
-    Err(unavailable_error())
+pub async fn select_capture_sources(
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<CaptureSourceList, RecorderError> {
+    platform::select_capture_sources(&storage, &manager).await
+}
+
+pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
+    platform::get_audio_sources().await
 }
 
 pub fn save_recorder_scene(
@@ -32,18 +42,34 @@ pub fn save_recorder_scene(
     save_recorder_scene_for_storage(&storage, input, now_ms())
 }
 
-pub fn start_recording(_input: StartRecordingInput) -> Result<RecorderStatus, RecorderError> {
+pub fn start_recording(
+    _input: StartRecordingInput,
+    _storage: State<'_, AppStorage>,
+    _manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
     Err(unavailable_error())
 }
 
-pub fn pause_recording(_input: PauseRecordingInput) -> Result<RecorderStatus, RecorderError> {
+pub fn pause_recording(
+    _input: PauseRecordingInput,
+    _storage: State<'_, AppStorage>,
+    _manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
     Err(unavailable_error())
 }
 
-pub fn resume_recording(_input: ResumeRecordingInput) -> Result<RecorderStatus, RecorderError> {
+pub fn resume_recording(
+    _input: ResumeRecordingInput,
+    _storage: State<'_, AppStorage>,
+    _manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
     Err(unavailable_error())
 }
 
-pub fn stop_recording(_input: StopRecordingInput) -> Result<RecorderStatus, RecorderError> {
+pub fn stop_recording(
+    _input: StopRecordingInput,
+    _storage: State<'_, AppStorage>,
+    _manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
     Err(unavailable_error())
 }

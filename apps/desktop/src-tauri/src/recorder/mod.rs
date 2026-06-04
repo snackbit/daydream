@@ -1,6 +1,7 @@
 mod commands;
 mod errors;
 mod manager;
+mod platform;
 mod storage_mapping;
 #[cfg(test)]
 mod tests;
@@ -13,21 +14,35 @@ use tauri::State;
 
 use crate::storage::AppStorage;
 
+pub async fn collect_backend_health() -> RecorderBackendHealth {
+    platform::collect_backend_health().await
+}
+
 #[tauri::command(rename = "getRecorderStatus")]
-pub fn get_recorder_status(
+pub async fn get_recorder_status(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    commands::get_recorder_status(manager)
+    commands::get_recorder_status(manager).await
 }
 
 #[tauri::command(rename = "getCaptureSources")]
-pub fn get_capture_sources() -> Result<CaptureSourceList, RecorderError> {
-    commands::get_capture_sources()
+pub fn get_capture_sources(
+    manager: State<'_, RecorderManager>,
+) -> Result<CaptureSourceList, RecorderError> {
+    commands::get_capture_sources(manager)
+}
+
+#[tauri::command(rename = "selectCaptureSources")]
+pub async fn select_capture_sources(
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<CaptureSourceList, RecorderError> {
+    commands::select_capture_sources(storage, manager).await
 }
 
 #[tauri::command(rename = "getAudioSources")]
-pub fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
-    commands::get_audio_sources()
+pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
+    commands::get_audio_sources().await
 }
 
 #[tauri::command(rename = "saveRecorderScene")]
@@ -39,21 +54,37 @@ pub fn save_recorder_scene(
 }
 
 #[tauri::command(rename = "startRecording")]
-pub fn start_recording(input: StartRecordingInput) -> Result<RecorderStatus, RecorderError> {
-    commands::start_recording(input)
+pub fn start_recording(
+    input: StartRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
+    commands::start_recording(input, storage, manager)
 }
 
 #[tauri::command(rename = "pauseRecording")]
-pub fn pause_recording(input: PauseRecordingInput) -> Result<RecorderStatus, RecorderError> {
-    commands::pause_recording(input)
+pub fn pause_recording(
+    input: PauseRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
+    commands::pause_recording(input, storage, manager)
 }
 
 #[tauri::command(rename = "resumeRecording")]
-pub fn resume_recording(input: ResumeRecordingInput) -> Result<RecorderStatus, RecorderError> {
-    commands::resume_recording(input)
+pub fn resume_recording(
+    input: ResumeRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
+    commands::resume_recording(input, storage, manager)
 }
 
 #[tauri::command(rename = "stopRecording")]
-pub fn stop_recording(input: StopRecordingInput) -> Result<RecorderStatus, RecorderError> {
-    commands::stop_recording(input)
+pub fn stop_recording(
+    input: StopRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderStatus, RecorderError> {
+    commands::stop_recording(input, storage, manager)
 }

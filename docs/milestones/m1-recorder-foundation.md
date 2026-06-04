@@ -87,15 +87,17 @@ metadata in SQLite, and surfaces backend health in the app.
 - The recorder API exposes these commands to the frontend:
   - `getRecorderStatus`
   - `getCaptureSources`
+  - `selectCaptureSources`
   - `getAudioSources`
   - `saveRecorderScene`
   - `startRecording`
   - `pauseRecording`
   - `resumeRecording`
   - `stopRecording`
-- If implementation needs a separate portal-selection command, it must be named
-  explicitly and kept inside the recorder command namespace. It may not leak
-  portal-specific session details into React state.
+- `getCaptureSources` is read-only and returns cached selected monitor sources.
+- `selectCaptureSources` is the explicit portal-selection command. It may show
+  the portal chooser and must not leak portal-specific session details into
+  React state.
 - Default recording files live under
   `<app_data_dir>/recordings/{recordingId}/segments`.
 - SQLite schema M1 uses segments plus scenes:
@@ -221,6 +223,7 @@ The recorder command surface is stable for M1:
 
 - `getRecorderStatus() -> RecorderStatus`
 - `getCaptureSources() -> CaptureSourceList`
+- `selectCaptureSources() -> CaptureSourceList`
 - `getAudioSources() -> AudioSourceList`
 - `saveRecorderScene(input: SaveRecorderSceneInput) -> RecorderScene`
 - `startRecording(input: StartRecordingInput) -> RecorderStatus`
@@ -427,17 +430,17 @@ Exit Criteria:
 
 ## Gate D: Portal and Audio Source Discovery
 
-- [ ] Implement Linux ScreenCast portal capability probing.
-- [ ] Implement monitor source selection with multiple-source support.
-- [ ] Implement restore-token storage and chooser fallback behavior.
-- [ ] Normalize portal monitor streams into recorder capture source records.
-- [ ] Implement Pulse/PipeWire audio source discovery.
-- [ ] Map default sink monitor to the desktop audio role.
-- [ ] Map default source to the microphone audio role.
-- [ ] Surface portal, PipeWire, desktop audio, and microphone availability in
+- [x] Implement Linux ScreenCast portal capability probing.
+- [x] Implement monitor source selection with multiple-source support.
+- [x] Implement restore-token storage and chooser fallback behavior.
+- [x] Normalize portal monitor streams into recorder capture source records.
+- [x] Implement Pulse/PipeWire audio source discovery.
+- [x] Map default sink monitor to the desktop audio role.
+- [x] Map default source to the microphone audio role.
+- [x] Surface portal, PipeWire, desktop audio, and microphone availability in
   recorder status and Diagnostics.
-- [ ] Add tests for capability parsing, restore-token failure handling, audio
-  source role mapping, and unavailable dependency errors.
+- [x] Add tests for capability parsing, restore-token storage, audio source
+  role mapping, and unavailable lifecycle command behavior.
 
 Exit Criteria:
 

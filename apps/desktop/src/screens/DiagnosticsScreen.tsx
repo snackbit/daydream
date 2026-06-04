@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
@@ -27,7 +27,7 @@ export function DiagnosticsScreen() {
             Diagnostics
           </h1>
           <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-            Runtime facts, FFmpeg location, storage paths, and future native
+            Runtime facts, FFmpeg location, storage paths, and native recorder
             capability probes. This screen is intentionally verbose for early
             development.
           </p>
@@ -125,6 +125,84 @@ export function DiagnosticsScreen() {
         </div>
 
         <div className="bg-card border p-4 md:col-span-2">
+          <h2 className="text-sm font-medium">Recorder Backend</h2>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <HealthBlock
+              available={diagnostics?.recorder.portal.available ?? false}
+              label="ScreenCast portal"
+            >
+              <DiagnosticRow
+                label="Version"
+                value={
+                  diagnostics?.recorder.portal.screenCastVersion?.toString() ??
+                  null
+                }
+              />
+              <DiagnosticRow
+                label="Sources"
+                value={
+                  diagnostics?.recorder.portal.sourceTypes.join(', ') ?? null
+                }
+              />
+              <DiagnosticRow
+                label="Cursor"
+                value={
+                  diagnostics?.recorder.portal.cursorModes.join(', ') ?? null
+                }
+              />
+              <DiagnosticRow
+                emptyValue="None"
+                label="Error"
+                value={diagnostics?.recorder.portal.error ?? null}
+              />
+            </HealthBlock>
+
+            <HealthBlock
+              available={diagnostics?.recorder.pipewire.available ?? false}
+              label="PipeWire"
+            >
+              <DiagnosticRow
+                emptyValue="None"
+                label="Error"
+                value={diagnostics?.recorder.pipewire.error ?? null}
+              />
+            </HealthBlock>
+
+            <HealthBlock
+              available={diagnostics?.recorder.desktopAudio.available ?? false}
+              label="Desktop audio"
+            >
+              <DiagnosticRow
+                label="Default"
+                value={
+                  diagnostics?.recorder.desktopAudio.defaultSourceId ?? null
+                }
+              />
+              <DiagnosticRow
+                emptyValue="None"
+                label="Error"
+                value={diagnostics?.recorder.desktopAudio.error ?? null}
+              />
+            </HealthBlock>
+
+            <HealthBlock
+              available={diagnostics?.recorder.microphone.available ?? false}
+              label="Microphone"
+            >
+              <DiagnosticRow
+                label="Default"
+                value={diagnostics?.recorder.microphone.defaultSourceId ?? null}
+              />
+              <DiagnosticRow
+                emptyValue="None"
+                label="Error"
+                value={diagnostics?.recorder.microphone.error ?? null}
+              />
+            </HealthBlock>
+          </div>
+        </div>
+
+        <div className="bg-card border p-4 md:col-span-2">
           <h2 className="text-sm font-medium">Database</h2>
           <div className="mt-3 flex items-center gap-2 text-sm">
             {diagnostics?.database.available ? (
@@ -174,6 +252,28 @@ export function DiagnosticsScreen() {
         </pre>
       </div>
     </section>
+  );
+}
+
+interface HealthBlockProps {
+  available: boolean;
+  children: ReactNode;
+  label: string;
+}
+
+function HealthBlock({ available, children, label }: HealthBlockProps) {
+  return (
+    <div className="bg-muted/40 border p-3">
+      <div className="flex items-center gap-2 text-sm">
+        {available ? (
+          <CheckCircle2 className="text-primary size-4" />
+        ) : (
+          <XCircle className="text-destructive size-4" />
+        )}
+        <span>{label}</span>
+      </div>
+      <dl className="mt-3 grid gap-2 text-sm">{children}</dl>
+    </div>
   );
 }
 
