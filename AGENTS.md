@@ -199,6 +199,18 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - Privacy tests SHOULD assert that sensitive raw content is not logged or sent
   to remote services by default.
 
+## Optional Milestone Workflow
+
+- Curated agent runbooks MAY live in `.agents/runbooks/`.
+- The milestone workflow is optional and explicit. Agents MUST treat ordinary
+  implementation requests as ad-hoc work unless the user mentions a milestone,
+  gate, scratchpad, or approved milestone-style plan.
+- When milestone-scoped work is explicitly requested, agents MUST follow
+  `.agents/runbooks/planning.md`.
+- Milestone artifacts SHOULD use `docs/milestone-template.md` and the artifact
+  pair `docs/milestones/m<nn>-<slug>.md` plus
+  `docs/milestones/m<nn>-<slug>-scratchpad.md`.
+
 ## Agent Expectations
 
 - You MUST behave like an expert in TypeScript, desktop app architecture,
