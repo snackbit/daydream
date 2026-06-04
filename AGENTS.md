@@ -29,8 +29,10 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   Tailwind, shadcn-style components, TanStack Router, and Zustand.
 - Shared TypeScript config, lint config, diagnostics types, and the development
   FFmpeg resolver live in `packages/`.
-- Real capture, SQLite persistence, redaction, OCR, transcription, VLM
-  inference, vector indexing, and timeline playback are not implemented yet.
+- SQLite persistence is owned by the Rust/Tauri backend and initialized on app
+  startup.
+- Real capture, redaction, OCR, transcription, VLM inference, vector indexing,
+  and timeline playback are not implemented yet.
 
 ## Engineering Approach
 
@@ -124,6 +126,10 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   frame references, audio references, OCR segments, transcript segments,
   activity samples, window events, annotations, redactions, and processing job
   status.
+- SQLite access MUST stay in the Rust/Tauri backend. React MUST use typed Tauri
+  commands instead of opening or querying SQLite directly.
+- SQLite migrations MUST be explicit and tested. The current backend uses
+  embedded Rust migrations.
 - LanceDB or Qdrant SHOULD own vector search data behind a narrow adapter.
 - Local files SHOULD be content-addressed or otherwise stable enough that
   processing jobs can resume without losing provenance.

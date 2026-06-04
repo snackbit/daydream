@@ -5,7 +5,9 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::Manager;
+use tauri::{Manager, State};
+
+use crate::storage::{collect_database_diagnostics, AppStorage, DatabaseDiagnostics};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +21,7 @@ pub struct AppDiagnostics {
 #[serde(rename_all = "camelCase")]
 pub struct DaydreamDiagnostics {
     app: AppDiagnostics,
+    database: DatabaseDiagnostics,
     ffmpeg: FfmpegDiagnostics,
     storage: StorageDiagnostics,
     system: SystemDiagnostics,
@@ -56,13 +59,17 @@ pub struct SystemDiagnostics {
 }
 
 #[tauri::command]
-pub fn get_diagnostics(app: tauri::AppHandle) -> DaydreamDiagnostics {
+pub fn get_diagnostics(
+    app: tauri::AppHandle,
+    storage: State<'_, AppStorage>,
+) -> DaydreamDiagnostics {
     DaydreamDiagnostics {
         app: AppDiagnostics {
             identifier: app.config().identifier.to_string(),
             name: "Daydream".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
+        database: collect_database_diagnostics(&storage),
         ffmpeg: collect_ffmpeg_diagnostics(),
         storage: StorageDiagnostics {
             app_data_dir: app

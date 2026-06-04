@@ -8,6 +8,15 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
       name: 'Daydream',
       version: '0.1.0',
     },
+    database: {
+      available: true,
+      error: null,
+      path: '/tmp/daydream/daydream.sqlite3',
+      schemaVersion: 1,
+      tableCounts: {
+        recordings: 0,
+      },
+    },
     ffmpeg: {
       available: false,
       error: 'missing DAYDREAM_FFMPEG_PATH',

@@ -18,6 +18,8 @@ Implemented baseline:
 - `apps/desktop`: runnable desktop shell with Home, Capture, Library,
   Diagnostics, and Settings navigation.
 - `apps/desktop/src-tauri`: Rust Tauri backend with a real diagnostics command.
+- Rust-owned SQLite persistence with embedded migrations and database health in
+  Diagnostics.
 - `packages/ffmpeg`: development FFmpeg resolver backed by `ffmpeg-static`.
 - `packages/shared`: shared diagnostics TypeScript types.
 - `packages/eslint-config` and `packages/tsconfig`: shared quality and compiler
@@ -27,7 +29,6 @@ Still out of scope / not implemented:
 
 - real screen/audio capture
 - record/pause/stop commands
-- SQLite schema and persistence
 - scissors/redaction workflows
 - OCR, Whisper, VLM, embeddings, LLM digesting
 - searchable annotations and timeline playback
@@ -171,6 +172,11 @@ On Linux Wayland, the dev launcher also defaults
 failures that can show up as `Gdk-Message: Error 71 (Protocol error)
 dispatching to Wayland display`, especially on NVIDIA/Wayland systems.
 
+SQLite is opened by the Rust/Tauri backend on startup at
+`<app_data_dir>/daydream.sqlite3`. The backend applies embedded migrations,
+stores one connection in Tauri managed state, and exposes database health through
+Diagnostics. React does not access SQLite directly.
+
 ## Native Permission Areas
 
 The implementation will need to handle platform-specific permissions and
@@ -192,7 +198,8 @@ behavior does not leak through the full application.
 When the repository is scaffolded, prefer small, explicit boundaries:
 
 - capture adapters for OS and FFmpeg interaction
-- storage adapters for files, SQLite, and vector index writes
+- storage adapters for files and vector index writes, with SQLite owned by the
+  Rust backend
 - processing jobs for chunking, OCR, transcription, VLM, and LLM summarization
 - domain logic for redaction eligibility, timestamp alignment, annotation
   merging, and digest construction
