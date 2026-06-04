@@ -89,6 +89,10 @@
   Gate B.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate C.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate C concurrent-start hardening.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate C recorder module split.
 
 ## Gate Notes
 
@@ -117,6 +121,11 @@
   `recorder_backend_not_implemented` until capture backends exist.
 - Gate C creates segment directories and persists deterministic segment paths,
   but does not create empty MKV files.
+- Gate C hardening serializes `start_internal` across the full start transition
+  so concurrent starts cannot create orphaned active recording rows.
+- Gate C cleanup split the recorder module into focused files for contracts,
+  commands, lifecycle management, storage mapping, errors, and tests before
+  Gate D adds portal and audio discovery.
 
 ## Gate Reconciliation Log
 
@@ -131,6 +140,12 @@
 - Gate C: reviewed Gates D-I after keeping public lifecycle commands
   unavailable. No milestone changes needed because source discovery, FFmpeg,
   and UX gates still own making public capture controls usable.
+- Gate C hardening: reviewed Gates D-I after serializing start transitions. No
+  milestone changes needed because this preserves the existing one-active-
+  recording invariant.
+- Gate C module split: reviewed Gates D-I after separating recorder code into
+  submodules. No milestone changes needed; the split preserves the public
+  recorder command surface and creates clearer landing spots for Gate D code.
 
 ## Risk Watchlist
 
