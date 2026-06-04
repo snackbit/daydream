@@ -9,8 +9,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
             let storage = storage::initialize(app.handle())?;
             app.manage(storage);
+            app.manage(recorder_manager);
 
             Ok(())
         })

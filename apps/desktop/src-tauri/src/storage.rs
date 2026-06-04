@@ -105,6 +105,18 @@ impl AppStorage {
     }
 }
 
+#[cfg(test)]
+pub fn test_storage(path: PathBuf) -> AppStorage {
+    let mut connection = Connection::open_in_memory().expect("open in-memory sqlite database");
+    enable_connection_pragmas(&connection).expect("enable sqlite pragmas");
+    apply_migrations(&mut connection).expect("apply migrations");
+
+    AppStorage {
+        connection: Mutex::new(connection),
+        path,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateRecordingInput {
     pub id: String,
@@ -121,8 +133,11 @@ pub struct CreateRecordingInput {
 pub struct RecordingRow {
     pub id: String,
     pub active_scene_id: Option<String>,
+    pub ended_at_ms: Option<i64>,
     pub output_root: Option<String>,
     pub quality_label: String,
+    pub started_at_ms: Option<i64>,
+    pub status: String,
     pub storage_dir: String,
 }
 
@@ -268,8 +283,11 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
         SELECT
             id,
             active_scene_id,
+            ended_at_ms,
             output_root,
             quality_label,
+            started_at_ms,
+            status,
             storage_dir
         FROM recordings
         WHERE id = ?1
@@ -279,12 +297,67 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
             Ok(RecordingRow {
                 id: row.get(0)?,
                 active_scene_id: row.get(1)?,
-                output_root: row.get(2)?,
-                quality_label: row.get(3)?,
-                storage_dir: row.get(4)?,
+                ended_at_ms: row.get(2)?,
+                output_root: row.get(3)?,
+                quality_label: row.get(4)?,
+                started_at_ms: row.get(5)?,
+                status: row.get(6)?,
+                storage_dir: row.get(7)?,
             })
         },
     )
+}
+
+pub fn mark_recording_started(
+    connection: &Connection,
+    id: &str,
+    started_at_ms: i64,
+) -> rusqlite::Result<RecordingRow> {
+    connection.execute(
+        r#"
+        UPDATE recordings
+        SET
+            status = 'recording',
+            started_at_ms = ?2,
+            ended_at_ms = NULL
+        WHERE id = ?1
+        "#,
+        params![id, started_at_ms],
+    )?;
+
+    get_recording(connection, id)
+}
+
+pub fn update_recording_status(
+    connection: &Connection,
+    id: &str,
+    status: &str,
+) -> rusqlite::Result<RecordingRow> {
+    connection.execute(
+        "UPDATE recordings SET status = ?2 WHERE id = ?1",
+        params![id, status],
+    )?;
+
+    get_recording(connection, id)
+}
+
+pub fn mark_recording_completed(
+    connection: &Connection,
+    id: &str,
+    ended_at_ms: i64,
+) -> rusqlite::Result<RecordingRow> {
+    connection.execute(
+        r#"
+        UPDATE recordings
+        SET
+            status = 'completed',
+            ended_at_ms = ?2
+        WHERE id = ?1
+        "#,
+        params![id, ended_at_ms],
+    )?;
+
+    get_recording(connection, id)
 }
 
 pub fn save_recorder_scene(
@@ -949,13 +1022,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        AppStorage,
         apply_migrations, collect_database_diagnostics_from_connection, create_recording,
         create_recording_segment, enable_connection_pragmas, fail_recording_segment,
-        finalize_recording_segment, get_recording, get_recorder_scene, list_recording_segments,
-        migrations, save_recorder_scene, CreateRecordingInput, CreateRecordingSegmentInput,
-        FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
-        SaveRecorderSceneSourceInput,
+        finalize_recording_segment, get_recorder_scene, get_recording, list_recording_segments,
+        migrations, save_recorder_scene, AppStorage, CreateRecordingInput,
+        CreateRecordingSegmentInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
+        SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
     };
 
     fn migrated_memory_connection() -> Connection {
@@ -1160,7 +1232,9 @@ mod tests {
         apply_migrations(&mut connection).expect("apply v2 migration");
 
         let track_count: i64 = connection
-            .query_row("SELECT COUNT(*) FROM recording_tracks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM recording_tracks", [], |row| {
+                row.get(0)
+            })
             .expect("count tracks");
 
         assert_eq!(track_count, 1);
@@ -1407,8 +1481,7 @@ mod tests {
         )
         .expect("fail segment");
 
-        let segments =
-            list_recording_segments(&connection, &recording_id).expect("list segments");
+        let segments = list_recording_segments(&connection, &recording_id).expect("list segments");
 
         assert_eq!(finalized.state, "finalized");
         assert_eq!(finalized.video_stream_index, Some(0));
@@ -1475,7 +1548,9 @@ mod tests {
                 [&Uuid::now_v7().to_string(), &recording_id],
             )
             .expect_err("segment end before start should fail");
-        assert!(segment_error.to_string().contains("CHECK constraint failed"));
+        assert!(segment_error
+            .to_string()
+            .contains("CHECK constraint failed"));
 
         let scene_error = connection
             .execute(
