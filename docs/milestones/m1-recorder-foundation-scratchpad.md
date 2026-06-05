@@ -2,14 +2,22 @@
 
 ## Current Status
 
-- Gate F complete.
-- Gate G is the next implementation gate.
+- Gate G complete.
+- Gate H.1 PipeWire SHM capture is partially staged: portal live-session
+  preflight, stable-ID source matching, `pipewire-rs` 0.9.2 dependency
+  resolution, CPU-readable buffer extraction, DMA-BUF-required classification,
+  latest-frame sampling, and CPU compositor tests exist. Public
+  `startRecording` still uses the synthetic FFmpeg frame pump until the manager
+  lifecycle is switched to the live PipeWire session.
 
 ## Locked Decisions
 
 - M1 targets Linux/KDE Wayland first.
 - Use xdg-desktop-portal ScreenCast and PipeWire for monitor capture.
 - Use FFmpeg for H.264 `yuv444p` MKV segment encoding and muxing.
+- Do not use `libobs` directly in M1.
+- Use OBS as architecture inspiration for separating platform capture adapters,
+  scene composition, and output/encoding.
 - Use one composed video canvas for selected monitors.
 - Use separate desktop and microphone audio streams in each segment.
 - Use one active recording at a time.
@@ -37,7 +45,8 @@
   - Diagnostics command already exists.
   - FFmpeg segment writing is implemented with synthetic/controlled video frame
     input.
-  - Real PipeWire frame intake and scene composition are not implemented.
+  - Internal PipeWire frame intake and scene composition are staged behind the
+    recorder runtime boundary.
 - Existing SQLite v1 foundation:
   - `recordings`
   - `recording_tracks`
@@ -81,6 +90,18 @@
   path because it is privileged and less appropriate for a user-controlled
   Wayland desktop app.
 
+## OBS Inspiration Notes
+
+- OBS separates platform-specific capture sources from scene composition and
+  output/encoding. Daydream should copy that separation of concerns.
+- Daydream should not copy OBS's plugin ABI, streaming services, filters,
+  transitions, live production controls, or broad capture backend matrix in M1.
+- The M1 architecture should introduce a Daydream-native capture runtime
+  boundary before wiring the Linux Wayland PipeWire adapter into recording.
+- Future Windows, macOS, and Linux X11 adapters should be able to plug into the
+  same runtime boundary without changing recorder scene storage or FFmpeg
+  segment metadata.
+
 ## Validation Log
 
 - `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed.
@@ -108,6 +129,27 @@
 - `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E.
 - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate E.
 - `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate E.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recorder::`:
+  passed after Gate G and H.1 dependency-free preflight/compositor staging with
+  46 recorder tests.
+- `cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml
+  --format-version 1`: blocked by sandbox DNS when resolving the new
+  `pipewire-rs` dependency.
+- `cargo metadata --offline --manifest-path apps/desktop/src-tauri/Cargo.toml
+  --format-version 1`: confirmed `pipewire-sys` is not available in the local
+  Cargo cache, so production PipeWire stream extraction cannot be compiled in
+  this environment without dependency resolution.
+- `cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml
+  --format-version 1`: passed with elevated network access after adding
+  `pipewire`; `pipewire` 0.10.0 resolved but failed to compile against local
+  generated `libspa-sys` bindings because `SPA_ID_INVALID` was missing.
+- `cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml
+  --format-version 1`: passed with elevated network access after pinning
+  `pipewire` to 0.9.2.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recorder::`:
+  passed after adding the internal PipeWire SHM adapter with 48 recorder tests.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`: found
+  rustfmt drift in the new Linux capture module; `cargo fmt` was applied.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate E with 37 Rust tests.
 - `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E shadcn
@@ -205,8 +247,9 @@
   `yuv444p` MKV segment arguments, optional Pulse desktop/microphone audio
   inputs, stream-index metadata, and process lifecycle management.
 - Gate F public lifecycle commands now call the FFmpeg-backed recorder manager.
-  This records synthetic/controlled video frames until Gate G replaces that
-  input with real PipeWire frame intake and composition.
+  This records synthetic/controlled video frames until Gate G introduces the
+  capture runtime boundary and Gate H replaces that input with real PipeWire
+  frame intake and composition.
 - Gate F marks FFmpeg start, write, wait, and non-zero-exit failures as typed
   dependency errors, fails the active segment, marks the recording failed, and
   moves runtime status to `error`.
@@ -219,44 +262,64 @@
 
 ## Gate Reconciliation Log
 
-- Gate A: reviewed Gates B-I, command contracts, and validation requirements.
+- Gate A: reviewed Gates B-J, command contracts, and validation requirements.
   No milestone changes needed because command names and typed placeholder
   behavior already match the M1 contract.
-- Gate B: reviewed Gates C-I, Storage Format, Recording Lifecycle Contract,
+- Gate B: reviewed Gates C-J, Storage Format, Recording Lifecycle Contract,
   Testing and Validation, and Expected Deliverables. Updated the milestone body
   to reflect concrete schema decisions: `_ms` timestamp columns,
   `recordings.active_scene_id`, `recordings.output_root`, reusable
   `recorder_scenes`, and `balanced-ocr` quality labels.
-- Gate C: reviewed Gates D-I after keeping public lifecycle commands
+- Gate C: reviewed Gates D-J after keeping public lifecycle commands
   unavailable. No milestone changes needed because source discovery, FFmpeg,
   and UX gates still own making public capture controls usable.
-- Gate C hardening: reviewed Gates D-I after serializing start transitions. No
+- Gate C hardening: reviewed Gates D-J after serializing start transitions. No
   milestone changes needed because this preserves the existing one-active-
   recording invariant.
-- Gate C module split: reviewed Gates D-I after separating recorder code into
+- Gate C module split: reviewed Gates D-J after separating recorder code into
   submodules. No milestone changes needed; the split preserves the public
   recorder command surface and creates clearer landing spots for Gate D code.
-- Gate D: reviewed Gates E-I after adding explicit portal selection and audio
+- Gate D: reviewed Gates E-J after adding explicit portal selection and audio
   discovery. Updated the milestone API to make `selectCaptureSources` a locked
   command and clarify that `getCaptureSources` is read-only cache access.
-- Gate E: reviewed Gates F-I after implementing the Capture workspace and
+- Gate E: reviewed Gates F-J after implementing the Capture workspace and
   explicit scene-save flow. Updated the milestone body to document logical
-  dimension fallback for default layouts and narrowed Gate H so it owns only the
+  dimension fallback for default layouts and narrowed Gate I so it owns only the
   real FFmpeg/PipeWire-backed lifecycle connection, not the already-present
   editor shell.
-- Gate F: reviewed Gates G-I after implementing the FFmpeg segment writer.
+- Gate F: reviewed Gates G-J after implementing the FFmpeg segment writer.
   Updated the milestone body to clarify that Gate F owns synthetic/controlled
-  FFmpeg input and failure handling, while Gate G still owns real PipeWire frame
-  intake and scene composition.
+  FFmpeg input and failure handling, while later gates still own capture runtime
+  integration, real PipeWire frame intake, and scene composition.
 - Gate F hardening: reviewed saved audio restoration and resume failure paths.
   Updated milestone contracts so restored audio IDs must be validated against
   current source availability and role, and terminal FFmpeg failures must keep
   runtime and SQLite states consistent.
+- OBS architecture reconciliation: split the next milestone work into Gate G
+  capture runtime boundary and Gate H Linux Wayland PipeWire adapter and
+  compositor. This keeps Daydream OBS-inspired without taking a `libobs`
+  dependency or exposing OBS-style plugin/streaming complexity.
+- Gate G: reviewed Gates H-J after adding the platform-neutral runtime
+  boundary. Updated the milestone checklist to mark Gate G complete and split
+  the old Gate H into Gate H.1 CPU-readable PipeWire SHM capture plus Gate H.2
+  DMA-BUF GPU import/composition.
+- Gate H split: H.1 opens a fresh portal session from `startRecording`, matches
+  fresh streams to saved scene sources by stable portal ID or mapping ID, and
+  feeds the existing FFmpeg `yuv444p` stdin writer. H.1 may close on a typed
+  `recorder_capture_dmabuf_required` blocker if the local compositor only
+  offers DMA-BUF.
+- Gate H.2 starts with a checked-in EGL/OpenGL DMA-BUF capability probe before
+  production integration. Hardware encoding remains a deferred optimization
+  because it changes the FFmpeg writer boundary and validation matrix.
 
 ## Risk Watchlist
 
 - PipeWire stream buffers may arrive in formats that need additional conversion
   support before feeding FFmpeg.
+- KDE/Wayland may negotiate DMA-BUF-only screen frames. Gate H.1 must return a
+  typed blocker rather than silently falling back to synthetic video.
+- Hardware encoding could reduce copies after DMA-BUF import is proven, but it
+  is out of M1 because M1 keeps the existing raw `yuv444p` FFmpeg handoff.
 - KDE portal restore tokens may behave differently across portal versions.
 - FFmpeg packaging is not complete if M1 still depends on system FFmpeg for the
   required Pulse/encoding behavior.

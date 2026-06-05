@@ -1,4 +1,5 @@
 mod audio;
+mod capture;
 mod portal;
 
 use crate::storage::AppStorage;

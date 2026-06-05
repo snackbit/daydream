@@ -38,6 +38,9 @@ metadata in SQLite, and surfaces backend health in the app.
   <https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html>
 - FFmpeg device reference:
   <https://www.ffmpeg.org/ffmpeg-devices.html>
+- OBS Studio backend design and capture-source architecture as implementation
+  inspiration, not as a direct dependency:
+  <https://docs.obsproject.com/backend-design>
 
 ## Locked Decisions
 
@@ -50,6 +53,14 @@ metadata in SQLite, and surfaces backend health in the app.
   - PipeWire carries screen frames from the portal.
   - Rust owns frame intake and scene composition.
   - FFmpeg owns encoding and muxing.
+- Daydream will not embed or link `libobs` in M1. The recorder uses
+  OBS-inspired separation between platform capture adapters, scene composition,
+  and output/encoding, but keeps those boundaries native to the Daydream Rust
+  backend.
+- Platform capture adapters must stay behind an internal capture runtime
+  boundary so Linux Wayland, future Linux X11, macOS, and Windows capture paths
+  can be added without rewriting scene storage, recorder lifecycle, or FFmpeg
+  segment output.
 - Privileged `kmsgrab` is not the primary path for M1.
 - The app requests persistent portal permission where available with
   `persist_mode=2`, stores restore tokens as sensitive local metadata, and
@@ -172,6 +183,8 @@ The milestone is successful when:
 - Keyboard/mouse activity instrumentation.
 - Focused-window or open-window metadata capture.
 - Cross-platform capture backends for Windows or macOS.
+- Direct `libobs` integration, OBS plugin ABI support, live streaming services,
+  filters, transitions, and broadcast-production features.
 - Final application installer packaging.
 - Final vendored FFmpeg distribution policy.
 - Privileged `kmsgrab` capture fallback.
@@ -187,6 +200,14 @@ The milestone is successful when:
 - Scene source: one selected monitor within a scene, including source identity,
   placement, size, crop, z-order, and aspect-ratio behavior.
 - Capture source: a monitor source exposed through the ScreenCast portal.
+- Capture adapter: a platform-specific backend that turns native capture
+  permissions and streams into recorder runtime frame inputs.
+- Capture runtime: the platform-neutral Rust boundary between selected capture
+  sources, timestamped frame delivery, scene composition, and segment output.
+- Captured frame: a timestamped video buffer plus format metadata. Raw frame
+  contents are private media and must not be logged.
+- Scene compositor: the deterministic Rust stage that maps captured frames into
+  the saved recorder scene canvas before FFmpeg encoding.
 - Audio source: a Pulse/PipeWire input source or sink monitor selectable for
   desktop or microphone capture.
 - Recorder status: the typed state returned to React. It is the source of truth
@@ -203,6 +224,12 @@ The milestone is successful when:
 
 - Native integrations stay behind recorder modules; UI code does not talk to
   portal, PipeWire, Pulse, FFmpeg, or SQLite directly.
+- Platform capture adapters feed the capture runtime; they do not write
+  SQLite, own scene layout, or invoke FFmpeg directly.
+- Scene composition consumes capture runtime frames and saved scene geometry; it
+  stays independent of the Linux PipeWire adapter.
+- FFmpeg segment writing consumes composed frames and optional audio sources; it
+  stays independent of portal and PipeWire session details.
 - All Tauri command payloads are serializable, typed, and mirrored in shared
   TypeScript contracts where practical.
 - Every recording segment has a stable recording ID, segment ID, file path,
@@ -258,6 +285,11 @@ The API must include these domain payloads:
 - `StopRecordingInput`
 - `RecorderSegment`
 - `RecorderBackendHealth`
+
+Internal Rust interfaces added by M1 must include platform-neutral equivalents
+for capture runtime, capture adapter, capture session, runtime source handle,
+captured frame, captured frame format, and scene compositor concepts. These are
+not Tauri IPC contracts.
 
 Config behavior:
 
@@ -508,31 +540,87 @@ Exit Criteria:
   or manual validation.
 - FFmpeg failures mark the active segment failed and return typed recorder
   errors.
-- Real PipeWire frame intake and scene composition remain owned by Gate G.
+- Real capture runtime integration, PipeWire frame intake, and scene
+  composition remain owned by Gates G and H.
 
-## Gate G: PipeWire Frame Intake and Compositor
+## Gate G: Capture Runtime Boundary
 
-- [ ] Implement PipeWire connection handling for portal monitor streams.
-- [ ] Decode or map supported portal frame formats into compositor inputs.
-- [ ] Composite selected monitor streams into the configured scene canvas.
-- [ ] Apply source placement, crop, scale, z-order, and cursor embedding
-  behavior.
-- [ ] Pace composed frames at the configured `1 FPS` default.
-- [ ] Feed composed frames to the FFmpeg segment writer.
-- [ ] Add tests for compositor math, frame pacing decisions, unsupported format
-  errors, and multi-monitor composition metadata.
+- [x] Add internal Rust capture runtime contracts for selected source runtime
+  handles, capture sessions, timestamped frames, frame formats, and adapter
+  lifecycle.
+- [x] Preserve portal PipeWire node metadata as backend-only runtime data
+  without exposing portal session internals to React.
+- [x] Add a platform-neutral scene compositor input model that maps
+  `RecorderScene` sources to runtime frame inputs.
+- [x] Define the initial supported frame path as CPU-readable raw video frames
+  that can be converted to the FFmpeg writer's `yuv444p` input.
+- [x] Return typed video or dependency errors for unsupported frame formats,
+  missing runtime sources, adapter startup failures, and adapter cleanup
+  failures.
+- [x] Add tests for source-to-runtime mapping, frame format classification,
+  compositor input planning, adapter lifecycle cleanup, and privacy-safe error
+  messages.
 
 Exit Criteria:
 
-- Multiple selected monitor streams can be represented as one composed video
-  canvas.
-- The compositor path handles unsupported frame formats with typed errors.
-- Frame content is not logged.
+- Recorder lifecycle can depend on platform-neutral capture runtime contracts
+  instead of Linux PipeWire details.
+- Unsupported frame formats fail before writing misleading complete segments.
+- Raw frame contents are not logged, serialized into errors, or exposed through
+  React state.
 
-## Gate H: End-to-End Recorder UX and Diagnostics
+## Gate H.1: PipeWire SHM Capture and CPU Compositor
+
+- [ ] Add Linux-only `pipewire-rs` integration for portal monitor streams opened
+  from a fresh `startRecording` portal session.
+- [x] Match fresh portal streams to saved scene sources by stable portal stream
+  ID or mapping ID. Missing matches fail before recording rows are created.
+- [x] Negotiate and ingest CPU-readable PipeWire buffers for `yuv444p`,
+  RGBx/RGBA/BGRx/BGRA, and XRGB/ARGB-equivalent raw formats.
+- [x] Return `recorder_capture_dmabuf_required` when the compositor only
+  provides DMA-BUF buffers before Gate H.2 is available.
+- [ ] Copy only sampled CPU-readable frames into owned recorder runtime frames
+  and return PipeWire buffers promptly.
+- [x] Composite selected monitor streams into the configured scene canvas using
+  deterministic CPU bilinear crop, scale, placement, and z-order behavior.
+- [ ] Pace composition with latest-frame sampling at the configured FPS and feed
+  composed `yuv444p` frames to the existing FFmpeg segment writer.
+- [ ] Add tests for source matching, SHM format mapping, DMA-BUF-required
+  errors, frame sampling, CPU compositor math, FFmpeg handoff, cleanup, and
+  privacy-safe error/debug output.
+
+Exit Criteria:
+
+- Public `startRecording` uses the real PipeWire SHM path, not synthetic video.
+- If the local compositor requires DMA-BUF, H.1 may close only with a typed
+  `recorder_capture_dmabuf_required` blocker and scratchpad evidence for H.2.
+- Frame content is not logged or exposed through React state.
+
+## Gate H.2: DMA-BUF GPU Import and Composition
+
+- [ ] Add a checked-in Linux-only EGL/OpenGL capability probe for DMA-BUF import
+  and modifier support.
+- [ ] Use the probe to lock thin native dependencies for EGL/OpenGL DMA-BUF
+  work before production integration.
+- [ ] Import supported DMA-BUF frames into EGL/OpenGL textures.
+- [ ] Perform crop, scale, placement, z-order composition on GPU.
+- [ ] Read the final composed frame back to CPU, convert to `yuv444p`, and feed
+  the existing FFmpeg writer.
+- [ ] Keep hardware encoding out of M1 and document it as a later optimization
+  because it changes the writer boundary and validation matrix.
+
+Exit Criteria:
+
+- DMA-BUF-only portal streams can produce the same MKV stream shape as the SHM
+  path.
+- Unsupported DMA-BUF formats or modifiers return typed recorder errors before
+  misleading complete segments are written.
+- GPU diagnostics and errors remain privacy-safe.
+
+## Gate I: End-to-End Recorder UX and Diagnostics
 
 - [ ] Connect Capture controls to real FFmpeg/PipeWire-backed recorder
-  lifecycle commands once Gates F and G make recording available.
+  lifecycle commands once Gates G and H make recording available.
 - [ ] Show backend readiness, degraded audio states, dependency failures, and
   lifecycle errors in user-facing UI.
 - [ ] Keep recording controls disabled or warning-gated when required sources
@@ -549,7 +637,7 @@ Exit Criteria:
 - Diagnostics distinguishes unavailable, degraded, and available backend states.
 - The UI does not display portal restore tokens or private captured content.
 
-## Gate I: Validation and Launch Readiness
+## Gate J: Validation and Launch Readiness
 
 - [ ] Run JavaScript lint fix.
 - [ ] Run JavaScript lint.
@@ -649,6 +737,8 @@ Suggested native diagnostics:
 - Audio source discovery and desktop/mic role mapping.
 - Scene layout storage and interactive Capture screen editor.
 - FFmpeg segment writer with H.264 `yuv444p` MKV output.
+- OBS-inspired internal capture runtime boundary for platform capture adapters,
+  frame format metadata, scene compositor inputs, and FFmpeg output handoff.
 - PipeWire compositor path for selected monitor streams.
 - Recorder backend health in Diagnostics.
 - Automated tests for the critical contracts and lifecycle behavior.

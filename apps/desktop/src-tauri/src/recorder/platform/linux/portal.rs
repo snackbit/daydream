@@ -1,8 +1,12 @@
 use ashpd::desktop::{
-    screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions},
-    PersistMode,
+    screencast::{
+        CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions,
+        Stream as ScreencastStream,
+    },
+    PersistMode, Session,
 };
 use enumflags2::BitFlags;
+use std::os::fd::OwnedFd;
 
 use crate::storage::{self, AppStorage};
 
@@ -16,6 +20,24 @@ use super::super::super::{
 
 const RESTORE_TOKEN_ID: &str = "linux-screencast-monitor";
 const RESTORE_TOKEN_PORTAL: &str = "linux-screencast";
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct LivePortalSession {
+    pub(crate) fd: OwnedFd,
+    pub(crate) streams: Vec<LivePortalStream>,
+    _session: Session<Screencast>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct LivePortalStream {
+    pub(crate) display_name: String,
+    pub(crate) logical_height: Option<u32>,
+    pub(crate) logical_width: Option<u32>,
+    pub(crate) node_id: u32,
+    pub(crate) source_id: String,
+}
 
 pub async fn collect_portal_health() -> RecorderPortalHealth {
     match Screencast::new().await {
@@ -102,6 +124,69 @@ pub async fn select_capture_sources(
     manager.set_capture_sources(sources)
 }
 
+#[allow(dead_code)]
+pub(crate) async fn open_live_capture_session(
+    storage: &AppStorage,
+) -> Result<LivePortalSession, RecorderError> {
+    let restore_token = storage
+        .with_connection(|connection| {
+            storage::get_portal_restore_token(connection, RESTORE_TOKEN_ID)
+        })
+        .map_err(storage_error)?
+        .map(|row| row.token);
+    let proxy = Screencast::new().await.map_err(portal_error)?;
+    let session = proxy
+        .create_session(Default::default())
+        .await
+        .map_err(portal_error)?;
+    let streams = match select_sources_for_session(&proxy, &session, restore_token.as_deref()).await
+    {
+        Ok(streams) => {
+            if restore_token.is_some() {
+                storage
+                    .with_connection(|connection| {
+                        storage::mark_portal_restore_token_used(
+                            connection,
+                            RESTORE_TOKEN_ID,
+                            now_ms() as i64,
+                        )
+                    })
+                    .map_err(storage_error)?;
+            }
+            streams
+        }
+        Err(_error) if restore_token.is_some() => {
+            select_sources_for_session(&proxy, &session, None).await?
+        }
+        Err(error) => return Err(error),
+    };
+
+    if let Some(token) = streams.restore_token() {
+        storage
+            .with_connection(|connection| {
+                storage::upsert_portal_restore_token(
+                    connection,
+                    RESTORE_TOKEN_ID,
+                    RESTORE_TOKEN_PORTAL,
+                    token,
+                    now_ms() as i64,
+                )
+            })
+            .map_err(storage_error)?;
+    }
+
+    let fd = proxy
+        .open_pipe_wire_remote(&session, Default::default())
+        .await
+        .map_err(portal_error)?;
+
+    Ok(LivePortalSession {
+        fd,
+        streams: streams_to_live_portal_streams(streams.streams()),
+        _session: session,
+    })
+}
+
 async fn select_sources_once(
     restore_token: Option<&str>,
 ) -> Result<ashpd::desktop::screencast::Streams, RecorderError> {
@@ -110,6 +195,14 @@ async fn select_sources_once(
         .create_session(Default::default())
         .await
         .map_err(portal_error)?;
+    select_sources_for_session(&proxy, &session, restore_token).await
+}
+
+async fn select_sources_for_session(
+    proxy: &Screencast,
+    session: &Session<Screencast>,
+    restore_token: Option<&str>,
+) -> Result<ashpd::desktop::screencast::Streams, RecorderError> {
     let cursor_mode = match proxy.available_cursor_modes().await {
         Ok(cursor_modes) => preferred_cursor_mode(cursor_modes),
         Err(_error) => None,
@@ -163,6 +256,37 @@ fn stream_to_capture_source(
         .unwrap_or_else(|| format!("pipewire-node-{}", stream.pipe_wire_node_id()));
 
     capture_source_from_portal_fields(index, id, stream.size())
+}
+
+#[allow(dead_code)]
+fn streams_to_live_portal_streams(streams: &[ScreencastStream]) -> Vec<LivePortalStream> {
+    streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| live_portal_stream_from_fields(index, stream))
+        .collect()
+}
+
+#[allow(dead_code)]
+fn live_portal_stream_from_fields(index: usize, stream: &ScreencastStream) -> LivePortalStream {
+    let source_id = stream
+        .id()
+        .or_else(|| stream.mapping_id())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("pipewire-node-{}", stream.pipe_wire_node_id()));
+    let (logical_width, logical_height) = stream
+        .size()
+        .filter(|(width, height)| *width > 0 && *height > 0)
+        .map(|(width, height)| (Some(width as u32), Some(height as u32)))
+        .unwrap_or((None, None));
+
+    LivePortalStream {
+        display_name: format!("Monitor {}", index + 1),
+        logical_height,
+        logical_width,
+        node_id: stream.pipe_wire_node_id(),
+        source_id,
+    }
 }
 
 fn capture_source_from_portal_fields(

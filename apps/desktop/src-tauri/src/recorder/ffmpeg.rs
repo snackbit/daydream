@@ -11,6 +11,7 @@ use std::{
 };
 
 use super::{
+    capture_runtime::FrameReceiver,
     errors::dependency_error,
     types::{RecorderError, RecorderFfmpegCapabilities, RecorderFfmpegHealth},
 };
@@ -113,37 +114,25 @@ pub(crate) fn start_synthetic_segment(
     ffmpeg_path: &Path,
     input: &FfmpegSegmentInput,
 ) -> Result<RunningFfmpegSegment, RecorderError> {
-    let args = build_segment_args(input);
-    let mut child = Command::new(ffmpeg_path)
-        .args(&args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| {
-            dependency_error(
-                "recorder_ffmpeg_spawn_failed",
-                format!("Failed to start FFmpeg: {error}"),
-            )
-        })?;
-    let stdin = child.stdin.take().ok_or_else(|| {
-        dependency_error(
-            "recorder_ffmpeg_stdin_unavailable",
-            "FFmpeg stdin is unavailable.",
-        )
-    })?;
-    let (stop_frames, receiver) = mpsc::channel();
     let canvas_width = input.canvas_width;
     let canvas_height = input.canvas_height;
     let frame_interval = frame_interval(input.fps);
-    let frame_pump = thread::spawn(move || {
-        pump_synthetic_frames(stdin, canvas_width, canvas_height, frame_interval, receiver)
-    });
 
-    Ok(RunningFfmpegSegment {
-        child,
-        frame_pump: Some(frame_pump),
-        stop_frames: Some(stop_frames),
+    start_segment_with_frame_pump(ffmpeg_path, input, move |stdin, stop| {
+        thread::spawn(move || {
+            pump_synthetic_frames(stdin, canvas_width, canvas_height, frame_interval, stop)
+        })
+    })
+}
+
+#[allow(dead_code)]
+pub(crate) fn start_segment_from_frames(
+    ffmpeg_path: &Path,
+    input: &FfmpegSegmentInput,
+    frames: FrameReceiver,
+) -> Result<RunningFfmpegSegment, RecorderError> {
+    start_segment_with_frame_pump(ffmpeg_path, input, move |stdin, stop| {
+        thread::spawn(move || pump_composed_frames(stdin, frames, stop))
     })
 }
 
@@ -182,6 +171,43 @@ impl RunningFfmpegSegment {
             )
         })
     }
+}
+
+fn start_segment_with_frame_pump(
+    ffmpeg_path: &Path,
+    input: &FfmpegSegmentInput,
+    spawn_frame_pump: impl FnOnce(
+        std::process::ChildStdin,
+        mpsc::Receiver<()>,
+    ) -> thread::JoinHandle<Result<(), String>>,
+) -> Result<RunningFfmpegSegment, RecorderError> {
+    let args = build_segment_args(input);
+    let mut child = Command::new(ffmpeg_path)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            dependency_error(
+                "recorder_ffmpeg_spawn_failed",
+                format!("Failed to start FFmpeg: {error}"),
+            )
+        })?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        dependency_error(
+            "recorder_ffmpeg_stdin_unavailable",
+            "FFmpeg stdin is unavailable.",
+        )
+    })?;
+    let (stop_frames, receiver) = mpsc::channel();
+    let frame_pump = spawn_frame_pump(stdin, receiver);
+
+    Ok(RunningFfmpegSegment {
+        child,
+        frame_pump: Some(frame_pump),
+        stop_frames: Some(stop_frames),
+    })
 }
 
 pub(crate) fn build_segment_args(input: &FfmpegSegmentInput) -> Vec<String> {
@@ -355,6 +381,30 @@ fn pump_synthetic_frames(
         match stop.recv_timeout(frame_interval) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn pump_composed_frames(
+    mut stdin: std::process::ChildStdin,
+    frames: FrameReceiver,
+    stop: mpsc::Receiver<()>,
+) -> Result<(), String> {
+    loop {
+        match stop.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
+        match frames.recv_timeout(Duration::from_millis(50)) {
+            Ok(frame) => {
+                let frame = frame.into_yuv444p().map_err(|error| error.message)?;
+                stdin.write_all(&frame).map_err(|error| error.to_string())?;
+                stdin.flush().map_err(|error| error.to_string())?;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
 }

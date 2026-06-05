@@ -51,6 +51,51 @@ pub(crate) fn dependency_error(code: &str, message: impl Into<String>) -> Record
     }
 }
 
+pub(crate) fn capture_source_missing_error(source_id: &str) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Video,
+        code: "recorder_capture_source_missing".to_string(),
+        details: None,
+        message: format!("Recorder scene source {source_id} has no runtime capture source."),
+    }
+}
+
+pub(crate) fn capture_format_unsupported_error(message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Video,
+        code: "recorder_capture_format_unsupported".to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
+pub(crate) fn capture_dmabuf_required_error(message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Video,
+        code: "recorder_capture_dmabuf_required".to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
+pub(crate) fn capture_adapter_failed_error(message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Video,
+        code: "recorder_capture_adapter_failed".to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
+pub(crate) fn capture_cleanup_failed_error(message: impl Into<String>) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Video,
+        code: "recorder_capture_cleanup_failed".to_string(),
+        details: None,
+        message: message.into(),
+    }
+}
+
 pub(crate) fn filesystem_error(error: std::io::Error) -> RecorderError {
     RecorderError {
         category: RecorderErrorCategory::Filesystem,

@@ -1,4 +1,6 @@
+mod capture_runtime;
 mod commands;
+mod compositor;
 mod errors;
 pub(crate) mod ffmpeg;
 mod manager;
