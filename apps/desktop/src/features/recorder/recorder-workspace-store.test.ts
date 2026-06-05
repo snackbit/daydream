@@ -66,6 +66,7 @@ const status: RecorderStatus = {
       sourceTypes: ['monitor'],
     },
   },
+  finalization: null,
   lastError: null,
   state: 'idle',
   updatedAtMs: 1,
@@ -675,13 +676,14 @@ test('pause resume stop and start update status through recorder commands', asyn
   expect(useRecorderWorkspaceStore.getState().status?.state).toBe('recording');
 });
 
-test('async pause keeps lifecycle action pending until status event settles', async () => {
+test('async pause shows paused while segment finalization is pending', async () => {
   const statusEvents: {
     handler?: (status: RecorderStatus) => void;
   } = {};
   const recordingStatus = {
     ...status,
     activeRecordingId: 'recording-1',
+    activeSegmentId: 'segment-1',
     state: 'recording' as const,
   };
   useRecorderWorkspaceStore.setState({
@@ -695,28 +697,97 @@ test('async pause keeps lifecycle action pending until status event settles', as
   });
   client.pauseRecording.mockResolvedValue({
     ...recordingStatus,
-    state: 'pausing',
+    activeSegmentId: null,
+    finalization: {
+      action: 'pause',
+      phase: 'stopping-capture',
+      recordingId: 'recording-1',
+      segmentId: 'segment-1',
+      startedAtMs: 2,
+    },
+    state: 'paused',
   });
 
   await useRecorderWorkspaceStore.getState().subscribeToStatusEvents();
   await useRecorderWorkspaceStore.getState().pause();
 
-  expect(useRecorderWorkspaceStore.getState().pendingLifecycleAction).toBe(
-    'pause',
-  );
-  expect(useRecorderWorkspaceStore.getState().status?.state).toBe('pausing');
+  expect(
+    useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+  ).toBeNull();
+  expect(useRecorderWorkspaceStore.getState().status?.state).toBe('paused');
+  expect(
+    useRecorderWorkspaceStore.getState().status?.finalization?.action,
+  ).toBe('pause');
+  await useRecorderWorkspaceStore.getState().resume();
+  expect(client.resumeRecording).not.toHaveBeenCalled();
 
   expect(statusEvents.handler).toBeDefined();
   statusEvents.handler?.({
     ...recordingStatus,
     activeSegmentId: null,
+    finalization: null,
     state: 'paused',
   });
 
-  expect(
-    useRecorderWorkspaceStore.getState().pendingLifecycleAction,
-  ).toBeNull();
+  expect(useRecorderWorkspaceStore.getState().status?.finalization).toBeNull();
   expect(useRecorderWorkspaceStore.getState().status?.state).toBe('paused');
+});
+
+test('async stop settles through status polling when completion event is missed', async () => {
+  vi.useFakeTimers();
+  try {
+    const recordingStatus = {
+      ...status,
+      activeRecordingId: 'recording-1',
+      activeSegmentId: 'segment-1',
+      state: 'recording' as const,
+    };
+    const finalizingStatus: RecorderStatus = {
+      ...recordingStatus,
+      activeRecordingId: null,
+      activeSegmentId: null,
+      finalization: {
+        action: 'stop',
+        phase: 'stopping-capture',
+        recordingId: 'recording-1',
+        segmentId: 'segment-1',
+        startedAtMs: 2,
+      },
+      state: 'idle',
+      updatedAtMs: 2,
+    };
+    const settledStatus: RecorderStatus = {
+      ...finalizingStatus,
+      finalization: null,
+      updatedAtMs: 3,
+    };
+    useRecorderWorkspaceStore.setState({
+      isDirty: false,
+      scene: sceneWithSources(['main']),
+      status: recordingStatus,
+    });
+    client.stopRecording.mockResolvedValue(finalizingStatus);
+    client.getRecorderStatus.mockResolvedValue(settledStatus);
+
+    await useRecorderWorkspaceStore.getState().stop();
+
+    expect(useRecorderWorkspaceStore.getState().status?.state).toBe('idle');
+    expect(
+      useRecorderWorkspaceStore.getState().status?.finalization?.action,
+    ).toBe('stop');
+    expect(
+      useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+    ).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(client.getRecorderStatus).toHaveBeenCalled();
+    expect(
+      useRecorderWorkspaceStore.getState().status?.finalization,
+    ).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('locked lifecycle transition rejects concurrent recorder commands', async () => {

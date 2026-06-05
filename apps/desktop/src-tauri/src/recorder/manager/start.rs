@@ -41,16 +41,19 @@ impl RecorderManager {
             output_path: segment_path.clone(),
         };
         let segment = ActiveSegment {
+            file_path: segment_path.clone(),
             id: segment_id,
             media: None,
             started_at_ms: timestamp_ms,
             stream_indexes: ffmpeg::stream_indexes(&segment_input),
+            timing: None,
         };
         let active = ActiveRecording {
             active_segment: Some(segment.clone()),
             canvas_height: segment_input.canvas_height,
             canvas_width: segment_input.canvas_width,
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
+            ffmpeg_path: ffmpeg_probe.path.clone(),
             fps: input.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),
@@ -130,6 +133,7 @@ impl RecorderManager {
         media: RunningSegmentMedia,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
+        pending.segment.timing = media.capture_timing();
         pending.segment.media = Some(Arc::new(Mutex::new(Some(media))));
         pending.active.active_segment = Some(pending.segment);
 
@@ -229,6 +233,7 @@ impl RecorderManager {
             .map_err(storage_error)?;
 
         let active_segment = ActiveSegment {
+            file_path: segment_path.clone(),
             id: segment_id.clone(),
             media: None,
             started_at_ms: timestamp_ms,
@@ -237,12 +242,14 @@ impl RecorderManager {
                 microphone_audio_stream_index: None,
                 video_stream_index: 0,
             },
+            timing: None,
         };
         let active = ActiveRecording {
             active_segment: Some(active_segment),
             canvas_height: scene.canvas_height.try_into().unwrap_or(0),
             canvas_width: scene.canvas_width.try_into().unwrap_or(0),
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
+            ffmpeg_path: String::new(),
             fps: input.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),
@@ -357,19 +364,23 @@ impl RecorderManager {
             };
 
         let active_segment = ActiveSegment {
+            file_path: segment_path.clone(),
             id: segment_id.clone(),
             media: Some(Arc::new(Mutex::new(Some(RunningSegmentMedia::new(
                 ffmpeg_segment,
                 None,
+                None,
             ))))),
             started_at_ms: timestamp_ms,
             stream_indexes,
+            timing: None,
         };
         let active = ActiveRecording {
             active_segment: Some(active_segment),
             canvas_height: segment_input.canvas_height,
             canvas_width: segment_input.canvas_width,
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
+            ffmpeg_path: ffmpeg_probe.path,
             fps: input.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),

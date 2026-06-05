@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateRecordingInput {
@@ -86,6 +86,21 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
             })
         },
     )
+}
+
+pub fn get_latest_recording_id(connection: &Connection) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            r#"
+            SELECT id
+            FROM recordings
+            ORDER BY created_at_ms DESC, id ASC
+            LIMIT 1
+            "#,
+            [],
+            |row| row.get(0),
+        )
+        .optional()
 }
 
 pub fn mark_recording_started(

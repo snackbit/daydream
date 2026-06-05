@@ -41,6 +41,7 @@ impl RecorderManager {
 
         let mut resumed = active;
         resumed.active_segment = Some(ActiveSegment {
+            file_path: segment_path,
             id: segment_id,
             media: None,
             started_at_ms: timestamp_ms,
@@ -49,6 +50,7 @@ impl RecorderManager {
                 microphone_audio_stream_index: None,
                 video_stream_index: 0,
             },
+            timing: None,
         });
         resumed.next_segment_index += 1;
 
@@ -122,10 +124,12 @@ impl RecorderManager {
             output_path: segment_path.clone(),
         };
         let segment = ActiveSegment {
+            file_path: segment_path.clone(),
             id: segment_id,
             media: None,
             started_at_ms: timestamp_ms,
             stream_indexes: ffmpeg::stream_indexes(&segment_input),
+            timing: None,
         };
 
         Ok(PendingSegmentStart {
@@ -180,7 +184,9 @@ impl RecorderManager {
         media: RunningSegmentMedia,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
+        pending.segment.timing = media.capture_timing();
         pending.segment.media = Some(Arc::new(Mutex::new(Some(media))));
+        pending.active.ffmpeg_path = pending.ffmpeg_path.clone();
         pending.active.active_segment = Some(pending.segment);
         pending.active.next_segment_index += 1;
 
@@ -273,14 +279,18 @@ impl RecorderManager {
             };
 
         let mut resumed = active;
+        resumed.ffmpeg_path = ffmpeg_probe.path.clone();
         resumed.active_segment = Some(ActiveSegment {
+            file_path: segment_path,
             id: segment_id,
             media: Some(Arc::new(Mutex::new(Some(RunningSegmentMedia::new(
                 ffmpeg_segment,
                 None,
+                None,
             ))))),
             started_at_ms: timestamp_ms,
             stream_indexes,
+            timing: None,
         });
         resumed.next_segment_index += 1;
 

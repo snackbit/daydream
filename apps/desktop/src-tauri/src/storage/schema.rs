@@ -356,5 +356,34 @@ pub(super) fn migrations() -> Migrations<'static> {
             ADD COLUMN microphone_audio_source_id TEXT;
         "#,
         ),
+        M::up_with_hook("SELECT 1;", |transaction| {
+            let table_count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'recording_segments'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            if table_count == 0 {
+                return Ok(());
+            }
+
+            let mut statement = transaction.prepare("PRAGMA table_info(recording_segments)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            for column in columns {
+                if column? == "probe_json" {
+                    return Ok(());
+                }
+            }
+
+            transaction.execute(
+                r#"
+                ALTER TABLE recording_segments
+                    ADD COLUMN probe_json TEXT CHECK (probe_json IS NULL OR json_valid(probe_json));
+                "#,
+                [],
+            )?;
+
+            Ok(())
+        }),
     ])
 }

@@ -25,6 +25,7 @@ impl RecorderManager {
                         ended_at_ms: timestamp_ms as i64,
                         id: segment.id.clone(),
                         microphone_audio_stream_index: None,
+                        probe_json: None,
                         updated_at_ms: timestamp_ms as i64,
                         video_stream_index: None,
                     },
@@ -71,6 +72,7 @@ impl RecorderManager {
             .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
 
         self.finalize_ffmpeg_segment(storage, &active, &segment, timestamp_ms)?;
+        mark_recording_paused(storage, &active.recording_id)?;
 
         let mut paused = active;
         paused.active_segment = None;
@@ -94,7 +96,7 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
         let mut runtime = self.lock_runtime()?;
-        if is_pending_lifecycle_state(&runtime.status.state) {
+        if status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
                 "A recorder lifecycle transition is already in progress.",
@@ -117,12 +119,15 @@ impl RecorderManager {
             ));
         }
 
-        let status = status_from_active(
-            RecorderState::Pausing,
+        let segment = active
+            .active_segment
+            .as_ref()
+            .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
+        let status = status_for_finalizing_pause(
             &active,
+            segment,
             timestamp_ms,
             runtime.status.backend_health.clone(),
-            None,
         );
         runtime.status = status.clone();
 
@@ -135,13 +140,17 @@ impl RecorderManager {
         recording_id: &str,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
-        let active = self.active_for_completion(recording_id, RecorderState::Pausing)?;
+        let active = self.active_for_completion(recording_id, RecorderFinalizationAction::Pause)?;
         let segment = active
             .active_segment
             .clone()
             .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
 
         if let Err(error) = self.finalize_ffmpeg_segment(storage, &active, &segment, timestamp_ms) {
+            self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
+            return Err(error);
+        }
+        if let Err(error) = mark_recording_paused(storage, &active.recording_id) {
             self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
             return Err(error);
         }
@@ -187,6 +196,7 @@ impl RecorderManager {
                             ended_at_ms: timestamp_ms as i64,
                             id: segment.id.clone(),
                             microphone_audio_stream_index: None,
+                            probe_json: None,
                             updated_at_ms: timestamp_ms as i64,
                             video_stream_index: None,
                         },
@@ -262,7 +272,7 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
         let mut runtime = self.lock_runtime()?;
-        if is_pending_lifecycle_state(&runtime.status.state) {
+        if status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
                 "A recorder lifecycle transition is already in progress.",
@@ -284,12 +294,10 @@ impl RecorderManager {
             ));
         }
 
-        let status = status_from_active(
-            RecorderState::Stopping,
+        let status = status_for_finalizing_stop(
             &active,
             timestamp_ms,
             runtime.status.backend_health.clone(),
-            None,
         );
         runtime.status = status.clone();
 
@@ -302,7 +310,7 @@ impl RecorderManager {
         recording_id: &str,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
-        let active = self.active_for_completion(recording_id, RecorderState::Stopping)?;
+        let active = self.active_for_completion(recording_id, RecorderFinalizationAction::Stop)?;
 
         if let Some(segment) = &active.active_segment {
             if let Err(error) =
@@ -396,6 +404,12 @@ impl RecorderManager {
             }
         }
 
+        let probe = ffmpeg::probe_segment_best_effort(&active.ffmpeg_path, &segment.file_path);
+        let duration_ms = probe
+            .duration_ms
+            .unwrap_or_else(|| duration_ms(segment.started_at_ms, timestamp_ms));
+        let probe_json = ffmpeg::probe_json_string(&probe);
+
         storage
             .with_connection(|connection| {
                 storage::finalize_recording_segment(
@@ -404,17 +418,17 @@ impl RecorderManager {
                         desktop_audio_stream_index: segment
                             .stream_indexes
                             .desktop_audio_stream_index,
-                        duration_ms: duration_ms(segment.started_at_ms, timestamp_ms) as i64,
+                        duration_ms: i64::try_from(duration_ms).unwrap_or(i64::MAX),
                         ended_at_ms: timestamp_ms as i64,
                         id: segment.id.clone(),
                         microphone_audio_stream_index: segment
                             .stream_indexes
                             .microphone_audio_stream_index,
+                        probe_json: Some(probe_json),
                         updated_at_ms: timestamp_ms as i64,
                         video_stream_index: Some(segment.stream_indexes.video_stream_index),
                     },
-                )?;
-                storage::update_recording_status(connection, &active.recording_id, "paused")
+                )
             })
             .map_err(storage_error)?;
 
@@ -424,10 +438,16 @@ impl RecorderManager {
     fn active_for_completion(
         &self,
         recording_id: &str,
-        expected_state: RecorderState,
+        expected_action: RecorderFinalizationAction,
     ) -> Result<ActiveRecording, RecorderError> {
         let runtime = self.lock_runtime()?;
-        if runtime.status.state != expected_state {
+        let Some(finalization) = &runtime.status.finalization else {
+            return Err(lifecycle_error(
+                "recorder_invalid_transition",
+                "The recorder is not waiting for that lifecycle completion.",
+            ));
+        };
+        if finalization.action != expected_action {
             return Err(lifecycle_error(
                 "recorder_invalid_transition",
                 "The recorder is not waiting for that lifecycle completion.",
@@ -495,4 +515,13 @@ impl RecorderManager {
 
         Ok(())
     }
+}
+
+fn mark_recording_paused(storage: &AppStorage, recording_id: &str) -> Result<(), RecorderError> {
+    storage
+        .with_connection(|connection| {
+            storage::update_recording_status(connection, recording_id, "paused")
+        })
+        .map(|_row| ())
+        .map_err(storage_error)
 }

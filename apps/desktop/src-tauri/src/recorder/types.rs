@@ -211,6 +211,30 @@ pub enum RecorderSegmentState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecorderFinalizationAction {
+    Pause,
+    Stop,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecorderFinalizationPhase {
+    SavingSegment,
+    StoppingCapture,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecorderFinalizationStatus {
+    pub(crate) action: RecorderFinalizationAction,
+    pub(crate) phase: RecorderFinalizationPhase,
+    pub(crate) recording_id: String,
+    pub(crate) segment_id: Option<String>,
+    pub(crate) started_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderSegment {
     pub(crate) desktop_audio_stream_index: Option<i32>,
@@ -226,6 +250,18 @@ pub struct RecorderSegment {
     pub(crate) started_at_ms: u64,
     pub(crate) state: RecorderSegmentState,
     pub(crate) video_stream_index: Option<i32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureTimingDiagnostics {
+    pub(crate) composed_frames: u64,
+    pub(crate) frames_received_by_source: BTreeMap<String, u64>,
+    pub(crate) frames_sent_to_ffmpeg: u64,
+    pub(crate) last_composed_timestamp_ms: Option<u64>,
+    pub(crate) reused_frame_compositions: u64,
+    pub(crate) source_timestamp_max_ms: Option<u64>,
+    pub(crate) source_timestamp_min_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -290,6 +326,7 @@ pub struct RecorderStatus {
     pub(crate) active_scene_id: Option<String>,
     pub(crate) active_segment_id: Option<String>,
     pub(crate) backend_health: RecorderBackendHealth,
+    pub(crate) finalization: Option<RecorderFinalizationStatus>,
     pub(crate) last_error: Option<RecorderError>,
     pub(crate) state: RecorderState,
     pub(crate) updated_at_ms: u64,

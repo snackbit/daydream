@@ -35,6 +35,9 @@ import type {
 type AsyncStatus = 'error' | 'idle' | 'loading' | 'ready';
 export type RecorderLifecycleAction = 'pause' | 'resume' | 'start' | 'stop';
 
+const FINALIZATION_POLL_INTERVAL_MS = 250;
+const FINALIZATION_POLL_TIMEOUT_MS = 15_000;
+
 interface RecorderWorkspaceState {
   audioSources: AudioSource[];
   captureSources: CaptureSource[];
@@ -158,7 +161,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, 'pause', () =>
+      await runStatusMutation(set, get, 'pause', () =>
         pauseRecording({ recordingId }),
       );
     },
@@ -172,7 +175,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, 'resume', () =>
+      await runStatusMutation(set, get, 'resume', () =>
         resumeRecording({ recordingId }),
       );
     },
@@ -300,7 +303,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, 'start', () =>
+      await runStatusMutation(set, get, 'start', () =>
         startRecording({
           desktopAudioSourceId: state.desktopAudioSourceId,
           fps: 1,
@@ -321,7 +324,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, 'stop', () =>
+      await runStatusMutation(set, get, 'stop', () =>
         stopRecording({ recordingId }),
       );
     },
@@ -435,6 +438,7 @@ async function runStatusMutation(
       | Partial<RecorderWorkspaceState>
       | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>),
   ) => void,
+  get: () => RecorderWorkspaceState,
   action: RecorderLifecycleAction,
   mutation: () => Promise<RecorderStatus>,
 ): Promise<void> {
@@ -443,11 +447,14 @@ async function runStatusMutation(
   try {
     const status = await mutation();
     set({
-      pendingLifecycleAction: statusNeedsCompletionEvent(status)
+      pendingLifecycleAction: statusShowsCommandInProgress(status)
         ? action
         : null,
       status,
     });
+    if (statusNeedsReconciliation(status)) {
+      void reconcileStatusUntilSettled(set, get, action);
+    }
   } catch (error) {
     set({ error: errorMessage(error), pendingLifecycleAction: null });
   }
@@ -455,17 +462,75 @@ async function runStatusMutation(
 
 function recorderLifecycleLocked(state: RecorderWorkspaceState): boolean {
   return (
-    state.pendingLifecycleAction !== null ||
-    statusNeedsCompletionEvent(state.status)
+    state.pendingLifecycleAction !== null || statusBlocksLifecycle(state.status)
   );
 }
 
-function statusNeedsCompletionEvent(status: RecorderStatus | null): boolean {
+function statusBlocksLifecycle(status: RecorderStatus | null): boolean {
+  return status?.finalization != null || statusShowsCommandInProgress(status);
+}
+
+function statusShowsCommandInProgress(status: RecorderStatus | null): boolean {
   return (
     status?.state === 'pausing' ||
     status?.state === 'selecting' ||
     status?.state === 'stopping'
   );
+}
+
+function statusNeedsReconciliation(status: RecorderStatus | null): boolean {
+  return statusBlocksLifecycle(status);
+}
+
+async function reconcileStatusUntilSettled(
+  set: (
+    partial:
+      | Partial<RecorderWorkspaceState>
+      | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>),
+  ) => void,
+  get: () => RecorderWorkspaceState,
+  action: RecorderLifecycleAction,
+): Promise<void> {
+  const deadline = Date.now() + FINALIZATION_POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    await sleep(FINALIZATION_POLL_INTERVAL_MS);
+
+    if (!statusNeedsReconciliation(get().status)) {
+      return;
+    }
+
+    try {
+      const status = await getRecorderStatus();
+      set({
+        error: status.lastError?.message ?? null,
+        pendingLifecycleAction: statusShowsCommandInProgress(status)
+          ? action
+          : null,
+        status,
+      });
+
+      if (!statusNeedsReconciliation(status)) {
+        return;
+      }
+    } catch (error) {
+      set({
+        error: errorMessage(error),
+        pendingLifecycleAction: null,
+      });
+      return;
+    }
+  }
+
+  set({
+    error:
+      'Recorder is still saving the recording. Diagnostics may show more detail.',
+    pendingLifecycleAction: null,
+  });
+}
+
+function sleep(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
 function errorMessage(error: unknown): string {

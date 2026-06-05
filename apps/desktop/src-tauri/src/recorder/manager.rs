@@ -12,7 +12,7 @@ use crate::storage::{
     FinalizeRecordingSegmentInput,
 };
 
-use super::capture_runtime::CaptureSession;
+use super::capture_runtime::{capture_timing_snapshot, CaptureSession, SharedCaptureTiming};
 use super::errors::{
     dependency_error, filesystem_error, lifecycle_error, scene_or_storage_error, storage_error,
 };
@@ -20,9 +20,10 @@ use super::ffmpeg::{self, FfmpegSegmentInput, FfmpegStreamIndexes, RunningFfmpeg
 use super::storage_mapping::quality_preset_as_storage_label;
 use super::storage_mapping::scene_from_storage;
 use super::types::{
-    CaptureSource, CaptureSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
-    RecorderBackendHealth, RecorderError, RecorderFfmpegHealth, RecorderPortalHealth,
-    RecorderState, RecorderStatus, StartRecordingInput,
+    CaptureSource, CaptureSourceList, CaptureTimingDiagnostics, RecorderAudioHealth,
+    RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError, RecorderFfmpegHealth,
+    RecorderFinalizationAction, RecorderFinalizationPhase, RecorderFinalizationStatus,
+    RecorderPortalHealth, RecorderState, RecorderStatus, StartRecordingInput,
 };
 
 mod resume;
@@ -49,6 +50,7 @@ pub(crate) struct ActiveRecording {
     canvas_height: u32,
     canvas_width: u32,
     desktop_audio_source_id: Option<String>,
+    ffmpeg_path: String,
     fps: f64,
     microphone_audio_source_id: Option<String>,
     recording_id: String,
@@ -59,16 +61,19 @@ pub(crate) struct ActiveRecording {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveSegment {
+    file_path: PathBuf,
     id: String,
     media: Option<SharedSegmentMedia>,
     started_at_ms: u64,
     stream_indexes: FfmpegStreamIndexes,
+    timing: Option<SharedCaptureTiming>,
 }
 
 #[derive(Debug)]
 pub(crate) struct RunningSegmentMedia {
     capture: Option<Box<dyn CaptureSession>>,
     ffmpeg: RunningFfmpegSegment,
+    timing: Option<SharedCaptureTiming>,
 }
 
 type SharedSegmentMedia = Arc<Mutex<Option<RunningSegmentMedia>>>;
@@ -102,8 +107,17 @@ impl RunningSegmentMedia {
     pub(crate) fn new(
         ffmpeg: RunningFfmpegSegment,
         capture: Option<Box<dyn CaptureSession>>,
+        timing: Option<SharedCaptureTiming>,
     ) -> Self {
-        Self { capture, ffmpeg }
+        Self {
+            capture,
+            ffmpeg,
+            timing,
+        }
+    }
+
+    pub(crate) fn capture_timing(&self) -> Option<SharedCaptureTiming> {
+        self.timing.clone()
     }
 
     fn stop(mut self) -> Result<std::process::ExitStatus, RecorderError> {
@@ -162,6 +176,18 @@ impl RecorderManager {
         Ok(CaptureSourceList { sources })
     }
 
+    pub(crate) fn active_capture_timing(
+        &self,
+    ) -> Result<Option<CaptureTimingDiagnostics>, RecorderError> {
+        let runtime = self.lock_runtime()?;
+        Ok(runtime
+            .active
+            .as_ref()
+            .and_then(|active| active.active_segment.as_ref())
+            .and_then(|segment| segment.timing.as_ref())
+            .map(capture_timing_snapshot))
+    }
+
     fn recordings_root(&self) -> PathBuf {
         self.app_data_dir.join("recordings")
     }
@@ -200,6 +226,7 @@ fn status_from_active(
             .as_ref()
             .map(|segment| segment.id.clone()),
         backend_health,
+        finalization: None,
         last_error,
         state,
         updated_at_ms,
@@ -219,6 +246,7 @@ fn idle_status_with_backend_health(
         active_scene_id: None,
         active_segment_id: None,
         backend_health,
+        finalization: None,
         last_error: None,
         state: RecorderState::Idle,
         updated_at_ms,
@@ -237,6 +265,7 @@ fn selecting_status(
         active_scene_id,
         active_segment_id,
         backend_health,
+        finalization: None,
         last_error: None,
         state: RecorderState::Selecting,
         updated_at_ms,
@@ -253,10 +282,65 @@ fn error_status_with_backend_health(
         active_scene_id: None,
         active_segment_id: None,
         backend_health,
+        finalization: None,
         last_error: Some(error),
         state: RecorderState::Error,
         updated_at_ms,
     }
+}
+
+fn status_for_finalizing_pause(
+    active: &ActiveRecording,
+    segment: &ActiveSegment,
+    timestamp_ms: u64,
+    backend_health: RecorderBackendHealth,
+) -> RecorderStatus {
+    RecorderStatus {
+        active_recording_id: Some(active.recording_id.clone()),
+        active_scene_id: Some(active.scene_id.clone()),
+        active_segment_id: None,
+        backend_health,
+        finalization: Some(RecorderFinalizationStatus {
+            action: RecorderFinalizationAction::Pause,
+            phase: RecorderFinalizationPhase::StoppingCapture,
+            recording_id: active.recording_id.clone(),
+            segment_id: Some(segment.id.clone()),
+            started_at_ms: timestamp_ms,
+        }),
+        last_error: None,
+        state: RecorderState::Paused,
+        updated_at_ms: timestamp_ms,
+    }
+}
+
+fn status_for_finalizing_stop(
+    active: &ActiveRecording,
+    timestamp_ms: u64,
+    backend_health: RecorderBackendHealth,
+) -> RecorderStatus {
+    RecorderStatus {
+        active_recording_id: None,
+        active_scene_id: None,
+        active_segment_id: None,
+        backend_health,
+        finalization: Some(RecorderFinalizationStatus {
+            action: RecorderFinalizationAction::Stop,
+            phase: RecorderFinalizationPhase::StoppingCapture,
+            recording_id: active.recording_id.clone(),
+            segment_id: active
+                .active_segment
+                .as_ref()
+                .map(|segment| segment.id.clone()),
+            started_at_ms: timestamp_ms,
+        }),
+        last_error: None,
+        state: RecorderState::Idle,
+        updated_at_ms: timestamp_ms,
+    }
+}
+
+fn status_has_pending_lifecycle(status: &RecorderStatus) -> bool {
+    status.finalization.is_some() || is_pending_lifecycle_state(&status.state)
 }
 
 fn is_pending_lifecycle_state(state: &RecorderState) -> bool {

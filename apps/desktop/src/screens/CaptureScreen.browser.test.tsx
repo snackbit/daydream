@@ -75,6 +75,7 @@ const status: RecorderStatus = {
       sourceTypes: ['monitor'],
     },
   },
+  finalization: null,
   lastError: null,
   state: 'idle',
   updatedAtMs: 1,
@@ -637,7 +638,7 @@ test('CaptureScreen saves and reloads selected audio sources', async () => {
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(false);
 });
 
-test('CaptureScreen locks recorder controls while stop is finishing', async () => {
+test('CaptureScreen shows saving banner while stop finalization is finishing', async () => {
   const statusEvents: {
     handler?: (status: RecorderStatus) => void;
   } = {};
@@ -656,7 +657,17 @@ test('CaptureScreen locks recorder controls while stop is finishing', async () =
   });
   client.stopRecording.mockResolvedValue({
     ...recordingStatus,
-    state: 'stopping',
+    activeRecordingId: null,
+    activeSegmentId: null,
+    finalization: {
+      action: 'stop',
+      phase: 'stopping-capture',
+      recordingId: 'recording-1',
+      segmentId: 'segment-1',
+      startedAtMs: 2,
+    },
+    state: 'idle',
+    updatedAtMs: 2,
   });
 
   render(<CaptureScreen />);
@@ -669,8 +680,10 @@ test('CaptureScreen locks recorder controls while stop is finishing', async () =
       recordingId: 'recording-1',
     }),
   );
+  expect(await screen.findByText('Saving recording')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /stopping/i })).toBeNull();
   expect(
-    (screen.getByRole('button', { name: /stopping/i }) as HTMLButtonElement)
+    (screen.getByRole('button', { name: /start/i }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
   expect(
@@ -683,7 +696,7 @@ test('CaptureScreen locks recorder controls while stop is finishing', async () =
         name: /add monitor sources/i,
       }) as HTMLButtonElement
     ).disabled,
-  ).toBe(true);
+  ).toBe(false);
 
   expect(statusEvents.handler).toBeDefined();
   statusEvents.handler?.({
@@ -691,6 +704,7 @@ test('CaptureScreen locks recorder controls while stop is finishing', async () =
     activeRecordingId: null,
     activeSceneId: null,
     activeSegmentId: null,
+    finalization: null,
     state: 'idle',
   });
 

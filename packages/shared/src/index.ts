@@ -1,6 +1,8 @@
 import type {
+  CaptureTimingDiagnostics,
   RecorderBackendHealth,
   RecorderFfmpegCapabilities,
+  RecorderSegmentState,
 } from './recorder.js';
 
 export interface AppDiagnostics {
@@ -26,6 +28,35 @@ export interface FfmpegDiagnostics {
   versionLine: string | null;
 }
 
+export type SegmentProbeMetadata = Record<string, unknown>;
+
+export interface LatestSegmentDiagnostics {
+  desktopAudioStreamIndex: number | null;
+  durationMs: number | null;
+  endedAtMs: number | null;
+  errorCode: string | null;
+  ffmpegExitCode: number | null;
+  filePath: string;
+  id: string;
+  microphoneAudioStreamIndex: number | null;
+  probe: SegmentProbeMetadata | null;
+  recordingId: string;
+  segmentIndex: number;
+  startedAtMs: number;
+  state: RecorderSegmentState;
+  videoStreamIndex: number | null;
+}
+
+export interface LatestRecordingDiagnostics {
+  activeCaptureTiming: CaptureTimingDiagnostics | null;
+  activeRecordingId: string | null;
+  activeSegmentId: string | null;
+  error: string | null;
+  latestSegment: LatestSegmentDiagnostics | null;
+  recordingId: string | null;
+  segmentCount: number;
+}
+
 export interface StorageDiagnostics {
   appDataDir: string | null;
 }
@@ -40,6 +71,7 @@ export interface DaydreamDiagnostics {
   app: AppDiagnostics;
   database: DatabaseDiagnostics;
   ffmpeg: FfmpegDiagnostics;
+  latestRecording: LatestRecordingDiagnostics;
   recorder: RecorderBackendHealth;
   storage: StorageDiagnostics;
   system: SystemDiagnostics;

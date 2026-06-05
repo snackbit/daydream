@@ -8,9 +8,10 @@ use pw::{properties::properties, spa};
 use super::portal::{LivePortalSession, LivePortalStream};
 use crate::recorder::{
     capture_runtime::{
-        bounded_frame_channel, CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession,
-        CapturedFrame, CapturedFrameFormat, CapturedFrameStorage, FrameSender, LatestFrameSampler,
-        RuntimeWorker,
+        bounded_frame_channel, new_capture_timing, record_capture_frame, record_composed_frame,
+        CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession, CapturedFrame,
+        CapturedFrameFormat, CapturedFrameStorage, FrameSender, LatestFrameSampler, RuntimeWorker,
+        SharedCaptureTiming,
     },
     compositor::{SceneCompositorInput, SceneCompositorPlan},
     errors::{
@@ -71,6 +72,7 @@ struct PipeWireCaptureState {
     error: Option<RecorderError>,
     plan: SceneCompositorPlan,
     sampler: LatestFrameSampler,
+    timing: SharedCaptureTiming,
 }
 
 struct PipeWireStartupNotifier {
@@ -108,12 +110,15 @@ pub(crate) fn start_live_segment(
     prepared: PreparedLiveCapture,
 ) -> Result<RunningSegmentMedia, RecorderError> {
     let (sender, receiver) = bounded_frame_channel(3);
-    let ffmpeg = ffmpeg::start_segment_from_frames(ffmpeg_path, input, receiver)?;
+    let timing = new_capture_timing();
+    let ffmpeg =
+        ffmpeg::start_segment_from_frames(ffmpeg_path, input, receiver, Some(timing.clone()))?;
     let capture = match start_pipewire_capture_session(
         prepared.live_session,
         prepared.preflight,
         input.fps,
         sender,
+        timing.clone(),
     ) {
         Ok(capture) => capture,
         Err(error) => {
@@ -122,7 +127,11 @@ pub(crate) fn start_live_segment(
         }
     };
 
-    Ok(RunningSegmentMedia::new(ffmpeg, Some(capture)))
+    Ok(RunningSegmentMedia::new(
+        ffmpeg,
+        Some(capture),
+        Some(timing),
+    ))
 }
 
 fn runtime_sources_for_scene(
@@ -210,6 +219,7 @@ pub(crate) fn start_pipewire_capture_session(
     preflight: LiveCapturePreflight,
     fps: f64,
     composed_frames: FrameSender,
+    timing: SharedCaptureTiming,
 ) -> Result<Box<dyn CaptureSession>, RecorderError> {
     let stream_configs = stream_configs_from_plan(&preflight.plan)?;
     let (shutdown, shutdown_receiver) = pw::channel::channel();
@@ -220,6 +230,7 @@ pub(crate) fn start_pipewire_capture_session(
             preflight.plan,
             fps,
             composed_frames,
+            timing,
             stream_configs,
             shutdown_receiver,
             ready_sender,
@@ -254,6 +265,7 @@ fn run_pipewire_capture(
     plan: SceneCompositorPlan,
     fps: f64,
     composed_frames: FrameSender,
+    timing: SharedCaptureTiming,
     stream_configs: Vec<PipeWireStreamConfig>,
     shutdown_receiver: pw::channel::Receiver<PipeWireControl>,
     ready_sender: mpsc::Sender<Result<(), RecorderError>>,
@@ -264,6 +276,7 @@ fn run_pipewire_capture(
         plan,
         fps,
         composed_frames,
+        timing,
         stream_configs,
         shutdown_receiver,
         &mut startup,
@@ -280,6 +293,7 @@ fn run_pipewire_capture_inner(
     plan: SceneCompositorPlan,
     fps: f64,
     composed_frames: FrameSender,
+    timing: SharedCaptureTiming,
     stream_configs: Vec<PipeWireStreamConfig>,
     shutdown_receiver: pw::channel::Receiver<PipeWireControl>,
     startup: &mut PipeWireStartupNotifier,
@@ -298,6 +312,7 @@ fn run_pipewire_capture_inner(
         error: None,
         plan,
         sampler: LatestFrameSampler::new(fps),
+        timing,
     }));
     let mut streams = Vec::with_capacity(stream_configs.len());
     let mut listeners = Vec::with_capacity(stream_configs.len());
@@ -449,18 +464,30 @@ fn capture_stream_frame(
 
     let frame =
         captured_frame_from_pipewire_data(&user_data.source_id, user_data.format, &mut datas[0])?;
+    let frame_source_id = frame.source_id.clone();
+    let frame_timestamp_ms = frame.timestamp_ms;
     let mut state = state.borrow_mut();
+    record_capture_frame(&state.timing, &frame_source_id, frame_timestamp_ms);
     state.sampler.push(frame)?;
     let timestamp_ms = now_ms();
     if !state.sampler.should_compose(timestamp_ms) {
         return Ok(());
     }
 
+    let reused_latest_frame = state.plan.inputs.iter().any(|input| {
+        input.source_id != frame_source_id
+            && state
+                .sampler
+                .latest_frames()
+                .get(&input.source_id)
+                .is_some_and(|latest| latest.timestamp_ms < frame_timestamp_ms)
+    });
     let composed = state
         .plan
         .compose_latest_frames(state.sampler.latest_frames(), timestamp_ms)?;
     state.plan.validate_composed_frame(&composed)?;
     state.composed_frames.send(composed)?;
+    record_composed_frame(&state.timing, timestamp_ms, reused_latest_frame);
     state.sampler.mark_composed(timestamp_ms);
 
     Ok(())

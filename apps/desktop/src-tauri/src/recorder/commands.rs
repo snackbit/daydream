@@ -103,7 +103,7 @@ pub fn pause_recording<R: tauri::Runtime>(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
     let status = manager.begin_pause_recording(&input.recording_id, now_ms())?;
-    if status.state == super::types::RecorderState::Pausing {
+    if status.finalization.is_some() {
         spawn_lifecycle_completion(app, input.recording_id, RecorderLifecycleCompletion::Pause);
     }
 
@@ -157,7 +157,7 @@ pub fn stop_recording<R: tauri::Runtime>(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
     let status = manager.begin_stop_recording(&input.recording_id, now_ms())?;
-    if status.state == super::types::RecorderState::Stopping {
+    if status.finalization.is_some() {
         spawn_lifecycle_completion(app, input.recording_id, RecorderLifecycleCompletion::Stop);
     }
 

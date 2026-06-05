@@ -27,7 +27,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 6);
+    assert_eq!(schema_version, 7);
     assert_eq!(table_counts["recordings"], 0);
     assert_eq!(table_counts["recording_tracks"], 0);
     assert_eq!(table_counts["recording_segments"], 0);
@@ -165,7 +165,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 6);
+    assert_eq!(schema_version, 7);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
@@ -603,6 +603,20 @@ fn segment_helpers_create_finalize_fail_and_list_in_order() {
             ended_at_ms: 25,
             id: first_segment_id,
             microphone_audio_stream_index: Some(2),
+            probe_json: Some(
+                serde_json::json!({
+                    "available": true,
+                    "durationMs": 15,
+                    "video": {
+                        "codecName": "h264",
+                        "height": 720,
+                        "index": 0,
+                        "pixelFormat": "yuv420p",
+                        "width": 1280
+                    }
+                })
+                .to_string(),
+            ),
             updated_at_ms: 26,
             video_stream_index: Some(0),
         },
@@ -624,6 +638,11 @@ fn segment_helpers_create_finalize_fail_and_list_in_order() {
 
     assert_eq!(finalized.state, "finalized");
     assert_eq!(finalized.video_stream_index, Some(0));
+    assert!(finalized
+        .probe_json
+        .as_deref()
+        .expect("probe json")
+        .contains("\"yuv420p\""));
     assert_eq!(failed.state, "failed");
     assert_eq!(failed.error_code, Some("ffmpeg_failed".to_string()));
     assert_eq!(segments.len(), 2);
@@ -661,6 +680,42 @@ fn duplicate_segment_index_per_recording_is_rejected() {
     .expect_err("duplicate segment index should fail");
 
     assert!(error.to_string().contains("UNIQUE constraint failed"));
+}
+
+#[test]
+fn segment_probe_json_must_be_valid_json() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let segment_id = Uuid::now_v7().to_string();
+
+    create_recording_segment(
+        &connection,
+        &CreateRecordingSegmentInput {
+            file_path: "/tmp/daydream/0001.mkv".to_string(),
+            id: segment_id.clone(),
+            recording_id,
+            segment_index: 1,
+            started_at_ms: 10,
+        },
+    )
+    .expect("create segment");
+
+    let error = finalize_recording_segment(
+        &connection,
+        &FinalizeRecordingSegmentInput {
+            desktop_audio_stream_index: None,
+            duration_ms: 10,
+            ended_at_ms: 20,
+            id: segment_id,
+            microphone_audio_stream_index: None,
+            probe_json: Some("{not-json".to_string()),
+            updated_at_ms: 20,
+            video_stream_index: Some(0),
+        },
+    )
+    .expect_err("invalid probe json should fail");
+
+    assert!(error.to_string().contains("CHECK constraint failed"));
 }
 
 #[test]

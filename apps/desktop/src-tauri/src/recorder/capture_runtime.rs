@@ -3,7 +3,10 @@
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        mpsc::{self, Receiver, SyncSender},
+        Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -14,7 +17,7 @@ use super::{
         capture_adapter_failed_error, capture_cleanup_failed_error, capture_dmabuf_required_error,
         capture_format_unsupported_error,
     },
-    types::{CaptureSourceKind, RecorderError},
+    types::{CaptureSourceKind, CaptureTimingDiagnostics, RecorderError},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +106,8 @@ pub(crate) struct LatestFrameSampler {
     last_composed_at_ms: Option<u64>,
     latest_frames: HashMap<String, CapturedFrame>,
 }
+
+pub(crate) type SharedCaptureTiming = Arc<Mutex<CaptureTimingDiagnostics>>;
 
 impl CapturedFrameFormat {
     pub(crate) fn label(self) -> &'static str {
@@ -412,6 +417,60 @@ impl LatestFrameSampler {
     }
 }
 
+pub(crate) fn new_capture_timing() -> SharedCaptureTiming {
+    Arc::new(Mutex::new(CaptureTimingDiagnostics::default()))
+}
+
+pub(crate) fn capture_timing_snapshot(timing: &SharedCaptureTiming) -> CaptureTimingDiagnostics {
+    timing
+        .lock()
+        .map(|timing| timing.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn record_capture_frame(
+    timing: &SharedCaptureTiming,
+    source_id: &str,
+    timestamp_ms: u64,
+) {
+    if let Ok(mut timing) = timing.lock() {
+        *timing
+            .frames_received_by_source
+            .entry(source_id.to_string())
+            .or_insert(0) += 1;
+        timing.source_timestamp_min_ms = Some(
+            timing
+                .source_timestamp_min_ms
+                .map_or(timestamp_ms, |current| current.min(timestamp_ms)),
+        );
+        timing.source_timestamp_max_ms = Some(
+            timing
+                .source_timestamp_max_ms
+                .map_or(timestamp_ms, |current| current.max(timestamp_ms)),
+        );
+    }
+}
+
+pub(crate) fn record_composed_frame(
+    timing: &SharedCaptureTiming,
+    timestamp_ms: u64,
+    reused_latest_frame: bool,
+) {
+    if let Ok(mut timing) = timing.lock() {
+        timing.composed_frames += 1;
+        timing.last_composed_timestamp_ms = Some(timestamp_ms);
+        if reused_latest_frame {
+            timing.reused_frame_compositions += 1;
+        }
+    }
+}
+
+pub(crate) fn record_frame_sent_to_ffmpeg(timing: &SharedCaptureTiming) {
+    if let Ok(mut timing) = timing.lock() {
+        timing.frames_sent_to_ffmpeg += 1;
+    }
+}
+
 pub(crate) fn bounded_frame_channel(capacity: usize) -> (FrameSender, FrameReceiver) {
     let (sender, receiver) = mpsc::sync_channel(capacity);
 
@@ -500,8 +559,9 @@ mod tests {
     };
 
     use super::{
-        bounded_frame_channel, CapturedFrame, CapturedFrameFormat, CapturedFrameStorage,
-        FfmpegFrameHandoffPlan, LatestFrameSampler, RuntimeWorker,
+        bounded_frame_channel, capture_timing_snapshot, new_capture_timing, record_capture_frame,
+        record_composed_frame, record_frame_sent_to_ffmpeg, CapturedFrame, CapturedFrameFormat,
+        CapturedFrameStorage, FfmpegFrameHandoffPlan, LatestFrameSampler, RuntimeWorker,
     };
 
     #[test]
@@ -658,6 +718,34 @@ mod tests {
             200,
         );
         assert_eq!(sampler.frame_interval(), Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn capture_timing_counters_track_live_frame_flow() {
+        let timing = new_capture_timing();
+
+        record_capture_frame(&timing, "monitor-1", 100);
+        record_capture_frame(&timing, "monitor-2", 90);
+        record_capture_frame(&timing, "monitor-1", 130);
+        record_composed_frame(&timing, 150, true);
+        record_frame_sent_to_ffmpeg(&timing);
+
+        let snapshot = capture_timing_snapshot(&timing);
+
+        assert_eq!(snapshot.composed_frames, 1);
+        assert_eq!(
+            snapshot.frames_received_by_source.get("monitor-1"),
+            Some(&2)
+        );
+        assert_eq!(
+            snapshot.frames_received_by_source.get("monitor-2"),
+            Some(&1)
+        );
+        assert_eq!(snapshot.frames_sent_to_ffmpeg, 1);
+        assert_eq!(snapshot.last_composed_timestamp_ms, Some(150));
+        assert_eq!(snapshot.reused_frame_compositions, 1);
+        assert_eq!(snapshot.source_timestamp_min_ms, Some(90));
+        assert_eq!(snapshot.source_timestamp_max_ms, Some(130));
     }
 
     fn test_frame(timestamp_ms: u64) -> CapturedFrame {

@@ -45,6 +45,15 @@ const diagnostics = {
     source: 'path',
     versionLine: 'ffmpeg version 6.1.1',
   },
+  latestRecording: {
+    activeCaptureTiming: null,
+    activeRecordingId: null,
+    activeSegmentId: null,
+    error: null,
+    latestSegment: null,
+    recordingId: null,
+    segmentCount: 0,
+  },
   recorder: {
     desktopAudio: {
       available: true,

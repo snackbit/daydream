@@ -290,12 +290,23 @@ fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
     let pausing = manager
         .begin_pause_recording(&recording_id, 20)
         .expect("begin pause");
-    assert_eq!(pausing.state, RecorderState::Pausing);
+    assert_eq!(pausing.state, RecorderState::Paused);
     assert_eq!(
         pausing.active_recording_id.as_deref(),
         Some(recording_id.as_str())
     );
-    assert!(pausing.active_segment_id.is_some());
+    assert_eq!(pausing.active_segment_id, None);
+    assert_eq!(
+        pausing.finalization.as_ref().map(|status| &status.action),
+        Some(&super::types::RecorderFinalizationAction::Pause)
+    );
+    assert_eq!(
+        pausing
+            .finalization
+            .as_ref()
+            .and_then(|status| status.segment_id.as_deref()),
+        started.active_segment_id.as_deref()
+    );
 
     let concurrent = manager
         .begin_stop_recording(&recording_id, 21)
@@ -311,6 +322,7 @@ fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
         Some(recording_id.as_str())
     );
     assert_eq!(paused.active_segment_id, None);
+    assert_eq!(paused.finalization, None);
 
     let segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
@@ -339,10 +351,11 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
     let stopping = manager
         .begin_stop_recording(&recording_id, 20)
         .expect("begin stop");
-    assert_eq!(stopping.state, RecorderState::Stopping);
+    assert_eq!(stopping.state, RecorderState::Idle);
+    assert_eq!(stopping.active_recording_id, None);
     assert_eq!(
-        stopping.active_recording_id.as_deref(),
-        Some(recording_id.as_str())
+        stopping.finalization.as_ref().map(|status| &status.action),
+        Some(&super::types::RecorderFinalizationAction::Stop)
     );
 
     let concurrent = manager
@@ -355,6 +368,7 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
         .expect("complete stop");
     assert_eq!(stopped.state, RecorderState::Idle);
     assert_eq!(stopped.active_recording_id, None);
+    assert_eq!(stopped.finalization, None);
 
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &recording_id))

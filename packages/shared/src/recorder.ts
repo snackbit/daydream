@@ -138,6 +138,18 @@ export interface StopRecordingInput {
 
 export type RecorderSegmentState = 'failed' | 'finalized' | 'recording';
 
+export type RecorderFinalizationAction = 'pause' | 'stop';
+
+export type RecorderFinalizationPhase = 'saving-segment' | 'stopping-capture';
+
+export interface RecorderFinalizationStatus {
+  action: RecorderFinalizationAction;
+  phase: RecorderFinalizationPhase;
+  recordingId: string;
+  segmentId: string | null;
+  startedAtMs: number;
+}
+
 export interface RecorderSegment {
   desktopAudioStreamIndex: number | null;
   durationMs: number | null;
@@ -152,6 +164,16 @@ export interface RecorderSegment {
   startedAtMs: number;
   state: RecorderSegmentState;
   videoStreamIndex: number | null;
+}
+
+export interface CaptureTimingDiagnostics {
+  composedFrames: number;
+  framesReceivedBySource: Record<string, number>;
+  framesSentToFfmpeg: number;
+  lastComposedTimestampMs: number | null;
+  reusedFrameCompositions: number;
+  sourceTimestampMaxMs: number | null;
+  sourceTimestampMinMs: number | null;
 }
 
 export interface RecorderBackendComponentHealth {
@@ -196,6 +218,7 @@ export interface RecorderStatus {
   activeSceneId: string | null;
   activeSegmentId: string | null;
   backendHealth: RecorderBackendHealth;
+  finalization: RecorderFinalizationStatus | null;
   lastError: RecorderError | null;
   state: RecorderState;
   updatedAtMs: number;

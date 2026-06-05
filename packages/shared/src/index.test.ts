@@ -40,6 +40,15 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
       source: 'unconfigured',
       versionLine: null,
     },
+    latestRecording: {
+      activeCaptureTiming: null,
+      activeRecordingId: null,
+      activeSegmentId: null,
+      error: null,
+      latestSegment: null,
+      recordingId: null,
+      segmentCount: 0,
+    },
     recorder: {
       desktopAudio: {
         available: false,
@@ -124,6 +133,7 @@ test('recorder contracts support gate-a unavailable state', () => {
         sourceTypes: [],
       },
     },
+    finalization: null,
     lastError: error,
     state: 'unavailable',
     updatedAtMs: 1,

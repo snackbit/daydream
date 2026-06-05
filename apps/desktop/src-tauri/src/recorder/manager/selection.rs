@@ -7,7 +7,7 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
         let mut runtime = self.lock_runtime()?;
-        if runtime.active.is_some() || is_pending_lifecycle_state(&runtime.status.state) {
+        if runtime.active.is_some() || status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
                 "A recording is already active.",
@@ -31,7 +31,7 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<ActiveRecording, RecorderError> {
         let mut runtime = self.lock_runtime()?;
-        if is_pending_lifecycle_state(&runtime.status.state) {
+        if status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
                 "A recorder lifecycle transition is already in progress.",

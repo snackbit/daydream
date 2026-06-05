@@ -16,6 +16,7 @@ pub struct FinalizeRecordingSegmentInput {
     pub ended_at_ms: i64,
     pub id: String,
     pub microphone_audio_stream_index: Option<i64>,
+    pub probe_json: Option<String>,
     pub updated_at_ms: i64,
     pub video_stream_index: Option<i64>,
 }
@@ -39,6 +40,7 @@ pub struct RecordingSegmentRow {
     pub file_path: String,
     pub id: String,
     pub microphone_audio_stream_index: Option<i64>,
+    pub probe_json: Option<String>,
     pub recording_id: String,
     pub segment_index: i64,
     pub started_at_ms: i64,
@@ -91,7 +93,8 @@ pub fn finalize_recording_segment(
             microphone_audio_stream_index = ?6,
             ffmpeg_exit_code = 0,
             error_code = NULL,
-            updated_at_ms = ?7
+            probe_json = ?7,
+            updated_at_ms = ?8
         WHERE id = ?1
         "#,
         params![
@@ -101,6 +104,7 @@ pub fn finalize_recording_segment(
             input.video_stream_index,
             input.desktop_audio_stream_index,
             input.microphone_audio_stream_index,
+            input.probe_json,
             input.updated_at_ms,
         ],
     )?;
@@ -158,7 +162,8 @@ pub fn list_recording_segments(
             desktop_audio_stream_index,
             microphone_audio_stream_index,
             ffmpeg_exit_code,
-            error_code
+            error_code,
+            probe_json
         FROM recording_segments
         WHERE recording_id = ?1
         ORDER BY segment_index ASC
@@ -189,7 +194,8 @@ fn get_recording_segment(
             desktop_audio_stream_index,
             microphone_audio_stream_index,
             ffmpeg_exit_code,
-            error_code
+            error_code,
+            probe_json
         FROM recording_segments
         WHERE id = ?1
         "#,
@@ -213,5 +219,6 @@ fn recording_segment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recor
         microphone_audio_stream_index: row.get(10)?,
         ffmpeg_exit_code: row.get(11)?,
         error_code: row.get(12)?,
+        probe_json: row.get(13)?,
     })
 }

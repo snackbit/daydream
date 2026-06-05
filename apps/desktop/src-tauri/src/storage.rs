@@ -20,8 +20,8 @@ pub use portal_tokens::{
     PortalRestoreTokenRow,
 };
 pub use recordings::{
-    create_recording, get_recording, mark_recording_completed, mark_recording_started,
-    update_recording_status, CreateRecordingInput, RecordingRow,
+    create_recording, get_latest_recording_id, get_recording, mark_recording_completed,
+    mark_recording_started, update_recording_status, CreateRecordingInput, RecordingRow,
 };
 pub use scenes::{
     get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, RecorderSceneRow,
