@@ -571,7 +571,7 @@ Exit Criteria:
 
 ## Gate H.1: PipeWire SHM Capture and CPU Compositor
 
-- [ ] Add Linux-only `pipewire-rs` integration for portal monitor streams opened
+- [x] Add Linux-only `pipewire-rs` integration for portal monitor streams opened
   from a fresh `startRecording` portal session.
 - [x] Match fresh portal streams to saved scene sources by stable portal stream
   ID or mapping ID. Missing matches fail before recording rows are created.
@@ -583,7 +583,7 @@ Exit Criteria:
   and return PipeWire buffers promptly.
 - [x] Composite selected monitor streams into the configured scene canvas using
   deterministic CPU bilinear crop, scale, placement, and z-order behavior.
-- [ ] Pace composition with latest-frame sampling at the configured FPS and feed
+- [x] Pace composition with latest-frame sampling at the configured FPS and feed
   composed `yuv444p` frames to the existing FFmpeg segment writer.
 - [ ] Add tests for source matching, SHM format mapping, DMA-BUF-required
   errors, frame sampling, CPU compositor math, FFmpeg handoff, cleanup, and

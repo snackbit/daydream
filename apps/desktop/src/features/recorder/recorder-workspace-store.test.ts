@@ -13,6 +13,7 @@ const client = vi.hoisted(() => ({
   getCaptureSources: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
+  listenToRecorderStatusChanged: vi.fn(),
   pauseRecording: vi.fn(),
   resumeRecording: vi.fn(),
   saveRecorderScene: vi.fn(),
@@ -114,6 +115,7 @@ beforeEach(() => {
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
+  client.listenToRecorderStatusChanged.mockResolvedValue(vi.fn());
   client.selectCaptureSources.mockResolvedValue(captureSources);
 });
 
@@ -671,6 +673,69 @@ test('pause resume stop and start update status through recorder commands', asyn
     expect.objectContaining({ sceneId: scene.id }),
   );
   expect(useRecorderWorkspaceStore.getState().status?.state).toBe('recording');
+});
+
+test('async pause keeps lifecycle action pending until status event settles', async () => {
+  const statusEvents: {
+    handler?: (status: RecorderStatus) => void;
+  } = {};
+  const recordingStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    state: 'recording' as const,
+  };
+  useRecorderWorkspaceStore.setState({
+    isDirty: false,
+    scene: sceneWithSources(['main']),
+    status: recordingStatus,
+  });
+  client.listenToRecorderStatusChanged.mockImplementation((handler) => {
+    statusEvents.handler = handler;
+    return Promise.resolve(vi.fn());
+  });
+  client.pauseRecording.mockResolvedValue({
+    ...recordingStatus,
+    state: 'pausing',
+  });
+
+  await useRecorderWorkspaceStore.getState().subscribeToStatusEvents();
+  await useRecorderWorkspaceStore.getState().pause();
+
+  expect(useRecorderWorkspaceStore.getState().pendingLifecycleAction).toBe(
+    'pause',
+  );
+  expect(useRecorderWorkspaceStore.getState().status?.state).toBe('pausing');
+
+  expect(statusEvents.handler).toBeDefined();
+  statusEvents.handler?.({
+    ...recordingStatus,
+    activeSegmentId: null,
+    state: 'paused',
+  });
+
+  expect(
+    useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+  ).toBeNull();
+  expect(useRecorderWorkspaceStore.getState().status?.state).toBe('paused');
+});
+
+test('locked lifecycle transition rejects concurrent recorder commands', async () => {
+  useRecorderWorkspaceStore.setState({
+    pendingLifecycleAction: 'stop',
+    status: {
+      ...status,
+      activeRecordingId: 'recording-1',
+      state: 'stopping',
+    },
+  });
+
+  await useRecorderWorkspaceStore.getState().pause();
+  await useRecorderWorkspaceStore.getState().resume();
+  await useRecorderWorkspaceStore.getState().stop();
+
+  expect(client.pauseRecording).not.toHaveBeenCalled();
+  expect(client.resumeRecording).not.toHaveBeenCalled();
+  expect(client.stopRecording).not.toHaveBeenCalled();
 });
 
 test('recorder command failures preserve typed recorder error messages', async () => {

@@ -1,6 +1,7 @@
 export type RecorderState =
   | 'error'
   | 'idle'
+  | 'pausing'
   | 'paused'
   | 'recording'
   | 'selecting'

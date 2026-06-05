@@ -6,9 +6,10 @@
 - Gate H.1 PipeWire SHM capture is partially staged: portal live-session
   preflight, stable-ID source matching, `pipewire-rs` 0.9.2 dependency
   resolution, CPU-readable buffer extraction, DMA-BUF-required classification,
-  latest-frame sampling, and CPU compositor tests exist. Public
-  `startRecording` still uses the synthetic FFmpeg frame pump until the manager
-  lifecycle is switched to the live PipeWire session.
+  latest-frame sampling, CPU compositor tests, and strict-live public
+  `startRecording`/`resumeRecording` wiring exist. Manual KDE Wayland smoke
+  validation is still required to prove whether the local compositor offers SHM
+  frames or requires Gate H.2 DMA-BUF import.
 
 ## Locked Decisions
 
@@ -150,6 +151,10 @@
   passed after adding the internal PipeWire SHM adapter with 48 recorder tests.
 - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`: found
   rustfmt drift in the new Linux capture module; `cargo fmt` was applied.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recorder::`:
+  passed after strict-live public start/resume wiring with 52 recorder tests.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`: passed
+  after strict-live public start/resume wiring.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate E with 37 Rust tests.
 - `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E shadcn

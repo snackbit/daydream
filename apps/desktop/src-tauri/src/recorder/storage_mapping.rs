@@ -83,7 +83,7 @@ fn storage_scene_source_input_from_recorder(
     })
 }
 
-fn scene_from_storage(scene: RecorderSceneRow) -> Result<RecorderScene, RecorderError> {
+pub(crate) fn scene_from_storage(scene: RecorderSceneRow) -> Result<RecorderScene, RecorderError> {
     Ok(RecorderScene {
         canvas_height: u32_value(scene.canvas_height, "canvasHeight")?,
         canvas_width: u32_value(scene.canvas_width, "canvasWidth")?,

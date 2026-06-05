@@ -22,6 +22,7 @@ export interface CaptureResizableLayoutProps {
   audioSources: AudioSource[];
   captureSources: CaptureSource[];
   desktopAudioSourceId: string | null;
+  lifecycleLocked: boolean;
   loadStatus: string;
   microphoneAudioSourceId: string | null;
   onChangeScene: (scene: RecorderScene) => void;
@@ -42,6 +43,7 @@ export function CaptureResizableLayout({
   audioSources,
   captureSources,
   desktopAudioSourceId,
+  lifecycleLocked,
   loadStatus,
   microphoneAudioSourceId,
   onChangeScene,
@@ -61,6 +63,7 @@ export function CaptureResizableLayout({
         <CaptureSourcesPanel
           audioSources={audioSources}
           desktopAudioSourceId={desktopAudioSourceId}
+          lifecycleLocked={lifecycleLocked}
           loadStatus={loadStatus}
           microphoneAudioSourceId={microphoneAudioSourceId}
           pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}

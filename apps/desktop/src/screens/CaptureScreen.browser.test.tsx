@@ -22,6 +22,7 @@ const client = vi.hoisted(() => ({
   getCaptureSources: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
+  listenToRecorderStatusChanged: vi.fn(),
   pauseRecording: vi.fn(),
   resumeRecording: vi.fn(),
   saveRecorderScene: vi.fn(),
@@ -133,6 +134,7 @@ beforeEach(() => {
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
+  client.listenToRecorderStatusChanged.mockResolvedValue(vi.fn());
   client.selectCaptureSources.mockResolvedValue(captureSources);
 });
 
@@ -633,6 +635,71 @@ test('CaptureScreen saves and reloads selected audio sources', async () => {
     'desktop',
   );
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(false);
+});
+
+test('CaptureScreen locks recorder controls while stop is finishing', async () => {
+  const statusEvents: {
+    handler?: (status: RecorderStatus) => void;
+  } = {};
+  const recordingStatus: RecorderStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    activeSceneId: 'scene-1',
+    activeSegmentId: 'segment-1',
+    state: 'recording',
+  };
+  client.getRecorderStatus.mockResolvedValue(recordingStatus);
+  client.getRecorderScene.mockResolvedValue(sceneFixture(['main']));
+  client.listenToRecorderStatusChanged.mockImplementation((handler) => {
+    statusEvents.handler = handler;
+    return Promise.resolve(vi.fn());
+  });
+  client.stopRecording.mockResolvedValue({
+    ...recordingStatus,
+    state: 'stopping',
+  });
+
+  render(<CaptureScreen />);
+
+  const stopButton = await screen.findByRole('button', { name: /stop/i });
+  fireEvent.click(stopButton);
+
+  await waitFor(() =>
+    expect(client.stopRecording).toHaveBeenCalledWith({
+      recordingId: 'recording-1',
+    }),
+  );
+  expect(
+    (screen.getByRole('button', { name: /stopping/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole('button', { name: /pause/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (
+      screen.getByRole('button', {
+        name: /add monitor sources/i,
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+
+  expect(statusEvents.handler).toBeDefined();
+  statusEvents.handler?.({
+    ...recordingStatus,
+    activeRecordingId: null,
+    activeSceneId: null,
+    activeSegmentId: null,
+    state: 'idle',
+  });
+
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /start/i })).toBeTruthy(),
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+  ).toBeNull();
 });
 
 test('CaptureScreen audio picker shows every unadded device', async () => {

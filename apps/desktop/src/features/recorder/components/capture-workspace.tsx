@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type SyntheticEvent } from 'react';
 import type {
   AudioSource,
   AudioSourceRole,
@@ -10,6 +10,7 @@ import type {
   DuplicateCaptureSourceCandidate,
   DuplicateCaptureSourceResolution,
 } from '@/features/recorder/scene-layout';
+import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 import { CaptureResizableLayout } from './capture-resizable-layout';
 import { CaptureToolbar } from './capture-toolbar';
 import { RecorderErrorAlert } from './recorder-error-alert';
@@ -35,6 +36,7 @@ export interface CaptureWorkspaceProps {
   onSelectSceneSource: (sourceId: string | null) => void;
   onStart: () => void;
   onStop: () => void;
+  pendingLifecycleAction: RecorderLifecycleAction | null;
   saveStatus: string;
   scene: RecorderScene | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
@@ -61,6 +63,7 @@ export function CaptureWorkspace({
   onSelectSceneSource,
   onStart,
   onStop,
+  pendingLifecycleAction,
   saveStatus,
   scene,
   pendingDuplicateCaptureSources,
@@ -73,12 +76,19 @@ export function CaptureWorkspace({
       null,
     [scene, selectedSceneSourceId],
   );
+  const lifecycleLocked =
+    pendingLifecycleAction !== null ||
+    status?.state === 'pausing' ||
+    status?.state === 'selecting' ||
+    status?.state === 'stopping';
 
   return (
     <section className="flex min-h-full flex-col">
       <CaptureToolbar
         isDirty={isDirty}
+        lifecycleLocked={lifecycleLocked}
         loadStatus={loadStatus}
+        pendingLifecycleAction={pendingLifecycleAction}
         saveStatus={saveStatus}
         scene={scene}
         status={status}
@@ -91,23 +101,43 @@ export function CaptureWorkspace({
 
       {error ? <RecorderErrorAlert message={error} /> : null}
 
-      <CaptureResizableLayout
-        audioSources={audioSources}
-        captureSources={captureSources}
-        desktopAudioSourceId={desktopAudioSourceId}
-        loadStatus={loadStatus}
-        microphoneAudioSourceId={microphoneAudioSourceId}
-        pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
-        scene={scene}
-        selectedSceneSource={selectedSceneSource}
-        selectedSceneSourceId={selectedSceneSourceId}
-        onChangeScene={onChangeScene}
-        onDeleteSceneSource={onDeleteSceneSource}
-        onSelectAudioSource={onSelectAudioSource}
-        onSelectCaptureSources={onSelectCaptureSources}
-        onSelectSceneSource={onSelectSceneSource}
-        onResolveDuplicateCaptureSource={onResolveDuplicateCaptureSource}
-      />
+      <div
+        aria-disabled={lifecycleLocked}
+        className={
+          lifecycleLocked ? 'min-h-0 flex-1 opacity-60' : 'min-h-0 flex-1'
+        }
+        onClickCapture={lifecycleLocked ? preventLockedInteraction : undefined}
+        onKeyDownCapture={
+          lifecycleLocked ? preventLockedInteraction : undefined
+        }
+        onPointerDownCapture={
+          lifecycleLocked ? preventLockedInteraction : undefined
+        }
+      >
+        <CaptureResizableLayout
+          audioSources={audioSources}
+          captureSources={captureSources}
+          desktopAudioSourceId={desktopAudioSourceId}
+          lifecycleLocked={lifecycleLocked}
+          loadStatus={loadStatus}
+          microphoneAudioSourceId={microphoneAudioSourceId}
+          pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
+          scene={scene}
+          selectedSceneSource={selectedSceneSource}
+          selectedSceneSourceId={selectedSceneSourceId}
+          onChangeScene={onChangeScene}
+          onDeleteSceneSource={onDeleteSceneSource}
+          onSelectAudioSource={onSelectAudioSource}
+          onSelectCaptureSources={onSelectCaptureSources}
+          onSelectSceneSource={onSelectSceneSource}
+          onResolveDuplicateCaptureSource={onResolveDuplicateCaptureSource}
+        />
+      </div>
     </section>
   );
+}
+
+function preventLockedInteraction(event: SyntheticEvent) {
+  event.preventDefault();
+  event.stopPropagation();
 }

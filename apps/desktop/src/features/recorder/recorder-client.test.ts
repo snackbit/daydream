@@ -14,7 +14,9 @@ import {
   getCaptureSources,
   getRecorderScene,
   getRecorderStatus,
+  listenToRecorderStatusChanged,
   pauseRecording,
+  recorderStatusChangedEvent,
   resumeRecording,
   saveRecorderScene,
   selectCaptureSources,
@@ -22,12 +24,17 @@ import {
   stopRecording,
 } from './recorder-client';
 
-const { invokeMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  listenMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: listenMock,
 }));
 
 const scene: RecorderScene = {
@@ -51,6 +58,7 @@ const unavailableFfmpegCapabilities = {
 
 beforeEach(() => {
   invokeMock.mockReset();
+  listenMock.mockReset();
 });
 
 test('recorder read helpers use locked camelCase command names', async () => {
@@ -172,4 +180,59 @@ test('recorder helpers propagate typed recorder errors', async () => {
   invokeMock.mockRejectedValue(error);
 
   await expect(getRecorderStatus()).rejects.toEqual(error);
+});
+
+test('recorder status event helper listens with locked event name', async () => {
+  const unlisten = vi.fn();
+  const handler = vi.fn();
+  const status = {
+    activeRecordingId: null,
+    activeSceneId: null,
+    activeSegmentId: null,
+    backendHealth: {
+      desktopAudio: {
+        available: false,
+        defaultSourceId: null,
+        error: null,
+      },
+      ffmpeg: {
+        available: false,
+        capabilities: unavailableFfmpegCapabilities,
+        error: null,
+        path: null,
+        versionLine: null,
+      },
+      microphone: {
+        available: false,
+        defaultSourceId: null,
+        error: null,
+      },
+      pipewire: {
+        available: false,
+        error: null,
+      },
+      portal: {
+        available: false,
+        cursorModes: [],
+        error: null,
+        screenCastVersion: null,
+        sourceTypes: [],
+      },
+    },
+    lastError: null,
+    state: 'idle',
+    updatedAtMs: 1,
+  };
+  listenMock.mockImplementation((_eventName, listener) => {
+    listener({ payload: status });
+    return Promise.resolve(unlisten);
+  });
+
+  await expect(listenToRecorderStatusChanged(handler)).resolves.toBe(unlisten);
+
+  expect(listenMock).toHaveBeenCalledWith(
+    recorderStatusChangedEvent,
+    expect.any(Function),
+  );
+  expect(handler).toHaveBeenCalledWith(status);
 });

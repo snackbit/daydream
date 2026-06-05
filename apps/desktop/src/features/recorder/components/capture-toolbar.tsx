@@ -1,16 +1,20 @@
+import type { ReactNode } from 'react';
 import type { RecorderScene, RecorderStatus } from '@daydream/shared';
-import { Pause, Play, Save, Square } from 'lucide-react';
+import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 
 export interface CaptureToolbarProps {
   isDirty: boolean;
+  lifecycleLocked: boolean;
   loadStatus: string;
   onPause: () => void;
   onResume: () => void;
   onSave: () => void;
   onStart: () => void;
   onStop: () => void;
+  pendingLifecycleAction: RecorderLifecycleAction | null;
   saveStatus: string;
   scene: RecorderScene | null;
   status: RecorderStatus | null;
@@ -18,17 +22,22 @@ export interface CaptureToolbarProps {
 
 export function CaptureToolbar({
   isDirty,
+  lifecycleLocked,
   loadStatus,
   onPause,
   onResume,
   onSave,
   onStart,
   onStop,
+  pendingLifecycleAction,
   saveStatus,
   scene,
   status,
 }: CaptureToolbarProps) {
+  const activeLifecycleAction =
+    pendingLifecycleAction ?? lifecycleActionFromStatus(status);
   const startDisabled =
+    lifecycleLocked ||
     !scene ||
     scene.sources.length === 0 ||
     isDirty ||
@@ -36,10 +45,11 @@ export function CaptureToolbar({
     !status.backendHealth.portal.available ||
     !status.backendHealth.pipewire.available ||
     !status.backendHealth.ffmpeg.available;
-  const pauseDisabled = status?.state !== 'recording';
-  const resumeDisabled = status?.state !== 'paused';
+  const pauseDisabled = lifecycleLocked || status?.state !== 'recording';
+  const resumeDisabled = lifecycleLocked || status?.state !== 'paused';
   const stopDisabled =
-    status?.state !== 'recording' && status?.state !== 'paused';
+    lifecycleLocked ||
+    (status?.state !== 'recording' && status?.state !== 'paused');
 
   return (
     <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-4">
@@ -60,16 +70,26 @@ export function CaptureToolbar({
       <div className="flex flex-wrap justify-end gap-2">
         <Button
           className="gap-2"
-          disabled={!scene || !isDirty || saveStatus === 'loading'}
+          disabled={
+            lifecycleLocked || !scene || !isDirty || saveStatus === 'loading'
+          }
           onClick={onSave}
           variant="outline"
         >
-          <Save className="size-3.5" />
+          {saveStatus === 'loading' ? (
+            <LoaderCircle className="size-3.5 animate-spin" />
+          ) : (
+            <Save className="size-3.5" />
+          )}
           Save
         </Button>
         <Button className="gap-2" disabled={startDisabled} onClick={onStart}>
-          <Play className="size-3.5" />
-          Start
+          <ToolbarButtonIcon
+            action="start"
+            activeAction={activeLifecycleAction}
+            icon={<Play className="size-3.5" />}
+          />
+          {activeLifecycleAction === 'start' ? 'Starting' : 'Start'}
         </Button>
         <Button
           className="gap-2"
@@ -77,8 +97,12 @@ export function CaptureToolbar({
           onClick={onPause}
           variant="outline"
         >
-          <Pause className="size-3.5" />
-          Pause
+          <ToolbarButtonIcon
+            action="pause"
+            activeAction={activeLifecycleAction}
+            icon={<Pause className="size-3.5" />}
+          />
+          {activeLifecycleAction === 'pause' ? 'Pausing' : 'Pause'}
         </Button>
         <Button
           className="gap-2"
@@ -86,8 +110,12 @@ export function CaptureToolbar({
           onClick={onResume}
           variant="outline"
         >
-          <Play className="size-3.5" />
-          Resume
+          <ToolbarButtonIcon
+            action="resume"
+            activeAction={activeLifecycleAction}
+            icon={<Play className="size-3.5" />}
+          />
+          {activeLifecycleAction === 'resume' ? 'Resuming' : 'Resume'}
         </Button>
         <Button
           className="gap-2"
@@ -95,10 +123,46 @@ export function CaptureToolbar({
           onClick={onStop}
           variant="destructive"
         >
-          <Square className="size-3.5" />
-          Stop
+          <ToolbarButtonIcon
+            action="stop"
+            activeAction={activeLifecycleAction}
+            icon={<Square className="size-3.5" />}
+          />
+          {activeLifecycleAction === 'stop' ? 'Stopping' : 'Stop'}
         </Button>
       </div>
     </div>
+  );
+}
+
+function lifecycleActionFromStatus(
+  status: RecorderStatus | null,
+): RecorderLifecycleAction | null {
+  if (status?.state === 'pausing') {
+    return 'pause';
+  }
+  if (status?.state === 'selecting') {
+    return 'start';
+  }
+  if (status?.state === 'stopping') {
+    return 'stop';
+  }
+
+  return null;
+}
+
+function ToolbarButtonIcon({
+  action,
+  activeAction,
+  icon,
+}: {
+  action: RecorderLifecycleAction;
+  activeAction: RecorderLifecycleAction | null;
+  icon: ReactNode;
+}) {
+  return activeAction === action ? (
+    <LoaderCircle className="size-3.5 animate-spin" />
+  ) : (
+    icon
   );
 }

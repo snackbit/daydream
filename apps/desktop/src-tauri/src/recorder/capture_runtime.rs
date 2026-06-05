@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    fmt,
+    fmt::{self, Debug},
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
     time::Duration,
@@ -87,7 +87,7 @@ pub(crate) trait CaptureAdapter: Send + Sync {
     ) -> Result<Box<dyn CaptureSession>, RecorderError>;
 }
 
-pub(crate) trait CaptureSession: Send {
+pub(crate) trait CaptureSession: Send + Debug {
     fn stop(self: Box<Self>) -> Result<(), RecorderError>;
 }
 

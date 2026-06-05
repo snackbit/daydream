@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   AudioSourceList,
   CaptureSourceList,
@@ -11,6 +12,8 @@ import type {
   StartRecordingInput,
   StopRecordingInput,
 } from '@daydream/shared';
+
+export const recorderStatusChangedEvent = 'recorder-status-changed';
 
 export async function getRecorderStatus(): Promise<RecorderStatus> {
   return invoke<RecorderStatus>('getRecorderStatus');
@@ -64,4 +67,12 @@ export async function stopRecording(
   input: StopRecordingInput,
 ): Promise<RecorderStatus> {
   return invoke<RecorderStatus>('stopRecording', { input });
+}
+
+export async function listenToRecorderStatusChanged(
+  handler: (status: RecorderStatus) => void,
+): Promise<() => void> {
+  return listen<RecorderStatus>(recorderStatusChangedEvent, (event) => {
+    handler(event.payload);
+  });
 }

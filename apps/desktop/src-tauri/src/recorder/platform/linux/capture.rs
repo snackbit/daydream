@@ -8,15 +8,17 @@ use pw::{properties::properties, spa};
 use super::portal::{LivePortalSession, LivePortalStream};
 use crate::recorder::{
     capture_runtime::{
-        CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession, CapturedFrame,
-        CapturedFrameFormat, CapturedFrameStorage, FrameSender, LatestFrameSampler, RuntimeWorker,
+        bounded_frame_channel, CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession,
+        CapturedFrame, CapturedFrameFormat, CapturedFrameStorage, FrameSender, LatestFrameSampler,
+        RuntimeWorker,
     },
     compositor::{SceneCompositorInput, SceneCompositorPlan},
     errors::{
         capture_adapter_failed_error, capture_format_unsupported_error,
         capture_source_missing_error,
     },
-    manager::now_ms,
+    ffmpeg::{self, FfmpegSegmentInput},
+    manager::{now_ms, RunningSegmentMedia},
     types::{CaptureSourceKind, RecorderError, RecorderScene},
 };
 
@@ -31,6 +33,20 @@ pub(crate) struct LiveCapturePreflight {
 pub(crate) struct PipeWireCaptureSession {
     shutdown: pw::channel::Sender<PipeWireControl>,
     worker: RuntimeWorker,
+}
+
+pub(crate) struct PreparedLiveCapture {
+    live_session: LivePortalSession,
+    preflight: LiveCapturePreflight,
+}
+
+impl std::fmt::Debug for PipeWireCaptureSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PipeWireCaptureSession")
+            .field("worker", &self.worker)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug)]
@@ -74,32 +90,119 @@ pub(crate) fn preflight_live_capture(
     })
 }
 
+pub(crate) fn prepared_live_capture(
+    live_session: LivePortalSession,
+    scene: &RecorderScene,
+) -> Result<PreparedLiveCapture, RecorderError> {
+    let preflight = preflight_live_capture(scene, &live_session.streams)?;
+
+    Ok(PreparedLiveCapture {
+        live_session,
+        preflight,
+    })
+}
+
+pub(crate) fn start_live_segment(
+    ffmpeg_path: &std::path::Path,
+    input: &FfmpegSegmentInput,
+    prepared: PreparedLiveCapture,
+) -> Result<RunningSegmentMedia, RecorderError> {
+    let (sender, receiver) = bounded_frame_channel(3);
+    let ffmpeg = ffmpeg::start_segment_from_frames(ffmpeg_path, input, receiver)?;
+    let capture = match start_pipewire_capture_session(
+        prepared.live_session,
+        prepared.preflight,
+        input.fps,
+        sender,
+    ) {
+        Ok(capture) => capture,
+        Err(error) => {
+            let _ = ffmpeg.stop();
+            return Err(error);
+        }
+    };
+
+    Ok(RunningSegmentMedia::new(ffmpeg, Some(capture)))
+}
+
 fn runtime_sources_for_scene(
     scene: &RecorderScene,
     live_streams: &[LivePortalStream],
 ) -> Result<Vec<CaptureRuntimeSource>, RecorderError> {
-    scene
-        .sources
-        .iter()
-        .map(|scene_source| {
-            let stream = live_streams
-                .iter()
-                .find(|stream| stream.source_id == scene_source.source_id)
-                .ok_or_else(|| capture_source_missing_error(&scene_source.source_id))?;
+    let mut claimed_streams = vec![false; live_streams.len()];
+    let mut runtime_sources = Vec::with_capacity(scene.sources.len());
 
-            Ok(CaptureRuntimeSource {
-                display_name: stream.display_name.clone(),
-                handle: CaptureRuntimeSourceHandle::BackendId(format!(
-                    "pipewire-node-{}",
-                    stream.node_id
-                )),
-                height: stream.logical_height,
-                kind: CaptureSourceKind::Monitor,
-                source_id: stream.source_id.clone(),
-                width: stream.logical_width,
-            })
+    for (scene_index, scene_source) in scene.sources.iter().enumerate() {
+        let stream_index = match_live_stream_for_scene_source(
+            scene_source,
+            scene_index,
+            live_streams,
+            &claimed_streams,
+        )
+        .ok_or_else(|| capture_source_missing_error(&scene_source.source_id))?;
+        claimed_streams[stream_index] = true;
+        let stream = &live_streams[stream_index];
+
+        runtime_sources.push(CaptureRuntimeSource {
+            display_name: stream.display_name.clone(),
+            handle: CaptureRuntimeSourceHandle::BackendId(format!(
+                "pipewire-node-{}",
+                stream.node_id
+            )),
+            height: stream.logical_height,
+            kind: CaptureSourceKind::Monitor,
+            source_id: scene_source.source_id.clone(),
+            width: stream.logical_width,
+        });
+    }
+
+    Ok(runtime_sources)
+}
+
+fn match_live_stream_for_scene_source(
+    scene_source: &crate::recorder::types::RecorderSceneSource,
+    scene_index: usize,
+    live_streams: &[LivePortalStream],
+    claimed_streams: &[bool],
+) -> Option<usize> {
+    if let Some(index) = live_streams
+        .iter()
+        .enumerate()
+        .find(|(index, stream)| {
+            !claimed_streams[*index] && stream.source_id == scene_source.source_id
         })
-        .collect()
+        .map(|(index, _stream)| index)
+    {
+        return Some(index);
+    }
+
+    if !is_volatile_pipewire_source_id(&scene_source.source_id) {
+        return None;
+    }
+
+    if let Some(index) = live_streams
+        .iter()
+        .enumerate()
+        .find(|(index, stream)| {
+            !claimed_streams[*index] && stream.display_name == scene_source.display_name
+        })
+        .map(|(index, _stream)| index)
+    {
+        return Some(index);
+    }
+
+    live_streams
+        .get(scene_index)
+        .filter(|_stream| !claimed_streams[scene_index])
+        .map(|_stream| scene_index)
+        .or_else(|| claimed_streams.iter().position(|claimed| !claimed))
+}
+
+fn is_volatile_pipewire_source_id(source_id: &str) -> bool {
+    source_id
+        .strip_prefix("pipewire-node-")
+        .and_then(|node_id| node_id.parse::<u32>().ok())
+        .is_some()
 }
 
 pub(crate) fn start_pipewire_capture_session(
@@ -534,6 +637,7 @@ mod tests {
         PipeWireStartupNotifier,
     };
     use crate::recorder::{
+        capture_runtime::CaptureRuntimeSourceHandle,
         errors::capture_adapter_failed_error,
         platform::linux::portal::LivePortalStream,
         types::{
@@ -572,6 +676,59 @@ mod tests {
 
         assert_eq!(error.code, "recorder_capture_source_missing");
         assert!(error.message.contains("portal-monitor-missing"));
+    }
+
+    #[test]
+    fn preflight_maps_volatile_pipewire_ids_by_display_name() {
+        let scene = test_scene(vec![scene_source_with_display(
+            "saved-monitor",
+            "pipewire-node-100",
+            0,
+            "Monitor 1",
+        )]);
+        let preflight = preflight_live_capture(
+            &scene,
+            &[live_stream_with_display(
+                "pipewire-node-101",
+                101,
+                "Monitor 1",
+            )],
+        )
+        .expect("volatile pipewire node should remap to live stream");
+
+        assert_eq!(preflight.runtime_sources[0].source_id, "pipewire-node-100");
+        assert_eq!(
+            preflight.runtime_sources[0].handle,
+            CaptureRuntimeSourceHandle::BackendId("pipewire-node-101".to_string())
+        );
+        assert_eq!(preflight.plan.inputs[0].source_id, "pipewire-node-100");
+    }
+
+    #[test]
+    fn preflight_maps_volatile_pipewire_ids_by_scene_order() {
+        let scene = test_scene(vec![
+            scene_source_with_display("left", "pipewire-node-100", 0, "Saved left"),
+            scene_source_with_display("right", "pipewire-node-200", 1, "Saved right"),
+        ]);
+        let preflight = preflight_live_capture(
+            &scene,
+            &[
+                live_stream_with_display("pipewire-node-8", 8, "Live first"),
+                live_stream_with_display("pipewire-node-9", 9, "Live second"),
+            ],
+        )
+        .expect("volatile pipewire nodes should remap by order");
+
+        assert_eq!(preflight.runtime_sources[0].source_id, "pipewire-node-100");
+        assert_eq!(
+            preflight.runtime_sources[0].handle,
+            CaptureRuntimeSourceHandle::BackendId("pipewire-node-8".to_string())
+        );
+        assert_eq!(preflight.runtime_sources[1].source_id, "pipewire-node-200");
+        assert_eq!(
+            preflight.runtime_sources[1].handle,
+            CaptureRuntimeSourceHandle::BackendId("pipewire-node-9".to_string())
+        );
     }
 
     #[test]
@@ -641,8 +798,16 @@ mod tests {
     }
 
     fn live_stream(source_id: &str, node_id: u32) -> LivePortalStream {
+        live_stream_with_display(source_id, node_id, source_id)
+    }
+
+    fn live_stream_with_display(
+        source_id: &str,
+        node_id: u32,
+        display_name: &str,
+    ) -> LivePortalStream {
         LivePortalStream {
-            display_name: source_id.to_string(),
+            display_name: display_name.to_string(),
             logical_height: Some(50),
             logical_width: Some(100),
             node_id,
@@ -664,6 +829,15 @@ mod tests {
     }
 
     fn scene_source(id: &str, source_id: &str, z_index: i32) -> RecorderSceneSource {
+        scene_source_with_display(id, source_id, z_index, id)
+    }
+
+    fn scene_source_with_display(
+        id: &str,
+        source_id: &str,
+        z_index: i32,
+        display_name: &str,
+    ) -> RecorderSceneSource {
         RecorderSceneSource {
             crop: CropRect {
                 bottom: 0.0,
@@ -671,7 +845,7 @@ mod tests {
                 right: 0.0,
                 top: 0.0,
             },
-            display_name: id.to_string(),
+            display_name: display_name.to_string(),
             id: id.to_string(),
             preserve_aspect_ratio: true,
             rect: CanvasRect {

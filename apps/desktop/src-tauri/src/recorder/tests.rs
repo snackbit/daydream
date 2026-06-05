@@ -273,6 +273,103 @@ fn manager_stop_from_paused_does_not_create_new_segment() {
 }
 
 #[test]
+fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+
+    let started = manager
+        .start_internal(&storage, start_input(&scene_id), 10)
+        .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+
+    let pausing = manager
+        .begin_pause_recording(&recording_id, 20)
+        .expect("begin pause");
+    assert_eq!(pausing.state, RecorderState::Pausing);
+    assert_eq!(
+        pausing.active_recording_id.as_deref(),
+        Some(recording_id.as_str())
+    );
+    assert!(pausing.active_segment_id.is_some());
+
+    let concurrent = manager
+        .begin_stop_recording(&recording_id, 21)
+        .expect_err("pending pause should reject concurrent stop");
+    assert_eq!(concurrent.code, "recorder_already_active");
+
+    let paused = manager
+        .complete_pause_recording(&storage, &recording_id, 25)
+        .expect("complete pause");
+    assert_eq!(paused.state, RecorderState::Paused);
+    assert_eq!(
+        paused.active_recording_id.as_deref(),
+        Some(recording_id.as_str())
+    );
+    assert_eq!(paused.active_segment_id, None);
+
+    let segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list segments");
+    assert_eq!(segments[0].state, "finalized");
+    assert_eq!(segments[0].duration_ms, Some(15));
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
+
+#[test]
+fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+
+    let started = manager
+        .start_internal(&storage, start_input(&scene_id), 10)
+        .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+
+    let stopping = manager
+        .begin_stop_recording(&recording_id, 20)
+        .expect("begin stop");
+    assert_eq!(stopping.state, RecorderState::Stopping);
+    assert_eq!(
+        stopping.active_recording_id.as_deref(),
+        Some(recording_id.as_str())
+    );
+
+    let concurrent = manager
+        .begin_pause_recording(&recording_id, 21)
+        .expect_err("pending stop should reject concurrent pause");
+    assert_eq!(concurrent.code, "recorder_already_active");
+
+    let stopped = manager
+        .complete_stop_recording(&storage, &recording_id, 25)
+        .expect("complete stop");
+    assert_eq!(stopped.state, RecorderState::Idle);
+    assert_eq!(stopped.active_recording_id, None);
+
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, &recording_id))
+        .expect("read recording");
+    let segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list segments");
+    assert_eq!(recording.status, "completed");
+    assert_eq!(segments[0].state, "finalized");
+    assert_eq!(segments[0].duration_ms, Some(15));
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
+
+#[test]
 fn manager_stop_while_idle_preserves_backend_health() {
     let manager = RecorderManager::new(test_app_data_dir());
     let storage = test_storage();
@@ -432,6 +529,57 @@ fn manager_rejects_missing_scene_before_creating_recording() {
     assert_eq!(error.code, "recorder_scene_not_found");
     assert_eq!(recording_count, 0);
     assert!(!app_data_dir.join("recordings").exists());
+}
+
+#[test]
+fn manager_selecting_state_rejects_concurrent_starts() {
+    let manager = RecorderManager::new(test_app_data_dir());
+
+    let selecting = manager
+        .begin_selecting("scene-1", 10)
+        .expect("begin selecting");
+    let error = manager
+        .begin_selecting("scene-2", 11)
+        .expect_err("second selection should fail");
+
+    assert_eq!(selecting.state, RecorderState::Selecting);
+    assert_eq!(selecting.active_scene_id.as_deref(), Some("scene-1"));
+    assert_eq!(error.code, "recorder_already_active");
+}
+
+#[test]
+fn pending_live_start_preparation_does_not_create_recording_rows() {
+    let app_data_dir = test_app_data_dir();
+    let fake_ffmpeg_path = fake_failing_ffmpeg_path();
+    let fake_ffmpeg_dir = fake_ffmpeg_path
+        .parent()
+        .expect("fake ffmpeg parent")
+        .to_path_buf();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+
+    with_ffmpeg_path(&fake_ffmpeg_path, || {
+        manager
+            .begin_selecting(&scene_id, 10)
+            .expect("begin selecting");
+        let pending = manager
+            .prepare_recording_start(&storage, start_input(&scene_id), 10)
+            .expect("prepare pending recording");
+        let recording_count = storage
+            .with_connection(|connection| {
+                connection.query_row("SELECT COUNT(*) FROM recordings", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
+            .expect("count recordings");
+
+        assert_eq!(pending.scene.id, scene_id);
+        assert_eq!(recording_count, 0);
+    });
+
+    let _ = fs::remove_dir_all(app_data_dir);
+    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
 }
 
 #[test]
@@ -626,33 +774,33 @@ fn public_lifecycle_commands_use_ffmpeg_backed_manager_contracts() {
     app.manage(RecorderManager::new(app_data_dir.clone()));
 
     with_ffmpeg_path(&missing_ffmpeg_path, || {
-        let start_error = start_recording(
+        let start_error = tauri::async_runtime::block_on(start_recording(
             start_input(&scene_id),
             app.state::<storage::AppStorage>(),
             app.state::<RecorderManager>(),
-        )
+        ))
         .expect_err("public start should require available FFmpeg");
         let pause_error = pause_recording(
             PauseRecordingInput {
                 recording_id: Uuid::now_v7().to_string(),
             },
-            app.state::<storage::AppStorage>(),
+            app.handle().clone(),
             app.state::<RecorderManager>(),
         )
         .expect_err("public pause should remain unavailable");
-        let resume_error = resume_recording(
+        let resume_error = tauri::async_runtime::block_on(resume_recording(
             ResumeRecordingInput {
                 recording_id: Uuid::now_v7().to_string(),
             },
             app.state::<storage::AppStorage>(),
             app.state::<RecorderManager>(),
-        )
+        ))
         .expect_err("public resume should remain unavailable");
         let stop_status = stop_recording(
             StopRecordingInput {
                 recording_id: Uuid::now_v7().to_string(),
             },
-            app.state::<storage::AppStorage>(),
+            app.handle().clone(),
             app.state::<RecorderManager>(),
         )
         .expect("public stop while idle is idempotent");

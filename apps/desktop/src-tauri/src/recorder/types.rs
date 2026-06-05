@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum RecorderState {
     Error,
     Idle,
+    Pausing,
     Paused,
     Recording,
     Selecting,

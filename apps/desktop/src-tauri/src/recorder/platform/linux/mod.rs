@@ -2,16 +2,22 @@ mod audio;
 mod capture;
 mod portal;
 
+use std::path::Path;
+
 use crate::storage::AppStorage;
 
 use super::super::{
     ffmpeg,
+    ffmpeg::FfmpegSegmentInput,
     manager::RecorderManager,
+    manager::RunningSegmentMedia,
     types::{
         AudioSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
-        RecorderBackendHealth, RecorderError,
+        RecorderBackendHealth, RecorderError, RecorderScene,
     },
 };
+
+pub(crate) use capture::PreparedLiveCapture;
 
 pub async fn collect_backend_health() -> RecorderBackendHealth {
     let portal = portal::collect_portal_health().await;
@@ -52,6 +58,22 @@ pub async fn select_capture_sources(
 
 pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
     audio::get_audio_sources()
+}
+
+pub async fn prepare_live_capture(
+    storage: &AppStorage,
+    scene: &RecorderScene,
+) -> Result<PreparedLiveCapture, RecorderError> {
+    let live_session = portal::open_live_capture_session(storage).await?;
+    capture::prepared_live_capture(live_session, scene)
+}
+
+pub fn start_live_segment(
+    ffmpeg_path: &Path,
+    input: &FfmpegSegmentInput,
+    prepared: PreparedLiveCapture,
+) -> Result<RunningSegmentMedia, RecorderError> {
+    capture::start_live_segment(ffmpeg_path, input, prepared)
 }
 
 fn audio_health(default_source_id: Option<String>, error: Option<String>) -> RecorderAudioHealth {

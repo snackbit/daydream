@@ -12,6 +12,7 @@ import {
   getCaptureSources,
   getRecorderScene,
   getRecorderStatus,
+  listenToRecorderStatusChanged,
   pauseRecording,
   resumeRecording,
   saveRecorderScene,
@@ -32,6 +33,7 @@ import type {
 } from './scene-layout';
 
 type AsyncStatus = 'error' | 'idle' | 'loading' | 'ready';
+export type RecorderLifecycleAction = 'pause' | 'resume' | 'start' | 'stop';
 
 interface RecorderWorkspaceState {
   audioSources: AudioSource[];
@@ -44,6 +46,7 @@ interface RecorderWorkspaceState {
   loadStatus: AsyncStatus;
   microphoneAudioSourceId: string | null;
   pause: () => Promise<void>;
+  pendingLifecycleAction: RecorderLifecycleAction | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
   resume: () => Promise<void>;
   resolveDuplicateCaptureSource: (
@@ -59,6 +62,7 @@ interface RecorderWorkspaceState {
   start: () => Promise<void>;
   status: RecorderStatus | null;
   stop: () => Promise<void>;
+  subscribeToStatusEvents: () => Promise<() => void>;
   updateCaptureSources: () => Promise<void>;
 }
 
@@ -150,7 +154,13 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, () => pauseRecording({ recordingId }));
+      if (recorderLifecycleLocked(get())) {
+        return;
+      }
+
+      await runStatusMutation(set, 'pause', () =>
+        pauseRecording({ recordingId }),
+      );
     },
     async resume() {
       const recordingId = get().status?.activeRecordingId;
@@ -158,7 +168,13 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, () => resumeRecording({ recordingId }));
+      if (recorderLifecycleLocked(get())) {
+        return;
+      }
+
+      await runStatusMutation(set, 'resume', () =>
+        resumeRecording({ recordingId }),
+      );
     },
     resolveDuplicateCaptureSource(resolution) {
       const [candidate, ...remainingCandidates] =
@@ -189,6 +205,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
               null),
       });
     },
+    pendingLifecycleAction: null,
     async saveScene() {
       const scene = get().scene;
       if (!scene) {
@@ -279,7 +296,11 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, () =>
+      if (recorderLifecycleLocked(state)) {
+        return;
+      }
+
+      await runStatusMutation(set, 'start', () =>
         startRecording({
           desktopAudioSourceId: state.desktopAudioSourceId,
           fps: 1,
@@ -296,7 +317,22 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      await runStatusMutation(set, () => stopRecording({ recordingId }));
+      if (recorderLifecycleLocked(get())) {
+        return;
+      }
+
+      await runStatusMutation(set, 'stop', () =>
+        stopRecording({ recordingId }),
+      );
+    },
+    async subscribeToStatusEvents() {
+      return listenToRecorderStatusChanged((status) => {
+        set({
+          error: status.lastError?.message ?? null,
+          pendingLifecycleAction: null,
+          status,
+        });
+      });
     },
     async updateCaptureSources() {
       set({ error: null, loadStatus: 'loading' });
@@ -399,16 +435,37 @@ async function runStatusMutation(
       | Partial<RecorderWorkspaceState>
       | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>),
   ) => void,
+  action: RecorderLifecycleAction,
   mutation: () => Promise<RecorderStatus>,
 ): Promise<void> {
-  set({ error: null });
+  set({ error: null, pendingLifecycleAction: action });
 
   try {
     const status = await mutation();
-    set({ status });
+    set({
+      pendingLifecycleAction: statusNeedsCompletionEvent(status)
+        ? action
+        : null,
+      status,
+    });
   } catch (error) {
-    set({ error: errorMessage(error) });
+    set({ error: errorMessage(error), pendingLifecycleAction: null });
   }
+}
+
+function recorderLifecycleLocked(state: RecorderWorkspaceState): boolean {
+  return (
+    state.pendingLifecycleAction !== null ||
+    statusNeedsCompletionEvent(state.status)
+  );
+}
+
+function statusNeedsCompletionEvent(status: RecorderStatus | null): boolean {
+  return (
+    status?.state === 'pausing' ||
+    status?.state === 'selecting' ||
+    status?.state === 'stopping'
+  );
 }
 
 function errorMessage(error: unknown): string {

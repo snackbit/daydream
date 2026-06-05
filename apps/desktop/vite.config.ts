@@ -18,7 +18,7 @@ export default defineConfig(() => ({
     },
   },
   optimizeDeps: {
-    include: ['react-resizable-panels'],
+    include: ['@tauri-apps/api/event', 'react-resizable-panels'],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

@@ -25,6 +25,7 @@ import { SceneSourceList } from './scene-source-list';
 export interface CaptureSourcesPanelProps {
   audioSources: AudioSource[];
   desktopAudioSourceId: string | null;
+  lifecycleLocked: boolean;
   loadStatus: string;
   microphoneAudioSourceId: string | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
@@ -42,6 +43,7 @@ export interface CaptureSourcesPanelProps {
 export function CaptureSourcesPanel({
   audioSources,
   desktopAudioSourceId,
+  lifecycleLocked,
   loadStatus,
   microphoneAudioSourceId,
   pendingDuplicateCaptureSources,
@@ -65,7 +67,7 @@ export function CaptureSourcesPanel({
           <Button
             aria-label="Add monitor sources"
             className="gap-2"
-            disabled={loadStatus === 'loading'}
+            disabled={lifecycleLocked || loadStatus === 'loading'}
             onClick={onSelectCaptureSources}
             size="sm"
             variant="outline"
@@ -97,6 +99,7 @@ export function CaptureSourcesPanel({
             <Button
               aria-label="Add audio source"
               className="gap-2"
+              disabled={lifecycleLocked}
               size="sm"
               type="button"
               variant="outline"

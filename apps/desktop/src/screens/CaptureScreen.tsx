@@ -24,6 +24,9 @@ export function CaptureScreen() {
   const pendingDuplicateCaptureSources = useRecorderWorkspaceStore(
     (state) => state.pendingDuplicateCaptureSources,
   );
+  const pendingLifecycleAction = useRecorderWorkspaceStore(
+    (state) => state.pendingLifecycleAction,
+  );
   const resume = useRecorderWorkspaceStore((state) => state.resume);
   const resolveDuplicateCaptureSource = useRecorderWorkspaceStore(
     (state) => state.resolveDuplicateCaptureSource,
@@ -46,6 +49,9 @@ export function CaptureScreen() {
   const start = useRecorderWorkspaceStore((state) => state.start);
   const status = useRecorderWorkspaceStore((state) => state.status);
   const stop = useRecorderWorkspaceStore((state) => state.stop);
+  const subscribeToStatusEvents = useRecorderWorkspaceStore(
+    (state) => state.subscribeToStatusEvents,
+  );
   const updateCaptureSources = useRecorderWorkspaceStore(
     (state) => state.updateCaptureSources,
   );
@@ -55,6 +61,25 @@ export function CaptureScreen() {
       void load();
     }
   }, [load, loadStatus]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    void subscribeToStatusEvents().then((listener) => {
+      if (cancelled) {
+        listener();
+        return;
+      }
+
+      unlisten = listener;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [subscribeToStatusEvents]);
 
   return (
     <CaptureWorkspace
@@ -66,6 +91,7 @@ export function CaptureScreen() {
       loadStatus={loadStatus}
       microphoneAudioSourceId={microphoneAudioSourceId}
       pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
+      pendingLifecycleAction={pendingLifecycleAction}
       saveStatus={saveStatus}
       scene={scene}
       selectedSceneSourceId={selectedSceneSourceId}
