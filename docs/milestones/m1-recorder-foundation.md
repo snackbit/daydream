@@ -81,6 +81,8 @@ metadata in SQLite, and surfaces backend health in the app.
   backend implementation when the user explicitly adds those sources.
 - Desktop audio and microphone audio are optional, user-controlled sources.
   They are not auto-selected on startup.
+- Restored scene audio source IDs must be validated against current audio
+  sources and required roles before the UI exposes them or recording starts.
 - The app supports one active recording at a time.
 - The recorder API exposes these commands to the frontend:
   - `getRecorderStatus`
@@ -212,6 +214,9 @@ The milestone is successful when:
   shutdown.
 - Pause, stop, and failure paths finalize or mark segment records so processing
   jobs can later avoid partial or failed files.
+- Terminal FFmpeg failures clear active runtime state, preserve the last error,
+  and leave SQLite recording and segment state failed. This includes resumed
+  segment startup failures after the new segment row has been created.
 - Source layout math is deterministic and testable without a live portal.
 - The app may degrade when desktop audio or microphone input is unavailable,
   but it must surface that state before recording starts.
@@ -259,6 +264,8 @@ Config behavior:
 - `DAYDREAM_FFMPEG_PATH` remains accepted in development.
 - The selected FFmpeg path is visible in Diagnostics.
 - Audio source overrides are stored as source IDs, not display labels.
+- Restored audio source IDs are dropped when the current source list no longer
+  contains that ID for the saved role.
 - Scene layout values are stored as absolute pixels.
 - The default scene is generated from selected monitor dimensions with
   horizontal layout and no crop. Physical pixel dimensions are preferred when
@@ -486,8 +493,8 @@ Exit Criteria:
 - [x] Implement configurable FFmpeg path selection with `DAYDREAM_FFMPEG_PATH`
   support.
 - [x] Start and stop FFmpeg child processes from the recorder manager.
-- [x] Pipe or feed composed video frames into FFmpeg without logging frame
-  content.
+- [x] Pipe or feed synthetic or controlled video frames into FFmpeg without
+  logging frame content.
 - [x] Attach explicitly selected desktop and microphone audio inputs as separate
   optional FFmpeg streams.
 - [x] Persist segment stream indexes and FFmpeg exit status in SQLite.
@@ -501,6 +508,7 @@ Exit Criteria:
   or manual validation.
 - FFmpeg failures mark the active segment failed and return typed recorder
   errors.
+- Real PipeWire frame intake and scene composition remain owned by Gate G.
 
 ## Gate G: PipeWire Frame Intake and Compositor
 
@@ -529,7 +537,7 @@ Exit Criteria:
   lifecycle errors in user-facing UI.
 - [ ] Keep recording controls disabled or warning-gated when required sources
   are unavailable.
-- [ ] Extend Diagnostics with recorder backend health rows.
+- [x] Extend Diagnostics with recorder backend health rows.
 - [ ] Add status refresh behavior that stays accurate during start, pause,
   resume, stop, and failure.
 - [ ] Add UI tests for recorder status rendering, disabled controls, lifecycle

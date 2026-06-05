@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- Gate E complete.
-- Gate F is the next implementation gate.
+- Gate F complete.
+- Gate G is the next implementation gate.
 
 ## Locked Decisions
 
@@ -35,7 +35,9 @@
   - Runtime: Tauri 2, React, Vite, Tailwind, TanStack Router, Zustand.
   - Rust backend owns SQLite.
   - Diagnostics command already exists.
-  - Real capture is not implemented.
+  - FFmpeg segment writing is implemented with synthetic/controlled video frame
+    input.
+  - Real PipeWire frame intake and scene composition are not implemented.
 - Existing SQLite v1 foundation:
   - `recordings`
   - `recording_tracks`
@@ -124,6 +126,17 @@
   handle cleanup with 22 desktop tests.
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
   Gate E scene handle cleanup with 37 Rust tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop test
+  recorder-workspace-store`: passed after saved-audio restore hardening with 25
+  recorder workspace store tests.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+  recorder::tests::`: passed after Gate F and FFmpeg failure hardening with 19
+  recorder Rust tests.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`:
+  passed after FFmpeg failure hardening.
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop
+  lint`: passed after saved-audio restore hardening; ESLint still reports the
+  existing `scene-layout.ts` max-lines warning.
 
 ## Gate Notes
 
@@ -147,9 +160,8 @@
   as Tauri managed state.
 - Gate C wires `getRecorderStatus` to the manager and `saveRecorderScene` to
   SQLite storage.
-- Gate C intentionally keeps public `startRecording`, `pauseRecording`,
-  `resumeRecording`, and `stopRecording` returning
-  `recorder_backend_not_implemented` until capture backends exist.
+- Gate C initially kept public `startRecording`, `pauseRecording`,
+  `resumeRecording`, and `stopRecording` unavailable until media output existed.
 - Gate C creates segment directories and persists deterministic segment paths,
   but does not create empty MKV files.
 - Gate C hardening serializes `start_internal` across the full start transition
@@ -164,9 +176,9 @@
 - Gate D stores ScreenCast restore tokens in SQLite as backend-only sensitive
   metadata. Tokens are not exposed through React contracts, diagnostics, or
   logs.
-- Gate D keeps `startRecording`, `pauseRecording`, `resumeRecording`, and
-  `stopRecording` returning `recorder_backend_not_implemented` until the FFmpeg
-  and capture-runtime gates wire real media output.
+- Gate D kept `startRecording`, `pauseRecording`, `resumeRecording`, and
+  `stopRecording` unavailable until the FFmpeg and capture-runtime gates wired
+  media output.
 - Gate D treats portal stream size as logical compositor size, not pixel size.
   `CaptureSource.width` and `CaptureSource.height` stay null until a later
   PipeWire/capture-runtime gate can prove actual frame pixel dimensions.
@@ -178,9 +190,8 @@
   edits stay local until `saveRecorderScene` succeeds.
 - Gate E adds Vitest Browser Mode with the Playwright provider and React Testing
   Library for critical Capture workspace UI coverage.
-- Gate E leaves lifecycle commands visually present but disabled until backend
-  health and saved-scene state make recording valid. Public lifecycle commands
-  still remain unavailable until Gates F and G wire real media output.
+- Gate E left lifecycle commands visually present but disabled until backend
+  health and saved-scene state make recording valid.
 - Gate E cleanup adds the shadcn components needed for the Capture workspace,
   moves the workspace to a shadcn Resizable three-panel layout, and splits the
   page into focused source, canvas, geometry, toolbar, and error components.
@@ -190,6 +201,21 @@
 - Gate E current-scene cleanup adds `getRecorderScene`, loads the latest saved
   scene on Capture startup, changes source selection to Add-with-merge, and
   keeps source deletion as an explicit-save draft edit.
+- Gate F adds FFmpeg capability probing, selected-binary diagnostics, H.264
+  `yuv444p` MKV segment arguments, optional Pulse desktop/microphone audio
+  inputs, stream-index metadata, and process lifecycle management.
+- Gate F public lifecycle commands now call the FFmpeg-backed recorder manager.
+  This records synthetic/controlled video frames until Gate G replaces that
+  input with real PipeWire frame intake and composition.
+- Gate F marks FFmpeg start, write, wait, and non-zero-exit failures as typed
+  dependency errors, fails the active segment, marks the recording failed, and
+  moves runtime status to `error`.
+- Saved recorder scenes validate restored desktop and microphone audio source
+  IDs against the current audio source list and required role. Unavailable or
+  wrong-role IDs are dropped before the UI exposes the scene or start payload.
+- Resume segment startup failures after the new segment row is created now use
+  the same terminal active-recording failure path as finalize failures, so a
+  later stop remains idempotent and cannot mark a failed recording completed.
 
 ## Gate Reconciliation Log
 
@@ -218,6 +244,14 @@
   dimension fallback for default layouts and narrowed Gate H so it owns only the
   real FFmpeg/PipeWire-backed lifecycle connection, not the already-present
   editor shell.
+- Gate F: reviewed Gates G-I after implementing the FFmpeg segment writer.
+  Updated the milestone body to clarify that Gate F owns synthetic/controlled
+  FFmpeg input and failure handling, while Gate G still owns real PipeWire frame
+  intake and scene composition.
+- Gate F hardening: reviewed saved audio restoration and resume failure paths.
+  Updated milestone contracts so restored audio IDs must be validated against
+  current source availability and role, and terminal FFmpeg failures must keep
+  runtime and SQLite states consistent.
 
 ## Risk Watchlist
 
