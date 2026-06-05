@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent } from 'react';
-import type { RecorderScene, RecorderSceneSource } from '@daydream/shared';
+import type {
+  RecorderPreviewFrame,
+  RecorderScene,
+  RecorderSceneSource,
+} from '@daydream/shared';
 import {
   moveSceneSource,
   resizeSceneSource,
@@ -34,6 +38,7 @@ type PendingDragState =
 export interface SceneCanvasProps {
   onChange: (scene: RecorderScene) => void;
   onSelect: (sourceId: string | null) => void;
+  previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   scene: RecorderScene;
   selectedSourceId: string | null;
 }
@@ -41,6 +46,7 @@ export interface SceneCanvasProps {
 export function SceneCanvas({
   onChange,
   onSelect,
+  previewFramesBySceneSourceId,
   scene,
   selectedSourceId,
 }: SceneCanvasProps) {
@@ -138,6 +144,7 @@ export function SceneCanvas({
         <SceneSourceFrame
           key={source.id}
           onSelect={onSelect}
+          previewFrame={previewFramesBySceneSourceId[source.id] ?? null}
           scene={scene}
           selected={selectedSourceId === source.id}
           selectedStackIndex={selectedStackIndex}
@@ -167,6 +174,7 @@ interface ResizeButtonProps {
 
 interface SceneSourceFrameProps {
   onSelect: (sourceId: string | null) => void;
+  previewFrame: RecorderPreviewFrame | null;
   scene: RecorderScene;
   selected: boolean;
   selectedStackIndex: number;
@@ -176,6 +184,7 @@ interface SceneSourceFrameProps {
 
 function SceneSourceFrame({
   onSelect,
+  previewFrame,
   scene,
   selected,
   selectedStackIndex,
@@ -234,7 +243,14 @@ function SceneSourceFrame({
           {source.displayName}
         </button>
       )}
-      <SyntheticSourcePreview />
+      {previewFrame ? (
+        <LiveSourcePreview
+          displayName={source.displayName}
+          previewFrame={previewFrame}
+        />
+      ) : (
+        <SyntheticSourcePreview />
+      )}
       {selected
         ? resizeHandles.map((handle) => (
             <ResizeButton
@@ -290,6 +306,23 @@ function DragThumb({ muted = false }: { muted?: boolean }) {
         />
       ))}
     </span>
+  );
+}
+
+function LiveSourcePreview({
+  displayName,
+  previewFrame,
+}: {
+  displayName: string;
+  previewFrame: RecorderPreviewFrame;
+}) {
+  return (
+    <img
+      alt={`${displayName} live preview`}
+      className="absolute inset-x-0 top-6 bottom-0 h-[calc(100%-1.5rem)] w-full object-fill"
+      draggable={false}
+      src={previewFrame.dataUrl}
+    />
   );
 }
 

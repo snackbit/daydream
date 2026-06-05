@@ -2,9 +2,11 @@ import type {
   PauseRecordingInput,
   RecorderFfmpegCapabilities,
   RecorderError,
+  RecorderPreviewFrame,
   RecorderScene,
   ResumeRecordingInput,
   SaveRecorderSceneInput,
+  StartRecorderPreviewInput,
   StartRecordingInput,
   StopRecordingInput,
 } from '@daydream/shared';
@@ -12,15 +14,20 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import {
   getAudioSources,
   getCaptureSources,
+  getRecorderPreviewStatus,
   getRecorderScene,
   getRecorderStatus,
+  listenToRecorderPreviewFrames,
   listenToRecorderStatusChanged,
   pauseRecording,
+  recorderPreviewFrameEvent,
   recorderStatusChangedEvent,
   resumeRecording,
   saveRecorderScene,
   selectCaptureSources,
+  startRecorderPreview,
   startRecording,
+  stopRecorderPreview,
   stopRecording,
 } from './recorder-client';
 
@@ -66,17 +73,19 @@ test('recorder read helpers use locked camelCase command names', async () => {
 
   await getCaptureSources();
   await getRecorderScene();
+  await getRecorderPreviewStatus();
   await selectCaptureSources();
   await selectCaptureSources({ forceChooser: true });
   await getAudioSources();
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'getCaptureSources');
   expect(invokeMock).toHaveBeenNthCalledWith(2, 'getRecorderScene');
-  expect(invokeMock).toHaveBeenNthCalledWith(3, 'selectCaptureSources');
-  expect(invokeMock).toHaveBeenNthCalledWith(4, 'selectCaptureSources', {
+  expect(invokeMock).toHaveBeenNthCalledWith(3, 'getRecorderPreviewStatus');
+  expect(invokeMock).toHaveBeenNthCalledWith(4, 'selectCaptureSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(5, 'selectCaptureSources', {
     input: { forceChooser: true },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(5, 'getAudioSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(6, 'getAudioSources');
 });
 
 test('getRecorderStatus uses locked camelCase command name', async () => {
@@ -131,6 +140,9 @@ test('recorder write helpers pass input payloads unchanged', async () => {
   const saveInput: SaveRecorderSceneInput = {
     scene,
   };
+  const previewInput: StartRecorderPreviewInput = {
+    sceneId: scene.id,
+  };
   const startInput: StartRecordingInput = {
     desktopAudioSourceId: 'desktop-monitor',
     fps: 1,
@@ -149,6 +161,8 @@ test('recorder write helpers pass input payloads unchanged', async () => {
   };
 
   await saveRecorderScene(saveInput);
+  await startRecorderPreview(previewInput);
+  await stopRecorderPreview();
   await startRecording(startInput);
   await pauseRecording(pauseInput);
   await resumeRecording(resumeInput);
@@ -157,16 +171,20 @@ test('recorder write helpers pass input payloads unchanged', async () => {
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'saveRecorderScene', {
     input: saveInput,
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(2, 'startRecording', {
+  expect(invokeMock).toHaveBeenNthCalledWith(2, 'startRecorderPreview', {
+    input: previewInput,
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(3, 'stopRecorderPreview');
+  expect(invokeMock).toHaveBeenNthCalledWith(4, 'startRecording', {
     input: startInput,
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(3, 'pauseRecording', {
+  expect(invokeMock).toHaveBeenNthCalledWith(5, 'pauseRecording', {
     input: pauseInput,
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(4, 'resumeRecording', {
+  expect(invokeMock).toHaveBeenNthCalledWith(6, 'resumeRecording', {
     input: resumeInput,
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(5, 'stopRecording', {
+  expect(invokeMock).toHaveBeenNthCalledWith(7, 'stopRecording', {
     input: stopInput,
   });
 });
@@ -237,4 +255,29 @@ test('recorder status event helper listens with locked event name', async () => 
     expect.any(Function),
   );
   expect(handler).toHaveBeenCalledWith(status);
+});
+
+test('recorder preview frame event helper listens with locked event name', async () => {
+  const unlisten = vi.fn();
+  const handler = vi.fn();
+  const frame: RecorderPreviewFrame = {
+    dataUrl: 'data:image/png;base64,abc',
+    height: 180,
+    sceneSourceId: 'scene-source-1',
+    sourceId: 'monitor-1',
+    timestampMs: 1,
+    width: 320,
+  };
+  listenMock.mockImplementation((_eventName, listener) => {
+    listener({ payload: frame });
+    return Promise.resolve(unlisten);
+  });
+
+  await expect(listenToRecorderPreviewFrames(handler)).resolves.toBe(unlisten);
+
+  expect(listenMock).toHaveBeenCalledWith(
+    recorderPreviewFrameEvent,
+    expect.any(Function),
+  );
+  expect(handler).toHaveBeenCalledWith(frame);
 });

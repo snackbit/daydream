@@ -3,7 +3,10 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Barrier, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier, Mutex,
+    },
     thread,
 };
 
@@ -11,11 +14,12 @@ use serde_json::json;
 use tauri::Manager as _;
 use uuid::Uuid;
 
+use super::capture_runtime::CapturePreviewSession;
 use super::commands::{
     get_recorder_scene, pause_recording, resume_recording, start_recording, stop_recording,
 };
 use super::errors::unavailable_error;
-use super::manager::RecorderManager;
+use super::manager::{PreviewStartDecision, RecorderManager};
 use super::storage_mapping::save_recorder_scene_for_storage;
 use super::types::{
     CanvasRect, CaptureSource, CaptureSourceKind, CropRect, PauseRecordingInput,
@@ -97,6 +101,135 @@ fn manager_initial_status_is_idle() {
     assert_eq!(status.active_recording_id, None);
     assert_eq!(status.active_segment_id, None);
     assert!(!status.backend_health.ffmpeg.available);
+}
+
+#[test]
+fn manager_does_not_launch_duplicate_preview_for_same_pending_scene() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = "scene-1";
+    let first = manager
+        .begin_preview_start(scene_id, 10)
+        .expect("begin first preview");
+    let second = manager
+        .begin_preview_start(scene_id, 11)
+        .expect("begin duplicate preview");
+
+    let PreviewStartDecision::Pending { generation, .. } = first else {
+        panic!("first preview should be pending");
+    };
+    let PreviewStartDecision::AlreadyCurrent(status) = second else {
+        panic!("duplicate preview should use current starting status");
+    };
+
+    assert_eq!(status.state, super::types::RecorderPreviewState::Starting);
+    assert_eq!(status.scene_id.as_deref(), Some(scene_id));
+
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let activated = manager
+        .activate_preview(
+            scene_id.to_string(),
+            generation,
+            vec!["monitor-1".to_string()],
+            Box::new(TestPreviewSession {
+                stopped: stopped.clone(),
+            }),
+            12,
+        )
+        .expect("activate current preview");
+
+    assert_eq!(activated.state, super::types::RecorderPreviewState::Live);
+    assert_eq!(stopped.load(Ordering::SeqCst), 0);
+
+    manager.stop_preview(13).expect("stop live preview");
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn manager_stops_preview_session_that_finishes_after_cancellation() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = "scene-1";
+    let PreviewStartDecision::Pending { generation, .. } = manager
+        .begin_preview_start(scene_id, 10)
+        .expect("begin preview")
+    else {
+        panic!("preview should be pending");
+    };
+
+    manager.stop_preview(11).expect("cancel preview");
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let status = manager
+        .activate_preview(
+            scene_id.to_string(),
+            generation,
+            vec!["monitor-1".to_string()],
+            Box::new(TestPreviewSession {
+                stopped: stopped.clone(),
+            }),
+            12,
+        )
+        .expect("stale activation should clean up");
+
+    assert_eq!(status.state, super::types::RecorderPreviewState::Idle);
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        manager.preview_status().expect("preview status").state,
+        super::types::RecorderPreviewState::Idle
+    );
+}
+
+#[test]
+fn manager_stops_preview_session_that_finishes_after_recording_selection_starts() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = "scene-1";
+    let PreviewStartDecision::Pending { generation, .. } = manager
+        .begin_preview_start(scene_id, 10)
+        .expect("begin preview")
+    else {
+        panic!("preview should be pending");
+    };
+
+    manager
+        .begin_selecting(scene_id, 11)
+        .expect("begin recording selection");
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let status = manager
+        .activate_preview(
+            scene_id.to_string(),
+            generation,
+            vec!["monitor-1".to_string()],
+            Box::new(TestPreviewSession {
+                stopped: stopped.clone(),
+            }),
+            12,
+        )
+        .expect("recording lifecycle should reject preview activation");
+
+    assert_eq!(status.state, super::types::RecorderPreviewState::Idle);
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        manager.preview_status().expect("preview status").state,
+        super::types::RecorderPreviewState::Idle
+    );
+}
+
+#[test]
+fn manager_ignores_stale_preview_start_failure_after_cancellation() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = "scene-1";
+    let PreviewStartDecision::Pending { generation, .. } = manager
+        .begin_preview_start(scene_id, 10)
+        .expect("begin preview")
+    else {
+        panic!("preview should be pending");
+    };
+
+    manager.stop_preview(11).expect("cancel preview");
+    let status = manager
+        .fail_preview_start(scene_id.to_string(), generation, unavailable_error(), 12)
+        .expect("stale failure should be ignored");
+
+    assert_eq!(status.state, super::types::RecorderPreviewState::Idle);
+    assert_eq!(status.error, None);
 }
 
 #[test]
@@ -828,6 +961,19 @@ fn public_lifecycle_commands_use_ffmpeg_backed_manager_contracts() {
 }
 
 static FFMPEG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug)]
+struct TestPreviewSession {
+    stopped: Arc<AtomicUsize>,
+}
+
+impl CapturePreviewSession for TestPreviewSession {
+    fn stop(self: Box<Self>) -> Result<(), super::types::RecorderError> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
 
 struct EnvVarGuard {
     key: &'static str,

@@ -5,6 +5,7 @@ mod unsupported;
 
 use crate::storage::AppStorage;
 use std::path::Path;
+use tauri::AppHandle;
 
 use super::{
     ffmpeg::FfmpegSegmentInput,
@@ -20,6 +21,7 @@ use linux as imp;
 use unsupported as imp;
 
 pub(crate) use imp::PreparedLiveCapture;
+pub(crate) use imp::RunningPreviewSession;
 
 pub async fn collect_backend_health() -> RecorderBackendHealth {
     imp::collect_backend_health().await
@@ -46,6 +48,14 @@ pub async fn prepare_live_capture(
     scene: &RecorderScene,
 ) -> Result<PreparedLiveCapture, RecorderError> {
     imp::prepare_live_capture(storage, scene).await
+}
+
+pub async fn start_preview_session(
+    app: AppHandle,
+    storage: &AppStorage,
+    scene: &RecorderScene,
+) -> Result<RunningPreviewSession, RecorderError> {
+    imp::start_preview_session(app, storage, scene).await
 }
 
 pub fn start_live_segment(

@@ -5,6 +5,7 @@ mod errors;
 pub(crate) mod ffmpeg;
 mod manager;
 mod platform;
+mod preview;
 mod storage_mapping;
 #[cfg(test)]
 mod tests;
@@ -62,6 +63,30 @@ pub fn save_recorder_scene(
     storage: State<'_, AppStorage>,
 ) -> Result<RecorderScene, RecorderError> {
     commands::save_recorder_scene(input, storage)
+}
+
+#[tauri::command(rename = "getRecorderPreviewStatus")]
+pub fn get_recorder_preview_status(
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    commands::get_recorder_preview_status(manager)
+}
+
+#[tauri::command(rename = "startRecorderPreview")]
+pub async fn start_recorder_preview(
+    input: StartRecorderPreviewInput,
+    app: tauri::AppHandle,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    commands::start_recorder_preview(input, app, storage, manager).await
+}
+
+#[tauri::command(rename = "stopRecorderPreview")]
+pub fn stop_recorder_preview(
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    commands::stop_recorder_preview(manager)
 }
 
 #[tauri::command(rename = "startRecording")]

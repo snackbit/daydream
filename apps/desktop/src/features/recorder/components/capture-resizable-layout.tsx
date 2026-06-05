@@ -2,6 +2,7 @@ import type {
   AudioSource,
   AudioSourceRole,
   CaptureSource,
+  RecorderPreviewFrame,
   RecorderScene,
   RecorderSceneSource,
 } from '@daydream/shared';
@@ -35,6 +36,7 @@ export interface CaptureResizableLayoutProps {
   onSelectSceneSource: (sourceId: string | null) => void;
   scene: RecorderScene | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
+  previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   selectedSceneSource: RecorderSceneSource | null;
   selectedSceneSourceId: string | null;
 }
@@ -54,6 +56,7 @@ export function CaptureResizableLayout({
   onSelectSceneSource,
   scene,
   pendingDuplicateCaptureSources,
+  previewFramesBySceneSourceId,
   selectedSceneSource,
   selectedSceneSourceId,
 }: CaptureResizableLayoutProps) {
@@ -81,6 +84,7 @@ export function CaptureResizableLayout({
         <main className="bg-foreground/10 flex h-full flex-col items-center justify-center overflow-auto p-4">
           <div className="bg-foreground/10 w-full">
             <SceneCanvasPanel
+              previewFramesBySceneSourceId={previewFramesBySceneSourceId}
               scene={scene}
               selectedSourceId={selectedSceneSourceId}
               onChange={onChangeScene}

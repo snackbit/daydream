@@ -3,6 +3,7 @@ mod capture;
 mod portal;
 
 use std::path::Path;
+use tauri::AppHandle;
 
 use crate::storage::AppStorage;
 
@@ -17,7 +18,7 @@ use super::super::{
     },
 };
 
-pub(crate) use capture::PreparedLiveCapture;
+pub(crate) use capture::{PreparedLiveCapture, RunningPreviewSession};
 
 pub async fn collect_backend_health() -> RecorderBackendHealth {
     let portal = portal::collect_portal_health().await;
@@ -66,6 +67,17 @@ pub async fn prepare_live_capture(
 ) -> Result<PreparedLiveCapture, RecorderError> {
     let live_session = portal::open_live_capture_session(storage).await?;
     capture::prepared_live_capture(live_session, scene)
+}
+
+pub async fn start_preview_session(
+    app: AppHandle,
+    storage: &AppStorage,
+    scene: &RecorderScene,
+) -> Result<RunningPreviewSession, RecorderError> {
+    let live_session = portal::open_live_capture_session(storage).await?;
+    let prepared = capture::prepared_live_capture(live_session, scene)?;
+
+    capture::start_preview_session(app, prepared)
 }
 
 pub fn start_live_segment(

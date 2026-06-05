@@ -3,16 +3,19 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::storage::AppStorage;
 use std::path::Path;
 
-use super::manager::{now_ms, RecorderManager};
+use super::manager::{now_ms, PreviewStartDecision, RecorderManager};
 use super::platform;
-use super::storage_mapping::{latest_recorder_scene_for_storage, save_recorder_scene_for_storage};
+use super::storage_mapping::{
+    latest_recorder_scene_for_storage, recorder_scene_for_storage, save_recorder_scene_for_storage,
+};
 use super::types::{
-    AudioSourceList, CaptureSourceList, PauseRecordingInput, RecorderError, RecorderScene,
-    RecorderStatus, ResumeRecordingInput, SaveRecorderSceneInput, SelectCaptureSourcesInput,
-    StartRecordingInput, StopRecordingInput,
+    AudioSourceList, CaptureSourceList, PauseRecordingInput, RecorderError, RecorderPreviewStatus,
+    RecorderScene, RecorderStatus, ResumeRecordingInput, SaveRecorderSceneInput,
+    SelectCaptureSourcesInput, StartRecorderPreviewInput, StartRecordingInput, StopRecordingInput,
 };
 
 pub(crate) const RECORDER_STATUS_CHANGED_EVENT: &str = "recorder-status-changed";
+pub(crate) const RECORDER_PREVIEW_FRAME_EVENT: &str = "recorder-preview-frame";
 
 pub async fn get_recorder_status(
     manager: State<'_, RecorderManager>,
@@ -56,12 +59,61 @@ pub fn save_recorder_scene(
     save_recorder_scene_for_storage(&storage, input, now_ms())
 }
 
+pub fn get_recorder_preview_status(
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    manager.preview_status()
+}
+
+pub async fn start_recorder_preview(
+    input: StartRecorderPreviewInput,
+    app: AppHandle,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    let timestamp_ms = now_ms();
+    let (scene_id, generation) = match manager.begin_preview_start(&input.scene_id, timestamp_ms)? {
+        PreviewStartDecision::AlreadyCurrent(status) => return Ok(status),
+        PreviewStartDecision::Pending { generation, .. } => (input.scene_id, generation),
+    };
+
+    let scene = match recorder_scene_for_storage(&storage, &scene_id) {
+        Ok(scene) => scene,
+        Err(error) => {
+            let _ = manager.fail_preview_start(scene_id, generation, error.clone(), now_ms());
+            return Err(error);
+        }
+    };
+    let preview = match platform::start_preview_session(app, &storage, &scene).await {
+        Ok(preview) => preview,
+        Err(error) => {
+            let _ = manager.fail_preview_start(scene_id, generation, error.clone(), now_ms());
+            return Err(error);
+        }
+    };
+
+    manager.activate_preview(
+        scene_id,
+        generation,
+        preview.source_ids,
+        preview.session,
+        now_ms(),
+    )
+}
+
+pub fn stop_recorder_preview(
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPreviewStatus, RecorderError> {
+    manager.stop_preview(now_ms())
+}
+
 pub async fn start_recording(
     input: StartRecordingInput,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
     let timestamp_ms = now_ms();
+    manager.stop_preview(timestamp_ms)?;
     manager.begin_selecting(&input.scene_id, timestamp_ms)?;
 
     let pending = match manager.prepare_recording_start(&storage, input, timestamp_ms) {

@@ -2,6 +2,7 @@ import type {
   AudioSourceList,
   CaptureSourceList,
   RecorderFfmpegCapabilities,
+  RecorderPreviewFrame,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -20,14 +21,18 @@ import { CaptureScreen } from './CaptureScreen';
 const client = vi.hoisted(() => ({
   getAudioSources: vi.fn(),
   getCaptureSources: vi.fn(),
+  getRecorderPreviewStatus: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
+  listenToRecorderPreviewFrames: vi.fn(),
   listenToRecorderStatusChanged: vi.fn(),
   pauseRecording: vi.fn(),
   resumeRecording: vi.fn(),
   saveRecorderScene: vi.fn(),
   selectCaptureSources: vi.fn(),
+  startRecorderPreview: vi.fn(),
   startRecording: vi.fn(),
+  stopRecorderPreview: vi.fn(),
   stopRecording: vi.fn(),
 }));
 
@@ -132,11 +137,35 @@ beforeEach(() => {
     true,
   );
   client.getRecorderStatus.mockResolvedValue(status);
+  client.getRecorderPreviewStatus.mockResolvedValue({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 1,
+  });
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
+  client.listenToRecorderPreviewFrames.mockResolvedValue(vi.fn());
   client.listenToRecorderStatusChanged.mockResolvedValue(vi.fn());
   client.selectCaptureSources.mockResolvedValue(captureSources);
+  client.startRecorderPreview.mockImplementation(({ sceneId }) =>
+    Promise.resolve({
+      error: null,
+      sceneId,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 2,
+    }),
+  );
+  client.stopRecorderPreview.mockResolvedValue({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 3,
+  });
 });
 
 afterEach(() => {
@@ -528,6 +557,46 @@ test('CaptureScreen renders a saved scene on startup without adding sources', as
   expect(await screen.findAllByText('Saved monitor')).toHaveLength(3);
   expect(client.selectCaptureSources).not.toHaveBeenCalled();
   expect(screen.getByText('Scene saved')).toBeTruthy();
+});
+
+test('CaptureScreen renders live preview frames for a saved scene', async () => {
+  const savedScene = sceneFixture(['main']);
+  let previewFrameHandler: ((frame: RecorderPreviewFrame) => void) | undefined;
+  client.getRecorderScene.mockResolvedValue(savedScene);
+  client.startRecorderPreview.mockResolvedValue({
+    error: null,
+    sceneId: savedScene.id,
+    sourceIds: ['main'],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+  client.listenToRecorderPreviewFrames.mockImplementation((handler) => {
+    previewFrameHandler = handler;
+    return Promise.resolve(vi.fn());
+  });
+
+  render(<CaptureScreen />);
+
+  await waitFor(() =>
+    expect(client.startRecorderPreview).toHaveBeenCalledWith({
+      sceneId: savedScene.id,
+    }),
+  );
+  previewFrameHandler?.({
+    dataUrl: 'data:image/png;base64,abc',
+    height: 180,
+    sceneSourceId: savedScene.sources[0]?.id ?? '',
+    sourceId: 'main',
+    timestampMs: 3,
+    width: 320,
+  });
+
+  const preview = await screen.findByRole('img', {
+    name: /main live preview/i,
+  });
+  expect(preview.getAttribute('src')).toBe('data:image/png;base64,abc');
+  expect(preview.className).toContain('object-fill');
+  expect(preview.className).not.toContain('object-cover');
 });
 
 test('CaptureScreen deletes a draft source and saves the reduced scene', async () => {

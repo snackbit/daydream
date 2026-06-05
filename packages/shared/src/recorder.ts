@@ -114,6 +114,29 @@ export interface SaveRecorderSceneInput {
   scene: RecorderScene;
 }
 
+export interface StartRecorderPreviewInput {
+  sceneId: string;
+}
+
+export type RecorderPreviewState = 'error' | 'idle' | 'live' | 'starting';
+
+export interface RecorderPreviewStatus {
+  error: RecorderError | null;
+  sceneId: string | null;
+  sourceIds: string[];
+  state: RecorderPreviewState;
+  updatedAtMs: number;
+}
+
+export interface RecorderPreviewFrame {
+  dataUrl: string;
+  height: number;
+  sceneSourceId: string;
+  sourceId: string;
+  timestampMs: number;
+  width: number;
+}
+
 export type RecorderQualityPreset = 'balanced-ocr';
 
 export interface StartRecordingInput {

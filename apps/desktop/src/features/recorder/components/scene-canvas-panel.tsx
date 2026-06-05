@@ -1,4 +1,4 @@
-import type { RecorderScene } from '@daydream/shared';
+import type { RecorderPreviewFrame, RecorderScene } from '@daydream/shared';
 import { Card, CardContent } from '@/components/ui/card';
 import { SceneCanvas } from './scene-canvas';
 import { SceneControls } from './scene-controls';
@@ -6,6 +6,7 @@ import { SceneControls } from './scene-controls';
 export interface SceneCanvasPanelProps {
   onChange: (scene: RecorderScene) => void;
   onSelect: (sourceId: string | null) => void;
+  previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   scene: RecorderScene | null;
   selectedSourceId: string | null;
 }
@@ -13,6 +14,7 @@ export interface SceneCanvasPanelProps {
 export function SceneCanvasPanel({
   onChange,
   onSelect,
+  previewFramesBySceneSourceId,
   scene,
   selectedSourceId,
 }: SceneCanvasPanelProps) {
@@ -31,6 +33,7 @@ export function SceneCanvasPanel({
       <SceneControls scene={scene} onChange={onChange} />
       <div className="min-h-0 flex-1 p-4">
         <SceneCanvas
+          previewFramesBySceneSourceId={previewFramesBySceneSourceId}
           scene={scene}
           selectedSourceId={selectedSourceId}
           onChange={onChange}

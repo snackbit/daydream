@@ -94,6 +94,10 @@ pub(crate) trait CaptureSession: Send + Debug {
     fn stop(self: Box<Self>) -> Result<(), RecorderError>;
 }
 
+pub(crate) trait CapturePreviewSession: Send + Debug {
+    fn stop(self: Box<Self>) -> Result<(), RecorderError>;
+}
+
 #[derive(Debug)]
 pub(crate) struct RuntimeWorker {
     name: &'static str,

@@ -27,6 +27,12 @@ export function CaptureScreen() {
   const pendingLifecycleAction = useRecorderWorkspaceStore(
     (state) => state.pendingLifecycleAction,
   );
+  const previewFramesBySceneSourceId = useRecorderWorkspaceStore(
+    (state) => state.previewFramesBySceneSourceId,
+  );
+  const previewStatus = useRecorderWorkspaceStore(
+    (state) => state.previewStatus,
+  );
   const resume = useRecorderWorkspaceStore((state) => state.resume);
   const resolveDuplicateCaptureSource = useRecorderWorkspaceStore(
     (state) => state.resolveDuplicateCaptureSource,
@@ -47,8 +53,13 @@ export function CaptureScreen() {
     (state) => state.setDraftScene,
   );
   const start = useRecorderWorkspaceStore((state) => state.start);
+  const startPreview = useRecorderWorkspaceStore((state) => state.startPreview);
   const status = useRecorderWorkspaceStore((state) => state.status);
   const stop = useRecorderWorkspaceStore((state) => state.stop);
+  const stopPreview = useRecorderWorkspaceStore((state) => state.stopPreview);
+  const subscribeToPreviewFrames = useRecorderWorkspaceStore(
+    (state) => state.subscribeToPreviewFrames,
+  );
   const subscribeToStatusEvents = useRecorderWorkspaceStore(
     (state) => state.subscribeToStatusEvents,
   );
@@ -81,6 +92,65 @@ export function CaptureScreen() {
     };
   }, [subscribeToStatusEvents]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    void subscribeToPreviewFrames().then((listener) => {
+      if (cancelled) {
+        listener();
+        return;
+      }
+
+      unlisten = listener;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [subscribeToPreviewFrames]);
+
+  useEffect(() => {
+    const canPreview =
+      loadStatus === 'ready' &&
+      !!scene &&
+      !isDirty &&
+      status?.state === 'idle' &&
+      status.finalization === null;
+
+    const previewFailedForScene =
+      previewStatus?.sceneId === scene?.id && previewStatus?.state === 'error';
+
+    if (canPreview && !previewFailedForScene) {
+      void startPreview(scene.id);
+      return;
+    }
+
+    if (
+      previewStatus?.state === 'starting' ||
+      previewStatus?.state === 'live'
+    ) {
+      void stopPreview();
+    }
+  }, [
+    isDirty,
+    loadStatus,
+    previewStatus?.sceneId,
+    previewStatus?.state,
+    scene,
+    startPreview,
+    status?.finalization,
+    status?.state,
+    stopPreview,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      void useRecorderWorkspaceStore.getState().stopPreview();
+    };
+  }, []);
+
   return (
     <CaptureWorkspace
       audioSources={audioSources}
@@ -92,6 +162,8 @@ export function CaptureScreen() {
       microphoneAudioSourceId={microphoneAudioSourceId}
       pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
       pendingLifecycleAction={pendingLifecycleAction}
+      previewFramesBySceneSourceId={previewFramesBySceneSourceId}
+      previewStatus={previewStatus}
       saveStatus={saveStatus}
       scene={scene}
       selectedSceneSourceId={selectedSceneSourceId}

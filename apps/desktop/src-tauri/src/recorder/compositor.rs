@@ -185,7 +185,7 @@ fn alpha_blend_pixel(target: &mut [u8], red: u8, green: u8, blue: u8, alpha: u8)
     target[3] = 255;
 }
 
-fn sample_bilinear_rgba(
+pub(crate) fn sample_bilinear_rgba(
     frame: &CapturedFrame,
     source_x: f64,
     source_y: f64,

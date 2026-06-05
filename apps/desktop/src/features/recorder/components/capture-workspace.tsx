@@ -3,6 +3,8 @@ import type {
   AudioSource,
   AudioSourceRole,
   CaptureSource,
+  RecorderPreviewFrame,
+  RecorderPreviewStatus,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -40,6 +42,8 @@ export interface CaptureWorkspaceProps {
   onStart: () => void;
   onStop: () => void;
   pendingLifecycleAction: RecorderLifecycleAction | null;
+  previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
+  previewStatus: RecorderPreviewStatus | null;
   saveStatus: string;
   scene: RecorderScene | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
@@ -67,6 +71,8 @@ export function CaptureWorkspace({
   onStart,
   onStop,
   pendingLifecycleAction,
+  previewFramesBySceneSourceId,
+  previewStatus,
   saveStatus,
   scene,
   pendingDuplicateCaptureSources,
@@ -98,6 +104,7 @@ export function CaptureWorkspace({
         lifecycleLocked={lifecycleLocked}
         loadStatus={loadStatus}
         pendingLifecycleAction={pendingLifecycleAction}
+        previewStatus={previewStatus}
         saveStatus={saveStatus}
         scene={scene}
         status={status}
@@ -147,6 +154,7 @@ export function CaptureWorkspace({
           loadStatus={loadStatus}
           microphoneAudioSourceId={microphoneAudioSourceId}
           pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
+          previewFramesBySceneSourceId={previewFramesBySceneSourceId}
           scene={scene}
           selectedSceneSource={selectedSceneSource}
           selectedSceneSourceId={selectedSceneSourceId}

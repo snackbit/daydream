@@ -756,9 +756,11 @@ name = "daydream-desktop"
 version = "0.1.0"
 dependencies = [
  "ashpd",
+ "base64 0.22.1",
  "enumflags2",
  "libpulse-binding",
  "pipewire",
+ "png 0.18.1",
  "rusqlite",
  "rusqlite_migration",
  "serde",

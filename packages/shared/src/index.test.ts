@@ -3,6 +3,8 @@ import type {
   DaydreamDiagnostics,
   RecorderFfmpegCapabilities,
   RecorderError,
+  RecorderPreviewFrame,
+  RecorderPreviewStatus,
   RecorderScene,
   RecorderSegment,
   RecorderStatus,
@@ -195,4 +197,25 @@ test('recorder contracts support scene and segment metadata', () => {
 
   expect(scene.sources[0]?.sourceKind).toBe('monitor');
   expect(segment.videoStreamIndex).toBe(0);
+});
+
+test('recorder contracts support transient live preview metadata', () => {
+  const status = {
+    error: null,
+    sceneId: 'scene-1',
+    sourceIds: ['monitor-1'],
+    state: 'live',
+    updatedAtMs: 1,
+  } satisfies RecorderPreviewStatus;
+  const frame = {
+    dataUrl: 'data:image/png;base64,abc',
+    height: 180,
+    sceneSourceId: 'source-1',
+    sourceId: 'monitor-1',
+    timestampMs: 2,
+    width: 320,
+  } satisfies RecorderPreviewFrame;
+
+  expect(status.state).toBe('live');
+  expect(frame.dataUrl).toMatch(/^data:image\/png;base64,/);
 });

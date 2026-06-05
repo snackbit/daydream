@@ -4,16 +4,20 @@ import type {
   AudioSourceList,
   CaptureSourceList,
   PauseRecordingInput,
+  RecorderPreviewFrame,
+  RecorderPreviewStatus,
   RecorderScene,
   RecorderStatus,
   ResumeRecordingInput,
   SaveRecorderSceneInput,
   SelectCaptureSourcesInput,
+  StartRecorderPreviewInput,
   StartRecordingInput,
   StopRecordingInput,
 } from '@daydream/shared';
 
 export const recorderStatusChangedEvent = 'recorder-status-changed';
+export const recorderPreviewFrameEvent = 'recorder-preview-frame';
 
 export async function getRecorderStatus(): Promise<RecorderStatus> {
   return invoke<RecorderStatus>('getRecorderStatus');
@@ -45,6 +49,20 @@ export async function saveRecorderScene(
   return invoke<RecorderScene>('saveRecorderScene', { input });
 }
 
+export async function getRecorderPreviewStatus(): Promise<RecorderPreviewStatus> {
+  return invoke<RecorderPreviewStatus>('getRecorderPreviewStatus');
+}
+
+export async function startRecorderPreview(
+  input: StartRecorderPreviewInput,
+): Promise<RecorderPreviewStatus> {
+  return invoke<RecorderPreviewStatus>('startRecorderPreview', { input });
+}
+
+export async function stopRecorderPreview(): Promise<RecorderPreviewStatus> {
+  return invoke<RecorderPreviewStatus>('stopRecorderPreview');
+}
+
 export async function startRecording(
   input: StartRecordingInput,
 ): Promise<RecorderStatus> {
@@ -73,6 +91,14 @@ export async function listenToRecorderStatusChanged(
   handler: (status: RecorderStatus) => void,
 ): Promise<() => void> {
   return listen<RecorderStatus>(recorderStatusChangedEvent, (event) => {
+    handler(event.payload);
+  });
+}
+
+export async function listenToRecorderPreviewFrames(
+  handler: (frame: RecorderPreviewFrame) => void,
+): Promise<() => void> {
+  return listen<RecorderPreviewFrame>(recorderPreviewFrameEvent, (event) => {
     handler(event.payload);
   });
 }

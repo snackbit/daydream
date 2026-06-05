@@ -2,6 +2,7 @@ import type {
   AudioSourceList,
   CaptureSourceList,
   RecorderFfmpegCapabilities,
+  RecorderPreviewFrame,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -11,14 +12,18 @@ import { useRecorderWorkspaceStore } from './recorder-workspace-store';
 const client = vi.hoisted(() => ({
   getAudioSources: vi.fn(),
   getCaptureSources: vi.fn(),
+  getRecorderPreviewStatus: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
+  listenToRecorderPreviewFrames: vi.fn(),
   listenToRecorderStatusChanged: vi.fn(),
   pauseRecording: vi.fn(),
   resumeRecording: vi.fn(),
   saveRecorderScene: vi.fn(),
   selectCaptureSources: vi.fn(),
+  startRecorderPreview: vi.fn(),
   startRecording: vi.fn(),
+  stopRecorderPreview: vi.fn(),
   stopRecording: vi.fn(),
 }));
 
@@ -113,11 +118,26 @@ beforeEach(() => {
     true,
   );
   client.getRecorderStatus.mockResolvedValue(status);
+  client.getRecorderPreviewStatus.mockResolvedValue({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 1,
+  });
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
+  client.listenToRecorderPreviewFrames.mockResolvedValue(vi.fn());
   client.listenToRecorderStatusChanged.mockResolvedValue(vi.fn());
   client.selectCaptureSources.mockResolvedValue(captureSources);
+  client.stopRecorderPreview.mockResolvedValue({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 2,
+  });
 });
 
 test('load initializes status, audio defaults, and logical-dimension fallback scene', async () => {
@@ -148,6 +168,79 @@ test('load uses the saved scene and marks it clean', async () => {
   expect(state.microphoneAudioSourceId).toBe('mic');
   expect(state.selectedSceneSourceId).toBe(savedSource.id);
   expect(state.isDirty).toBe(false);
+});
+
+test('startPreview records live status and preview frame events by scene source id', async () => {
+  const scene = sceneWithSources(['main']);
+  let previewFrameHandler: ((frame: RecorderPreviewFrame) => void) | undefined;
+  client.listenToRecorderPreviewFrames.mockImplementation((handler) => {
+    previewFrameHandler = handler;
+    return Promise.resolve(vi.fn());
+  });
+  client.startRecorderPreview.mockResolvedValue({
+    error: null,
+    sceneId: scene.id,
+    sourceIds: ['main'],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+
+  await useRecorderWorkspaceStore.getState().subscribeToPreviewFrames();
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  previewFrameHandler?.({
+    dataUrl: 'data:image/png;base64,abc',
+    height: 180,
+    sceneSourceId: scene.sources[0]?.id ?? '',
+    sourceId: 'main',
+    timestampMs: 3,
+    width: 320,
+  });
+
+  expect(client.startRecorderPreview).toHaveBeenCalledWith({
+    sceneId: scene.id,
+  });
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+    'live',
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId[
+      scene.sources[0]?.id ?? ''
+    ]?.dataUrl,
+  ).toBe('data:image/png;base64,abc');
+});
+
+test('start stops active preview before starting recording', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    isDirty: false,
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 2,
+    },
+    scene,
+    status,
+  });
+  client.startRecording.mockResolvedValue({
+    ...status,
+    activeRecordingId: 'recording-1',
+    state: 'recording',
+  });
+
+  await useRecorderWorkspaceStore.getState().start();
+
+  expect(client.stopRecorderPreview.mock.invocationCallOrder[0]).toBeLessThan(
+    client.startRecording.mock.invocationCallOrder[0] ??
+      Number.MAX_SAFE_INTEGER,
+  );
+  expect(client.startRecording).toHaveBeenCalledWith(
+    expect.objectContaining({ sceneId: scene.id }),
+  );
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+    'idle',
+  );
 });
 
 test('load drops unavailable saved audio source ids before exposing the scene', async () => {

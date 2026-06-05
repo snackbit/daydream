@@ -1,5 +1,9 @@
 import type { ReactNode } from 'react';
-import type { RecorderScene, RecorderStatus } from '@daydream/shared';
+import type {
+  RecorderPreviewStatus,
+  RecorderScene,
+  RecorderStatus,
+} from '@daydream/shared';
 import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +19,7 @@ export interface CaptureToolbarProps {
   onStart: () => void;
   onStop: () => void;
   pendingLifecycleAction: RecorderLifecycleAction | null;
+  previewStatus: RecorderPreviewStatus | null;
   saveStatus: string;
   scene: RecorderScene | null;
   status: RecorderStatus | null;
@@ -30,6 +35,7 @@ export function CaptureToolbar({
   onStart,
   onStop,
   pendingLifecycleAction,
+  previewStatus,
   saveStatus,
   scene,
   status,
@@ -63,6 +69,13 @@ export function CaptureToolbar({
           <Badge variant="outline">Quality: balanced-ocr</Badge>
           <Badge variant={isDirty ? 'destructive' : 'secondary'}>
             {isDirty ? 'Unsaved scene' : 'Scene saved'}
+          </Badge>
+          <Badge
+            variant={
+              previewStatus?.state === 'error' ? 'destructive' : 'outline'
+            }
+          >
+            Preview: {previewLabel(previewStatus)}
           </Badge>
         </div>
       </div>
@@ -133,6 +146,23 @@ export function CaptureToolbar({
       </div>
     </div>
   );
+}
+
+function previewLabel(status: RecorderPreviewStatus | null): string {
+  if (!status) {
+    return 'stopped';
+  }
+
+  switch (status.state) {
+    case 'error':
+      return 'unavailable';
+    case 'idle':
+      return 'stopped';
+    case 'live':
+      return 'live';
+    case 'starting':
+      return 'starting';
+  }
 }
 
 function lifecycleActionFromStatus(

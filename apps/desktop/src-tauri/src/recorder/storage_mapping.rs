@@ -33,6 +33,16 @@ pub(crate) fn latest_recorder_scene_for_storage(
     scene.map(scene_from_storage).transpose()
 }
 
+pub(crate) fn recorder_scene_for_storage(
+    storage: &AppStorage,
+    scene_id: &str,
+) -> Result<RecorderScene, RecorderError> {
+    storage
+        .with_connection(|connection| storage::get_recorder_scene(connection, scene_id))
+        .map_err(|error| super::errors::scene_or_storage_error(error, scene_id))
+        .and_then(scene_from_storage)
+}
+
 pub(crate) fn quality_preset_as_storage_label(preset: &RecorderQualityPreset) -> &'static str {
     match preset {
         RecorderQualityPreset::BalancedOcr => "balanced-ocr",
