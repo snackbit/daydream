@@ -1,13 +1,11 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{env, path::PathBuf};
 
 use serde::Serialize;
 use tauri::{Manager, State};
 
-use crate::recorder::{self, RecorderBackendHealth};
+use crate::recorder::{
+    self, ffmpeg, ffmpeg::FfmpegPathSource, RecorderBackendHealth, RecorderFfmpegCapabilities,
+};
 use crate::storage::{collect_database_diagnostics, AppStorage, DatabaseDiagnostics};
 
 #[derive(Serialize)]
@@ -33,16 +31,18 @@ pub struct DaydreamDiagnostics {
 #[serde(rename_all = "camelCase")]
 pub struct FfmpegDiagnostics {
     available: bool,
+    capabilities: RecorderFfmpegCapabilities,
     error: Option<String>,
     path: Option<String>,
     source: FfmpegSource,
     version_line: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FfmpegSource {
     DaydreamFfmpegEnv,
+    Path,
     Unconfigured,
 }
 
@@ -90,43 +90,25 @@ pub async fn get_diagnostics(
 }
 
 fn collect_ffmpeg_diagnostics() -> FfmpegDiagnostics {
-    let Ok(path) = env::var("DAYDREAM_FFMPEG_PATH") else {
-        return FfmpegDiagnostics {
-            available: false,
-            error: Some("DAYDREAM_FFMPEG_PATH is not configured.".to_string()),
-            path: None,
-            source: FfmpegSource::Unconfigured,
-            version_line: None,
-        };
-    };
+    let health = ffmpeg::collect_ffmpeg_health();
+    let source = ffmpeg::selected_ffmpeg_path_details()
+        .map(|selected| source_from_ffmpeg_path_source(selected.source))
+        .unwrap_or(FfmpegSource::Unconfigured);
 
-    let trimmed_path = path.trim();
-
-    if trimmed_path.is_empty() {
-        return FfmpegDiagnostics {
-            available: false,
-            error: Some("DAYDREAM_FFMPEG_PATH is empty.".to_string()),
-            path: None,
-            source: FfmpegSource::Unconfigured,
-            version_line: None,
-        };
+    FfmpegDiagnostics {
+        available: health.available,
+        capabilities: health.capabilities,
+        error: health.error,
+        path: health.path,
+        source,
+        version_line: health.version_line,
     }
+}
 
-    match probe_ffmpeg_version_line(Path::new(trimmed_path)) {
-        Ok(version_line) => FfmpegDiagnostics {
-            available: true,
-            error: None,
-            path: Some(trimmed_path.to_string()),
-            source: FfmpegSource::DaydreamFfmpegEnv,
-            version_line: Some(version_line),
-        },
-        Err(error) => FfmpegDiagnostics {
-            available: false,
-            error: Some(error),
-            path: Some(trimmed_path.to_string()),
-            source: FfmpegSource::DaydreamFfmpegEnv,
-            version_line: None,
-        },
+fn source_from_ffmpeg_path_source(source: FfmpegPathSource) -> FfmpegSource {
+    match source {
+        FfmpegPathSource::DaydreamFfmpegEnv => FfmpegSource::DaydreamFfmpegEnv,
+        FfmpegPathSource::Path => FfmpegSource::Path,
     }
 }
 
@@ -134,44 +116,44 @@ fn path_to_string(path: &PathBuf) -> String {
     path.to_string_lossy().to_string()
 }
 
-fn probe_ffmpeg_version_line(path: &Path) -> Result<String, String> {
-    let output = Command::new(path)
-        .arg("-version")
-        .output()
-        .map_err(|error| format!("Failed to run FFmpeg: {error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let reason = first_non_empty_line(&stderr).unwrap_or("unknown error");
-
-        return Err(format!("FFmpeg exited with {}: {reason}", output.status));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    first_non_empty_line(&stdout)
-        .map(str::to_string)
-        .ok_or_else(|| "FFmpeg did not print a version line.".to_string())
-}
-
-fn first_non_empty_line(value: &str) -> Option<&str> {
-    value.lines().map(str::trim).find(|line| !line.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::first_non_empty_line;
+    use crate::recorder::ffmpeg::{parse_capabilities, FfmpegPathSource};
+
+    use super::source_from_ffmpeg_path_source;
 
     #[test]
-    fn finds_first_non_empty_line() {
+    fn parses_ffmpeg_capability_summary() {
+        let capabilities = parse_capabilities(
+            " D  lavfi\n DE pulse\n",
+            " DE rawvideo\n  E matroska\n",
+            " V....D libx264\n A..... libopus\n",
+        );
+
+        assert!(capabilities.rawvideo_demuxer);
+        assert!(capabilities.pulse_input);
+        assert!(capabilities.matroska_muxer);
+        assert!(capabilities.libx264_encoder);
+        assert!(capabilities.libopus_encoder);
+    }
+
+    #[test]
+    fn reports_path_sourced_ffmpeg_distinctly() {
+        let source = source_from_ffmpeg_path_source(FfmpegPathSource::Path);
+
         assert_eq!(
-            first_non_empty_line("\n\nffmpeg version 7.1\nconfiguration"),
-            Some("ffmpeg version 7.1"),
+            serde_json::to_value(source).expect("serialize ffmpeg source"),
+            serde_json::json!("path"),
         );
     }
 
     #[test]
-    fn returns_none_for_blank_output() {
-        assert_eq!(first_non_empty_line(" \n\t\n"), None);
+    fn reports_env_sourced_ffmpeg_distinctly() {
+        let source = source_from_ffmpeg_path_source(FfmpegPathSource::DaydreamFfmpegEnv);
+
+        assert_eq!(
+            serde_json::to_value(source).expect("serialize ffmpeg source"),
+            serde_json::json!("daydream-ffmpeg-env"),
+        );
     }
 }

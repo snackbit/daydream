@@ -1,6 +1,7 @@
 import type { RecorderScene } from '@daydream/shared';
 import { Card, CardContent } from '@/components/ui/card';
 import { SceneCanvas } from './scene-canvas';
+import { SceneControls } from './scene-controls';
 
 export interface SceneCanvasPanelProps {
   onChange: (scene: RecorderScene) => void;
@@ -26,11 +27,16 @@ export function SceneCanvasPanel({
   }
 
   return (
-    <SceneCanvas
-      scene={scene}
-      selectedSourceId={selectedSourceId}
-      onChange={onChange}
-      onSelect={onSelect}
-    />
+    <div className="flex h-full w-full flex-col">
+      <SceneControls scene={scene} onChange={onChange} />
+      <div className="min-h-0 flex-1 p-4">
+        <SceneCanvas
+          scene={scene}
+          selectedSourceId={selectedSourceId}
+          onChange={onChange}
+          onSelect={onSelect}
+        />
+      </div>
+    </div>
   );
 }

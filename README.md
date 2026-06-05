@@ -164,8 +164,10 @@ Run Rust tests after Linux Tauri prerequisites are installed:
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-The current dev launcher builds `@daydream/ffmpeg`, resolves the downloaded
-FFmpeg binary, sets `DAYDREAM_FFMPEG_PATH`, and starts `tauri dev`.
+The recorder uses `DAYDREAM_FFMPEG_PATH` as an FFmpeg override and otherwise
+falls back to `ffmpeg` on `PATH`. The checked `ffmpeg-static` binary does not
+expose Pulse input support on Linux, so audio recording needs a capable FFmpeg
+such as `/usr/bin/ffmpeg` during development.
 
 On Linux Wayland, the dev launcher also defaults
 `WEBKIT_DISABLE_DMABUF_RENDERER=1`. This avoids WebKitGTK DMA-BUF protocol

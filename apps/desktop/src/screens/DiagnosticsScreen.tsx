@@ -1,5 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
+import type { RecorderFfmpegCapabilities } from '@daydream/shared';
 import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
 
@@ -112,6 +114,9 @@ export function DiagnosticsScreen() {
               value={diagnostics?.ffmpeg.error ?? null}
             />
           </dl>
+          <FfmpegCapabilityList
+            capabilities={diagnostics?.ffmpeg.capabilities ?? null}
+          />
         </div>
 
         <div className="bg-card border p-4">
@@ -252,6 +257,95 @@ export function DiagnosticsScreen() {
         </pre>
       </div>
     </section>
+  );
+}
+
+interface FfmpegCapabilityListProps {
+  capabilities: RecorderFfmpegCapabilities | null;
+}
+
+const ffmpegCapabilityRows = [
+  {
+    key: 'rawvideoDemuxer',
+    label: 'rawvideo demuxer',
+    requiredFor: 'video',
+  },
+  {
+    key: 'matroskaMuxer',
+    label: 'Matroska muxer',
+    requiredFor: 'segment output',
+  },
+  {
+    key: 'libx264Encoder',
+    label: 'libx264 encoder',
+    requiredFor: 'video',
+  },
+  {
+    key: 'pulseInput',
+    label: 'Pulse input',
+    requiredFor: 'audio sources',
+  },
+  {
+    key: 'libopusEncoder',
+    label: 'libopus encoder',
+    requiredFor: 'audio sources',
+  },
+] satisfies Array<{
+  key: keyof RecorderFfmpegCapabilities;
+  label: string;
+  requiredFor: string;
+}>;
+
+function FfmpegCapabilityList({ capabilities }: FfmpegCapabilityListProps) {
+  return (
+    <div className="mt-4">
+      <h3 className="text-muted-foreground text-xs font-medium tracking-normal">
+        Required capabilities
+      </h3>
+      <div className="mt-2 grid gap-2">
+        {ffmpegCapabilityRows.map((capability) => (
+          <FfmpegCapabilityRow
+            key={capability.key}
+            label={capability.label}
+            requiredFor={capability.requiredFor}
+            supported={capabilities?.[capability.key] ?? false}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface FfmpegCapabilityRowProps {
+  label: string;
+  requiredFor: string;
+  supported: boolean;
+}
+
+function FfmpegCapabilityRow({
+  label,
+  requiredFor,
+  supported,
+}: FfmpegCapabilityRowProps) {
+  return (
+    <div className="bg-muted/40 grid grid-cols-[1fr_auto] items-center gap-3 p-2 text-sm">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          {supported ? (
+            <CheckCircle2 className="text-primary size-3.5 shrink-0" />
+          ) : (
+            <XCircle className="text-destructive size-3.5 shrink-0" />
+          )}
+          <span className="truncate">{label}</span>
+        </div>
+        <div className="text-muted-foreground mt-0.5 text-xs">
+          Required for {requiredFor}
+        </div>
+      </div>
+      <Badge variant={supported ? 'secondary' : 'destructive'}>
+        {supported ? 'Supported' : 'Missing'}
+      </Badge>
+    </div>
   );
 }
 

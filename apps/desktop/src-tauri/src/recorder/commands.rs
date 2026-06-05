@@ -2,7 +2,6 @@ use tauri::State;
 
 use crate::storage::AppStorage;
 
-use super::errors::unavailable_error;
 use super::manager::{now_ms, RecorderManager};
 use super::platform;
 use super::storage_mapping::{latest_recorder_scene_for_storage, save_recorder_scene_for_storage};
@@ -55,33 +54,33 @@ pub fn save_recorder_scene(
 }
 
 pub fn start_recording(
-    _input: StartRecordingInput,
-    _storage: State<'_, AppStorage>,
-    _manager: State<'_, RecorderManager>,
+    input: StartRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    Err(unavailable_error())
+    manager.start_recording(&storage, input, now_ms())
 }
 
 pub fn pause_recording(
-    _input: PauseRecordingInput,
-    _storage: State<'_, AppStorage>,
-    _manager: State<'_, RecorderManager>,
+    input: PauseRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    Err(unavailable_error())
+    manager.pause_recording(&storage, &input.recording_id, now_ms())
 }
 
 pub fn resume_recording(
-    _input: ResumeRecordingInput,
-    _storage: State<'_, AppStorage>,
-    _manager: State<'_, RecorderManager>,
+    input: ResumeRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    Err(unavailable_error())
+    manager.resume_recording(&storage, &input.recording_id, now_ms())
 }
 
 pub fn stop_recording(
-    _input: StopRecordingInput,
-    _storage: State<'_, AppStorage>,
-    _manager: State<'_, RecorderManager>,
+    input: StopRecordingInput,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    Err(unavailable_error())
+    manager.stop_recording(&storage, &input.recording_id, now_ms())
 }

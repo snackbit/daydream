@@ -90,9 +90,11 @@ Use this order for the milestone doc:
 4. `## Inputs` (optional)
 5. `## Locked Decisions`
 6. `## Success Criteria` (optional but recommended for large/product-facing work)
-7. `## Scope`
-8. `## Non-Goals`
-9. Domain-specific contract sections as needed, for example:
+7. `## User Workflows and Test Matrix` (optional but recommended for
+   product-facing work)
+8. `## Scope`
+9. `## Non-Goals`
+10. Domain-specific contract sections as needed, for example:
    - `## Definitions and Ownership Rules`
    - `## Architectural Invariants`
    - `## Public API / Interface / Config Changes`
@@ -100,11 +102,11 @@ Use this order for the milestone doc:
    - `## Privacy and Deletion Contract`
    - `## Storage Format`
    - `## Processing Contract`
-10. `## Gate A: ...` onward
-11. `## Testing and Validation`
-12. `## Dependencies and Risks` or `## Risks and Edge Cases`
-13. `## Assumptions`
-14. `## Expected Deliverables` or `## Operability Runbook` when useful
+11. `## Gate A: ...` onward
+12. `## Testing and Validation`
+13. `## Dependencies and Risks` or `## Risks and Edge Cases`
+14. `## Assumptions`
+15. `## Expected Deliverables` or `## Operability Runbook` when useful
 
 Not every milestone needs every optional section, but the order should stay
 stable.
@@ -126,6 +128,8 @@ stable.
 - If a gate has a special stop boundary, say it explicitly as an execution
   boundary, not as a meta reminder.
 - If a gate requires manual review, say what must be verified.
+- UI or stateful workflow gates SHOULD include scenario-level tests for primary
+  workflows and failure states, not only focused unit tests.
 - If a gate changes contracts, permissions, storage, deletion, processing
   eligibility, or state transitions, it should include at least one explicit
   testing task somewhere in the milestone.
@@ -225,6 +229,12 @@ The milestone is successful when:
 - <technical outcome>
 - <validation/completion outcome>
 
+## User Workflows and Test Matrix
+
+| Workflow | State combinations | Automated test layer | Manual check | Privacy/logging risk |
+| --- | --- | --- | --- | --- |
+| <primary workflow> | <empty/populated, saved/dirty, loading/error/success, etc.> | <Browser Mode / unit / Rust / integration> | <manual verification or none> | <sensitive data/logging risk or none> |
+
 ## Scope
 
 - <in-scope area>
@@ -263,6 +273,7 @@ Exit Criteria:
 ## Gate <Final>: Validation and Launch Readiness
 
 - [ ] <targeted lint/test/build/manual validation task>
+- [ ] <scenario coverage note update>
 - [ ] <manual verification task>
 - [ ] <scratchpad and follow-up note update>
 
@@ -280,6 +291,9 @@ Required validation:
 - manual verification:
   - <critical path>
   - <negative path>
+- scenario coverage:
+  - <workflow and state combinations covered by automated tests>
+  - <manual-only workflow or residual untested risk>
 
 If the implementation changes contracts, permissions, storage, deletion, or
 state transitions, add or update the relevant tests in the correct layer.

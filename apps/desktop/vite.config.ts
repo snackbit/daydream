@@ -45,6 +45,22 @@ export default defineConfig(() => ({
     },
   },
   test: {
+    coverage: {
+      all: true,
+      include: [
+        'src/features/recorder/scene-layout.ts',
+        'src/features/recorder/recorder-client.ts',
+        'src/features/recorder/recorder-workspace-store.ts',
+      ],
+      provider: 'v8' as const,
+      reporter: ['text', 'json-summary'],
+      thresholds: {
+        branches: 82,
+        functions: 94,
+        lines: 92,
+        statements: 92,
+      },
+    },
     projects: [
       {
         extends: true as const,

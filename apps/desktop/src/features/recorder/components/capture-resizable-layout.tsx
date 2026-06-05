@@ -1,5 +1,7 @@
 import type {
   AudioSource,
+  AudioSourceRole,
+  CaptureSource,
   RecorderScene,
   RecorderSceneSource,
 } from '@daydream/shared';
@@ -8,39 +10,48 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable';
+import type {
+  DuplicateCaptureSourceCandidate,
+  DuplicateCaptureSourceResolution,
+} from '@/features/recorder/scene-layout';
 import { CaptureSourcesPanel } from './capture-sources-panel';
 import { GeometryPanel } from './geometry-panel';
 import { SceneCanvasPanel } from './scene-canvas-panel';
 
 export interface CaptureResizableLayoutProps {
   audioSources: AudioSource[];
+  captureSources: CaptureSource[];
   desktopAudioSourceId: string | null;
   loadStatus: string;
   microphoneAudioSourceId: string | null;
   onChangeScene: (scene: RecorderScene) => void;
   onDeleteSceneSource: (sceneSourceId: string) => void;
-  onSelectAudioSource: (
-    role: 'desktop-audio' | 'microphone',
-    sourceId: string | null,
+  onResolveDuplicateCaptureSource: (
+    resolution: DuplicateCaptureSourceResolution,
   ) => void;
+  onSelectAudioSource: (role: AudioSourceRole, sourceId: string | null) => void;
   onSelectCaptureSources: () => void;
   onSelectSceneSource: (sourceId: string | null) => void;
   scene: RecorderScene | null;
+  pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
   selectedSceneSource: RecorderSceneSource | null;
   selectedSceneSourceId: string | null;
 }
 
 export function CaptureResizableLayout({
   audioSources,
+  captureSources,
   desktopAudioSourceId,
   loadStatus,
   microphoneAudioSourceId,
   onChangeScene,
   onDeleteSceneSource,
+  onResolveDuplicateCaptureSource,
   onSelectAudioSource,
   onSelectCaptureSources,
   onSelectSceneSource,
   scene,
+  pendingDuplicateCaptureSources,
   selectedSceneSource,
   selectedSceneSourceId,
 }: CaptureResizableLayoutProps) {
@@ -52,9 +63,11 @@ export function CaptureResizableLayout({
           desktopAudioSourceId={desktopAudioSourceId}
           loadStatus={loadStatus}
           microphoneAudioSourceId={microphoneAudioSourceId}
+          pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
           scene={scene}
           selectedSceneSourceId={selectedSceneSourceId}
           onDeleteSceneSource={onDeleteSceneSource}
+          onResolveDuplicateCaptureSource={onResolveDuplicateCaptureSource}
           onSelectAudioSource={onSelectAudioSource}
           onSelectCaptureSources={onSelectCaptureSources}
           onSelectSceneSource={onSelectSceneSource}
@@ -76,6 +89,7 @@ export function CaptureResizableLayout({
       <ResizableHandle withHandle />
       <ResizablePanel defaultSize="26%" minSize="20%">
         <GeometryPanel
+          captureSources={captureSources}
           scene={scene}
           source={selectedSceneSource}
           onChange={onChangeScene}

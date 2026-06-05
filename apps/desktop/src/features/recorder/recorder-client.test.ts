@@ -1,5 +1,6 @@
 import type {
   PauseRecordingInput,
+  RecorderFfmpegCapabilities,
   RecorderError,
   RecorderScene,
   ResumeRecordingInput,
@@ -32,11 +33,21 @@ vi.mock('@tauri-apps/api/core', () => ({
 const scene: RecorderScene = {
   canvasHeight: 1440,
   canvasWidth: 2560,
+  desktopAudioSourceId: 'desktop-monitor',
   id: 'scene-1',
   layoutMode: 'horizontal',
+  microphoneAudioSourceId: 'mic',
   name: 'Workday',
   sources: [],
 };
+
+const unavailableFfmpegCapabilities = {
+  libopusEncoder: false,
+  libx264Encoder: false,
+  matroskaMuxer: false,
+  pulseInput: false,
+  rawvideoDemuxer: false,
+} satisfies RecorderFfmpegCapabilities;
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -73,8 +84,10 @@ test('getRecorderStatus uses locked camelCase command name', async () => {
       },
       ffmpeg: {
         available: false,
+        capabilities: unavailableFfmpegCapabilities,
         error: null,
         path: null,
+        versionLine: null,
       },
       microphone: {
         available: false,

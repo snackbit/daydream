@@ -4,6 +4,9 @@ import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspac
 
 export function CaptureScreen() {
   const audioSources = useRecorderWorkspaceStore((state) => state.audioSources);
+  const captureSources = useRecorderWorkspaceStore(
+    (state) => state.captureSources,
+  );
   const desktopAudioSourceId = useRecorderWorkspaceStore(
     (state) => state.desktopAudioSourceId,
   );
@@ -18,7 +21,13 @@ export function CaptureScreen() {
     (state) => state.microphoneAudioSourceId,
   );
   const pause = useRecorderWorkspaceStore((state) => state.pause);
+  const pendingDuplicateCaptureSources = useRecorderWorkspaceStore(
+    (state) => state.pendingDuplicateCaptureSources,
+  );
   const resume = useRecorderWorkspaceStore((state) => state.resume);
+  const resolveDuplicateCaptureSource = useRecorderWorkspaceStore(
+    (state) => state.resolveDuplicateCaptureSource,
+  );
   const saveScene = useRecorderWorkspaceStore((state) => state.saveScene);
   const saveStatus = useRecorderWorkspaceStore((state) => state.saveStatus);
   const scene = useRecorderWorkspaceStore((state) => state.scene);
@@ -50,11 +59,13 @@ export function CaptureScreen() {
   return (
     <CaptureWorkspace
       audioSources={audioSources}
+      captureSources={captureSources}
       desktopAudioSourceId={desktopAudioSourceId}
       error={error}
       isDirty={isDirty}
       loadStatus={loadStatus}
       microphoneAudioSourceId={microphoneAudioSourceId}
+      pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
       saveStatus={saveStatus}
       scene={scene}
       selectedSceneSourceId={selectedSceneSourceId}
@@ -63,6 +74,7 @@ export function CaptureScreen() {
       onDeleteSceneSource={deleteSceneSource}
       onPause={() => void pause()}
       onResume={() => void resume()}
+      onResolveDuplicateCaptureSource={resolveDuplicateCaptureSource}
       onSave={() => void saveScene()}
       onSelectAudioSource={selectAudioSource}
       onSelectCaptureSources={() => void updateCaptureSources()}

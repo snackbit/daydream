@@ -226,6 +226,15 @@
 - KDE portal restore tokens may behave differently across portal versions.
 - FFmpeg packaging is not complete if M1 still depends on system FFmpeg for the
   required Pulse/encoding behavior.
+- Gate F uses `DAYDREAM_FFMPEG_PATH` as an FFmpeg override and otherwise falls
+  back to `ffmpeg` on `PATH`. The checked `ffmpeg-static` binary does not expose
+  Pulse input, so Linux audio recording needs a capable system FFmpeg during
+  development.
+- Audio recording is explicit opt-in. Desktop and microphone sources are added
+  and removed by the user instead of auto-selecting defaults.
+- Gate F smoke validation used `/usr/bin/ffmpeg` to encode two synthetic
+  rawvideo frames through stdin into `/tmp/daydream-gate-f-smoke.mkv`; `ffprobe`
+  reported stream `0|h264|video|yuv444p`.
 - Interactive canvas editing may need careful pointer math to stay stable on
   high-DPI displays.
 - Audio defaults can change during runtime; the recorder should avoid silently

@@ -1,15 +1,14 @@
 mod audio;
 mod portal;
 
-use std::{env, path::Path, process::Command};
-
 use crate::storage::AppStorage;
 
 use super::super::{
+    ffmpeg,
     manager::RecorderManager,
     types::{
         AudioSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
-        RecorderBackendHealth, RecorderError, RecorderFfmpegHealth,
+        RecorderBackendHealth, RecorderError,
     },
 };
 
@@ -29,7 +28,7 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
 
     RecorderBackendHealth {
         desktop_audio,
-        ffmpeg: collect_ffmpeg_health(),
+        ffmpeg: ffmpeg::collect_ffmpeg_health(),
         microphone,
         pipewire,
         portal,
@@ -59,47 +58,6 @@ fn audio_health(default_source_id: Option<String>, error: Option<String>) -> Rec
         available: default_source_id.is_some() && error.is_none(),
         default_source_id,
         error,
-    }
-}
-
-fn collect_ffmpeg_health() -> RecorderFfmpegHealth {
-    let Ok(path) = env::var("DAYDREAM_FFMPEG_PATH") else {
-        return RecorderFfmpegHealth {
-            available: false,
-            error: Some("DAYDREAM_FFMPEG_PATH is not configured.".to_string()),
-            path: None,
-        };
-    };
-
-    let trimmed_path = path.trim();
-
-    if trimmed_path.is_empty() {
-        return RecorderFfmpegHealth {
-            available: false,
-            error: Some("DAYDREAM_FFMPEG_PATH is empty.".to_string()),
-            path: None,
-        };
-    }
-
-    match Command::new(Path::new(trimmed_path))
-        .arg("-version")
-        .output()
-    {
-        Ok(output) if output.status.success() => RecorderFfmpegHealth {
-            available: true,
-            error: None,
-            path: Some(trimmed_path.to_string()),
-        },
-        Ok(output) => RecorderFfmpegHealth {
-            available: false,
-            error: Some(format!("FFmpeg exited with {}.", output.status)),
-            path: Some(trimmed_path.to_string()),
-        },
-        Err(error) => RecorderFfmpegHealth {
-            available: false,
-            error: Some(format!("Failed to run FFmpeg: {error}")),
-            path: Some(trimmed_path.to_string()),
-        },
     }
 }
 

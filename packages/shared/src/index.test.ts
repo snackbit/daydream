@@ -1,11 +1,20 @@
 import { expect, test } from 'vitest';
 import type {
   DaydreamDiagnostics,
+  RecorderFfmpegCapabilities,
   RecorderError,
   RecorderScene,
   RecorderSegment,
   RecorderStatus,
 } from './index.js';
+
+const unavailableFfmpegCapabilities = {
+  libopusEncoder: false,
+  libx264Encoder: false,
+  matroskaMuxer: false,
+  pulseInput: false,
+  rawvideoDemuxer: false,
+} satisfies RecorderFfmpegCapabilities;
 
 test('diagnostics shape supports unavailable ffmpeg state', () => {
   const diagnostics: DaydreamDiagnostics = {
@@ -25,6 +34,7 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
     },
     ffmpeg: {
       available: false,
+      capabilities: unavailableFfmpegCapabilities,
       error: 'missing DAYDREAM_FFMPEG_PATH',
       path: null,
       source: 'unconfigured',
@@ -38,8 +48,10 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
       },
       ffmpeg: {
         available: false,
+        capabilities: unavailableFfmpegCapabilities,
         error: 'not implemented',
         path: null,
+        versionLine: null,
       },
       microphone: {
         available: false,
@@ -90,8 +102,10 @@ test('recorder contracts support gate-a unavailable state', () => {
       },
       ffmpeg: {
         available: false,
+        capabilities: unavailableFfmpegCapabilities,
         error: 'not implemented',
         path: null,
+        versionLine: null,
       },
       microphone: {
         available: false,
@@ -122,8 +136,10 @@ test('recorder contracts support scene and segment metadata', () => {
   const scene = {
     canvasHeight: 1440,
     canvasWidth: 5120,
+    desktopAudioSourceId: 'desktop-monitor',
     id: 'scene-1',
     layoutMode: 'horizontal',
+    microphoneAudioSourceId: 'mic',
     name: 'Workday',
     sources: [
       {
@@ -143,7 +159,9 @@ test('recorder contracts support scene and segment metadata', () => {
           y: 0,
         },
         sourceId: 'monitor-1',
+        sourceHeight: 1440,
         sourceKind: 'monitor',
+        sourceWidth: 2560,
         zIndex: 0,
       },
     ],

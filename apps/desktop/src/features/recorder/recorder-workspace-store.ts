@@ -1,5 +1,6 @@
 import type {
   AudioSource,
+  AudioSourceRole,
   CaptureSource,
   RecorderError,
   RecorderScene,
@@ -19,9 +20,15 @@ import {
   stopRecording,
 } from './recorder-client';
 import {
+  classifyCaptureSourceMerge,
   createDefaultRecorderScene,
   mergeCaptureSourcesIntoScene,
   removeSceneSource,
+  resolveDuplicateCaptureSource as resolveDuplicateCaptureSourceInScene,
+} from './scene-layout';
+import type {
+  DuplicateCaptureSourceCandidate,
+  DuplicateCaptureSourceResolution,
 } from './scene-layout';
 
 type AsyncStatus = 'error' | 'idle' | 'loading' | 'ready';
@@ -37,14 +44,15 @@ interface RecorderWorkspaceState {
   loadStatus: AsyncStatus;
   microphoneAudioSourceId: string | null;
   pause: () => Promise<void>;
+  pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
   resume: () => Promise<void>;
+  resolveDuplicateCaptureSource: (
+    resolution: DuplicateCaptureSourceResolution,
+  ) => void;
   saveScene: () => Promise<void>;
   saveStatus: AsyncStatus;
   scene: RecorderScene | null;
-  selectAudioSource: (
-    role: 'desktop-audio' | 'microphone',
-    sourceId: string | null,
-  ) => void;
+  selectAudioSource: (role: AudioSourceRole, sourceId: string | null) => void;
   selectSceneSource: (sourceId: string | null) => void;
   selectedSceneSourceId: string | null;
   setDraftScene: (scene: RecorderScene) => void;
@@ -72,23 +80,28 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
             getAudioSources(),
             getRecorderScene(),
           ]);
-        const scene =
+        const restoredScene =
           savedScene ?? createDefaultRecorderScene(captureSourceList.sources);
+        const scene = sanitizeSceneAudioSources(
+          restoredScene,
+          audioSourceList.sources,
+        );
+        const droppedSavedAudioSource =
+          !!savedScene &&
+          (scene.desktopAudioSourceId !== savedScene.desktopAudioSourceId ||
+            scene.microphoneAudioSourceId !==
+              savedScene.microphoneAudioSourceId);
 
         set({
           audioSources: audioSourceList.sources,
           captureSources: captureSourceList.sources,
-          desktopAudioSourceId: defaultAudioSourceId(
-            audioSourceList.sources,
-            'desktop-audio',
-          ),
+          desktopAudioSourceId: scene.desktopAudioSourceId,
           error: null,
-          isDirty: !savedScene && captureSourceList.sources.length > 0,
+          isDirty:
+            droppedSavedAudioSource ||
+            (!savedScene && captureSourceList.sources.length > 0),
           loadStatus: 'ready',
-          microphoneAudioSourceId: defaultAudioSourceId(
-            audioSourceList.sources,
-            'microphone',
-          ),
+          microphoneAudioSourceId: scene.microphoneAudioSourceId,
           scene,
           selectedSceneSourceId: scene.sources[0]?.id ?? null,
           status,
@@ -130,6 +143,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     },
     loadStatus: 'idle',
     microphoneAudioSourceId: null,
+    pendingDuplicateCaptureSources: [],
     async pause() {
       const recordingId = get().status?.activeRecordingId;
       if (!recordingId) {
@@ -146,6 +160,35 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
 
       await runStatusMutation(set, () => resumeRecording({ recordingId }));
     },
+    resolveDuplicateCaptureSource(resolution) {
+      const [candidate, ...remainingCandidates] =
+        get().pendingDuplicateCaptureSources;
+      const scene = get().scene;
+      if (!candidate || !scene) {
+        return;
+      }
+
+      const nextScene = resolveDuplicateCaptureSourceInScene(
+        scene,
+        candidate,
+        resolution,
+      );
+      set({
+        error: null,
+        isDirty: resolution === 'skip' ? get().isDirty : true,
+        pendingDuplicateCaptureSources: remainingCandidates,
+        scene: nextScene,
+        selectedSceneSourceId:
+          resolution === 'refresh-existing'
+            ? candidate.existingSource.id
+            : (selectExistingSceneSource(
+                nextScene,
+                get().selectedSceneSourceId,
+              ) ??
+              nextScene.sources.at(-1)?.id ??
+              null),
+      });
+    },
     async saveScene() {
       const scene = get().scene;
       if (!scene) {
@@ -156,10 +199,19 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
       set({ error: null, saveStatus: 'loading' });
 
       try {
-        const savedScene = await saveRecorderScene({ scene });
+        const sceneWithAudioSources = {
+          ...scene,
+          desktopAudioSourceId: get().desktopAudioSourceId,
+          microphoneAudioSourceId: get().microphoneAudioSourceId,
+        };
+        const savedScene = await saveRecorderScene({
+          scene: sceneWithAudioSources,
+        });
         set({
+          desktopAudioSourceId: savedScene.desktopAudioSourceId,
           error: null,
           isDirty: false,
+          microphoneAudioSourceId: savedScene.microphoneAudioSourceId,
           saveStatus: 'ready',
           scene: savedScene,
           selectedSceneSourceId: selectExistingSceneSource(
@@ -177,12 +229,33 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     saveStatus: 'idle',
     scene: null,
     selectAudioSource(role, sourceId) {
+      const state = get();
       if (role === 'desktop-audio') {
-        set({ desktopAudioSourceId: sourceId });
+        if (state.desktopAudioSourceId === sourceId) {
+          return;
+        }
+
+        set({
+          desktopAudioSourceId: sourceId,
+          isDirty: true,
+          scene: state.scene
+            ? { ...state.scene, desktopAudioSourceId: sourceId }
+            : state.scene,
+        });
         return;
       }
 
-      set({ microphoneAudioSourceId: sourceId });
+      if (state.microphoneAudioSourceId === sourceId) {
+        return;
+      }
+
+      set({
+        isDirty: true,
+        microphoneAudioSourceId: sourceId,
+        scene: state.scene
+          ? { ...state.scene, microphoneAudioSourceId: sourceId }
+          : state.scene,
+      });
     },
     selectSceneSource(sourceId) {
       set({ selectedSceneSourceId: sourceId });
@@ -233,15 +306,23 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
           forceChooser: true,
         });
         const currentScene = get().scene ?? createDefaultRecorderScene([]);
-        const scene = mergeCaptureSourcesIntoScene(
+        const classification = classifyCaptureSourceMerge(
           currentScene,
           captureSourceList.sources,
+        );
+        const scene = mergeCaptureSourcesIntoScene(
+          currentScene,
+          classification.newSources,
         );
         set({
           captureSources: captureSourceList.sources,
           error: null,
-          isDirty: scene.sources.length > 0,
+          isDirty:
+            scene !== currentScene && scene.sources.length > 0
+              ? true
+              : get().isDirty,
           loadStatus: 'ready',
+          pendingDuplicateCaptureSources: classification.duplicateCandidates,
           scene,
           selectedSceneSourceId:
             selectExistingSceneSource(scene, get().selectedSceneSourceId) ??
@@ -258,18 +339,6 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
   }),
 );
 
-function defaultAudioSourceId(
-  sources: AudioSource[],
-  role: 'desktop-audio' | 'microphone',
-): string | null {
-  return (
-    sources.find((source) => source.isDefault && source.roles.includes(role))
-      ?.id ??
-    sources.find((source) => source.roles.includes(role))?.id ??
-    null
-  );
-}
-
 function selectExistingSceneSource(
   scene: RecorderScene,
   sceneSourceId: string | null,
@@ -277,6 +346,51 @@ function selectExistingSceneSource(
   return scene.sources.some((source) => source.id === sceneSourceId)
     ? sceneSourceId
     : (scene.sources[0]?.id ?? null);
+}
+
+function sanitizeSceneAudioSources(
+  scene: RecorderScene,
+  audioSources: AudioSource[],
+): RecorderScene {
+  const desktopAudioSourceId = availableAudioSourceId(
+    audioSources,
+    'desktop-audio',
+    scene.desktopAudioSourceId,
+  );
+  const microphoneAudioSourceId = availableAudioSourceId(
+    audioSources,
+    'microphone',
+    scene.microphoneAudioSourceId,
+  );
+
+  if (
+    desktopAudioSourceId === scene.desktopAudioSourceId &&
+    microphoneAudioSourceId === scene.microphoneAudioSourceId
+  ) {
+    return scene;
+  }
+
+  return {
+    ...scene,
+    desktopAudioSourceId,
+    microphoneAudioSourceId,
+  };
+}
+
+function availableAudioSourceId(
+  audioSources: AudioSource[],
+  role: AudioSourceRole,
+  sourceId: string | null,
+): string | null {
+  if (!sourceId) {
+    return null;
+  }
+
+  return audioSources.some(
+    (source) => source.id === sourceId && source.roles.includes(role),
+  )
+    ? sourceId
+    : null;
 }
 
 async function runStatusMutation(

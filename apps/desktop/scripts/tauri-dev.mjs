@@ -1,7 +1,4 @@
-import { resolveFfmpegBinaryPath } from '@daydream/ffmpeg';
 import { spawn } from 'node:child_process';
-
-const ffmpegPath = resolveFfmpegBinaryPath();
 
 function createLinuxWaylandEnv() {
   if (
@@ -20,7 +17,6 @@ function createLinuxWaylandEnv() {
 const child = spawn('yarn', ['tauri', 'dev'], {
   env: {
     ...process.env,
-    DAYDREAM_FFMPEG_PATH: ffmpegPath,
     ...createLinuxWaylandEnv(),
   },
   stdio: 'inherit',

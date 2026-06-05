@@ -11,6 +11,11 @@ of these workflows.
 Use when creating, refining, executing, reviewing, or closing milestone-scoped
 work.
 
+### [UI Quality and Scenario Testing](./ui-quality-and-scenario-testing.md)
+
+Use when adding or reviewing user-facing UI, stateful workflows, or fixes for
+bugs found during manual verification.
+
 ## Authoring New Runbooks
 
 Prefer updating an existing runbook when the scenario already exists. Add a new

@@ -146,8 +146,10 @@ pub struct RecordingRow {
 pub struct SaveRecorderSceneInput {
     pub canvas_height: i64,
     pub canvas_width: i64,
+    pub desktop_audio_source_id: Option<String>,
     pub id: String,
     pub layout_mode: String,
+    pub microphone_audio_source_id: Option<String>,
     pub name: String,
     pub sources: Vec<SaveRecorderSceneSourceInput>,
     pub timestamp_ms: i64,
@@ -164,7 +166,9 @@ pub struct SaveRecorderSceneSourceInput {
     pub id: String,
     pub preserve_aspect_ratio: bool,
     pub source_id: String,
+    pub source_height: Option<i64>,
     pub source_kind: String,
+    pub source_width: Option<i64>,
     pub width: i64,
     pub x: i64,
     pub y: i64,
@@ -175,8 +179,10 @@ pub struct SaveRecorderSceneSourceInput {
 pub struct RecorderSceneRow {
     pub canvas_height: i64,
     pub canvas_width: i64,
+    pub desktop_audio_source_id: Option<String>,
     pub id: String,
     pub layout_mode: String,
+    pub microphone_audio_source_id: Option<String>,
     pub name: String,
     pub sources: Vec<RecorderSceneSourceRow>,
 }
@@ -192,7 +198,9 @@ pub struct RecorderSceneSourceRow {
     pub id: String,
     pub preserve_aspect_ratio: bool,
     pub source_id: String,
+    pub source_height: Option<i64>,
     pub source_kind: String,
+    pub source_width: Option<i64>,
     pub width: i64,
     pub x: i64,
     pub y: i64,
@@ -385,14 +393,18 @@ pub fn save_recorder_scene(
             canvas_width,
             canvas_height,
             layout_mode,
+            desktop_audio_source_id,
+            microphone_audio_source_id,
             created_at_ms,
             updated_at_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             canvas_width = excluded.canvas_width,
             canvas_height = excluded.canvas_height,
             layout_mode = excluded.layout_mode,
+            desktop_audio_source_id = excluded.desktop_audio_source_id,
+            microphone_audio_source_id = excluded.microphone_audio_source_id,
             updated_at_ms = excluded.updated_at_ms
         "#,
         params![
@@ -401,6 +413,8 @@ pub fn save_recorder_scene(
             input.canvas_width,
             input.canvas_height,
             input.layout_mode,
+            input.desktop_audio_source_id,
+            input.microphone_audio_source_id,
             input.timestamp_ms,
         ],
     )?;
@@ -423,6 +437,8 @@ pub fn save_recorder_scene(
                 y,
                 width,
                 height,
+                source_width,
+                source_height,
                 crop_left,
                 crop_top,
                 crop_right,
@@ -431,7 +447,7 @@ pub fn save_recorder_scene(
                 preserve_aspect_ratio,
                 created_at_ms,
                 updated_at_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)
             "#,
             params![
                 source.id,
@@ -443,6 +459,8 @@ pub fn save_recorder_scene(
                 source.y,
                 source.width,
                 source.height,
+                source.source_width,
+                source.source_height,
                 source.crop_left,
                 source.crop_top,
                 source.crop_right,
@@ -467,7 +485,9 @@ pub fn get_recorder_scene(connection: &Connection, id: &str) -> rusqlite::Result
             name,
             canvas_width,
             canvas_height,
-            layout_mode
+            layout_mode,
+            desktop_audio_source_id,
+            microphone_audio_source_id
         FROM recorder_scenes
         WHERE id = ?1
         "#,
@@ -479,6 +499,8 @@ pub fn get_recorder_scene(connection: &Connection, id: &str) -> rusqlite::Result
                 canvas_width: row.get(2)?,
                 canvas_height: row.get(3)?,
                 layout_mode: row.get(4)?,
+                desktop_audio_source_id: row.get(5)?,
+                microphone_audio_source_id: row.get(6)?,
                 sources: Vec::new(),
             })
         },
@@ -500,7 +522,9 @@ pub fn get_latest_recorder_scene(
                 name,
                 canvas_width,
                 canvas_height,
-                layout_mode
+                layout_mode,
+                desktop_audio_source_id,
+                microphone_audio_source_id
             FROM recorder_scenes
             ORDER BY updated_at_ms DESC, id ASC
             LIMIT 1
@@ -513,6 +537,8 @@ pub fn get_latest_recorder_scene(
                     canvas_width: row.get(2)?,
                     canvas_height: row.get(3)?,
                     layout_mode: row.get(4)?,
+                    desktop_audio_source_id: row.get(5)?,
+                    microphone_audio_source_id: row.get(6)?,
                     sources: Vec::new(),
                 })
             },
@@ -775,6 +801,8 @@ fn list_recorder_scene_sources(
             y,
             width,
             height,
+            source_width,
+            source_height,
             crop_left,
             crop_top,
             crop_right,
@@ -797,12 +825,14 @@ fn list_recorder_scene_sources(
             y: row.get(5)?,
             width: row.get(6)?,
             height: row.get(7)?,
-            crop_left: row.get(8)?,
-            crop_top: row.get(9)?,
-            crop_right: row.get(10)?,
-            crop_bottom: row.get(11)?,
-            z_index: row.get(12)?,
-            preserve_aspect_ratio: row.get(13)?,
+            source_width: row.get(8)?,
+            source_height: row.get(9)?,
+            crop_left: row.get(10)?,
+            crop_top: row.get(11)?,
+            crop_right: row.get(12)?,
+            crop_bottom: row.get(13)?,
+            z_index: row.get(14)?,
+            preserve_aspect_ratio: row.get(15)?,
         })
     })?;
 
@@ -949,7 +979,7 @@ fn migrations() -> Migrations<'static> {
             name TEXT NOT NULL,
             canvas_width INTEGER NOT NULL CHECK (canvas_width > 0),
             canvas_height INTEGER NOT NULL CHECK (canvas_height > 0),
-            layout_mode TEXT NOT NULL CHECK (layout_mode IN ('horizontal', 'custom')),
+            layout_mode TEXT NOT NULL CHECK (layout_mode IN ('auto-16-9', 'custom', 'horizontal', 'vertical')),
             created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)
         );
@@ -1152,6 +1182,44 @@ fn migrations() -> Migrations<'static> {
         );
         "#,
         ),
+        M::up(
+            r#"
+        ALTER TABLE recorder_scene_sources
+            ADD COLUMN source_width INTEGER CHECK (source_width IS NULL OR source_width > 0);
+        ALTER TABLE recorder_scene_sources
+            ADD COLUMN source_height INTEGER CHECK (source_height IS NULL OR source_height > 0);
+        "#,
+        ),
+        M::up(
+            r#"
+        -- Existing alpha databases have recorder_scenes referenced by child
+        -- tables, and this migration runner wraps each migration in a
+        -- transaction. Patch only the CHECK expression instead of rebuilding
+        -- the foreign-key-linked table with PRAGMA foreign_keys disabled.
+        PRAGMA writable_schema = ON;
+
+        UPDATE sqlite_schema
+        SET sql = replace(
+            sql,
+            'layout_mode TEXT NOT NULL CHECK (layout_mode IN (''horizontal'', ''custom''))',
+            'layout_mode TEXT NOT NULL CHECK (layout_mode IN (''auto-16-9'', ''custom'', ''horizontal'', ''vertical''))'
+        )
+        WHERE type = 'table'
+            AND name = 'recorder_scenes'
+            AND sql LIKE '%layout_mode TEXT NOT NULL CHECK (layout_mode IN (''horizontal'', ''custom''))%';
+
+        PRAGMA schema_version = 5000;
+        PRAGMA writable_schema = OFF;
+        "#,
+        ),
+        M::up(
+            r#"
+        ALTER TABLE recorder_scenes
+            ADD COLUMN desktop_audio_source_id TEXT;
+        ALTER TABLE recorder_scenes
+            ADD COLUMN microphone_audio_source_id TEXT;
+        "#,
+        ),
     ])
 }
 
@@ -1191,7 +1259,7 @@ mod tests {
             collect_database_diagnostics_from_connection(&connection)
                 .expect("collect database diagnostics");
 
-        assert_eq!(schema_version, 3);
+        assert_eq!(schema_version, 6);
         assert_eq!(table_counts["recordings"], 0);
         assert_eq!(table_counts["recording_tracks"], 0);
         assert_eq!(table_counts["recording_segments"], 0);
@@ -1323,14 +1391,14 @@ mod tests {
             )
             .expect("insert v1 recording");
 
-        apply_migrations(&mut connection).expect("apply v2 migration");
+        apply_migrations(&mut connection).expect("apply remaining migrations");
 
         let (schema_version, table_counts) =
             collect_database_diagnostics_from_connection(&connection)
                 .expect("collect database diagnostics");
         let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-        assert_eq!(schema_version, 3);
+        assert_eq!(schema_version, 6);
         assert_eq!(table_counts["recordings"], 1);
         assert_eq!(migrated.quality_label, "ocr");
         assert_eq!(migrated.active_scene_id, None);
@@ -1376,7 +1444,7 @@ mod tests {
             )
             .expect("insert v1 track");
 
-        apply_migrations(&mut connection).expect("apply v2 migration");
+        apply_migrations(&mut connection).expect("apply remaining migrations");
 
         let track_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM recording_tracks", [], |row| {
@@ -1451,8 +1519,10 @@ mod tests {
             &SaveRecorderSceneInput {
                 canvas_height: 1440,
                 canvas_width: 5120,
+                desktop_audio_source_id: Some("desktop-monitor".to_string()),
                 id: scene_id.clone(),
                 layout_mode: "horizontal".to_string(),
+                microphone_audio_source_id: Some("microphone".to_string()),
                 name: "Workday".to_string(),
                 sources: vec![
                     SaveRecorderSceneSourceInput {
@@ -1465,7 +1535,9 @@ mod tests {
                         id: Uuid::now_v7().to_string(),
                         preserve_aspect_ratio: true,
                         source_id: "monitor-2".to_string(),
+                        source_height: Some(1440),
                         source_kind: "monitor".to_string(),
+                        source_width: Some(2560),
                         width: 2560,
                         x: 2560,
                         y: 0,
@@ -1481,7 +1553,9 @@ mod tests {
                         id: Uuid::now_v7().to_string(),
                         preserve_aspect_ratio: false,
                         source_id: "monitor-1".to_string(),
+                        source_height: Some(1440),
                         source_kind: "monitor".to_string(),
+                        source_width: Some(2560),
                         width: 2560,
                         x: 0,
                         y: 0,
@@ -1495,6 +1569,14 @@ mod tests {
 
         assert_eq!(scene.id, scene_id);
         assert_eq!(scene.canvas_width, 5120);
+        assert_eq!(
+            scene.desktop_audio_source_id,
+            Some("desktop-monitor".to_string()),
+        );
+        assert_eq!(
+            scene.microphone_audio_source_id,
+            Some("microphone".to_string()),
+        );
         assert_eq!(scene.sources.len(), 2);
         assert_eq!(scene.sources[0].source_id, "monitor-1");
         assert_eq!(scene.sources[0].crop_left, 1);
@@ -1512,8 +1594,10 @@ mod tests {
             &SaveRecorderSceneInput {
                 canvas_height: 1440,
                 canvas_width: 2560,
+                desktop_audio_source_id: None,
                 id: scene_id.clone(),
                 layout_mode: "horizontal".to_string(),
+                microphone_audio_source_id: None,
                 name: "Initial".to_string(),
                 sources: vec![scene_source("monitor-1", 0)],
                 timestamp_ms: 1,
@@ -1526,8 +1610,10 @@ mod tests {
             &SaveRecorderSceneInput {
                 canvas_height: 1440,
                 canvas_width: 2560,
+                desktop_audio_source_id: None,
                 id: scene_id.clone(),
                 layout_mode: "custom".to_string(),
+                microphone_audio_source_id: None,
                 name: "Updated".to_string(),
                 sources: vec![scene_source("monitor-2", 0)],
                 timestamp_ms: 2,
@@ -1544,6 +1630,88 @@ mod tests {
     }
 
     #[test]
+    fn scene_helper_accepts_current_layout_modes() {
+        let mut connection = migrated_memory_connection();
+
+        for (index, layout_mode) in ["auto-16-9", "custom", "horizontal", "vertical"]
+            .into_iter()
+            .enumerate()
+        {
+            let scene_id = Uuid::now_v7().to_string();
+            let scene = save_recorder_scene(
+                &mut connection,
+                &SaveRecorderSceneInput {
+                    canvas_height: 1440,
+                    canvas_width: 2560,
+                    desktop_audio_source_id: None,
+                    id: scene_id,
+                    layout_mode: layout_mode.to_string(),
+                    microphone_audio_source_id: None,
+                    name: format!("Layout {layout_mode}"),
+                    sources: vec![scene_source("monitor-1", index as i64)],
+                    timestamp_ms: index as i64 + 1,
+                },
+            )
+            .expect("save scene with current layout mode");
+
+            assert_eq!(scene.layout_mode, layout_mode);
+        }
+    }
+
+    #[test]
+    fn existing_v4_scene_constraint_migrates_to_current_layout_modes() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory sqlite database");
+        enable_connection_pragmas(&connection).expect("enable sqlite pragmas");
+        create_v4_recorder_scene_tables(&connection);
+        let existing_scene_id = Uuid::now_v7().to_string();
+        connection
+            .execute(
+                r#"
+                INSERT INTO recorder_scenes (
+                    id,
+                    name,
+                    canvas_width,
+                    canvas_height,
+                    layout_mode,
+                    created_at_ms,
+                    updated_at_ms
+                ) VALUES (?1, 'Existing scene', 2560, 1440, 'horizontal', 1, 1)
+                "#,
+                [&existing_scene_id],
+            )
+            .expect("insert existing v4 scene");
+        connection
+            .pragma_update(None, "user_version", 4)
+            .expect("set v4 schema version");
+
+        apply_migrations(&mut connection).expect("apply current layout migration");
+
+        let existing_scene =
+            get_recorder_scene(&connection, &existing_scene_id).expect("read migrated v4 scene");
+        assert_eq!(existing_scene.desktop_audio_source_id, None);
+        assert_eq!(existing_scene.microphone_audio_source_id, None);
+
+        let scene_id = Uuid::now_v7().to_string();
+        let scene = save_recorder_scene(
+            &mut connection,
+            &SaveRecorderSceneInput {
+                canvas_height: 1440,
+                canvas_width: 2560,
+                desktop_audio_source_id: None,
+                id: scene_id,
+                layout_mode: "auto-16-9".to_string(),
+                microphone_audio_source_id: None,
+                name: "Auto scene".to_string(),
+                sources: vec![scene_source("monitor-1", 0)],
+                timestamp_ms: 1,
+            },
+        )
+        .expect("save scene after layout constraint migration");
+
+        assert_eq!(scene.layout_mode, "auto-16-9");
+    }
+
+    #[test]
     fn latest_scene_helper_returns_newest_saved_scene() {
         let mut connection = migrated_memory_connection();
         let older_scene_id = Uuid::now_v7().to_string();
@@ -1554,8 +1722,10 @@ mod tests {
             &SaveRecorderSceneInput {
                 canvas_height: 720,
                 canvas_width: 1280,
+                desktop_audio_source_id: None,
                 id: older_scene_id,
                 layout_mode: "horizontal".to_string(),
+                microphone_audio_source_id: None,
                 name: "Older".to_string(),
                 sources: vec![scene_source("monitor-1", 0)],
                 timestamp_ms: 10,
@@ -1567,8 +1737,10 @@ mod tests {
             &SaveRecorderSceneInput {
                 canvas_height: 1440,
                 canvas_width: 2560,
+                desktop_audio_source_id: None,
                 id: newer_scene_id.clone(),
                 layout_mode: "custom".to_string(),
+                microphone_audio_source_id: None,
                 name: "Newer".to_string(),
                 sources: vec![scene_source("monitor-2", 0)],
                 timestamp_ms: 20,
@@ -1610,8 +1782,10 @@ mod tests {
                     &SaveRecorderSceneInput {
                         canvas_height: 1440,
                         canvas_width: 2560,
+                        desktop_audio_source_id: None,
                         id: scene_id.clone(),
                         layout_mode: "horizontal".to_string(),
+                        microphone_audio_source_id: None,
                         name: "Managed storage scene".to_string(),
                         sources: vec![scene_source("monitor-1", 0)],
                         timestamp_ms: 1,
@@ -1928,6 +2102,47 @@ mod tests {
         recording_id
     }
 
+    fn create_v4_recorder_scene_tables(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE recorder_scenes (
+                    id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                    name TEXT NOT NULL,
+                    canvas_width INTEGER NOT NULL CHECK (canvas_width > 0),
+                    canvas_height INTEGER NOT NULL CHECK (canvas_height > 0),
+                    layout_mode TEXT NOT NULL CHECK (layout_mode IN ('horizontal', 'custom')),
+                    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)
+                );
+
+                CREATE TABLE recorder_scene_sources (
+                    id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                    scene_id TEXT NOT NULL CHECK (length(scene_id) = 36),
+                    source_id TEXT NOT NULL,
+                    source_kind TEXT NOT NULL CHECK (source_kind IN ('monitor')),
+                    display_name TEXT NOT NULL,
+                    x INTEGER NOT NULL,
+                    y INTEGER NOT NULL,
+                    width INTEGER NOT NULL CHECK (width > 0),
+                    height INTEGER NOT NULL CHECK (height > 0),
+                    source_width INTEGER CHECK (source_width IS NULL OR source_width > 0),
+                    source_height INTEGER CHECK (source_height IS NULL OR source_height > 0),
+                    crop_left INTEGER NOT NULL CHECK (crop_left >= 0),
+                    crop_top INTEGER NOT NULL CHECK (crop_top >= 0),
+                    crop_right INTEGER NOT NULL CHECK (crop_right >= 0),
+                    crop_bottom INTEGER NOT NULL CHECK (crop_bottom >= 0),
+                    z_index INTEGER NOT NULL,
+                    preserve_aspect_ratio INTEGER NOT NULL CHECK (preserve_aspect_ratio IN (0, 1)),
+                    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+                    FOREIGN KEY (scene_id) REFERENCES recorder_scenes(id) ON DELETE CASCADE
+                );
+                "#,
+            )
+            .expect("create v4 recorder scene tables");
+    }
+
     fn scene_source(source_id: &str, z_index: i64) -> SaveRecorderSceneSourceInput {
         SaveRecorderSceneSourceInput {
             crop_bottom: 0,
@@ -1939,7 +2154,9 @@ mod tests {
             id: Uuid::now_v7().to_string(),
             preserve_aspect_ratio: true,
             source_id: source_id.to_string(),
+            source_height: Some(1440),
             source_kind: "monitor".to_string(),
+            source_width: Some(2560),
             width: 2560,
             x: 0,
             y: 0,

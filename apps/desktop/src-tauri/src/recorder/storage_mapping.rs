@@ -46,8 +46,10 @@ fn storage_scene_input_from_recorder(
     Ok(StorageSaveRecorderSceneInput {
         canvas_height: scene.canvas_height.into(),
         canvas_width: scene.canvas_width.into(),
+        desktop_audio_source_id: scene.desktop_audio_source_id,
         id: scene.id,
         layout_mode: layout_mode_as_storage_label(&scene.layout_mode).to_string(),
+        microphone_audio_source_id: scene.microphone_audio_source_id,
         name: scene.name,
         sources: scene
             .sources
@@ -71,7 +73,9 @@ fn storage_scene_source_input_from_recorder(
         id: source.id,
         preserve_aspect_ratio: source.preserve_aspect_ratio,
         source_id: source.source_id,
+        source_height: optional_pixel_value(source.source_height, "sourceHeight")?,
         source_kind: capture_source_kind_as_storage_label(&source.source_kind).to_string(),
+        source_width: optional_pixel_value(source.source_width, "sourceWidth")?,
         width: pixel_value(source.rect.width, "rect.width")?,
         x: pixel_value(source.rect.x, "rect.x")?,
         y: pixel_value(source.rect.y, "rect.y")?,
@@ -83,8 +87,10 @@ fn scene_from_storage(scene: RecorderSceneRow) -> Result<RecorderScene, Recorder
     Ok(RecorderScene {
         canvas_height: u32_value(scene.canvas_height, "canvasHeight")?,
         canvas_width: u32_value(scene.canvas_width, "canvasWidth")?,
+        desktop_audio_source_id: scene.desktop_audio_source_id,
         id: scene.id,
         layout_mode: layout_mode_from_storage_label(&scene.layout_mode)?,
+        microphone_audio_source_id: scene.microphone_audio_source_id,
         name: scene.name,
         sources: scene
             .sources
@@ -114,7 +120,9 @@ fn scene_source_from_storage(
             y: source.y as f64,
         },
         source_id: source.source_id,
+        source_height: source.source_height.map(|height| height as f64),
         source_kind: capture_source_kind_from_storage_label(&source.source_kind)?,
+        source_width: source.source_width.map(|width| width as f64),
         z_index: source.z_index as i32,
     })
 }
@@ -134,15 +142,19 @@ fn capture_source_kind_from_storage_label(value: &str) -> Result<CaptureSourceKi
 
 fn layout_mode_as_storage_label(layout_mode: &RecorderSceneLayoutMode) -> &'static str {
     match layout_mode {
+        RecorderSceneLayoutMode::Auto169 => "auto-16-9",
         RecorderSceneLayoutMode::Custom => "custom",
         RecorderSceneLayoutMode::Horizontal => "horizontal",
+        RecorderSceneLayoutMode::Vertical => "vertical",
     }
 }
 
 fn layout_mode_from_storage_label(value: &str) -> Result<RecorderSceneLayoutMode, RecorderError> {
     match value {
+        "auto-16-9" => Ok(RecorderSceneLayoutMode::Auto169),
         "custom" => Ok(RecorderSceneLayoutMode::Custom),
         "horizontal" => Ok(RecorderSceneLayoutMode::Horizontal),
+        "vertical" => Ok(RecorderSceneLayoutMode::Vertical),
         _ => Err(storage_error_message("Unknown scene layout mode.")),
     }
 }
@@ -153,6 +165,10 @@ fn pixel_value(value: f64, field: &str) -> Result<i64, RecorderError> {
     }
 
     Ok(value.round() as i64)
+}
+
+fn optional_pixel_value(value: Option<f64>, field: &str) -> Result<Option<i64>, RecorderError> {
+    value.map(|value| pixel_value(value, field)).transpose()
 }
 
 fn u32_value(value: i64, field: &str) -> Result<u32, RecorderError> {

@@ -1,7 +1,9 @@
 use std::{
+    env,
+    ffi::OsString,
     fs,
-    path::PathBuf,
-    sync::{Arc, Barrier},
+    path::{Path, PathBuf},
+    sync::{Arc, Barrier, Mutex},
     thread,
 };
 
@@ -53,6 +55,16 @@ fn enum_serialization_uses_kebab_case() {
         serde_json::to_value(RecorderQualityPreset::BalancedOcr).expect("serialize quality preset"),
         json!("balanced-ocr"),
     );
+    assert_eq!(
+        serde_json::to_value(RecorderSceneLayoutMode::Auto169)
+            .expect("serialize auto scene layout"),
+        json!("auto-16-9"),
+    );
+    assert_eq!(
+        serde_json::to_value(RecorderSceneLayoutMode::Vertical)
+            .expect("serialize vertical scene layout"),
+        json!("vertical"),
+    );
 }
 
 #[test]
@@ -102,6 +114,11 @@ fn save_scene_persists_through_app_storage() {
     .expect("save scene");
 
     assert_eq!(scene.id, scene_id);
+    assert_eq!(
+        scene.desktop_audio_source_id,
+        Some("desktop-monitor".to_string()),
+    );
+    assert_eq!(scene.microphone_audio_source_id, Some("mic".to_string()));
     assert_eq!(scene.sources.len(), 1);
     assert_eq!(scene.sources[0].source_id, "monitor-1");
 }
@@ -256,6 +273,47 @@ fn manager_stop_from_paused_does_not_create_new_segment() {
 }
 
 #[test]
+fn manager_stop_while_idle_preserves_backend_health() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let storage = test_storage();
+    let backend_health = available_test_backend_health();
+    manager
+        .status_with_backend_health(backend_health.clone(), 10)
+        .expect("set backend health");
+
+    let stopped = manager
+        .stop_recording(&storage, &Uuid::now_v7().to_string(), 20)
+        .expect("idempotent stop while idle");
+
+    assert_eq!(stopped.state, RecorderState::Idle);
+    assert_eq!(stopped.backend_health, backend_health);
+}
+
+#[test]
+fn manager_stop_after_recording_preserves_backend_health() {
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+    let backend_health = available_test_backend_health();
+    manager
+        .status_with_backend_health(backend_health.clone(), 10)
+        .expect("set backend health");
+    manager
+        .start_internal(&storage, start_input(&scene_id), 20)
+        .expect("start recording");
+
+    let stopped = manager
+        .stop_internal(&storage, 30)
+        .expect("stop active recording");
+
+    assert_eq!(stopped.state, RecorderState::Idle);
+    assert_eq!(stopped.backend_health, backend_health);
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
+
+#[test]
 fn manager_rejects_invalid_transitions() {
     let app_data_dir = test_app_data_dir();
     let manager = RecorderManager::new(app_data_dir.clone());
@@ -377,6 +435,165 @@ fn manager_rejects_missing_scene_before_creating_recording() {
 }
 
 #[test]
+fn ffmpeg_failure_clears_runtime_and_preserves_failed_segment() {
+    let app_data_dir = test_app_data_dir();
+    let fake_ffmpeg_path = fake_failing_ffmpeg_path();
+    let fake_ffmpeg_dir = fake_ffmpeg_path
+        .parent()
+        .expect("fake ffmpeg parent")
+        .to_path_buf();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+
+    with_ffmpeg_path(&fake_ffmpeg_path, || {
+        let started = manager
+            .start_recording(&storage, start_input(&scene_id), 10)
+            .expect("start recording with fake ffmpeg");
+        let recording_id = started
+            .active_recording_id
+            .clone()
+            .expect("active recording id");
+
+        let pause_error = manager
+            .pause_recording(&storage, &recording_id, 20)
+            .expect_err("fake ffmpeg should fail during pause");
+        assert!(
+            pause_error.code == "recorder_ffmpeg_failed"
+                || pause_error.code == "recorder_ffmpeg_frame_write_failed"
+        );
+
+        let failed_status = manager.status().expect("read failed manager status");
+        assert_eq!(failed_status.state, RecorderState::Error);
+        assert_eq!(failed_status.active_recording_id, None);
+        assert_eq!(failed_status.active_segment_id, None);
+        assert_eq!(
+            failed_status
+                .last_error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some(pause_error.code.as_str()),
+        );
+
+        let recording = storage
+            .with_connection(|connection| storage::get_recording(connection, &recording_id))
+            .expect("read failed recording");
+        let segments = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &recording_id)
+            })
+            .expect("list failed segments");
+        assert_eq!(recording.status, "failed");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].state, "failed");
+        let failed_error_code = segments[0].error_code.clone();
+        let failed_ended_at_ms = segments[0].ended_at_ms;
+
+        let stopped = manager
+            .stop_recording(&storage, &recording_id, 30)
+            .expect("stop after terminal failure should be idempotent");
+        assert_eq!(stopped.state, RecorderState::Idle);
+
+        let recording_after_stop = storage
+            .with_connection(|connection| storage::get_recording(connection, &recording_id))
+            .expect("read recording after stop");
+        let segments_after_stop = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &recording_id)
+            })
+            .expect("list segments after stop");
+        assert_eq!(recording_after_stop.status, "failed");
+        assert_eq!(segments_after_stop[0].state, "failed");
+        assert_eq!(segments_after_stop[0].error_code, failed_error_code);
+        assert_eq!(segments_after_stop[0].ended_at_ms, failed_ended_at_ms);
+    });
+
+    let _ = fs::remove_dir_all(app_data_dir);
+    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
+}
+
+#[test]
+fn resume_ffmpeg_start_failure_clears_runtime_and_preserves_failed_segment() {
+    let app_data_dir = test_app_data_dir();
+    let fake_ffmpeg_path = fake_probe_then_missing_ffmpeg_path();
+    let fake_ffmpeg_dir = fake_ffmpeg_path
+        .parent()
+        .expect("fake ffmpeg parent")
+        .to_path_buf();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+
+    let started = manager
+        .start_internal(&storage, start_input(&scene_id), 10)
+        .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+    manager
+        .pause_internal(&storage, 20)
+        .expect("pause recording");
+
+    with_ffmpeg_path(&fake_ffmpeg_path, || {
+        let resume_error = manager
+            .resume_recording(&storage, &recording_id, 30)
+            .expect_err("resume should fail when FFmpeg cannot start");
+        assert_eq!(resume_error.code, "recorder_ffmpeg_spawn_failed");
+
+        let failed_status = manager.status().expect("read failed manager status");
+        assert_eq!(failed_status.state, RecorderState::Error);
+        assert_eq!(failed_status.active_recording_id, None);
+        assert_eq!(failed_status.active_segment_id, None);
+        assert_eq!(
+            failed_status
+                .last_error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some("recorder_ffmpeg_spawn_failed"),
+        );
+
+        let recording = storage
+            .with_connection(|connection| storage::get_recording(connection, &recording_id))
+            .expect("read failed recording");
+        let segments = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &recording_id)
+            })
+            .expect("list failed segments");
+        assert_eq!(recording.status, "failed");
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].state, "finalized");
+        assert_eq!(segments[1].state, "failed");
+        assert_eq!(
+            segments[1].error_code.as_deref(),
+            Some("recorder_ffmpeg_spawn_failed"),
+        );
+        let failed_ended_at_ms = segments[1].ended_at_ms;
+
+        let stopped = manager
+            .stop_recording(&storage, &recording_id, 40)
+            .expect("stop after terminal failure should be idempotent");
+        assert_eq!(stopped.state, RecorderState::Idle);
+
+        let recording_after_stop = storage
+            .with_connection(|connection| storage::get_recording(connection, &recording_id))
+            .expect("read recording after stop");
+        let segments_after_stop = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &recording_id)
+            })
+            .expect("list segments after stop");
+        assert_eq!(recording_after_stop.status, "failed");
+        assert_eq!(segments_after_stop[1].state, "failed");
+        assert_eq!(segments_after_stop[1].ended_at_ms, failed_ended_at_ms);
+    });
+
+    let _ = fs::remove_dir_all(app_data_dir);
+    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
+}
+
+#[test]
 fn manager_caches_selected_capture_sources() {
     let manager = RecorderManager::new(test_app_data_dir());
 
@@ -399,49 +616,86 @@ fn manager_caches_selected_capture_sources() {
 }
 
 #[test]
-fn public_lifecycle_commands_remain_unavailable_until_capture_backend_exists() {
+fn public_lifecycle_commands_use_ffmpeg_backed_manager_contracts() {
     let app = tauri::test::mock_app();
     let app_data_dir = test_app_data_dir();
-    app.manage(test_storage());
+    let missing_ffmpeg_path = app_data_dir.join("missing-ffmpeg");
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+    app.manage(storage);
     app.manage(RecorderManager::new(app_data_dir.clone()));
 
-    let scene_id = Uuid::now_v7().to_string();
-    let start_error = start_recording(
-        start_input(&scene_id),
-        app.state::<storage::AppStorage>(),
-        app.state::<RecorderManager>(),
-    )
-    .expect_err("public start should remain unavailable");
-    let pause_error = pause_recording(
-        PauseRecordingInput {
-            recording_id: Uuid::now_v7().to_string(),
-        },
-        app.state::<storage::AppStorage>(),
-        app.state::<RecorderManager>(),
-    )
-    .expect_err("public pause should remain unavailable");
-    let resume_error = resume_recording(
-        ResumeRecordingInput {
-            recording_id: Uuid::now_v7().to_string(),
-        },
-        app.state::<storage::AppStorage>(),
-        app.state::<RecorderManager>(),
-    )
-    .expect_err("public resume should remain unavailable");
-    let stop_error = stop_recording(
-        StopRecordingInput {
-            recording_id: Uuid::now_v7().to_string(),
-        },
-        app.state::<storage::AppStorage>(),
-        app.state::<RecorderManager>(),
-    )
-    .expect_err("public stop should remain unavailable");
+    with_ffmpeg_path(&missing_ffmpeg_path, || {
+        let start_error = start_recording(
+            start_input(&scene_id),
+            app.state::<storage::AppStorage>(),
+            app.state::<RecorderManager>(),
+        )
+        .expect_err("public start should require available FFmpeg");
+        let pause_error = pause_recording(
+            PauseRecordingInput {
+                recording_id: Uuid::now_v7().to_string(),
+            },
+            app.state::<storage::AppStorage>(),
+            app.state::<RecorderManager>(),
+        )
+        .expect_err("public pause should remain unavailable");
+        let resume_error = resume_recording(
+            ResumeRecordingInput {
+                recording_id: Uuid::now_v7().to_string(),
+            },
+            app.state::<storage::AppStorage>(),
+            app.state::<RecorderManager>(),
+        )
+        .expect_err("public resume should remain unavailable");
+        let stop_status = stop_recording(
+            StopRecordingInput {
+                recording_id: Uuid::now_v7().to_string(),
+            },
+            app.state::<storage::AppStorage>(),
+            app.state::<RecorderManager>(),
+        )
+        .expect("public stop while idle is idempotent");
 
-    assert_eq!(start_error.code, "recorder_backend_not_implemented");
-    assert_eq!(pause_error.code, "recorder_backend_not_implemented");
-    assert_eq!(resume_error.code, "recorder_backend_not_implemented");
-    assert_eq!(stop_error.code, "recorder_backend_not_implemented");
+        assert_eq!(start_error.code, "recorder_ffmpeg_unavailable");
+        assert_eq!(pause_error.code, "recorder_not_recording");
+        assert_eq!(resume_error.code, "recorder_not_paused");
+        assert_eq!(stop_status.state, RecorderState::Idle);
+    });
     let _ = fs::remove_dir_all(app_data_dir);
+}
+
+static FFMPEG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set_path(key: &'static str, path: &Path) -> Self {
+        let previous = env::var_os(key);
+        env::set_var(key, path);
+
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            env::set_var(self.key, previous);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
+}
+
+fn with_ffmpeg_path<T>(path: &Path, run: impl FnOnce() -> T) -> T {
+    let _lock = FFMPEG_ENV_LOCK.lock().expect("ffmpeg env lock");
+    let _guard = EnvVarGuard::set_path("DAYDREAM_FFMPEG_PATH", path);
+
+    run()
 }
 
 fn test_storage() -> storage::AppStorage {
@@ -451,6 +705,76 @@ fn test_storage() -> storage::AppStorage {
 fn test_app_data_dir() -> PathBuf {
     std::env::temp_dir().join(format!("daydream-recorder-{}", Uuid::now_v7()))
 }
+
+fn fake_failing_ffmpeg_path() -> PathBuf {
+    let directory = test_app_data_dir();
+    fs::create_dir_all(&directory).expect("create fake ffmpeg directory");
+    let path = directory.join("ffmpeg");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+case "$*" in
+  *-version*) echo 'ffmpeg version fake'; exit 0 ;;
+  *-devices*) printf ' D  lavfi\n DE pulse\n'; exit 0 ;;
+  *-formats*) printf ' DE rawvideo\n  E matroska\n'; exit 0 ;;
+  *-encoders*) printf ' V....D libx264\n A..... libopus\n'; exit 0 ;;
+esac
+exit 1
+"#,
+    )
+    .expect("write fake ffmpeg");
+    make_executable(&path);
+
+    path
+}
+
+fn fake_probe_then_missing_ffmpeg_path() -> PathBuf {
+    let directory = test_app_data_dir();
+    fs::create_dir_all(&directory).expect("create fake ffmpeg directory");
+    let path = directory.join("ffmpeg");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+case "$*" in
+  *-version*) echo 'ffmpeg version fake'; exit 0 ;;
+  *-devices*) printf ' D  lavfi\n DE pulse\n'; exit 0 ;;
+  *-formats*) printf ' DE rawvideo\n  E matroska\n'; exit 0 ;;
+  *-encoders*) printf ' V....D libx264\n A..... libopus\n'; rm "$0"; exit 0 ;;
+esac
+exit 1
+"#,
+    )
+    .expect("write fake ffmpeg");
+    make_executable(&path);
+
+    path
+}
+
+fn available_test_backend_health() -> super::types::RecorderBackendHealth {
+    let mut backend_health = super::manager::unavailable_backend_health();
+    backend_health.ffmpeg.available = true;
+    backend_health.ffmpeg.error = None;
+    backend_health.pipewire.available = true;
+    backend_health.pipewire.error = None;
+    backend_health.portal.available = true;
+    backend_health.portal.error = None;
+
+    backend_health
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .expect("fake ffmpeg metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("make fake ffmpeg executable");
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) {}
 
 fn saved_test_scene(storage: &storage::AppStorage) -> String {
     let scene_id = Uuid::now_v7().to_string();
@@ -480,8 +804,10 @@ fn test_scene(scene_id: &str) -> RecorderScene {
     RecorderScene {
         canvas_height: 1440,
         canvas_width: 2560,
+        desktop_audio_source_id: Some("desktop-monitor".to_string()),
         id: scene_id.to_string(),
         layout_mode: RecorderSceneLayoutMode::Horizontal,
+        microphone_audio_source_id: Some("mic".to_string()),
         name: "Test scene".to_string(),
         sources: vec![RecorderSceneSource {
             crop: CropRect {
@@ -500,7 +826,9 @@ fn test_scene(scene_id: &str) -> RecorderScene {
                 y: 0.0,
             },
             source_id: "monitor-1".to_string(),
+            source_height: Some(1440.0),
             source_kind: CaptureSourceKind::Monitor,
+            source_width: Some(2560.0),
             z_index: 0,
         }],
     }

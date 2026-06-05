@@ -186,6 +186,24 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - UI feature work is not complete until component consistency, accessibility
   labels, responsive layout, and critical UI tests are covered.
 
+## User-Facing Work Quality Bar
+
+- Before implementing user-facing UI, agents MUST identify the primary user
+  workflow, the expected visible outcome, and the loading, empty, error,
+  disabled, and success states that can occur.
+- UI work MUST be validated through real user interactions where practical:
+  clicking, typing, selecting, navigating, saving, retrying, and recovering from
+  errors.
+- Agents MUST NOT treat internal state assertions as a substitute for visible UI
+  behavior when a user-visible outcome exists.
+- Layout-changing UI work SHOULD be checked at one desktop viewport and one
+  narrow viewport. Text must not overlap, truncate critical labels, or make
+  primary actions ambiguous.
+- Critical controls MUST have accessible names and keyboard-reachable behavior
+  unless the control is genuinely pointer-only, such as canvas drag handles.
+- Disabled or unavailable primary actions SHOULD make the blocking condition
+  visible through nearby status, copy, or error state.
+
 ## Dependency & Tooling Hygiene
 
 - You MUST use `npm view <package-name>` or official package metadata before
@@ -202,10 +220,31 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 
 - You SHOULD add tests with the behavior they protect. Do not defer all testing
   to final integration work.
-- When adding interactive React UI, agents SHOULD add Browser Mode or
-  equivalent user-level tests for critical workflows, not only pure unit tests.
+- Tests MUST be scenario-first for user-facing, stateful, native-boundary, or
+  privacy-sensitive changes. Start by naming the real workflow and failure mode
+  the test protects.
+- Interactive React UI changes MUST include Browser Mode or equivalent
+  user-level tests for at least one critical workflow unless the agent documents
+  why that layer is not practical.
+- Unit tests SHOULD cover deterministic logic, data mapping, reducers/stores,
+  validation, and edge-case math. They MUST NOT be the only coverage for a
+  feature whose main risk is broken user workflow.
+- Mocks SHOULD stop at process, native, filesystem, model, network, or Tauri IPC
+  boundaries. Do not mock the component, store transition, or domain behavior
+  that the test claims to validate.
+- UI workflow tests SHOULD prefer visible assertions and accessible queries over
+  implementation details. Store/internal assertions MAY support a test but
+  SHOULD NOT be the main proof.
+- For stateful UI, tests SHOULD cover meaningful combinations: empty and
+  populated data, saved and dirty state, loading and error state, unavailable
+  permissions/tools, and active lifecycle states.
+- A bug found during manual verification SHOULD be converted into a regression
+  test before or alongside the fix. If that is not practical, the final handoff
+  MUST say why and list the residual manual risk.
 - Do not skip tests because setup requires more work. If a test dependency or
   runtime is justified, verify package metadata and add it cleanly.
+- Final handoff for non-trivial changes MUST report scenario coverage, commands
+  run, manual checks performed or skipped, and important untested risks.
 - You SHOULD run `yarn lint:fix`, `yarn lint`, `yarn typecheck`, and
   `yarn test` before handing off TypeScript changes.
 - You SHOULD run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`

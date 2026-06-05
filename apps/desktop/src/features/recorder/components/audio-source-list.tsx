@@ -1,0 +1,270 @@
+import type { ReactNode } from 'react';
+import { useMemo, useState } from 'react';
+import type { AudioSource, AudioSourceRole } from '@daydream/shared';
+import { Mic, MonitorSpeaker, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select';
+
+const audioRoleLabels = {
+  'desktop-audio': 'Desktop',
+  microphone: 'Microphone',
+} satisfies Record<AudioSourceRole, string>;
+
+export interface AudioSourceListProps {
+  desktopAudioSourceId: string | null;
+  microphoneAudioSourceId: string | null;
+  onSelectAudioSource: (role: AudioSourceRole, sourceId: string | null) => void;
+  sources: AudioSource[];
+}
+
+export function AudioSourceList({
+  desktopAudioSourceId,
+  microphoneAudioSourceId,
+  onSelectAudioSource,
+  sources,
+}: AudioSourceListProps) {
+  const selectedSources = useMemo(
+    () =>
+      (
+        [
+          {
+            role: 'desktop-audio',
+            sourceId: desktopAudioSourceId,
+          },
+          {
+            role: 'microphone',
+            sourceId: microphoneAudioSourceId,
+          },
+        ] satisfies { role: AudioSourceRole; sourceId: string | null }[]
+      ).flatMap(({ role, sourceId }) => {
+        const source = sources.find(
+          (candidate) =>
+            candidate.id === sourceId && candidate.roles.includes(role),
+        );
+
+        return source ? [{ role, source }] : [];
+      }),
+    [desktopAudioSourceId, microphoneAudioSourceId, sources],
+  );
+
+  if (selectedSources.length === 0) {
+    return (
+      <Card size="sm">
+        <CardContent className="text-muted-foreground text-xs">
+          No audio sources selected.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      {selectedSources.map(({ role, source }) => (
+        <Card key={role} size="sm">
+          <CardContent className="flex items-center gap-2">
+            <AudioRoleIcon role={role} />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium">{audioRoleLabels[role]}</div>
+              <div className="text-muted-foreground truncate text-xs">
+                {source.displayName}
+              </div>
+            </div>
+            <Button
+              aria-label={`Delete ${audioRoleLabels[role]} audio`}
+              onClick={() => onSelectAudioSource(role, null)}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+export interface AudioSourcePickerDialogProps extends AudioSourceListProps {
+  children: ReactNode;
+}
+
+export function AudioSourcePickerDialog({
+  children,
+  desktopAudioSourceId,
+  microphoneAudioSourceId,
+  onSelectAudioSource,
+  sources,
+}: AudioSourcePickerDialogProps) {
+  const [open, setOpen] = useState(false);
+  const eligibleOptions = useMemo(
+    () =>
+      buildEligibleAudioOptions({
+        desktopAudioSourceId,
+        microphoneAudioSourceId,
+        sources,
+      }),
+    [desktopAudioSourceId, microphoneAudioSourceId, sources],
+  );
+  const [selectedOptionValue, setSelectedOptionValue] = useState('');
+  const defaultOptionValue = eligibleOptions[0]?.value ?? '';
+  const activeOptionValue = eligibleOptions.some(
+    (option) => option.value === selectedOptionValue,
+  )
+    ? selectedOptionValue
+    : defaultOptionValue;
+  const selectedOption =
+    eligibleOptions.find((option) => option.value === activeOptionValue) ??
+    null;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          setSelectedOptionValue(defaultOptionValue);
+        }
+
+        setOpen(nextOpen);
+      }}
+    >
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add audio source</DialogTitle>
+          <DialogDescription>
+            Select an audio device to include in this recording.
+          </DialogDescription>
+        </DialogHeader>
+
+        {eligibleOptions.length > 0 ? (
+          <NativeSelect
+            aria-label="Audio source"
+            className="w-full"
+            value={activeOptionValue}
+            onChange={(event) => setSelectedOptionValue(event.target.value)}
+          >
+            {eligibleOptions.map((option) => (
+              <NativeSelectOption key={option.value} value={option.value}>
+                {option.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        ) : (
+          <div className="text-muted-foreground rounded-md border px-3 py-2 text-xs">
+            No more devices available
+          </div>
+        )}
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            disabled={!selectedOption}
+            type="button"
+            onClick={() => {
+              if (!selectedOption) {
+                return;
+              }
+
+              onSelectAudioSource(
+                selectedOption.role,
+                selectedOption.source.id,
+              );
+              setOpen(false);
+            }}
+          >
+            Add
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface EligibleAudioOptionsInput {
+  desktopAudioSourceId: string | null;
+  microphoneAudioSourceId: string | null;
+  sources: AudioSource[];
+}
+
+interface EligibleAudioOption {
+  label: string;
+  role: AudioSourceRole;
+  source: AudioSource;
+  value: string;
+}
+
+function buildEligibleAudioOptions({
+  desktopAudioSourceId,
+  microphoneAudioSourceId,
+  sources,
+}: EligibleAudioOptionsInput): EligibleAudioOption[] {
+  const selectedSourceIds = new Set(
+    [desktopAudioSourceId, microphoneAudioSourceId].filter(
+      (sourceId): sourceId is string => Boolean(sourceId),
+    ),
+  );
+
+  return sources
+    .filter((source) => !selectedSourceIds.has(source.id))
+    .map((source) => {
+      const role = preferredAudioRoleForSource({
+        desktopAudioSourceId,
+        microphoneAudioSourceId,
+        source,
+      });
+
+      return {
+        label: `${source.displayName}${source.isDefault ? ' (default)' : ''}`,
+        role,
+        source,
+        value: source.id,
+      };
+    });
+}
+
+function preferredAudioRoleForSource({
+  desktopAudioSourceId,
+  microphoneAudioSourceId,
+  source,
+}: {
+  desktopAudioSourceId: string | null;
+  microphoneAudioSourceId: string | null;
+  source: AudioSource;
+}): AudioSourceRole {
+  if (source.roles.includes('desktop-audio') && !desktopAudioSourceId) {
+    return 'desktop-audio';
+  }
+
+  if (source.roles.includes('microphone') && !microphoneAudioSourceId) {
+    return 'microphone';
+  }
+
+  return source.roles[0] ?? 'microphone';
+}
+
+function AudioRoleIcon({ role }: { role: AudioSourceRole }) {
+  if (role === 'desktop-audio') {
+    return <MonitorSpeaker className="text-muted-foreground size-3" />;
+  }
+
+  return <Mic className="text-muted-foreground size-3" />;
+}

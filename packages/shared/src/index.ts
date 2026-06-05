@@ -1,4 +1,7 @@
-import type { RecorderBackendHealth } from './recorder.js';
+import type {
+  RecorderBackendHealth,
+  RecorderFfmpegCapabilities,
+} from './recorder.js';
 
 export interface AppDiagnostics {
   identifier: string;
@@ -16,9 +19,10 @@ export interface DatabaseDiagnostics {
 
 export interface FfmpegDiagnostics {
   available: boolean;
+  capabilities: RecorderFfmpegCapabilities;
   error: string | null;
   path: string | null;
-  source: 'daydream-ffmpeg-env' | 'unconfigured';
+  source: 'daydream-ffmpeg-env' | 'path' | 'unconfigured';
   versionLine: string | null;
 }
 

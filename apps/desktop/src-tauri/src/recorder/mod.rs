@@ -1,5 +1,6 @@
 mod commands;
 mod errors;
+pub(crate) mod ffmpeg;
 mod manager;
 mod platform;
 mod storage_mapping;

@@ -47,6 +47,8 @@ export function SceneCanvas({
   const dragState = useRef<DragState | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [activeDrag, setActiveDrag] = useState<DragState['type'] | null>(null);
+  const selectedStackIndex =
+    Math.max(0, ...scene.sources.map((source) => source.zIndex)) + 1;
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragState.current;
@@ -133,61 +135,15 @@ export function SceneCanvas({
       }}
     >
       {sortedSceneSources(scene).map((source) => (
-        <div
-          className={cn(
-            'bg-background/80 absolute border shadow-sm',
-            selectedSourceId === source.id
-              ? 'border-primary ring-primary/30 ring-2'
-              : 'border-foreground/30',
-          )}
-          data-testid={`scene-source-${source.sourceId}`}
+        <SceneSourceFrame
           key={source.id}
-          onPointerDown={() => {
-            onSelect(source.id);
-          }}
-          style={sceneSourceStyle(scene, source)}
-        >
-          <button
-            className={cn(
-              'bg-background/90 flex w-full cursor-grab items-center gap-2 border-b px-2 py-1 text-left text-xs font-medium active:cursor-grabbing',
-            )}
-            aria-label={`Move ${source.displayName}`}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-              onSelect(source.id);
-              startDrag(event, {
-                clientX: event.clientX,
-                clientY: event.clientY,
-                scene,
-                sourceId: source.id,
-                type: 'move',
-              });
-            }}
-            type="button"
-          >
-            <DragThumb />
-            {source.displayName}
-          </button>
-          <SyntheticSourcePreview />
-          {resizeHandles.map((handle) => (
-            <ResizeButton
-              handle={handle}
-              key={handle}
-              onPointerDown={(event) => {
-                event.stopPropagation();
-                onSelect(source.id);
-                startDrag(event, {
-                  clientX: event.clientX,
-                  clientY: event.clientY,
-                  handle,
-                  scene,
-                  sourceId: source.id,
-                  type: 'resize',
-                });
-              }}
-            />
-          ))}
-        </div>
+          onSelect={onSelect}
+          scene={scene}
+          selected={selectedSourceId === source.id}
+          selectedStackIndex={selectedStackIndex}
+          source={source}
+          startDrag={startDrag}
+        />
       ))}
     </div>
   );
@@ -209,6 +165,100 @@ interface ResizeButtonProps {
   onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
 }
 
+interface SceneSourceFrameProps {
+  onSelect: (sourceId: string | null) => void;
+  scene: RecorderScene;
+  selected: boolean;
+  selectedStackIndex: number;
+  source: RecorderSceneSource;
+  startDrag: (event: PointerEvent<HTMLElement>, drag: PendingDragState) => void;
+}
+
+function SceneSourceFrame({
+  onSelect,
+  scene,
+  selected,
+  selectedStackIndex,
+  source,
+  startDrag,
+}: SceneSourceFrameProps) {
+  return (
+    <div
+      className={cn(
+        'bg-background/70 absolute border shadow-sm',
+        selected
+          ? 'border-primary ring-primary/30 ring-2'
+          : 'border-foreground/20 hover:border-foreground/50',
+      )}
+      data-testid={`scene-source-${source.sourceId}`}
+      key={source.id}
+      onPointerDown={() => {
+        onSelect(source.id);
+      }}
+      style={sceneSourceStyle(scene, source, selected, selectedStackIndex)}
+    >
+      {selected ? (
+        <button
+          className="bg-background/95 flex w-full cursor-grab items-center gap-2 border-b px-2 py-1 text-left text-xs font-medium active:cursor-grabbing"
+          aria-label={`Move ${source.displayName}`}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelect(source.id);
+            startDrag(event, {
+              clientX: event.clientX,
+              clientY: event.clientY,
+              scene,
+              sourceId: source.id,
+              type: 'move',
+            });
+          }}
+          type="button"
+        >
+          <DragThumb />
+          {source.displayName}
+        </button>
+      ) : (
+        <button
+          className="bg-background/70 text-muted-foreground flex w-full items-center gap-2 border-b px-2 py-1 text-left text-xs font-medium"
+          aria-label={`Select ${source.displayName}`}
+          onClick={() => {
+            onSelect(source.id);
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onSelect(source.id);
+          }}
+          type="button"
+        >
+          <DragThumb muted />
+          {source.displayName}
+        </button>
+      )}
+      <SyntheticSourcePreview />
+      {selected
+        ? resizeHandles.map((handle) => (
+            <ResizeButton
+              handle={handle}
+              key={handle}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                onSelect(source.id);
+                startDrag(event, {
+                  clientX: event.clientX,
+                  clientY: event.clientY,
+                  handle,
+                  scene,
+                  sourceId: source.id,
+                  type: 'resize',
+                });
+              }}
+            />
+          ))
+        : null}
+    </div>
+  );
+}
+
 function ResizeButton({ handle, onPointerDown }: ResizeButtonProps) {
   return (
     <button
@@ -223,7 +273,7 @@ function ResizeButton({ handle, onPointerDown }: ResizeButtonProps) {
   );
 }
 
-function DragThumb() {
+function DragThumb({ muted = false }: { muted?: boolean }) {
   return (
     <span
       aria-hidden="true"
@@ -231,7 +281,13 @@ function DragThumb() {
       title="Move source"
     >
       {Array.from({ length: 6 }).map((_, index) => (
-        <span className="bg-muted-foreground size-1 rounded-full" key={index} />
+        <span
+          className={cn(
+            'size-1 rounded-full',
+            muted ? 'bg-muted-foreground/60' : 'bg-muted-foreground',
+          )}
+          key={index}
+        />
       ))}
     </span>
   );
@@ -247,9 +303,7 @@ function SyntheticSourcePreview() {
           'linear-gradient(135deg, var(--muted) 0%, var(--background) 55%, var(--muted) 100%)',
       }}
     >
-      <div className="absolute inset-0 [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [background-size:32px_32px] opacity-70" />
-      <div className="bg-primary/10 border-primary/20 absolute top-[18%] left-[8%] h-[20%] w-[36%] border" />
-      <div className="bg-foreground/5 border-foreground/10 absolute right-[10%] bottom-[18%] h-[26%] w-[42%] border" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-size-[32px_32px] opacity-70" />
     </div>
   );
 }
@@ -278,11 +332,14 @@ function resizeHandleClassName(handle: ResizeHandle): string {
 function sceneSourceStyle(
   scene: RecorderScene,
   source: RecorderSceneSource,
+  selected: boolean,
+  selectedStackIndex: number,
 ): CSSProperties {
   return {
     height: `${(source.rect.height / scene.canvasHeight) * 100}%`,
     left: `${(source.rect.x / scene.canvasWidth) * 100}%`,
     top: `${(source.rect.y / scene.canvasHeight) * 100}%`,
     width: `${(source.rect.width / scene.canvasWidth) * 100}%`,
+    zIndex: selected ? selectedStackIndex : source.zIndex,
   };
 }

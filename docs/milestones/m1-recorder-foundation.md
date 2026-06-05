@@ -78,11 +78,9 @@ metadata in SQLite, and surfaces backend health in the app.
 - The default frame rate is `1 FPS`.
 - The default video encoding profile is balanced H.264 with `yuv444p` output.
 - The app records video, desktop audio, and microphone audio from the first
-  backend implementation.
-- Desktop audio defaults to the default Pulse/PipeWire sink monitor and can be
-  overridden by source ID.
-- Microphone audio defaults to the default Pulse/PipeWire source and can be
-  overridden by source ID.
+  backend implementation when the user explicitly adds those sources.
+- Desktop audio and microphone audio are optional, user-controlled sources.
+  They are not auto-selected on startup.
 - The app supports one active recording at a time.
 - The recorder API exposes these commands to the frontend:
   - `getRecorderStatus`
@@ -117,9 +115,9 @@ metadata in SQLite, and surfaces backend health in the app.
   - default desktop audio source ID
   - default microphone source ID
 - The FFmpeg binary remains configurable.
-- M1 may use the system FFmpeg as a development bridge only when the bundled
-  binary lacks required capabilities. The milestone is not complete until the
-  app reports the selected FFmpeg path and the capability gap is documented.
+- Gate F uses `DAYDREAM_FFMPEG_PATH` as an FFmpeg override and otherwise falls
+  back to `ffmpeg` on `PATH`. The checked `ffmpeg-static` build lacks Pulse
+  input support and is not enough for Linux audio recording.
 - M1 does not ship a final installer-level FFmpeg packaging solution. It must
   leave a concrete follow-up if the development bridge is still required.
 - The app must not log raw frames, raw audio, OCR-like text, transcripts,
@@ -482,17 +480,18 @@ Exit Criteria:
 
 ## Gate F: FFmpeg Segment Writer and Audio Tracks
 
-- [ ] Implement FFmpeg capability probing for the selected binary.
-- [ ] Implement FFmpeg argument builder for one MKV segment with H.264
-  `yuv444p`, `1 FPS`, desktop audio, and microphone audio.
-- [ ] Implement configurable FFmpeg path selection with `DAYDREAM_FFMPEG_PATH`
+- [x] Implement FFmpeg capability probing for the selected binary.
+- [x] Implement FFmpeg argument builder for one MKV segment with H.264
+  `yuv444p`, `1 FPS`, and optional desktop/microphone audio.
+- [x] Implement configurable FFmpeg path selection with `DAYDREAM_FFMPEG_PATH`
   support.
-- [ ] Start and stop FFmpeg child processes from the recorder manager.
-- [ ] Pipe or feed composed video frames into FFmpeg without logging frame
+- [x] Start and stop FFmpeg child processes from the recorder manager.
+- [x] Pipe or feed composed video frames into FFmpeg without logging frame
   content.
-- [ ] Attach desktop and microphone audio inputs as separate FFmpeg streams.
-- [ ] Persist segment stream indexes and FFmpeg exit status in SQLite.
-- [ ] Add tests for FFmpeg args, selected binary reporting, process failure
+- [x] Attach explicitly selected desktop and microphone audio inputs as separate
+  optional FFmpeg streams.
+- [x] Persist segment stream indexes and FFmpeg exit status in SQLite.
+- [x] Add tests for FFmpeg args, selected binary reporting, process failure
   handling, and stream-index metadata.
 
 Exit Criteria:

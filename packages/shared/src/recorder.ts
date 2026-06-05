@@ -79,7 +79,11 @@ export interface AudioSourceList {
   sources: AudioSource[];
 }
 
-export type RecorderSceneLayoutMode = 'custom' | 'horizontal';
+export type RecorderSceneLayoutMode =
+  | 'auto-16-9'
+  | 'custom'
+  | 'horizontal'
+  | 'vertical';
 
 export interface RecorderSceneSource {
   crop: CropRect;
@@ -88,15 +92,19 @@ export interface RecorderSceneSource {
   preserveAspectRatio: boolean;
   rect: CanvasRect;
   sourceId: string;
+  sourceHeight: number | null;
   sourceKind: CaptureSourceKind;
+  sourceWidth: number | null;
   zIndex: number;
 }
 
 export interface RecorderScene {
   canvasHeight: number;
   canvasWidth: number;
+  desktopAudioSourceId: string | null;
   id: string;
   layoutMode: RecorderSceneLayoutMode;
+  microphoneAudioSourceId: string | null;
   name: string;
   sources: RecorderSceneSource[];
 }
@@ -151,7 +159,17 @@ export interface RecorderBackendComponentHealth {
 }
 
 export interface RecorderFfmpegHealth extends RecorderBackendComponentHealth {
+  capabilities: RecorderFfmpegCapabilities;
   path: string | null;
+  versionLine: string | null;
+}
+
+export interface RecorderFfmpegCapabilities {
+  libopusEncoder: boolean;
+  libx264Encoder: boolean;
+  matroskaMuxer: boolean;
+  pulseInput: boolean;
+  rawvideoDemuxer: boolean;
 }
 
 export interface RecorderAudioHealth extends RecorderBackendComponentHealth {
