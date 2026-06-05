@@ -16,6 +16,10 @@ use super::{
     types::{RecorderError, RecorderFfmpegCapabilities, RecorderFfmpegHealth},
 };
 
+const RAW_VIDEO_PIXEL_FORMAT: &str = "yuv444p";
+const ENCODED_VIDEO_PIXEL_FORMAT: &str = "yuv420p";
+const EVEN_DIMENSION_PAD_FILTER: &str = "pad=ceil(iw/2)*2:ceil(ih/2)*2";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FfmpegProbe {
     pub(crate) path: String,
@@ -220,7 +224,7 @@ pub(crate) fn build_segment_args(input: &FfmpegSegmentInput) -> Vec<String> {
         "-f".to_string(),
         "rawvideo".to_string(),
         "-pixel_format".to_string(),
-        "yuv444p".to_string(),
+        RAW_VIDEO_PIXEL_FORMAT.to_string(),
         "-video_size".to_string(),
         format!("{}x{}", input.canvas_width, input.canvas_height),
         "-framerate".to_string(),
@@ -255,7 +259,9 @@ pub(crate) fn build_segment_args(input: &FfmpegSegmentInput) -> Vec<String> {
         "-preset".to_string(),
         "ultrafast".to_string(),
         "-pix_fmt".to_string(),
-        "yuv444p".to_string(),
+        ENCODED_VIDEO_PIXEL_FORMAT.to_string(),
+        "-vf".to_string(),
+        EVEN_DIMENSION_PAD_FILTER.to_string(),
         "-r".to_string(),
         format_fps(input.fps),
     ]);
@@ -648,7 +654,9 @@ mod tests {
                 "-preset",
                 "ultrafast",
                 "-pix_fmt",
-                "yuv444p",
+                "yuv420p",
+                "-vf",
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
                 "-r",
                 "1",
                 "-shortest",
@@ -672,6 +680,20 @@ mod tests {
         assert!(contains_subsequence(&args, &["-map", "1:a:0"]));
         assert!(contains_subsequence(&args, &["-map", "2:a:0"]));
         assert!(contains_subsequence(&args, &["-c:a", "libopus"]));
+    }
+
+    #[test]
+    fn yuv420p_segment_args_pad_odd_canvas_dimensions() {
+        let mut input = segment_input(None, None);
+        input.canvas_width = 1279;
+        input.canvas_height = 719;
+        let args = build_segment_args(&input);
+
+        assert!(contains_subsequence(&args, &["-video_size", "1279x719"]));
+        assert!(contains_subsequence(
+            &args,
+            &["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"],
+        ));
     }
 
     #[test]
