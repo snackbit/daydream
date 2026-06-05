@@ -2,8 +2,8 @@
 
 ## Current Status
 
-- Gate D complete.
-- Gate E is the next implementation gate.
+- Gate E complete.
+- Gate F is the next implementation gate.
 
 ## Locked Decisions
 
@@ -98,6 +98,32 @@
 - `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate D.
 - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate D.
 - `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate D.
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop
+  typecheck`: passed during Gate E implementation.
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop
+  test`: passed during Gate E implementation with 19 desktop tests, including
+  Vitest Browser Mode coverage for the Capture workspace.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate E.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate E.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate E with 37 Rust tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E shadcn
+  cleanup.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate E
+  shadcn cleanup.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate E shadcn
+  cleanup.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate E shadcn cleanup with 37 Rust tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after Gate E scene
+  handle cleanup.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after Gate E
+  scene handle cleanup.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed after Gate E scene
+  handle cleanup with 22 desktop tests.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  Gate E scene handle cleanup with 37 Rust tests.
 
 ## Gate Notes
 
@@ -144,6 +170,26 @@
 - Gate D treats portal stream size as logical compositor size, not pixel size.
   `CaptureSource.width` and `CaptureSource.height` stay null until a later
   PipeWire/capture-runtime gate can prove actual frame pixel dimensions.
+- Gate E replaces the Capture placeholder with a real recorder workspace.
+- Gate E uses logical portal dimensions as provisional editor pixels when
+  physical capture pixels are unknown, while keeping persisted scene geometry in
+  absolute canvas pixels.
+- Gate E uses explicit scene saving. Drag, resize, crop, aspect, and z-order
+  edits stay local until `saveRecorderScene` succeeds.
+- Gate E adds Vitest Browser Mode with the Playwright provider and React Testing
+  Library for critical Capture workspace UI coverage.
+- Gate E leaves lifecycle commands visually present but disabled until backend
+  health and saved-scene state make recording valid. Public lifecycle commands
+  still remain unavailable until Gates F and G wire real media output.
+- Gate E cleanup adds the shadcn components needed for the Capture workspace,
+  moves the workspace to a shadcn Resizable three-panel layout, and splits the
+  page into focused source, canvas, geometry, toolbar, and error components.
+- Gate E scene handle cleanup adds explicit move grips, eight resize handles,
+  handle-specific cursors, synthetic source placeholders, and pointer-capture
+  cleanup so move/resize interactions end correctly after pointer release.
+- Gate E current-scene cleanup adds `getRecorderScene`, loads the latest saved
+  scene on Capture startup, changes source selection to Add-with-merge, and
+  keeps source deletion as an explicit-save draft edit.
 
 ## Gate Reconciliation Log
 
@@ -167,6 +213,11 @@
 - Gate D: reviewed Gates E-I after adding explicit portal selection and audio
   discovery. Updated the milestone API to make `selectCaptureSources` a locked
   command and clarify that `getCaptureSources` is read-only cache access.
+- Gate E: reviewed Gates F-I after implementing the Capture workspace and
+  explicit scene-save flow. Updated the milestone body to document logical
+  dimension fallback for default layouts and narrowed Gate H so it owns only the
+  real FFmpeg/PipeWire-backed lifecycle connection, not the already-present
+  editor shell.
 
 ## Risk Watchlist
 

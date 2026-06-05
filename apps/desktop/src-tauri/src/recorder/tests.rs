@@ -9,7 +9,9 @@ use serde_json::json;
 use tauri::Manager as _;
 use uuid::Uuid;
 
-use super::commands::{pause_recording, resume_recording, start_recording, stop_recording};
+use super::commands::{
+    get_recorder_scene, pause_recording, resume_recording, start_recording, stop_recording,
+};
 use super::errors::unavailable_error;
 use super::manager::RecorderManager;
 use super::storage_mapping::save_recorder_scene_for_storage;
@@ -102,6 +104,49 @@ fn save_scene_persists_through_app_storage() {
     assert_eq!(scene.id, scene_id);
     assert_eq!(scene.sources.len(), 1);
     assert_eq!(scene.sources[0].source_id, "monitor-1");
+}
+
+#[test]
+fn get_recorder_scene_returns_null_when_no_scene_exists() {
+    let app = tauri::test::mock_app();
+    app.manage(test_storage());
+
+    let scene =
+        get_recorder_scene(app.state::<storage::AppStorage>()).expect("read latest recorder scene");
+
+    assert_eq!(scene, None);
+}
+
+#[test]
+fn get_recorder_scene_returns_latest_saved_scene() {
+    let app = tauri::test::mock_app();
+    let storage = test_storage();
+    let older_scene_id = Uuid::now_v7().to_string();
+    let newer_scene_id = Uuid::now_v7().to_string();
+
+    save_recorder_scene_for_storage(
+        &storage,
+        SaveRecorderSceneInput {
+            scene: test_scene(&older_scene_id),
+        },
+        10,
+    )
+    .expect("save older scene");
+    save_recorder_scene_for_storage(
+        &storage,
+        SaveRecorderSceneInput {
+            scene: test_scene(&newer_scene_id),
+        },
+        20,
+    )
+    .expect("save newer scene");
+    app.manage(storage);
+
+    let scene = get_recorder_scene(app.state::<storage::AppStorage>())
+        .expect("read latest recorder scene")
+        .expect("latest recorder scene");
+
+    assert_eq!(scene.id, newer_scene_id);
 }
 
 #[test]

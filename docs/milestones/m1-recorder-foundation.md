@@ -87,6 +87,7 @@ metadata in SQLite, and surfaces backend health in the app.
 - The recorder API exposes these commands to the frontend:
   - `getRecorderStatus`
   - `getCaptureSources`
+  - `getRecorderScene`
   - `selectCaptureSources`
   - `getAudioSources`
   - `saveRecorderScene`
@@ -95,9 +96,11 @@ metadata in SQLite, and surfaces backend health in the app.
   - `resumeRecording`
   - `stopRecording`
 - `getCaptureSources` is read-only and returns cached selected monitor sources.
-- `selectCaptureSources` is the explicit portal-selection command. It may show
-  the portal chooser and must not leak portal-specific session details into
-  React state.
+- `getRecorderScene` returns the latest saved recorder scene, or `null` when no
+  scene has been saved.
+- `selectCaptureSources` is the explicit portal-selection command. Passing
+  `{ forceChooser: true }` bypasses restore-token reuse and shows the portal
+  chooser. It must not leak portal-specific session details into React state.
 - Default recording files live under
   `<app_data_dir>/recordings/{recordingId}/segments`.
 - SQLite schema M1 uses segments plus scenes:
@@ -223,7 +226,8 @@ The recorder command surface is stable for M1:
 
 - `getRecorderStatus() -> RecorderStatus`
 - `getCaptureSources() -> CaptureSourceList`
-- `selectCaptureSources() -> CaptureSourceList`
+- `getRecorderScene() -> RecorderScene | null`
+- `selectCaptureSources(input?: SelectCaptureSourcesInput) -> CaptureSourceList`
 - `getAudioSources() -> AudioSourceList`
 - `saveRecorderScene(input: SaveRecorderSceneInput) -> RecorderScene`
 - `startRecording(input: StartRecordingInput) -> RecorderStatus`
@@ -238,6 +242,7 @@ The API must include these domain payloads:
 - `RecorderError`
 - `CaptureSource`
 - `CaptureSourceSelection`
+- `SelectCaptureSourcesInput`
 - `AudioSource`
 - `AudioSourceRole`
 - `RecorderScene`
@@ -258,7 +263,9 @@ Config behavior:
 - Audio source overrides are stored as source IDs, not display labels.
 - Scene layout values are stored as absolute pixels.
 - The default scene is generated from selected monitor dimensions with
-  horizontal layout and no crop.
+  horizontal layout and no crop. Physical pixel dimensions are preferred when
+  known; logical portal dimensions are used as the Gate E editor fallback until
+  PipeWire frame intake proves actual frame pixels.
 
 ## Native Permission Requirements
 
@@ -453,18 +460,18 @@ Exit Criteria:
 
 ## Gate E: Scene Layout and Interactive Editor
 
-- [ ] Add deterministic default horizontal layout generation for selected
+- [x] Add deterministic default horizontal layout generation for selected
   monitor dimensions.
-- [ ] Implement canvas layout math for move, resize, crop, z-order, and
+- [x] Implement canvas layout math for move, resize, crop, z-order, and
   preserve-aspect-ratio behavior.
-- [ ] Persist scene edits through `saveRecorderScene`.
-- [ ] Replace the Capture placeholder with a recorder workspace.
-- [ ] Add status header, start/pause/resume/stop controls, source list, audio
+- [x] Persist scene edits through `saveRecorderScene`.
+- [x] Replace the Capture placeholder with a recorder workspace.
+- [x] Add status header, start/pause/resume/stop controls, source list, audio
   selectors, FPS display, quality preset display, and scene canvas.
-- [ ] Implement OBS Studio-style pointer interactions for moving and resizing
+- [x] Implement OBS Studio-style pointer interactions for moving and resizing
   scene sources.
-- [ ] Add crop controls that persist absolute pixel crop values.
-- [ ] Add tests for layout math, scene persistence client behavior, and critical
+- [x] Add crop controls that persist absolute pixel crop values.
+- [x] Add tests for layout math, scene persistence client behavior, and critical
   UI states.
 
 Exit Criteria:
@@ -517,7 +524,8 @@ Exit Criteria:
 
 ## Gate H: End-to-End Recorder UX and Diagnostics
 
-- [ ] Connect the Capture screen to real recorder commands.
+- [ ] Connect Capture controls to real FFmpeg/PipeWire-backed recorder
+  lifecycle commands once Gates F and G make recording available.
 - [ ] Show backend readiness, degraded audio states, dependency failures, and
   lifecycle errors in user-facing UI.
 - [ ] Keep recording controls disabled or warning-gated when required sources

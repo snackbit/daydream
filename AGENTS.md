@@ -153,6 +153,8 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - TypeScript SHOULD be the default application language once the app is
   scaffolded.
 - React UI code MUST use the shadcn/Tailwind baseline in `apps/desktop`.
+  "Baseline" means actual shadcn components where available, not visually
+  similar hand-rolled markup.
 - UI navigation MUST go through TanStack Router.
 - Local UI state SHOULD use Zustand when component-local state is not enough.
 - You SHOULD use strict typing at external boundaries: native capture payloads,
@@ -166,6 +168,23 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   construction.
 - You MUST NOT couple UI components directly to FFmpeg, model runners, or raw
   database access.
+
+## UI Component Quality
+
+- React UI code MUST use actual shadcn components from
+  `apps/desktop/src/components/ui` when an eligible component exists.
+- Before building a new UI surface, agents MUST inspect existing shadcn
+  components and the shadcn docs for needed components.
+- If a needed shadcn component is missing, agents SHOULD add it through the
+  local `components.json` setup instead of hand-rolling equivalent controls.
+- Raw `input`, `select`, `checkbox`, alert banners, cards, scroll containers,
+  separators, tabs, resizable panes, and tooltip patterns SHOULD NOT be
+  hand-rolled when shadcn provides the component.
+- Large route/page components SHOULD be split into focused components by
+  responsibility: data binding, layout shell, toolbar/actions, panels, forms,
+  canvas/editor surfaces, and error display.
+- UI feature work is not complete until component consistency, accessibility
+  labels, responsive layout, and critical UI tests are covered.
 
 ## Dependency & Tooling Hygiene
 
@@ -183,6 +202,10 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 
 - You SHOULD add tests with the behavior they protect. Do not defer all testing
   to final integration work.
+- When adding interactive React UI, agents SHOULD add Browser Mode or
+  equivalent user-level tests for critical workflows, not only pure unit tests.
+- Do not skip tests because setup requires more work. If a test dependency or
+  runtime is justified, verify package metadata and add it cleanly.
 - You SHOULD run `yarn lint:fix`, `yarn lint`, `yarn typecheck`, and
   `yarn test` before handing off TypeScript changes.
 - You SHOULD run `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`

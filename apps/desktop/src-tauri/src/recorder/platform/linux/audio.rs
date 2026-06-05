@@ -87,20 +87,11 @@ fn query_pulse_sources() -> Result<(PulseServer, Vec<PulseSource>), String> {
     ));
 
     {
-        let context_ref = Rc::clone(&context);
         let mainloop_ptr = &mut mainloop as *mut Mainloop;
         context
             .borrow_mut()
-            .set_state_callback(Some(Box::new(move || {
-                let state = context_ref.borrow().get_state();
-                if matches!(
-                    state,
-                    ContextState::Ready | ContextState::Failed | ContextState::Terminated
-                ) {
-                    unsafe {
-                        (*mainloop_ptr).signal(false);
-                    }
-                }
+            .set_state_callback(Some(Box::new(move || unsafe {
+                (*mainloop_ptr).signal(false);
             })));
     }
 

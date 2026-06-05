@@ -20,6 +20,7 @@ pub fn run() {
             diagnostics::get_diagnostics,
             recorder::get_recorder_status,
             recorder::get_capture_sources,
+            recorder::get_recorder_scene,
             recorder::select_capture_sources,
             recorder::get_audio_sources,
             recorder::save_recorder_scene,

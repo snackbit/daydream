@@ -7,6 +7,7 @@ import type {
   RecorderStatus,
   ResumeRecordingInput,
   SaveRecorderSceneInput,
+  SelectCaptureSourcesInput,
   StartRecordingInput,
   StopRecordingInput,
 } from '@daydream/shared';
@@ -19,8 +20,16 @@ export async function getCaptureSources(): Promise<CaptureSourceList> {
   return invoke<CaptureSourceList>('getCaptureSources');
 }
 
-export async function selectCaptureSources(): Promise<CaptureSourceList> {
-  return invoke<CaptureSourceList>('selectCaptureSources');
+export async function getRecorderScene(): Promise<RecorderScene | null> {
+  return invoke<RecorderScene | null>('getRecorderScene');
+}
+
+export async function selectCaptureSources(
+  input?: SelectCaptureSourcesInput,
+): Promise<CaptureSourceList> {
+  return input
+    ? invoke<CaptureSourceList>('selectCaptureSources', { input })
+    : invoke<CaptureSourceList>('selectCaptureSources');
 }
 
 export async function getAudioSources(): Promise<AudioSourceList> {

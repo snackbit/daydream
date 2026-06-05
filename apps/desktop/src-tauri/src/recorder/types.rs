@@ -87,6 +87,13 @@ pub struct CaptureSourceSelection {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectCaptureSourcesInput {
+    #[serde(default)]
+    pub(crate) force_chooser: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioSourceRole {
     DesktopAudio,

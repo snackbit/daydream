@@ -4,6 +4,7 @@ import {
   createRouter,
 } from '@tanstack/react-router';
 import { AppShell } from '@/app/AppShell';
+import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
 import { PlaceholderScreen } from '@/screens/PlaceholderScreen';
@@ -19,12 +20,7 @@ const homeRoute = createRoute({
 });
 
 const captureRoute = createRoute({
-  component: () => (
-    <PlaceholderScreen
-      title="Capture"
-      summary="Record, pause, stop, capture profile, and FFmpeg process controls will land here."
-    />
-  ),
+  component: CaptureScreen,
   getParentRoute: () => rootRoute,
   path: '/capture',
 });

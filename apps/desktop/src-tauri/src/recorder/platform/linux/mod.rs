@@ -45,8 +45,9 @@ pub fn get_capture_sources(
 pub async fn select_capture_sources(
     storage: &AppStorage,
     manager: &RecorderManager,
+    force_chooser: bool,
 ) -> Result<super::super::types::CaptureSourceList, RecorderError> {
-    portal::select_capture_sources(storage, manager).await
+    portal::select_capture_sources(storage, manager, force_chooser).await
 }
 
 pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {

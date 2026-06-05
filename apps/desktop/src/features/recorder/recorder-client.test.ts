@@ -11,6 +11,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import {
   getAudioSources,
   getCaptureSources,
+  getRecorderScene,
   getRecorderStatus,
   pauseRecording,
   resumeRecording,
@@ -45,12 +46,18 @@ test('recorder read helpers use locked camelCase command names', async () => {
   invokeMock.mockResolvedValue({ sources: [] });
 
   await getCaptureSources();
+  await getRecorderScene();
   await selectCaptureSources();
+  await selectCaptureSources({ forceChooser: true });
   await getAudioSources();
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'getCaptureSources');
-  expect(invokeMock).toHaveBeenNthCalledWith(2, 'selectCaptureSources');
-  expect(invokeMock).toHaveBeenNthCalledWith(3, 'getAudioSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(2, 'getRecorderScene');
+  expect(invokeMock).toHaveBeenNthCalledWith(3, 'selectCaptureSources');
+  expect(invokeMock).toHaveBeenNthCalledWith(4, 'selectCaptureSources', {
+    input: { forceChooser: true },
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(5, 'getAudioSources');
 });
 
 test('getRecorderStatus uses locked camelCase command name', async () => {

@@ -52,13 +52,18 @@ pub async fn collect_portal_health() -> RecorderPortalHealth {
 pub async fn select_capture_sources(
     storage: &AppStorage,
     manager: &RecorderManager,
+    force_chooser: bool,
 ) -> Result<CaptureSourceList, RecorderError> {
-    let restore_token = storage
-        .with_connection(|connection| {
-            storage::get_portal_restore_token(connection, RESTORE_TOKEN_ID)
-        })
-        .map_err(storage_error)?
-        .map(|row| row.token);
+    let restore_token = if force_chooser {
+        None
+    } else {
+        storage
+            .with_connection(|connection| {
+                storage::get_portal_restore_token(connection, RESTORE_TOKEN_ID)
+            })
+            .map_err(storage_error)?
+            .map(|row| row.token)
+    };
 
     let streams = match restore_token.as_deref() {
         Some(token) => match select_sources_once(Some(token)).await {
@@ -182,6 +187,18 @@ fn capture_source_from_portal_fields(
     }
 }
 
+#[cfg(test)]
+fn restore_token_for_selection(
+    stored_restore_token: Option<&str>,
+    force_chooser: bool,
+) -> Option<&str> {
+    if force_chooser {
+        None
+    } else {
+        stored_restore_token
+    }
+}
+
 fn source_type_labels(flags: BitFlags<SourceType>) -> Vec<String> {
     let mut labels = Vec::new();
 
@@ -251,7 +268,7 @@ mod tests {
 
     use super::{
         capture_source_from_portal_fields, cursor_mode_labels, portal_error, preferred_cursor_mode,
-        source_type_labels,
+        restore_token_for_selection, source_type_labels,
     };
     use crate::recorder::types::RecorderErrorCategory;
 
@@ -301,5 +318,17 @@ mod tests {
         assert_eq!(source.height, None);
         assert_eq!(source.logical_width, Some(1280));
         assert_eq!(source.logical_height, Some(720));
+    }
+
+    #[test]
+    fn force_chooser_bypasses_restore_token_reuse() {
+        assert_eq!(
+            restore_token_for_selection(Some("restore-token"), false),
+            Some("restore-token"),
+        );
+        assert_eq!(
+            restore_token_for_selection(Some("restore-token"), true),
+            None,
+        );
     }
 }

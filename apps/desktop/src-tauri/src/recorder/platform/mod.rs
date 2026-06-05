@@ -26,8 +26,9 @@ pub fn get_capture_sources(manager: &RecorderManager) -> Result<CaptureSourceLis
 pub async fn select_capture_sources(
     storage: &AppStorage,
     manager: &RecorderManager,
+    force_chooser: bool,
 ) -> Result<CaptureSourceList, RecorderError> {
-    imp::select_capture_sources(storage, manager).await
+    imp::select_capture_sources(storage, manager, force_chooser).await
 }
 
 pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {

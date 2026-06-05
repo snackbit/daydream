@@ -17,6 +17,7 @@ pub fn get_capture_sources(manager: &RecorderManager) -> Result<CaptureSourceLis
 pub async fn select_capture_sources(
     _storage: &AppStorage,
     _manager: &RecorderManager,
+    _force_chooser: bool,
 ) -> Result<CaptureSourceList, RecorderError> {
     Err(unavailable_error())
 }

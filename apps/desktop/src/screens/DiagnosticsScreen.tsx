@@ -291,7 +291,7 @@ function DiagnosticRow({
   return (
     <div className="grid min-h-5 grid-cols-[8rem_1fr] items-baseline gap-3">
       <dt className="text-muted-foreground text-sm leading-5">{label}</dt>
-      <dd className="min-w-0 font-mono text-xs leading-5 break-words">
+      <dd className="min-w-0 font-mono text-xs leading-5 wrap-break-word">
         {formatValue(value, emptyValue)}
       </dd>
     </div>

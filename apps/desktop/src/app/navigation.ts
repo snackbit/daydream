@@ -15,7 +15,7 @@ export const navigationItems: NavigationItem[] = [
     label: 'Home',
   },
   {
-    description: 'Future record, pause, stop, and capture profile controls.',
+    description: 'Source selection, scene layout, and recorder controls.',
     href: '/capture',
     icon: Video,
     label: 'Capture',

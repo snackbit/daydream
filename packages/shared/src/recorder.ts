@@ -59,6 +59,10 @@ export interface CaptureSourceSelection {
   sourceIds: string[];
 }
 
+export interface SelectCaptureSourcesInput {
+  forceChooser: boolean;
+}
+
 export type AudioSourceRole = 'desktop-audio' | 'microphone';
 
 export type AudioSourceKind = 'input' | 'monitor';

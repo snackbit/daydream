@@ -5,7 +5,7 @@ use std::{
     sync::Mutex,
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde::Serialize;
 use tauri::Manager;
@@ -487,6 +487,44 @@ pub fn get_recorder_scene(connection: &Connection, id: &str) -> rusqlite::Result
     scene.sources = list_recorder_scene_sources(connection, id)?;
 
     Ok(scene)
+}
+
+pub fn get_latest_recorder_scene(
+    connection: &Connection,
+) -> rusqlite::Result<Option<RecorderSceneRow>> {
+    let scene = connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                name,
+                canvas_width,
+                canvas_height,
+                layout_mode
+            FROM recorder_scenes
+            ORDER BY updated_at_ms DESC, id ASC
+            LIMIT 1
+            "#,
+            [],
+            |row| {
+                Ok(RecorderSceneRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    canvas_width: row.get(2)?,
+                    canvas_height: row.get(3)?,
+                    layout_mode: row.get(4)?,
+                    sources: Vec::new(),
+                })
+            },
+        )
+        .optional()?;
+
+    scene
+        .map(|mut scene| {
+            scene.sources = list_recorder_scene_sources(connection, &scene.id)?;
+            Ok(scene)
+        })
+        .transpose()
 }
 
 pub fn create_recording_segment(
@@ -1131,8 +1169,8 @@ mod tests {
     use super::{
         apply_migrations, collect_database_diagnostics_from_connection, create_recording,
         create_recording_segment, enable_connection_pragmas, fail_recording_segment,
-        finalize_recording_segment, get_recorder_scene, get_recording, list_recording_segments,
-        mark_portal_restore_token_used, migrations, save_recorder_scene,
+        finalize_recording_segment, get_latest_recorder_scene, get_recorder_scene, get_recording,
+        list_recording_segments, mark_portal_restore_token_used, migrations, save_recorder_scene,
         upsert_portal_restore_token, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput,
         FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
         SaveRecorderSceneSourceInput,
@@ -1503,6 +1541,57 @@ mod tests {
         assert_eq!(scene.layout_mode, "custom");
         assert_eq!(scene.sources.len(), 1);
         assert_eq!(scene.sources[0].source_id, "monitor-2");
+    }
+
+    #[test]
+    fn latest_scene_helper_returns_newest_saved_scene() {
+        let mut connection = migrated_memory_connection();
+        let older_scene_id = Uuid::now_v7().to_string();
+        let newer_scene_id = Uuid::now_v7().to_string();
+
+        save_recorder_scene(
+            &mut connection,
+            &SaveRecorderSceneInput {
+                canvas_height: 720,
+                canvas_width: 1280,
+                id: older_scene_id,
+                layout_mode: "horizontal".to_string(),
+                name: "Older".to_string(),
+                sources: vec![scene_source("monitor-1", 0)],
+                timestamp_ms: 10,
+            },
+        )
+        .expect("save older scene");
+        save_recorder_scene(
+            &mut connection,
+            &SaveRecorderSceneInput {
+                canvas_height: 1440,
+                canvas_width: 2560,
+                id: newer_scene_id.clone(),
+                layout_mode: "custom".to_string(),
+                name: "Newer".to_string(),
+                sources: vec![scene_source("monitor-2", 0)],
+                timestamp_ms: 20,
+            },
+        )
+        .expect("save newer scene");
+
+        let latest = get_latest_recorder_scene(&connection)
+            .expect("read latest scene")
+            .expect("latest scene");
+
+        assert_eq!(latest.id, newer_scene_id);
+        assert_eq!(latest.name, "Newer");
+        assert_eq!(latest.sources[0].source_id, "monitor-2");
+    }
+
+    #[test]
+    fn latest_scene_helper_returns_none_without_scenes() {
+        let connection = migrated_memory_connection();
+
+        let latest = get_latest_recorder_scene(&connection).expect("read latest scene");
+
+        assert_eq!(latest, None);
     }
 
     #[test]

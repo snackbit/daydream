@@ -1,8 +1,9 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { playwright } from '@vitest/browser-playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +16,9 @@ export default defineConfig(() => ({
     alias: {
       '@': path.resolve(dirname, 'src'),
     },
+  },
+  optimizeDeps: {
+    include: ['react-resizable-panels'],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -39,5 +43,31 @@ export default defineConfig(() => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ['**/src-tauri/**'],
     },
+  },
+  test: {
+    projects: [
+      {
+        extends: true as const,
+        test: {
+          exclude: ['dist/**', 'src/**/*.browser.test.tsx'],
+          include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+          name: 'unit',
+        },
+      },
+      {
+        extends: true as const,
+        test: {
+          browser: {
+            enabled: true,
+            headless: true,
+            instances: [{ browser: 'chromium' as const }],
+            provider: playwright(),
+          },
+          exclude: ['dist/**'],
+          include: ['src/**/*.browser.test.tsx'],
+          name: 'browser',
+        },
+      },
+    ],
   },
 }));

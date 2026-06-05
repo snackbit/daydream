@@ -32,12 +32,20 @@ pub fn get_capture_sources(
     commands::get_capture_sources(manager)
 }
 
+#[tauri::command(rename = "getRecorderScene")]
+pub fn get_recorder_scene(
+    storage: State<'_, AppStorage>,
+) -> Result<Option<RecorderScene>, RecorderError> {
+    commands::get_recorder_scene(storage)
+}
+
 #[tauri::command(rename = "selectCaptureSources")]
 pub async fn select_capture_sources(
+    input: Option<SelectCaptureSourcesInput>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<CaptureSourceList, RecorderError> {
-    commands::select_capture_sources(storage, manager).await
+    commands::select_capture_sources(input, storage, manager).await
 }
 
 #[tauri::command(rename = "getAudioSources")]
