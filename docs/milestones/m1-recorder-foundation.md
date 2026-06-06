@@ -87,7 +87,8 @@ metadata in SQLite, and surfaces backend health in the app.
   - desktop audio
   - microphone audio
 - The default frame rate is `1 FPS`.
-- The default video encoding profile is balanced H.264 with `yuv444p` output.
+- The default video encoding profile is balanced H.264 with `yuv420p` output.
+  The internal FFmpeg rawvideo handoff remains `yuv444p`.
 - The app records video, desktop audio, and microphone audio from the first
   backend implementation when the user explicitly adds those sources.
 - Desktop audio and microphone audio are optional, user-controlled sources.
@@ -520,8 +521,9 @@ Exit Criteria:
 ## Gate F: FFmpeg Segment Writer and Audio Tracks
 
 - [x] Implement FFmpeg capability probing for the selected binary.
-- [x] Implement FFmpeg argument builder for one MKV segment with H.264
-  `yuv444p`, `1 FPS`, and optional desktop/microphone audio.
+- [x] Implement FFmpeg argument builder for one MKV segment with `yuv444p`
+  rawvideo input, H.264 `yuv420p` output, `1 FPS`, and optional
+  desktop/microphone audio.
 - [x] Implement configurable FFmpeg path selection with `DAYDREAM_FFMPEG_PATH`
   support.
 - [x] Start and stop FFmpeg child processes from the recorder manager.
@@ -579,13 +581,13 @@ Exit Criteria:
   RGBx/RGBA/BGRx/BGRA, and XRGB/ARGB-equivalent raw formats.
 - [x] Return `recorder_capture_dmabuf_required` when the compositor only
   provides DMA-BUF buffers before Gate H.2 is available.
-- [ ] Copy only sampled CPU-readable frames into owned recorder runtime frames
+- [x] Copy only sampled CPU-readable frames into owned recorder runtime frames
   and return PipeWire buffers promptly.
 - [x] Composite selected monitor streams into the configured scene canvas using
   deterministic CPU bilinear crop, scale, placement, and z-order behavior.
 - [x] Pace composition with latest-frame sampling at the configured FPS and feed
   composed `yuv444p` frames to the existing FFmpeg segment writer.
-- [ ] Add tests for source matching, SHM format mapping, DMA-BUF-required
+- [x] Add tests for source matching, SHM format mapping, DMA-BUF-required
   errors, frame sampling, CPU compositor math, FFmpeg handoff, cleanup, and
   privacy-safe error/debug output.
 
@@ -598,14 +600,14 @@ Exit Criteria:
 
 ## Gate H.2: DMA-BUF GPU Import and Composition
 
-- [ ] Add a checked-in Linux-only EGL/OpenGL capability probe for DMA-BUF import
+- [x] Add a checked-in Linux-only EGL/OpenGL capability probe for DMA-BUF import
   and modifier support.
-- [ ] Use the probe to lock thin native dependencies for EGL/OpenGL DMA-BUF
+- [x] Use the probe to lock thin native dependencies for EGL/OpenGL DMA-BUF
   work before production integration.
 - [ ] Import supported DMA-BUF frames into EGL/OpenGL textures.
 - [ ] Perform crop, scale, placement, z-order composition on GPU.
-- [ ] Read the final composed frame back to CPU, convert to `yuv444p`, and feed
-  the existing FFmpeg writer.
+- [ ] Read the final composed frame back to CPU, convert to the existing
+  `yuv444p` FFmpeg rawvideo handoff, and keep encoded output at `yuv420p`.
 - [ ] Keep hardware encoding out of M1 and document it as a later optimization
   because it changes the writer boundary and validation matrix.
 
@@ -736,7 +738,8 @@ Suggested native diagnostics:
 - Portal monitor source discovery and restore-token fallback.
 - Audio source discovery and desktop/mic role mapping.
 - Scene layout storage and interactive Capture screen editor.
-- FFmpeg segment writer with H.264 `yuv444p` MKV output.
+- FFmpeg segment writer with `yuv444p` rawvideo input and H.264 `yuv420p` MKV
+  output.
 - OBS-inspired internal capture runtime boundary for platform capture adapters,
   frame format metadata, scene compositor inputs, and FFmpeg output handoff.
 - PipeWire compositor path for selected monitor streams.

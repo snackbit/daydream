@@ -174,6 +174,93 @@ export function DiagnosticsScreen() {
             </HealthBlock>
 
             <HealthBlock
+              available={diagnostics?.recorder.gpuCapture.available ?? false}
+              label="GPU capture"
+            >
+              <DiagnosticRow
+                label="EGL"
+                value={
+                  diagnostics
+                    ? formatBoolean(
+                        diagnostics.recorder.gpuCapture.eglAvailable,
+                      )
+                    : null
+                }
+              />
+              <DiagnosticRow
+                label="EGL platform"
+                value={diagnostics?.recorder.gpuCapture.eglPlatform ?? null}
+              />
+              <DiagnosticRow
+                label="EGL vendor"
+                value={diagnostics?.recorder.gpuCapture.eglVendor ?? null}
+              />
+              <DiagnosticRow
+                label="EGL version"
+                value={diagnostics?.recorder.gpuCapture.eglVersion ?? null}
+              />
+              <DiagnosticRow
+                label="EGL APIs"
+                value={
+                  diagnostics?.recorder.gpuCapture.eglClientApis.join(', ') ??
+                  null
+                }
+              />
+              <DiagnosticRow
+                label="OpenGL"
+                value={
+                  diagnostics
+                    ? formatBoolean(
+                        diagnostics.recorder.gpuCapture.openglAvailable,
+                      )
+                    : null
+                }
+              />
+              <DiagnosticRow
+                label="DMA-BUF"
+                value={
+                  diagnostics
+                    ? formatBoolean(
+                        diagnostics.recorder.gpuCapture.dmabufImportAvailable,
+                      )
+                    : null
+                }
+              />
+              <DiagnosticRow
+                label="Modifiers"
+                value={
+                  diagnostics
+                    ? formatOptionalBoolean(
+                        diagnostics.recorder.gpuCapture.modifierImportAvailable,
+                      )
+                    : null
+                }
+              />
+              <DiagnosticRow
+                label="Renderer"
+                value={diagnostics?.recorder.gpuCapture.renderer ?? null}
+              />
+              <DiagnosticRow
+                label="Vendor"
+                value={diagnostics?.recorder.gpuCapture.vendor ?? null}
+              />
+              <DiagnosticRow
+                label="Version"
+                value={diagnostics?.recorder.gpuCapture.version ?? null}
+              />
+              <DiagnosticRow
+                emptyValue="None"
+                label="Cleanup error"
+                value={diagnostics?.recorder.gpuCapture.cleanupError ?? null}
+              />
+              <DiagnosticRow
+                emptyValue="None"
+                label="Error"
+                value={diagnostics?.recorder.gpuCapture.error ?? null}
+              />
+            </HealthBlock>
+
+            <HealthBlock
               available={diagnostics?.recorder.desktopAudio.available ?? false}
               label="Desktop audio"
             >
@@ -258,6 +345,14 @@ export function DiagnosticsScreen() {
       </div>
     </section>
   );
+}
+
+function formatBoolean(value: boolean): string {
+  return value ? 'Yes' : 'No';
+}
+
+function formatOptionalBoolean(value: boolean | null): string | null {
+  return value === null ? null : formatBoolean(value);
 }
 
 interface FfmpegCapabilityListProps {

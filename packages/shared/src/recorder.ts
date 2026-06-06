@@ -228,9 +228,25 @@ export interface RecorderPortalHealth extends RecorderBackendComponentHealth {
   sourceTypes: string[];
 }
 
+export interface RecorderGpuCaptureHealth extends RecorderBackendComponentHealth {
+  cleanupError: string | null;
+  dmabufImportAvailable: boolean;
+  eglAvailable: boolean;
+  eglClientApis: string[];
+  eglPlatform: string | null;
+  eglVendor: string | null;
+  eglVersion: string | null;
+  modifierImportAvailable: boolean | null;
+  openglAvailable: boolean;
+  renderer: string | null;
+  vendor: string | null;
+  version: string | null;
+}
+
 export interface RecorderBackendHealth {
   desktopAudio: RecorderAudioHealth;
   ffmpeg: RecorderFfmpegHealth;
+  gpuCapture: RecorderGpuCaptureHealth;
   microphone: RecorderAudioHealth;
   pipewire: RecorderBackendComponentHealth;
   portal: RecorderPortalHealth;

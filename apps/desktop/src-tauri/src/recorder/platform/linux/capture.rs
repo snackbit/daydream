@@ -784,8 +784,6 @@ fn captured_frame_from_pipewire_data(
     format: spa::param::video::VideoInfoRaw,
     data: &mut spa::buffer::Data,
 ) -> Result<CapturedFrame, RecorderError> {
-    storage_from_pipewire_data_type(data.type_()).ensure_cpu_readable(source_id)?;
-
     let size = format.size();
     let frame_format = captured_frame_format_from_pipewire(format.format())?;
     let chunk = data.chunk();
@@ -805,11 +803,52 @@ fn captured_frame_from_pipewire_data(
             "Capture source {source_id} reported invalid PipeWire frame byte size."
         ))
     })?;
-    let bytes = data.data().ok_or_else(|| {
+    let storage = storage_from_pipewire_data_type(data.type_());
+    let mapped_bytes = data.data();
+    let bytes = cpu_readable_pipewire_data_bytes(source_id, &storage, mapped_bytes.as_deref())?;
+
+    captured_frame_from_cpu_readable_pipewire_bytes(
+        source_id,
+        storage,
+        now_ms(),
+        size.width,
+        size.height,
+        stride,
+        frame_format,
+        offset,
+        len,
+        bytes,
+    )
+}
+
+fn cpu_readable_pipewire_data_bytes<'a>(
+    source_id: &str,
+    storage: &CapturedFrameStorage,
+    bytes: Option<&'a [u8]>,
+) -> Result<&'a [u8], RecorderError> {
+    storage.ensure_cpu_readable(source_id)?;
+    bytes.ok_or_else(|| {
         capture_format_unsupported_error(format!(
             "Capture source {source_id} did not expose CPU-readable PipeWire frame bytes."
         ))
-    })?;
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn captured_frame_from_cpu_readable_pipewire_bytes(
+    source_id: &str,
+    storage: CapturedFrameStorage,
+    timestamp_ms: u64,
+    width: u32,
+    height: u32,
+    stride: u32,
+    frame_format: CapturedFrameFormat,
+    offset: usize,
+    len: usize,
+    bytes: &[u8],
+) -> Result<CapturedFrame, RecorderError> {
+    storage.ensure_cpu_readable(source_id)?;
+
     let end = offset.checked_add(len).ok_or_else(|| {
         capture_format_unsupported_error(format!(
             "Capture source {source_id} reported overflowing PipeWire frame bounds."
@@ -823,9 +862,9 @@ fn captured_frame_from_pipewire_data(
 
     CapturedFrame::new(
         source_id,
-        now_ms(),
-        size.width,
-        size.height,
+        timestamp_ms,
+        width,
+        height,
         stride,
         frame_format,
         frame_bytes.to_vec(),
@@ -946,11 +985,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        captured_frame_format_from_pipewire, preflight_live_capture, stream_configs_from_plan,
+        captured_frame_format_from_pipewire, captured_frame_from_cpu_readable_pipewire_bytes,
+        cpu_readable_pipewire_data_bytes, preflight_live_capture, stream_configs_from_plan,
         PipeWireStartupNotifier,
     };
     use crate::recorder::{
-        capture_runtime::CaptureRuntimeSourceHandle,
+        capture_runtime::{CaptureRuntimeSourceHandle, CapturedFrameFormat, CapturedFrameStorage},
         errors::capture_adapter_failed_error,
         platform::linux::portal::LivePortalStream,
         types::{
@@ -1077,6 +1117,61 @@ mod tests {
                 .expect_err("unsupported format");
 
         assert_eq!(error.code, "recorder_capture_format_unsupported");
+    }
+
+    #[test]
+    fn pipewire_cpu_readable_frame_copies_owned_bytes() {
+        let mut mapped_bytes = vec![9, 8, 7, 6, 5, 4, 3, 2];
+        let frame = captured_frame_from_cpu_readable_pipewire_bytes(
+            "portal-monitor-a",
+            CapturedFrameStorage::CpuReadable,
+            1,
+            1,
+            1,
+            4,
+            CapturedFrameFormat::Rgba,
+            2,
+            4,
+            &mapped_bytes,
+        )
+        .expect("captured frame");
+
+        mapped_bytes[2..6].copy_from_slice(&[0, 0, 0, 0]);
+
+        assert_eq!(frame.data, vec![7, 6, 5, 4]);
+    }
+
+    #[test]
+    fn pipewire_dmabuf_frame_reports_gate_h2_requirement() {
+        let error = captured_frame_from_cpu_readable_pipewire_bytes(
+            "portal-monitor-a",
+            CapturedFrameStorage::DmaBuf,
+            1,
+            1,
+            1,
+            4,
+            CapturedFrameFormat::Rgba,
+            0,
+            4,
+            &[1, 2, 3, 4],
+        )
+        .expect_err("dmabuf should not be CPU-readable");
+
+        assert_eq!(error.code, "recorder_capture_dmabuf_required");
+        assert!(!format!("{error:?}").contains("[1, 2, 3, 4]"));
+    }
+
+    #[test]
+    fn pipewire_dmabuf_without_mapped_bytes_reports_gate_h2_requirement() {
+        let error = cpu_readable_pipewire_data_bytes(
+            "portal-monitor-a",
+            &CapturedFrameStorage::DmaBuf,
+            None,
+        )
+        .expect_err("dmabuf should not request CPU-readable bytes");
+
+        assert_eq!(error.code, "recorder_capture_dmabuf_required");
+        assert!(!error.message.contains("CPU-readable PipeWire frame bytes"));
     }
 
     #[test]

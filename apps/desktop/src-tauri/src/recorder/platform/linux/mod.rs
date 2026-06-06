@@ -1,5 +1,6 @@
 mod audio;
 mod capture;
+mod gpu_probe;
 mod portal;
 
 use std::path::Path;
@@ -33,10 +34,12 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
         });
     let desktop_audio = audio_health(audio.desktop_default_source_id.clone(), audio.error.clone());
     let microphone = audio_health(audio.microphone_default_source_id.clone(), audio.error);
+    let gpu_capture = gpu_probe::collect_gpu_capture_health();
 
     RecorderBackendHealth {
         desktop_audio,
         ffmpeg: ffmpeg::collect_ffmpeg_health(),
+        gpu_capture,
         microphone,
         pipewire,
         portal,

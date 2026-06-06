@@ -15,7 +15,8 @@
 
 - M1 targets Linux/KDE Wayland first.
 - Use xdg-desktop-portal ScreenCast and PipeWire for monitor capture.
-- Use FFmpeg for H.264 `yuv444p` MKV segment encoding and muxing.
+- Use FFmpeg with `yuv444p` rawvideo input and H.264 `yuv420p` MKV segment
+  encoding and muxing.
 - Do not use `libobs` directly in M1.
 - Use OBS as architecture inspiration for separating platform capture adapters,
   scene composition, and output/encoding.
@@ -248,9 +249,10 @@
 - Gate E current-scene cleanup adds `getRecorderScene`, loads the latest saved
   scene on Capture startup, changes source selection to Add-with-merge, and
   keeps source deletion as an explicit-save draft edit.
-- Gate F adds FFmpeg capability probing, selected-binary diagnostics, H.264
-  `yuv444p` MKV segment arguments, optional Pulse desktop/microphone audio
-  inputs, stream-index metadata, and process lifecycle management.
+- Gate F adds FFmpeg capability probing, selected-binary diagnostics, `yuv444p`
+  rawvideo input with H.264 `yuv420p` MKV segment arguments, optional Pulse
+  desktop/microphone audio inputs, stream-index metadata, and process lifecycle
+  management.
 - Gate F public lifecycle commands now call the FFmpeg-backed recorder manager.
   This records synthetic/controlled video frames until Gate G introduces the
   capture runtime boundary and Gate H replaces that input with real PipeWire
@@ -316,6 +318,14 @@
 - Gate H.2 starts with a checked-in EGL/OpenGL DMA-BUF capability probe before
   production integration. Hardware encoding remains a deferred optimization
   because it changes the FFmpeg writer boundary and validation matrix.
+- Gate H.1 hardening: CPU-readable PipeWire frame extraction now routes through
+  a testable owned-copy helper. Unit coverage proves mapped bytes are copied
+  before buffer return, DMA-BUF still returns `recorder_capture_dmabuf_required`,
+  and debug/error output does not include frame bytes.
+- Gate H.2 probe slice: added a Linux-only EGL/OpenGL capability probe using
+  `khronos-egl` dynamic loading. Diagnostics now reports GPU capture health,
+  DMA-BUF import support, modifier import support, and non-content driver
+  strings. This does not import DMA-BUF frames or alter the FFmpeg writer path.
 
 ## Risk Watchlist
 
@@ -324,7 +334,8 @@
 - KDE/Wayland may negotiate DMA-BUF-only screen frames. Gate H.1 must return a
   typed blocker rather than silently falling back to synthetic video.
 - Hardware encoding could reduce copies after DMA-BUF import is proven, but it
-  is out of M1 because M1 keeps the existing raw `yuv444p` FFmpeg handoff.
+  is out of M1 because M1 keeps the existing raw `yuv444p` FFmpeg handoff and
+  H.264 `yuv420p` encoded output.
 - KDE portal restore tokens may behave differently across portal versions.
 - FFmpeg packaging is not complete if M1 still depends on system FFmpeg for the
   required Pulse/encoding behavior.

@@ -25,8 +25,8 @@ use super::types::{
     CaptureSource, CaptureSourceList, CaptureTimingDiagnostics, RecorderAudioHealth,
     RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError, RecorderFfmpegHealth,
     RecorderFinalizationAction, RecorderFinalizationPhase, RecorderFinalizationStatus,
-    RecorderPortalHealth, RecorderPreviewState, RecorderPreviewStatus, RecorderState,
-    RecorderStatus, StartRecordingInput,
+    RecorderGpuCaptureHealth, RecorderPortalHealth, RecorderPreviewState, RecorderPreviewStatus,
+    RecorderState, RecorderStatus, StartRecordingInput,
 };
 
 mod resume;
@@ -554,6 +554,7 @@ pub(crate) fn unavailable_backend_health() -> RecorderBackendHealth {
             path: None,
             version_line: None,
         },
+        gpu_capture: unavailable_gpu_capture_health("Recorder backend is not implemented yet."),
         microphone: RecorderAudioHealth {
             available: false,
             default_source_id: None,
@@ -570,6 +571,25 @@ pub(crate) fn unavailable_backend_health() -> RecorderBackendHealth {
             screen_cast_version: None,
             source_types: Vec::new(),
         },
+    }
+}
+
+pub(crate) fn unavailable_gpu_capture_health(error: impl Into<String>) -> RecorderGpuCaptureHealth {
+    RecorderGpuCaptureHealth {
+        available: false,
+        cleanup_error: None,
+        dmabuf_import_available: false,
+        egl_available: false,
+        egl_client_apis: Vec::new(),
+        egl_platform: None,
+        egl_vendor: None,
+        egl_version: None,
+        error: Some(error.into()),
+        modifier_import_available: None,
+        opengl_available: false,
+        renderer: None,
+        vendor: None,
+        version: None,
     }
 }
 

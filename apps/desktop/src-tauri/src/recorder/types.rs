@@ -347,9 +347,29 @@ pub struct RecorderPortalHealth {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct RecorderGpuCaptureHealth {
+    pub(crate) available: bool,
+    pub(crate) cleanup_error: Option<String>,
+    pub(crate) dmabuf_import_available: bool,
+    pub(crate) egl_available: bool,
+    pub(crate) egl_client_apis: Vec<String>,
+    pub(crate) egl_platform: Option<String>,
+    pub(crate) egl_vendor: Option<String>,
+    pub(crate) egl_version: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) modifier_import_available: Option<bool>,
+    pub(crate) opengl_available: bool,
+    pub(crate) renderer: Option<String>,
+    pub(crate) vendor: Option<String>,
+    pub(crate) version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RecorderBackendHealth {
     pub(crate) desktop_audio: RecorderAudioHealth,
     pub(crate) ffmpeg: RecorderFfmpegHealth,
+    pub(crate) gpu_capture: RecorderGpuCaptureHealth,
     pub(crate) microphone: RecorderAudioHealth,
     pub(crate) pipewire: RecorderBackendComponentHealth,
     pub(crate) portal: RecorderPortalHealth,

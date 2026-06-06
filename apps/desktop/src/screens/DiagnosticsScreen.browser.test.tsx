@@ -68,6 +68,22 @@ const diagnostics = {
       path: '/usr/bin/ffmpeg',
       versionLine: 'ffmpeg version 6.1.1',
     },
+    gpuCapture: {
+      available: true,
+      cleanupError: null,
+      dmabufImportAvailable: true,
+      eglAvailable: true,
+      eglClientApis: ['OpenGL_ES', 'OpenGL'],
+      eglPlatform: 'surfaceless',
+      eglVendor: 'NVIDIA',
+      eglVersion: '1.5',
+      error: null,
+      modifierImportAvailable: true,
+      openglAvailable: true,
+      renderer: 'NVIDIA GeForce RTX 4090',
+      vendor: 'NVIDIA Corporation',
+      version: '4.6.0 NVIDIA',
+    },
     microphone: {
       available: true,
       defaultSourceId: 'mic',
@@ -125,4 +141,25 @@ test('DiagnosticsScreen shows required FFmpeg capability support', async () => {
   expect(within(ffmpegCard).getByText('libopus encoder')).toBeTruthy();
   expect(within(ffmpegCard).getAllByText('Supported')).toHaveLength(3);
   expect(within(ffmpegCard).getAllByText('Missing')).toHaveLength(2);
+});
+
+test('DiagnosticsScreen shows GPU capture probe details', async () => {
+  render(<DiagnosticsScreen />);
+
+  expect(await screen.findByText('GPU capture')).toBeTruthy();
+
+  const recorderCard = screen.getByRole('heading', {
+    name: 'Recorder Backend',
+  }).parentElement;
+
+  if (!recorderCard) {
+    throw new Error('Expected recorder backend diagnostics card to render.');
+  }
+
+  expect(within(recorderCard).getByText('GPU capture')).toBeTruthy();
+  expect(within(recorderCard).getByText('DMA-BUF')).toBeTruthy();
+  expect(within(recorderCard).getByText('surfaceless')).toBeTruthy();
+  expect(
+    within(recorderCard).getByText('NVIDIA GeForce RTX 4090'),
+  ).toBeTruthy();
 });
