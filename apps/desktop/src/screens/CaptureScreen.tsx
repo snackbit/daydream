@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { CaptureWorkspace } from '@/features/recorder/components/capture-workspace';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
+import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 
 export function CaptureScreen() {
+  const runAsyncAction = useAsyncErrorBoundary();
   const audioSources = useRecorderWorkspaceStore((state) => state.audioSources);
   const captureSources = useRecorderWorkspaceStore(
     (state) => state.captureSources,
@@ -69,9 +71,9 @@ export function CaptureScreen() {
 
   useEffect(() => {
     if (loadStatus === 'idle') {
-      void load();
+      runAsyncAction(load);
     }
-  }, [load, loadStatus]);
+  }, [load, loadStatus, runAsyncAction]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -115,7 +117,9 @@ export function CaptureScreen() {
     const canPreview =
       loadStatus === 'ready' &&
       !!scene &&
+      scene.sources.length > 0 &&
       !isDirty &&
+      pendingLifecycleAction === null &&
       status?.state === 'idle' &&
       status.finalization === null;
 
@@ -136,6 +140,7 @@ export function CaptureScreen() {
   }, [
     isDirty,
     loadStatus,
+    pendingLifecycleAction,
     previewStatus?.sceneId,
     previewStatus?.state,
     scene,
@@ -170,15 +175,15 @@ export function CaptureScreen() {
       status={status}
       onChangeScene={setDraftScene}
       onDeleteSceneSource={deleteSceneSource}
-      onPause={() => void pause()}
-      onResume={() => void resume()}
+      onPause={() => runAsyncAction(pause)}
+      onResume={() => runAsyncAction(resume)}
       onResolveDuplicateCaptureSource={resolveDuplicateCaptureSource}
-      onSave={() => void saveScene()}
+      onSave={() => runAsyncAction(saveScene)}
       onSelectAudioSource={selectAudioSource}
-      onSelectCaptureSources={() => void updateCaptureSources()}
+      onSelectCaptureSources={() => runAsyncAction(updateCaptureSources)}
       onSelectSceneSource={selectSceneSource}
-      onStart={() => void start()}
-      onStop={() => void stop()}
+      onStart={() => runAsyncAction(start)}
+      onStop={() => runAsyncAction(stop)}
     />
   );
 }

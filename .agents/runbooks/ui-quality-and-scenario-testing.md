@@ -75,6 +75,10 @@ unit tests.
      test before or alongside the fix.
    - If the bug cannot be automated, document the exact manual verification and
      residual risk in the final handoff or milestone scratchpad.
+   - The note must identify the workflow, trigger, expected outcome, observed
+     failure, and why automation is not practical right now.
+   - Do not treat a manual re-check as equivalent to automated coverage unless
+     the residual manual-only risk is explicitly named.
 
 7. Validate UX basics.
    - Critical controls have accessible names.
@@ -93,6 +97,8 @@ unit tests.
 - List manual checks performed or explicitly skipped.
 - Call out important untested risks, especially native, privacy, packaging, or
   manual-only behavior.
+- For any manual bug fix, say which regression test was added or where the
+  manual-only residual risk was recorded.
 
 ## Pitfalls
 

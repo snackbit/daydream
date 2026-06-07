@@ -3,8 +3,9 @@
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
+    os::fd::{AsRawFd, OwnedFd},
     sync::{
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
         Arc, Mutex,
     },
     thread,
@@ -38,6 +39,7 @@ pub(crate) struct CaptureRuntimeSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CapturedFrameFormat {
     Yuv444p,
+    Yuv420p,
     Rgbx,
     Rgba,
     Xrgb,
@@ -57,10 +59,23 @@ pub(crate) struct CapturedFrame {
     pub(crate) width: u32,
 }
 
+pub(crate) struct CapturedDmaBufFrame {
+    pub(crate) fd: OwnedFd,
+    pub(crate) format: CapturedFrameFormat,
+    pub(crate) fourcc: u32,
+    pub(crate) height: u32,
+    pub(crate) modifier: u64,
+    pub(crate) offset: u32,
+    pub(crate) source_id: String,
+    pub(crate) stride: u32,
+    pub(crate) timestamp_ms: u64,
+    pub(crate) width: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FfmpegFrameHandoffPlan {
-    PassThroughYuv444p,
-    ConvertToYuv444p { source_format: CapturedFrameFormat },
+pub(crate) enum WriterFrameHandoffPlan {
+    PassThroughYuv420p,
+    ConvertToYuv420p { source_format: CapturedFrameFormat },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,7 +106,7 @@ pub(crate) trait CaptureAdapter: Send + Sync {
 }
 
 pub(crate) trait CaptureSession: Send + Debug {
-    fn stop(self: Box<Self>) -> Result<(), RecorderError>;
+    fn stop(self: Box<Self>, stop_at_ms: u64) -> Result<(), RecorderError>;
 }
 
 pub(crate) trait CapturePreviewSession: Send + Debug {
@@ -111,12 +126,20 @@ pub(crate) struct LatestFrameSampler {
     latest_frames: HashMap<String, CapturedFrame>,
 }
 
+#[derive(Debug)]
+pub(crate) struct LatestDmaBufFrameSampler {
+    frame_interval_ms: u64,
+    last_composed_at_ms: Option<u64>,
+    latest_frames: HashMap<String, CapturedDmaBufFrame>,
+}
+
 pub(crate) type SharedCaptureTiming = Arc<Mutex<CaptureTimingDiagnostics>>;
 
 impl CapturedFrameFormat {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Yuv444p => "yuv444p",
+            Self::Yuv420p => "yuv420p",
             Self::Rgbx => "rgbx",
             Self::Rgba => "rgba",
             Self::Xrgb => "xrgb",
@@ -129,6 +152,7 @@ impl CapturedFrameFormat {
     pub(crate) fn from_label(label: &str) -> Result<Self, RecorderError> {
         match label {
             "yuv444p" => Ok(Self::Yuv444p),
+            "yuv420p" | "i420" => Ok(Self::Yuv420p),
             "rgbx" => Ok(Self::Rgbx),
             "rgba" => Ok(Self::Rgba),
             "xrgb" => Ok(Self::Xrgb),
@@ -150,6 +174,7 @@ impl CapturedFrameFormat {
             "BGRx" | "bgrx" => Ok(Self::Bgrx),
             "BGRA" | "bgra" => Ok(Self::Bgra),
             "YUV444P" | "YUV444p" | "yuv444p" => Ok(Self::Yuv444p),
+            "I420" | "YUV420P" | "YUV420p" | "yuv420p" => Ok(Self::Yuv420p),
             other => Err(capture_format_unsupported_error(format!(
                 "PipeWire frame format {other} is not supported."
             ))),
@@ -158,7 +183,7 @@ impl CapturedFrameFormat {
 
     pub(crate) fn bytes_per_pixel(self) -> Option<u32> {
         match self {
-            Self::Yuv444p => None,
+            Self::Yuv444p | Self::Yuv420p => None,
             Self::Rgbx | Self::Rgba | Self::Xrgb | Self::Argb | Self::Bgrx | Self::Bgra => Some(4),
         }
     }
@@ -241,27 +266,30 @@ impl CapturedFrame {
         Ok(())
     }
 
-    pub(crate) fn ffmpeg_handoff_plan(&self) -> Result<FfmpegFrameHandoffPlan, RecorderError> {
+    pub(crate) fn writer_handoff_plan(&self) -> Result<WriterFrameHandoffPlan, RecorderError> {
         self.validate()?;
 
         match self.format {
-            CapturedFrameFormat::Yuv444p => Ok(FfmpegFrameHandoffPlan::PassThroughYuv444p),
+            CapturedFrameFormat::Yuv420p => Ok(WriterFrameHandoffPlan::PassThroughYuv420p),
+            CapturedFrameFormat::Yuv444p => Ok(WriterFrameHandoffPlan::ConvertToYuv420p {
+                source_format: self.format,
+            }),
             CapturedFrameFormat::Rgbx
             | CapturedFrameFormat::Rgba
             | CapturedFrameFormat::Xrgb
             | CapturedFrameFormat::Argb
             | CapturedFrameFormat::Bgrx
-            | CapturedFrameFormat::Bgra => Ok(FfmpegFrameHandoffPlan::ConvertToYuv444p {
+            | CapturedFrameFormat::Bgra => Ok(WriterFrameHandoffPlan::ConvertToYuv420p {
                 source_format: self.format,
             }),
         }
     }
 
-    pub(crate) fn into_yuv444p(self) -> Result<Vec<u8>, RecorderError> {
-        match self.ffmpeg_handoff_plan()? {
-            FfmpegFrameHandoffPlan::PassThroughYuv444p => Ok(self.data),
-            FfmpegFrameHandoffPlan::ConvertToYuv444p { source_format } => {
-                convert_packed_rgba_to_yuv444p(&self, source_format)
+    pub(crate) fn into_yuv420p(self) -> Result<Vec<u8>, RecorderError> {
+        match self.writer_handoff_plan()? {
+            WriterFrameHandoffPlan::PassThroughYuv420p => Ok(self.data),
+            WriterFrameHandoffPlan::ConvertToYuv420p { source_format } => {
+                convert_frame_to_yuv420p(&self, source_format)
             }
         }
     }
@@ -280,6 +308,35 @@ impl CapturedFrame {
                         self.source_id, self.width, self.height, self.stride
                     ))
                 }),
+            CapturedFrameFormat::Yuv420p => {
+                if self.width % 2 != 0 || self.height % 2 != 0 || self.stride % 2 != 0 {
+                    return Err(capture_format_unsupported_error(format!(
+                        "Capture frame from source {} has odd yuv420p dimensions {}x{} or stride {}.",
+                        self.source_id, self.width, self.height, self.stride
+                    )));
+                }
+                let y_len = stride.checked_mul(height).ok_or_else(|| {
+                    capture_format_unsupported_error(format!(
+                        "Capture frame from source {} has overflowing yuv420p dimensions {}x{} stride {}.",
+                        self.source_id, self.width, self.height, self.stride
+                    ))
+                })?;
+                let chroma_len = (stride / 2)
+                    .checked_mul(height / 2)
+                    .and_then(|plane_len| plane_len.checked_mul(2))
+                    .ok_or_else(|| {
+                        capture_format_unsupported_error(format!(
+                            "Capture frame from source {} has overflowing yuv420p chroma dimensions {}x{} stride {}.",
+                            self.source_id, self.width, self.height, self.stride
+                        ))
+                    })?;
+                y_len.checked_add(chroma_len).ok_or_else(|| {
+                    capture_format_unsupported_error(format!(
+                        "Capture frame from source {} has overflowing yuv420p frame size.",
+                        self.source_id
+                    ))
+                })
+            }
             format => {
                 let Some(bytes_per_pixel) = format.bytes_per_pixel() else {
                     return Err(capture_format_unsupported_error(format!(
@@ -314,6 +371,83 @@ impl CapturedFrame {
     }
 }
 
+impl CapturedDmaBufFrame {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_id: impl Into<String>,
+        timestamp_ms: u64,
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: CapturedFrameFormat,
+        fourcc: u32,
+        modifier: u64,
+        offset: u32,
+        fd: OwnedFd,
+    ) -> Result<Self, RecorderError> {
+        let frame = Self {
+            fd,
+            format,
+            fourcc,
+            height,
+            modifier,
+            offset,
+            source_id: source_id.into(),
+            stride,
+            timestamp_ms,
+            width,
+        };
+        frame.validate()?;
+
+        Ok(frame)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), RecorderError> {
+        if self.timestamp_ms == 0 {
+            return Err(capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} has an invalid timestamp.",
+                self.source_id
+            )));
+        }
+        if self.width == 0 || self.height == 0 || self.stride == 0 {
+            return Err(capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} has invalid dimensions {}x{} and stride {}.",
+                self.source_id, self.width, self.height, self.stride
+            )));
+        }
+        let Some(bytes_per_pixel) = self.format.bytes_per_pixel() else {
+            return Err(capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} uses unsupported import format {}.",
+                self.source_id,
+                self.format.label()
+            )));
+        };
+        let minimum_stride = self.width.checked_mul(bytes_per_pixel).ok_or_else(|| {
+            capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} has overflowing dimensions {}x{}.",
+                self.source_id, self.width, self.height
+            ))
+        })?;
+        if self.stride < minimum_stride {
+            return Err(capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} has stride {} below required stride {} for {}.",
+                self.source_id,
+                self.stride,
+                minimum_stride,
+                self.format.label()
+            )));
+        }
+        if self.fourcc == 0 {
+            return Err(capture_format_unsupported_error(format!(
+                "Capture DMA-BUF frame from source {} has an invalid DRM format.",
+                self.source_id
+            )));
+        }
+
+        Ok(())
+    }
+}
+
 impl fmt::Debug for CapturedFrame {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -329,6 +463,24 @@ impl fmt::Debug for CapturedFrame {
     }
 }
 
+impl fmt::Debug for CapturedDmaBufFrame {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CapturedDmaBufFrame")
+            .field("source_id", &self.source_id)
+            .field("timestamp_ms", &self.timestamp_ms)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("stride", &self.stride)
+            .field("offset", &self.offset)
+            .field("format", &self.format)
+            .field("fourcc", &self.fourcc)
+            .field("modifier", &self.modifier)
+            .field("fd", &self.fd.as_raw_fd())
+            .finish()
+    }
+}
+
 impl FrameSender {
     pub(crate) fn send(&self, frame: CapturedFrame) -> Result<(), RecorderError> {
         frame.validate()?;
@@ -336,6 +488,21 @@ impl FrameSender {
             capture_adapter_failed_error("Capture frame receiver is no longer available.")
         })
     }
+
+    pub(crate) fn try_send(&self, frame: CapturedFrame) -> Result<(), FrameTrySendError> {
+        frame.validate().map_err(FrameTrySendError::InvalidFrame)?;
+        self.inner.try_send(frame).map_err(|error| match error {
+            TrySendError::Full(frame) => FrameTrySendError::Full(frame),
+            TrySendError::Disconnected(_frame) => FrameTrySendError::Disconnected,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum FrameTrySendError {
+    Disconnected,
+    Full(CapturedFrame),
+    InvalidFrame(RecorderError),
 }
 
 impl Clone for FrameSender {
@@ -421,6 +588,41 @@ impl LatestFrameSampler {
     }
 }
 
+impl LatestDmaBufFrameSampler {
+    pub(crate) fn new(fps: f64) -> Self {
+        Self {
+            frame_interval_ms: frame_interval_ms(fps),
+            last_composed_at_ms: None,
+            latest_frames: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, frame: CapturedDmaBufFrame) -> Result<(), RecorderError> {
+        frame.validate()?;
+        self.latest_frames.insert(frame.source_id.clone(), frame);
+
+        Ok(())
+    }
+
+    pub(crate) fn should_compose(&self, now_ms: u64) -> bool {
+        match self.last_composed_at_ms {
+            None => !self.latest_frames.is_empty(),
+            Some(last_composed_at_ms) => {
+                now_ms.saturating_sub(last_composed_at_ms) >= self.frame_interval_ms
+                    && !self.latest_frames.is_empty()
+            }
+        }
+    }
+
+    pub(crate) fn mark_composed(&mut self, timestamp_ms: u64) {
+        self.last_composed_at_ms = Some(timestamp_ms);
+    }
+
+    pub(crate) fn latest_frames(&self) -> &HashMap<String, CapturedDmaBufFrame> {
+        &self.latest_frames
+    }
+}
+
 pub(crate) fn new_capture_timing() -> SharedCaptureTiming {
     Arc::new(Mutex::new(CaptureTimingDiagnostics::default()))
 }
@@ -469,9 +671,24 @@ pub(crate) fn record_composed_frame(
     }
 }
 
-pub(crate) fn record_frame_sent_to_ffmpeg(timing: &SharedCaptureTiming) {
+pub(crate) fn record_scheduler_tick(timing: &SharedCaptureTiming, missed_deadlines: u64) {
     if let Ok(mut timing) = timing.lock() {
-        timing.frames_sent_to_ffmpeg += 1;
+        timing.scheduler_ticks += 1;
+        timing.scheduler_missed_deadlines += missed_deadlines;
+    }
+}
+
+pub(crate) fn record_compose_duration(timing: &SharedCaptureTiming, duration_ms: u64) {
+    if let Ok(mut timing) = timing.lock() {
+        timing.total_compose_duration_ms =
+            timing.total_compose_duration_ms.saturating_add(duration_ms);
+        timing.max_compose_duration_ms = timing.max_compose_duration_ms.max(duration_ms);
+    }
+}
+
+pub(crate) fn record_frame_sent_to_writer(timing: &SharedCaptureTiming) {
+    if let Ok(mut timing) = timing.lock() {
+        timing.frames_sent_to_writer += 1;
     }
 }
 
@@ -492,52 +709,132 @@ fn frame_interval_ms(fps: f64) -> u64 {
     }
 }
 
-fn convert_packed_rgba_to_yuv444p(
+fn convert_frame_to_yuv420p(
     frame: &CapturedFrame,
     format: CapturedFrameFormat,
 ) -> Result<Vec<u8>, RecorderError> {
-    let pixel_count = (frame.width as usize)
-        .checked_mul(frame.height as usize)
-        .ok_or_else(|| {
-            capture_format_unsupported_error(format!(
-                "Capture frame from source {} has overflowing dimensions {}x{}.",
-                frame.source_id, frame.width, frame.height
-            ))
-        })?;
-    let plane_len = pixel_count;
-    let mut output = vec![0; plane_len * 3];
+    if frame.width % 2 != 0 || frame.height % 2 != 0 {
+        return Err(capture_format_unsupported_error(format!(
+            "Capture frame from source {} has odd dimensions {}x{}; yuv420p requires even dimensions.",
+            frame.source_id, frame.width, frame.height
+        )));
+    }
+    match format {
+        CapturedFrameFormat::Yuv444p => convert_yuv444p_to_yuv420p(frame),
+        CapturedFrameFormat::Yuv420p => Err(capture_format_unsupported_error(
+            "yuv420p frame conversion must use pass-through.",
+        )),
+        CapturedFrameFormat::Rgbx | CapturedFrameFormat::Rgba => {
+            convert_packed_rgba_to_yuv420p(frame, [0, 1, 2])
+        }
+        CapturedFrameFormat::Xrgb | CapturedFrameFormat::Argb => {
+            convert_packed_rgba_to_yuv420p(frame, [1, 2, 3])
+        }
+        CapturedFrameFormat::Bgrx | CapturedFrameFormat::Bgra => {
+            convert_packed_rgba_to_yuv420p(frame, [2, 1, 0])
+        }
+    }
+}
 
-    for y in 0..frame.height as usize {
-        let row_start = y * frame.stride as usize;
-        for x in 0..frame.width as usize {
-            let input_index = row_start + x * 4;
-            let (red, green, blue) = match format {
-                CapturedFrameFormat::Rgbx | CapturedFrameFormat::Rgba => (
-                    frame.data[input_index],
-                    frame.data[input_index + 1],
-                    frame.data[input_index + 2],
-                ),
-                CapturedFrameFormat::Xrgb | CapturedFrameFormat::Argb => (
-                    frame.data[input_index + 1],
-                    frame.data[input_index + 2],
-                    frame.data[input_index + 3],
-                ),
-                CapturedFrameFormat::Bgrx | CapturedFrameFormat::Bgra => (
-                    frame.data[input_index + 2],
-                    frame.data[input_index + 1],
-                    frame.data[input_index],
-                ),
-                CapturedFrameFormat::Yuv444p => {
-                    return Err(capture_format_unsupported_error(
-                        "YUV frame conversion must use pass-through.",
-                    ));
+fn yuv420p_layout(
+    source_id: &str,
+    width: u32,
+    height: u32,
+) -> Result<(usize, usize, usize), RecorderError> {
+    let width = width as usize;
+    let height = height as usize;
+    let y_len = width.checked_mul(height).ok_or_else(|| {
+        capture_format_unsupported_error(format!(
+            "Capture frame from source {} has overflowing dimensions {}x{}.",
+            source_id, width, height
+        ))
+    })?;
+    let chroma_width = width / 2;
+    let chroma_height = height / 2;
+    let chroma_len = chroma_width.checked_mul(chroma_height).ok_or_else(|| {
+        capture_format_unsupported_error(format!(
+            "Capture frame from source {} has overflowing chroma dimensions {}x{}.",
+            source_id, width, height
+        ))
+    })?;
+    Ok((y_len, chroma_width, chroma_len))
+}
+
+fn convert_yuv444p_to_yuv420p(frame: &CapturedFrame) -> Result<Vec<u8>, RecorderError> {
+    let (y_len, chroma_width, chroma_len) =
+        yuv420p_layout(&frame.source_id, frame.width, frame.height)?;
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let mut output = vec![0; y_len + chroma_len * 2];
+    let u_plane_offset = y_len;
+    let v_plane_offset = y_len + chroma_len;
+    let source_y_plane_len = frame.stride as usize * height;
+
+    for y in 0..height {
+        let source_start = y * frame.stride as usize;
+        let output_start = y * width;
+        output[output_start..output_start + width]
+            .copy_from_slice(&frame.data[source_start..source_start + width]);
+    }
+
+    for block_y in 0..height / 2 {
+        for block_x in 0..chroma_width {
+            let mut u_sum = 0_u16;
+            let mut v_sum = 0_u16;
+            for local_y in 0..2 {
+                for local_x in 0..2 {
+                    let x = block_x * 2 + local_x;
+                    let y = block_y * 2 + local_y;
+                    let source_index = y * frame.stride as usize + x;
+                    let u_value = frame.data[source_y_plane_len + source_index];
+                    let v_value = frame.data[source_y_plane_len * 2 + source_index];
+                    u_sum += u_value as u16;
+                    v_sum += v_value as u16;
                 }
-            };
-            let output_index = y * frame.width as usize + x;
-            let (y_value, u_value, v_value) = rgb_to_yuv(red, green, blue);
-            output[output_index] = y_value;
-            output[plane_len + output_index] = u_value;
-            output[plane_len * 2 + output_index] = v_value;
+            }
+            let chroma_index = block_y * chroma_width + block_x;
+            output[u_plane_offset + chroma_index] = (u_sum / 4) as u8;
+            output[v_plane_offset + chroma_index] = (v_sum / 4) as u8;
+        }
+    }
+
+    Ok(output)
+}
+
+fn convert_packed_rgba_to_yuv420p(
+    frame: &CapturedFrame,
+    channels: [usize; 3],
+) -> Result<Vec<u8>, RecorderError> {
+    let (y_len, chroma_width, chroma_len) =
+        yuv420p_layout(&frame.source_id, frame.width, frame.height)?;
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let mut output = vec![0; y_len + chroma_len * 2];
+    let u_plane_offset = y_len;
+    let v_plane_offset = y_len + chroma_len;
+
+    for block_y in 0..height / 2 {
+        for block_x in 0..chroma_width {
+            let mut u_sum = 0_u16;
+            let mut v_sum = 0_u16;
+            for local_y in 0..2 {
+                for local_x in 0..2 {
+                    let x = block_x * 2 + local_x;
+                    let y = block_y * 2 + local_y;
+                    let input_index = y * frame.stride as usize + x * 4;
+                    let (y_value, u_value, v_value) = rgb_to_yuv(
+                        frame.data[input_index + channels[0]],
+                        frame.data[input_index + channels[1]],
+                        frame.data[input_index + channels[2]],
+                    );
+                    output[y * width + x] = y_value;
+                    u_sum += u_value as u16;
+                    v_sum += v_value as u16;
+                }
+            }
+            let chroma_index = block_y * chroma_width + block_x;
+            output[u_plane_offset + chroma_index] = (u_sum / 4) as u8;
+            output[v_plane_offset + chroma_index] = (v_sum / 4) as u8;
         }
     }
 
@@ -564,14 +861,16 @@ mod tests {
 
     use super::{
         bounded_frame_channel, capture_timing_snapshot, new_capture_timing, record_capture_frame,
-        record_composed_frame, record_frame_sent_to_ffmpeg, CapturedFrame, CapturedFrameFormat,
-        CapturedFrameStorage, FfmpegFrameHandoffPlan, LatestFrameSampler, RuntimeWorker,
+        record_compose_duration, record_composed_frame, record_frame_sent_to_writer,
+        record_scheduler_tick, CapturedFrame, CapturedFrameFormat, CapturedFrameStorage,
+        LatestFrameSampler, RuntimeWorker, WriterFrameHandoffPlan,
     };
 
     #[test]
-    fn supported_formats_are_accepted_and_plan_ffmpeg_handoff() {
+    fn supported_formats_are_accepted_and_plan_writer_handoff() {
         for (format, label) in [
             (CapturedFrameFormat::Yuv444p, "yuv444p"),
+            (CapturedFrameFormat::Yuv420p, "yuv420p"),
             (CapturedFrameFormat::Rgbx, "rgbx"),
             (CapturedFrameFormat::Rgba, "rgba"),
             (CapturedFrameFormat::Xrgb, "xrgb"),
@@ -593,14 +892,14 @@ mod tests {
             CapturedFrameFormat::Argb,
         );
 
-        let yuv = CapturedFrame::new(
+        let yuv420 = CapturedFrame::new(
             "monitor-1",
             1,
             2,
             2,
             2,
-            CapturedFrameFormat::Yuv444p,
-            vec![0; 12],
+            CapturedFrameFormat::Yuv420p,
+            vec![0; 6],
         )
         .expect("valid yuv frame");
         let rgba = CapturedFrame::new(
@@ -615,12 +914,12 @@ mod tests {
         .expect("valid rgba frame");
 
         assert_eq!(
-            yuv.ffmpeg_handoff_plan().expect("yuv handoff plan"),
-            FfmpegFrameHandoffPlan::PassThroughYuv444p,
+            yuv420.writer_handoff_plan().expect("yuv handoff plan"),
+            WriterFrameHandoffPlan::PassThroughYuv420p,
         );
         assert_eq!(
-            rgba.ffmpeg_handoff_plan().expect("rgba handoff plan"),
-            FfmpegFrameHandoffPlan::ConvertToYuv444p {
+            rgba.writer_handoff_plan().expect("rgba handoff plan"),
+            WriterFrameHandoffPlan::ConvertToYuv420p {
                 source_format: CapturedFrameFormat::Rgba,
             },
         );
@@ -732,7 +1031,10 @@ mod tests {
         record_capture_frame(&timing, "monitor-2", 90);
         record_capture_frame(&timing, "monitor-1", 130);
         record_composed_frame(&timing, 150, true);
-        record_frame_sent_to_ffmpeg(&timing);
+        record_scheduler_tick(&timing, 2);
+        record_compose_duration(&timing, 7);
+        record_compose_duration(&timing, 3);
+        record_frame_sent_to_writer(&timing);
 
         let snapshot = capture_timing_snapshot(&timing);
 
@@ -745,9 +1047,13 @@ mod tests {
             snapshot.frames_received_by_source.get("monitor-2"),
             Some(&1)
         );
-        assert_eq!(snapshot.frames_sent_to_ffmpeg, 1);
+        assert_eq!(snapshot.frames_sent_to_writer, 1);
         assert_eq!(snapshot.last_composed_timestamp_ms, Some(150));
+        assert_eq!(snapshot.max_compose_duration_ms, 7);
+        assert_eq!(snapshot.total_compose_duration_ms, 10);
         assert_eq!(snapshot.reused_frame_compositions, 1);
+        assert_eq!(snapshot.scheduler_missed_deadlines, 2);
+        assert_eq!(snapshot.scheduler_ticks, 1);
         assert_eq!(snapshot.source_timestamp_min_ms, Some(90));
         assert_eq!(snapshot.source_timestamp_max_ms, Some(130));
     }
@@ -758,9 +1064,9 @@ mod tests {
             timestamp_ms,
             1,
             1,
-            1,
-            CapturedFrameFormat::Yuv444p,
-            vec![0, 128, 128],
+            4,
+            CapturedFrameFormat::Rgba,
+            vec![0, 0, 0, 255],
         )
         .expect("valid test frame")
     }

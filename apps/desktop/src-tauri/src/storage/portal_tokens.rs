@@ -1,5 +1,7 @@
 use rusqlite::{params, Connection};
 
+pub const LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID: &str = "linux-screencast-monitor";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortalRestoreTokenRow {
     pub created_at_ms: i64,
@@ -76,6 +78,18 @@ pub fn mark_portal_restore_token_used(
         WHERE id = ?1
         "#,
         params![id, timestamp_ms],
+    )?;
+
+    Ok(())
+}
+
+pub fn delete_portal_restore_token(connection: &Connection, id: &str) -> rusqlite::Result<()> {
+    connection.execute(
+        r#"
+        DELETE FROM recorder_portal_restore_tokens
+        WHERE id = ?1
+        "#,
+        [id],
     )?;
 
     Ok(())

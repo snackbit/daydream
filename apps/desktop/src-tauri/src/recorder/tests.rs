@@ -1,13 +1,12 @@
 use std::{
-    env,
-    ffi::OsString,
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Barrier, Mutex,
+        Arc, Barrier,
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use serde_json::json;
@@ -16,7 +15,8 @@ use uuid::Uuid;
 
 use super::capture_runtime::CapturePreviewSession;
 use super::commands::{
-    get_recorder_scene, pause_recording, resume_recording, start_recording, stop_recording,
+    get_recorder_scene, pause_recording, resume_recording, save_recorder_scene,
+    select_capture_sources, start_recording, stop_empty_preview_start, stop_recording,
 };
 use super::errors::unavailable_error;
 use super::manager::{PreviewStartDecision, RecorderManager};
@@ -100,7 +100,7 @@ fn manager_initial_status_is_idle() {
     assert_eq!(status.state, RecorderState::Idle);
     assert_eq!(status.active_recording_id, None);
     assert_eq!(status.active_segment_id, None);
-    assert!(!status.backend_health.ffmpeg.available);
+    assert!(!status.backend_health.media_writer.available);
 }
 
 #[test]
@@ -175,6 +175,24 @@ fn manager_stops_preview_session_that_finishes_after_cancellation() {
         manager.preview_status().expect("preview status").state,
         super::types::RecorderPreviewState::Idle
     );
+}
+
+#[test]
+fn manager_marks_cancelled_preview_start_stale_before_platform_start() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = "scene-1";
+    let PreviewStartDecision::Pending { generation, .. } = manager
+        .begin_preview_start(scene_id, 10)
+        .expect("begin preview")
+    else {
+        panic!("preview should be pending");
+    };
+
+    assert!(manager.preview_start_is_current(scene_id, generation));
+
+    manager.stop_preview(11).expect("cancel preview");
+
+    assert!(!manager.preview_start_is_current(scene_id, generation));
 }
 
 #[test]
@@ -297,6 +315,41 @@ fn get_recorder_scene_returns_latest_saved_scene() {
         .expect("latest recorder scene");
 
     assert_eq!(scene.id, newer_scene_id);
+}
+
+#[test]
+fn public_configuration_commands_reject_while_recording_is_active() {
+    let app = tauri::test::mock_app();
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+    manager
+        .start_internal(&storage, start_input(&scene_id), 100)
+        .expect("start active recording");
+    app.manage(storage);
+    app.manage(manager);
+
+    let save_error = save_recorder_scene(
+        SaveRecorderSceneInput {
+            scene: test_scene(&scene_id),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    )
+    .expect_err("save should reject while recording is active");
+    let select_error = tauri::async_runtime::block_on(select_capture_sources(
+        Some(super::types::SelectCaptureSourcesInput {
+            force_chooser: true,
+        }),
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    ))
+    .expect_err("source selection should reject while recording is active");
+
+    assert_eq!(save_error.code, "recorder_configuration_locked");
+    assert_eq!(select_error.code, "recorder_configuration_locked");
+    let _ = fs::remove_dir_all(app_data_dir);
 }
 
 #[test]
@@ -428,7 +481,10 @@ fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
         pausing.active_recording_id.as_deref(),
         Some(recording_id.as_str())
     );
-    assert_eq!(pausing.active_segment_id, None);
+    assert_eq!(
+        pausing.active_segment_id.as_deref(),
+        started.active_segment_id.as_deref()
+    );
     assert_eq!(
         pausing.finalization.as_ref().map(|status| &status.action),
         Some(&super::types::RecorderFinalizationAction::Pause)
@@ -486,6 +542,10 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
         .expect("begin stop");
     assert_eq!(stopping.state, RecorderState::Idle);
     assert_eq!(stopping.active_recording_id, None);
+    assert_eq!(
+        stopping.active_segment_id.as_deref(),
+        started.active_segment_id.as_deref()
+    );
     assert_eq!(
         stopping.finalization.as_ref().map(|status| &status.action),
         Some(&super::types::RecorderFinalizationAction::Stop)
@@ -697,195 +757,58 @@ fn manager_selecting_state_rejects_concurrent_starts() {
 #[test]
 fn pending_live_start_preparation_does_not_create_recording_rows() {
     let app_data_dir = test_app_data_dir();
-    let fake_ffmpeg_path = fake_failing_ffmpeg_path();
-    let fake_ffmpeg_dir = fake_ffmpeg_path
-        .parent()
-        .expect("fake ffmpeg parent")
-        .to_path_buf();
     let manager = RecorderManager::new(app_data_dir.clone());
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    with_ffmpeg_path(&fake_ffmpeg_path, || {
-        manager
-            .begin_selecting(&scene_id, 10)
-            .expect("begin selecting");
-        let pending = manager
-            .prepare_recording_start(&storage, start_input(&scene_id), 10)
-            .expect("prepare pending recording");
-        let recording_count = storage
-            .with_connection(|connection| {
-                connection.query_row("SELECT COUNT(*) FROM recordings", [], |row| {
-                    row.get::<_, i64>(0)
-                })
-            })
-            .expect("count recordings");
-
-        assert_eq!(pending.scene.id, scene_id);
-        assert_eq!(recording_count, 0);
-    });
-
-    let _ = fs::remove_dir_all(app_data_dir);
-    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
-}
-
-#[test]
-fn ffmpeg_failure_clears_runtime_and_preserves_failed_segment() {
-    let app_data_dir = test_app_data_dir();
-    let fake_ffmpeg_path = fake_failing_ffmpeg_path();
-    let fake_ffmpeg_dir = fake_ffmpeg_path
-        .parent()
-        .expect("fake ffmpeg parent")
-        .to_path_buf();
-    let manager = RecorderManager::new(app_data_dir.clone());
-    let storage = test_storage();
-    let scene_id = saved_test_scene(&storage);
-
-    with_ffmpeg_path(&fake_ffmpeg_path, || {
-        let started = manager
-            .start_recording(&storage, start_input(&scene_id), 10)
-            .expect("start recording with fake ffmpeg");
-        let recording_id = started
-            .active_recording_id
-            .clone()
-            .expect("active recording id");
-
-        let pause_error = manager
-            .pause_recording(&storage, &recording_id, 20)
-            .expect_err("fake ffmpeg should fail during pause");
-        assert!(
-            pause_error.code == "recorder_ffmpeg_failed"
-                || pause_error.code == "recorder_ffmpeg_frame_write_failed"
-        );
-
-        let failed_status = manager.status().expect("read failed manager status");
-        assert_eq!(failed_status.state, RecorderState::Error);
-        assert_eq!(failed_status.active_recording_id, None);
-        assert_eq!(failed_status.active_segment_id, None);
-        assert_eq!(
-            failed_status
-                .last_error
-                .as_ref()
-                .map(|error| error.code.as_str()),
-            Some(pause_error.code.as_str()),
-        );
-
-        let recording = storage
-            .with_connection(|connection| storage::get_recording(connection, &recording_id))
-            .expect("read failed recording");
-        let segments = storage
-            .with_connection(|connection| {
-                storage::list_recording_segments(connection, &recording_id)
-            })
-            .expect("list failed segments");
-        assert_eq!(recording.status, "failed");
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].state, "failed");
-        let failed_error_code = segments[0].error_code.clone();
-        let failed_ended_at_ms = segments[0].ended_at_ms;
-
-        let stopped = manager
-            .stop_recording(&storage, &recording_id, 30)
-            .expect("stop after terminal failure should be idempotent");
-        assert_eq!(stopped.state, RecorderState::Idle);
-
-        let recording_after_stop = storage
-            .with_connection(|connection| storage::get_recording(connection, &recording_id))
-            .expect("read recording after stop");
-        let segments_after_stop = storage
-            .with_connection(|connection| {
-                storage::list_recording_segments(connection, &recording_id)
-            })
-            .expect("list segments after stop");
-        assert_eq!(recording_after_stop.status, "failed");
-        assert_eq!(segments_after_stop[0].state, "failed");
-        assert_eq!(segments_after_stop[0].error_code, failed_error_code);
-        assert_eq!(segments_after_stop[0].ended_at_ms, failed_ended_at_ms);
-    });
-
-    let _ = fs::remove_dir_all(app_data_dir);
-    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
-}
-
-#[test]
-fn resume_ffmpeg_start_failure_clears_runtime_and_preserves_failed_segment() {
-    let app_data_dir = test_app_data_dir();
-    let fake_ffmpeg_path = fake_probe_then_missing_ffmpeg_path();
-    let fake_ffmpeg_dir = fake_ffmpeg_path
-        .parent()
-        .expect("fake ffmpeg parent")
-        .to_path_buf();
-    let manager = RecorderManager::new(app_data_dir.clone());
-    let storage = test_storage();
-    let scene_id = saved_test_scene(&storage);
-
-    let started = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
-        .expect("start recording");
-    let recording_id = started
-        .active_recording_id
-        .clone()
-        .expect("active recording id");
     manager
-        .pause_internal(&storage, 20)
-        .expect("pause recording");
-
-    with_ffmpeg_path(&fake_ffmpeg_path, || {
-        let resume_error = manager
-            .resume_recording(&storage, &recording_id, 30)
-            .expect_err("resume should fail when FFmpeg cannot start");
-        assert_eq!(resume_error.code, "recorder_ffmpeg_spawn_failed");
-
-        let failed_status = manager.status().expect("read failed manager status");
-        assert_eq!(failed_status.state, RecorderState::Error);
-        assert_eq!(failed_status.active_recording_id, None);
-        assert_eq!(failed_status.active_segment_id, None);
-        assert_eq!(
-            failed_status
-                .last_error
-                .as_ref()
-                .map(|error| error.code.as_str()),
-            Some("recorder_ffmpeg_spawn_failed"),
-        );
-
-        let recording = storage
-            .with_connection(|connection| storage::get_recording(connection, &recording_id))
-            .expect("read failed recording");
-        let segments = storage
-            .with_connection(|connection| {
-                storage::list_recording_segments(connection, &recording_id)
+        .begin_selecting(&scene_id, 10)
+        .expect("begin selecting");
+    let pending = manager
+        .prepare_recording_start(&storage, start_input(&scene_id), 10)
+        .expect("prepare pending recording");
+    let recording_count = storage
+        .with_connection(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM recordings", [], |row| {
+                row.get::<_, i64>(0)
             })
-            .expect("list failed segments");
-        assert_eq!(recording.status, "failed");
-        assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].state, "finalized");
-        assert_eq!(segments[1].state, "failed");
-        assert_eq!(
-            segments[1].error_code.as_deref(),
-            Some("recorder_ffmpeg_spawn_failed"),
-        );
-        let failed_ended_at_ms = segments[1].ended_at_ms;
+        })
+        .expect("count recordings");
 
-        let stopped = manager
-            .stop_recording(&storage, &recording_id, 40)
-            .expect("stop after terminal failure should be idempotent");
-        assert_eq!(stopped.state, RecorderState::Idle);
-
-        let recording_after_stop = storage
-            .with_connection(|connection| storage::get_recording(connection, &recording_id))
-            .expect("read recording after stop");
-        let segments_after_stop = storage
-            .with_connection(|connection| {
-                storage::list_recording_segments(connection, &recording_id)
-            })
-            .expect("list segments after stop");
-        assert_eq!(recording_after_stop.status, "failed");
-        assert_eq!(segments_after_stop[1].state, "failed");
-        assert_eq!(segments_after_stop[1].ended_at_ms, failed_ended_at_ms);
-    });
+    assert_eq!(pending.scene.id, scene_id);
+    assert_eq!(recording_count, 0);
 
     let _ = fs::remove_dir_all(app_data_dir);
-    let _ = fs::remove_dir_all(fake_ffmpeg_dir);
+}
+
+#[test]
+fn recording_start_pads_odd_canvas_dimensions_without_mutating_scene() {
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = Uuid::now_v7().to_string();
+    let mut scene = test_scene(&scene_id);
+    scene.canvas_width = 2559;
+    scene.canvas_height = 1439;
+    save_recorder_scene_for_storage(&storage, SaveRecorderSceneInput { scene }, 1)
+        .expect("save odd scene");
+
+    manager
+        .begin_selecting(&scene_id, 10)
+        .expect("begin selecting");
+    let pending = manager
+        .prepare_recording_start(&storage, start_input(&scene_id), 10)
+        .expect("prepare pending recording");
+    let stored_scene = storage
+        .with_connection(|connection| storage::get_recorder_scene(connection, &scene_id))
+        .expect("read stored scene");
+
+    assert_eq!(stored_scene.canvas_width, 2559);
+    assert_eq!(stored_scene.canvas_height, 1439);
+    assert_eq!(pending.segment_input.canvas_width, 2560);
+    assert_eq!(pending.segment_input.canvas_height, 1440);
+
+    let _ = fs::remove_dir_all(app_data_dir);
 }
 
 #[test]
@@ -911,56 +834,164 @@ fn manager_caches_selected_capture_sources() {
 }
 
 #[test]
-fn public_lifecycle_commands_use_ffmpeg_backed_manager_contracts() {
+fn public_lifecycle_commands_use_media_writer_manager_contracts() {
     let app = tauri::test::mock_app();
     let app_data_dir = test_app_data_dir();
-    let missing_ffmpeg_path = app_data_dir.join("missing-ffmpeg");
     let storage = test_storage();
-    let scene_id = saved_test_scene(&storage);
     app.manage(storage);
     app.manage(RecorderManager::new(app_data_dir.clone()));
 
-    with_ffmpeg_path(&missing_ffmpeg_path, || {
-        let start_error = tauri::async_runtime::block_on(start_recording(
-            start_input(&scene_id),
-            app.state::<storage::AppStorage>(),
-            app.state::<RecorderManager>(),
-        ))
-        .expect_err("public start should require available FFmpeg");
-        let pause_error = pause_recording(
-            PauseRecordingInput {
-                recording_id: Uuid::now_v7().to_string(),
-            },
-            app.handle().clone(),
-            app.state::<RecorderManager>(),
-        )
-        .expect_err("public pause should remain unavailable");
-        let resume_error = tauri::async_runtime::block_on(resume_recording(
-            ResumeRecordingInput {
-                recording_id: Uuid::now_v7().to_string(),
-            },
-            app.state::<storage::AppStorage>(),
-            app.state::<RecorderManager>(),
-        ))
-        .expect_err("public resume should remain unavailable");
-        let stop_status = stop_recording(
-            StopRecordingInput {
-                recording_id: Uuid::now_v7().to_string(),
-            },
-            app.handle().clone(),
-            app.state::<RecorderManager>(),
-        )
-        .expect("public stop while idle is idempotent");
+    let start_error = tauri::async_runtime::block_on(start_recording(
+        start_input("missing-scene"),
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    ))
+    .expect_err("public start should require an existing scene");
+    let pause_error = pause_recording(
+        PauseRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.handle().clone(),
+        app.state::<RecorderManager>(),
+    )
+    .expect_err("public pause should remain unavailable");
+    let resume_error = tauri::async_runtime::block_on(resume_recording(
+        ResumeRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    ))
+    .expect_err("public resume should remain unavailable");
+    let stop_status = stop_recording(
+        StopRecordingInput {
+            recording_id: Uuid::now_v7().to_string(),
+        },
+        app.handle().clone(),
+        app.state::<RecorderManager>(),
+    )
+    .expect("public stop while idle is idempotent");
 
-        assert_eq!(start_error.code, "recorder_ffmpeg_unavailable");
-        assert_eq!(pause_error.code, "recorder_not_recording");
-        assert_eq!(resume_error.code, "recorder_not_paused");
-        assert_eq!(stop_status.state, RecorderState::Idle);
-    });
+    assert_eq!(start_error.code, "recorder_scene_not_found");
+    assert_eq!(pause_error.code, "recorder_not_recording");
+    assert_eq!(resume_error.code, "recorder_not_paused");
+    assert_eq!(stop_status.state, RecorderState::Idle);
     let _ = fs::remove_dir_all(app_data_dir);
 }
 
-static FFMPEG_ENV_LOCK: Mutex<()> = Mutex::new(());
+#[test]
+fn empty_scene_preview_start_resets_pending_preview_before_platform_start() {
+    let manager = RecorderManager::new(test_app_data_dir());
+    let scene_id = Uuid::now_v7().to_string();
+    let PreviewStartDecision::Pending { generation, .. } = manager
+        .begin_preview_start(&scene_id, 10)
+        .expect("begin preview")
+    else {
+        panic!("preview should be pending");
+    };
+
+    let preview_status = stop_empty_preview_start(
+        &manager,
+        &empty_test_scene(&scene_id),
+        &scene_id,
+        generation,
+    )
+    .expect("empty scene should stop pending preview")
+    .expect("empty scene should return idle status");
+
+    assert_eq!(
+        preview_status.state,
+        super::types::RecorderPreviewState::Idle
+    );
+    assert_eq!(preview_status.scene_id, None);
+    assert!(!manager.preview_start_is_current(&scene_id, generation));
+}
+
+#[test]
+fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() {
+    let app = tauri::test::mock_app();
+    let app_data_dir = test_app_data_dir();
+    let storage = test_storage();
+    let scene_id = Uuid::now_v7().to_string();
+    save_recorder_scene_for_storage(
+        &storage,
+        SaveRecorderSceneInput {
+            scene: fake_test_scene(&scene_id),
+        },
+        10,
+    )
+    .expect("save fake scene");
+    app.manage(storage);
+    app.manage(RecorderManager::new(app_data_dir.clone()));
+
+    let started = tauri::async_runtime::block_on(start_recording(
+        start_input(&scene_id),
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    ))
+    .expect("start fake recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+    thread::sleep(Duration::from_millis(250));
+
+    let pausing = pause_recording(
+        PauseRecordingInput {
+            recording_id: recording_id.clone(),
+        },
+        app.handle().clone(),
+        app.state::<RecorderManager>(),
+    )
+    .expect("pause fake recording");
+    assert!(pausing.finalization.is_some());
+    wait_for_recorder_state(app.state::<RecorderManager>(), RecorderState::Paused);
+
+    let first_segments = app
+        .state::<storage::AppStorage>()
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list paused segments");
+    assert_eq!(first_segments.len(), 1);
+    assert_finalized_probeable_segment(&first_segments[0]);
+
+    let resumed = tauri::async_runtime::block_on(resume_recording(
+        ResumeRecordingInput {
+            recording_id: recording_id.clone(),
+        },
+        app.state::<storage::AppStorage>(),
+        app.state::<RecorderManager>(),
+    ))
+    .expect("resume fake recording");
+    assert_eq!(resumed.state, RecorderState::Recording);
+    thread::sleep(Duration::from_millis(250));
+
+    let stopping = stop_recording(
+        StopRecordingInput {
+            recording_id: recording_id.clone(),
+        },
+        app.handle().clone(),
+        app.state::<RecorderManager>(),
+    )
+    .expect("stop fake recording");
+    assert!(stopping.finalization.is_some());
+    wait_for_recorder_state(app.state::<RecorderManager>(), RecorderState::Idle);
+
+    let recording = app
+        .state::<storage::AppStorage>()
+        .with_connection(|connection| storage::get_recording(connection, &recording_id))
+        .expect("read stopped recording");
+    let segments = app
+        .state::<storage::AppStorage>()
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list stopped segments");
+
+    assert_eq!(recording.status, "completed");
+    assert_eq!(segments.len(), 2);
+    assert_finalized_probeable_segment(&segments[0]);
+    assert_finalized_probeable_segment(&segments[1]);
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
 
 #[derive(Debug)]
 struct TestPreviewSession {
@@ -975,37 +1006,6 @@ impl CapturePreviewSession for TestPreviewSession {
     }
 }
 
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set_path(key: &'static str, path: &Path) -> Self {
-        let previous = env::var_os(key);
-        env::set_var(key, path);
-
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            env::set_var(self.key, previous);
-        } else {
-            env::remove_var(self.key);
-        }
-    }
-}
-
-fn with_ffmpeg_path<T>(path: &Path, run: impl FnOnce() -> T) -> T {
-    let _lock = FFMPEG_ENV_LOCK.lock().expect("ffmpeg env lock");
-    let _guard = EnvVarGuard::set_path("DAYDREAM_FFMPEG_PATH", path);
-
-    run()
-}
-
 fn test_storage() -> storage::AppStorage {
     storage::test_storage(PathBuf::from("/tmp/daydream-test.sqlite3"))
 }
@@ -1014,54 +1014,10 @@ fn test_app_data_dir() -> PathBuf {
     std::env::temp_dir().join(format!("daydream-recorder-{}", Uuid::now_v7()))
 }
 
-fn fake_failing_ffmpeg_path() -> PathBuf {
-    let directory = test_app_data_dir();
-    fs::create_dir_all(&directory).expect("create fake ffmpeg directory");
-    let path = directory.join("ffmpeg");
-    fs::write(
-        &path,
-        r#"#!/bin/sh
-case "$*" in
-  *-version*) echo 'ffmpeg version fake'; exit 0 ;;
-  *-devices*) printf ' D  lavfi\n DE pulse\n'; exit 0 ;;
-  *-formats*) printf ' DE rawvideo\n  E matroska\n'; exit 0 ;;
-  *-encoders*) printf ' V....D libx264\n A..... libopus\n'; exit 0 ;;
-esac
-exit 1
-"#,
-    )
-    .expect("write fake ffmpeg");
-    make_executable(&path);
-
-    path
-}
-
-fn fake_probe_then_missing_ffmpeg_path() -> PathBuf {
-    let directory = test_app_data_dir();
-    fs::create_dir_all(&directory).expect("create fake ffmpeg directory");
-    let path = directory.join("ffmpeg");
-    fs::write(
-        &path,
-        r#"#!/bin/sh
-case "$*" in
-  *-version*) echo 'ffmpeg version fake'; exit 0 ;;
-  *-devices*) printf ' D  lavfi\n DE pulse\n'; exit 0 ;;
-  *-formats*) printf ' DE rawvideo\n  E matroska\n'; exit 0 ;;
-  *-encoders*) printf ' V....D libx264\n A..... libopus\n'; rm "$0"; exit 0 ;;
-esac
-exit 1
-"#,
-    )
-    .expect("write fake ffmpeg");
-    make_executable(&path);
-
-    path
-}
-
 fn available_test_backend_health() -> super::types::RecorderBackendHealth {
     let mut backend_health = super::manager::unavailable_backend_health();
-    backend_health.ffmpeg.available = true;
-    backend_health.ffmpeg.error = None;
+    backend_health.media_writer.available = true;
+    backend_health.media_writer.error = None;
     backend_health.pipewire.available = true;
     backend_health.pipewire.error = None;
     backend_health.portal.available = true;
@@ -1069,20 +1025,6 @@ fn available_test_backend_health() -> super::types::RecorderBackendHealth {
 
     backend_health
 }
-
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)
-        .expect("fake ffmpeg metadata")
-        .permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("make fake ffmpeg executable");
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) {}
 
 fn saved_test_scene(storage: &storage::AppStorage) -> String {
     let scene_id = Uuid::now_v7().to_string();
@@ -1140,4 +1082,89 @@ fn test_scene(scene_id: &str) -> RecorderScene {
             z_index: 0,
         }],
     }
+}
+
+fn empty_test_scene(scene_id: &str) -> RecorderScene {
+    RecorderScene {
+        canvas_height: 1440,
+        canvas_width: 2560,
+        desktop_audio_source_id: None,
+        id: scene_id.to_string(),
+        layout_mode: RecorderSceneLayoutMode::Horizontal,
+        microphone_audio_source_id: None,
+        name: "Empty scene".to_string(),
+        sources: Vec::new(),
+    }
+}
+
+fn fake_test_scene(scene_id: &str) -> RecorderScene {
+    RecorderScene {
+        canvas_height: 180,
+        canvas_width: 320,
+        desktop_audio_source_id: None,
+        id: scene_id.to_string(),
+        layout_mode: RecorderSceneLayoutMode::Horizontal,
+        microphone_audio_source_id: None,
+        name: "Fake recorder scene".to_string(),
+        sources: vec![RecorderSceneSource {
+            crop: CropRect {
+                bottom: 0.0,
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+            },
+            display_name: "Fake monitor".to_string(),
+            id: Uuid::now_v7().to_string(),
+            preserve_aspect_ratio: true,
+            rect: CanvasRect {
+                height: 180.0,
+                width: 320.0,
+                x: 0.0,
+                y: 0.0,
+            },
+            source_id: "fake-monitor-1".to_string(),
+            source_height: Some(180.0),
+            source_kind: CaptureSourceKind::Monitor,
+            source_width: Some(320.0),
+            z_index: 0,
+        }],
+    }
+}
+
+fn wait_for_recorder_state(manager: tauri::State<'_, RecorderManager>, expected: RecorderState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = manager.status().expect("read recorder status");
+        if status.state == expected && status.finalization.is_none() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for recorder state {expected:?}; latest status: {status:?}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn assert_finalized_probeable_segment(segment: &storage::RecordingSegmentRow) {
+    assert_eq!(segment.state, "finalized");
+    assert_eq!(segment.error_code, None);
+    assert!(segment.duration_ms.unwrap_or_default() > 0);
+    let metadata = fs::metadata(&segment.file_path).expect("read media segment metadata");
+    assert!(metadata.len() > 0, "segment should not be empty");
+    let probe: serde_json::Value = serde_json::from_str(
+        segment
+            .probe_json
+            .as_deref()
+            .expect("finalized segment should have probe metadata"),
+    )
+    .expect("parse segment probe json");
+    assert_eq!(
+        probe.get("available").and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert!(
+        probe.get("video").is_some_and(|value| value.is_object()),
+        "probe should include video metadata: {probe}"
+    );
 }

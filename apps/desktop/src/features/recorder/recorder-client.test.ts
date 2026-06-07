@@ -1,6 +1,6 @@
 import type {
   PauseRecordingInput,
-  RecorderFfmpegCapabilities,
+  RecorderMediaWriterCapabilities,
   RecorderError,
   RecorderPreviewFrame,
   RecorderScene,
@@ -14,6 +14,7 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import {
   getAudioSources,
   getCaptureSources,
+  getRecorderPerformanceStats,
   getRecorderPreviewStatus,
   getRecorderScene,
   getRecorderStatus,
@@ -55,13 +56,19 @@ const scene: RecorderScene = {
   sources: [],
 };
 
-const unavailableFfmpegCapabilities = {
-  libopusEncoder: false,
-  libx264Encoder: false,
+const unavailableMediaWriterCapabilities = {
+  appsrc: false,
+  audioConvert: false,
+  audioResample: false,
+  fileSink: false,
+  h264Parse: false,
   matroskaMuxer: false,
-  pulseInput: false,
-  rawvideoDemuxer: false,
-} satisfies RecorderFfmpegCapabilities;
+  opusEncoder: false,
+  pulseSource: false,
+  queue: false,
+  videoConvert: false,
+  x264Encoder: false,
+} satisfies RecorderMediaWriterCapabilities;
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -99,12 +106,12 @@ test('getRecorderStatus uses locked camelCase command name', async () => {
         defaultSourceId: null,
         error: null,
       },
-      ffmpeg: {
+      mediaWriter: {
         available: false,
-        capabilities: unavailableFfmpegCapabilities,
+        capabilities: unavailableMediaWriterCapabilities,
         error: null,
-        path: null,
-        versionLine: null,
+        version: null,
+        writer: null,
       },
       gpuCapture: {
         available: false,
@@ -148,6 +155,20 @@ test('getRecorderStatus uses locked camelCase command name', async () => {
   await getRecorderStatus();
 
   expect(invokeMock).toHaveBeenCalledWith('getRecorderStatus');
+});
+
+test('getRecorderPerformanceStats uses locked camelCase command name', async () => {
+  invokeMock.mockResolvedValue({
+    desiredFps: null,
+    segmentStartedAtMs: null,
+    state: 'idle',
+    timing: null,
+    updatedAtMs: 1,
+  });
+
+  await getRecorderPerformanceStats();
+
+  expect(invokeMock).toHaveBeenCalledWith('getRecorderPerformanceStats');
 });
 
 test('recorder write helpers pass input payloads unchanged', async () => {
@@ -230,12 +251,12 @@ test('recorder status event helper listens with locked event name', async () => 
         defaultSourceId: null,
         error: null,
       },
-      ffmpeg: {
+      mediaWriter: {
         available: false,
-        capabilities: unavailableFfmpegCapabilities,
+        capabilities: unavailableMediaWriterCapabilities,
         error: null,
-        path: null,
-        versionLine: null,
+        version: null,
+        writer: null,
       },
       gpuCapture: {
         available: false,

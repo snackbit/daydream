@@ -1,4 +1,3 @@
-use std::path::Path;
 use tauri::AppHandle;
 
 use crate::storage::AppStorage;
@@ -6,9 +5,9 @@ use crate::storage::AppStorage;
 use super::super::{
     capture_runtime::CapturePreviewSession,
     errors::unavailable_error,
-    ffmpeg::FfmpegSegmentInput,
-    manager::RunningSegmentMedia,
+    manager::RecordingSegmentRuntime,
     manager::{unavailable_backend_health, RecorderManager},
+    media_writer::MediaSegmentInput,
     types::{
         AudioSourceList, CaptureSourceList, RecorderBackendHealth, RecorderError, RecorderScene,
     },
@@ -60,9 +59,8 @@ pub async fn start_preview_session(
 }
 
 pub fn start_live_segment(
-    _ffmpeg_path: &Path,
-    _input: &FfmpegSegmentInput,
+    _input: &MediaSegmentInput,
     _prepared: PreparedLiveCapture,
-) -> Result<RunningSegmentMedia, RecorderError> {
+) -> Result<RecordingSegmentRuntime, RecorderError> {
     Err(unavailable_error())
 }

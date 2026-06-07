@@ -1,9 +1,14 @@
+mod benchmark;
 mod capture_runtime;
 mod commands;
 mod compositor;
 mod errors;
-pub(crate) mod ffmpeg;
 mod manager;
+#[cfg(target_os = "linux")]
+pub(crate) mod media_writer;
+#[cfg(not(target_os = "linux"))]
+#[path = "media_writer_unsupported.rs"]
+pub(crate) mod media_writer;
 mod platform;
 mod preview;
 mod storage_mapping;
@@ -27,6 +32,13 @@ pub async fn get_recorder_status(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
     commands::get_recorder_status(manager).await
+}
+
+#[tauri::command(rename = "getRecorderPerformanceStats")]
+pub fn get_recorder_performance_stats(
+    manager: State<'_, RecorderManager>,
+) -> Result<RecorderPerformanceStats, RecorderError> {
+    commands::get_recorder_performance_stats(manager)
 }
 
 #[tauri::command(rename = "getCaptureSources")]
@@ -61,8 +73,9 @@ pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
 pub fn save_recorder_scene(
     input: SaveRecorderSceneInput,
     storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
 ) -> Result<RecorderScene, RecorderError> {
-    commands::save_recorder_scene(input, storage)
+    commands::save_recorder_scene(input, storage, manager)
 }
 
 #[tauri::command(rename = "getRecorderPreviewStatus")]

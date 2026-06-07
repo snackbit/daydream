@@ -4,12 +4,11 @@ mod linux;
 mod unsupported;
 
 use crate::storage::AppStorage;
-use std::path::Path;
 use tauri::AppHandle;
 
 use super::{
-    ffmpeg::FfmpegSegmentInput,
-    manager::{RecorderManager, RunningSegmentMedia},
+    manager::{RecorderManager, RecordingSegmentRuntime},
+    media_writer::MediaSegmentInput,
     types::{
         AudioSourceList, CaptureSourceList, RecorderBackendHealth, RecorderError, RecorderScene,
     },
@@ -59,9 +58,8 @@ pub async fn start_preview_session(
 }
 
 pub fn start_live_segment(
-    ffmpeg_path: &Path,
-    input: &FfmpegSegmentInput,
+    input: &MediaSegmentInput,
     prepared: PreparedLiveCapture,
-) -> Result<RunningSegmentMedia, RecorderError> {
-    imp::start_live_segment(ffmpeg_path, input, prepared)
+) -> Result<RecordingSegmentRuntime, RecorderError> {
+    imp::start_live_segment(input, prepared)
 }

@@ -1,6 +1,7 @@
 mod diagnostics;
 pub mod recorder;
 pub mod storage;
+mod telemetry;
 
 use tauri::Manager;
 
@@ -9,6 +10,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            telemetry::initialize(app.handle())?;
             let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
             let storage = storage::initialize(app.handle())?;
             app.manage(storage);
@@ -18,7 +20,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             diagnostics::get_diagnostics,
+            diagnostics::get_debug_log_bundle,
             recorder::get_recorder_status,
+            recorder::get_recorder_performance_stats,
             recorder::get_capture_sources,
             recorder::get_recorder_scene,
             recorder::select_capture_sources,

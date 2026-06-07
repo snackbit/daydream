@@ -4,6 +4,7 @@ import type {
   AudioSourceList,
   CaptureSourceList,
   PauseRecordingInput,
+  RecorderPerformanceStats,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
   RecorderScene,
@@ -21,6 +22,10 @@ export const recorderPreviewFrameEvent = 'recorder-preview-frame';
 
 export async function getRecorderStatus(): Promise<RecorderStatus> {
   return invoke<RecorderStatus>('getRecorderStatus');
+}
+
+export async function getRecorderPerformanceStats(): Promise<RecorderPerformanceStats> {
+  return invoke<RecorderPerformanceStats>('getRecorderPerformanceStats');
 }
 
 export async function getCaptureSources(): Promise<CaptureSourceList> {

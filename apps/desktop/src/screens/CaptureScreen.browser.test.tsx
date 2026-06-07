@@ -1,7 +1,7 @@
 import type {
   AudioSourceList,
   CaptureSourceList,
-  RecorderFfmpegCapabilities,
+  RecorderMediaWriterCapabilities,
   RecorderPreviewFrame,
   RecorderScene,
   RecorderStatus,
@@ -38,13 +38,19 @@ const client = vi.hoisted(() => ({
 
 vi.mock('@/features/recorder/recorder-client', () => client);
 
-const unavailableFfmpegCapabilities = {
-  libopusEncoder: false,
-  libx264Encoder: false,
+const unavailableMediaWriterCapabilities = {
+  appsrc: false,
+  audioConvert: false,
+  audioResample: false,
+  fileSink: false,
+  h264Parse: false,
   matroskaMuxer: false,
-  pulseInput: false,
-  rawvideoDemuxer: false,
-} satisfies RecorderFfmpegCapabilities;
+  opusEncoder: false,
+  pulseSource: false,
+  queue: false,
+  videoConvert: false,
+  x264Encoder: false,
+} satisfies RecorderMediaWriterCapabilities;
 
 const status: RecorderStatus = {
   activeRecordingId: null,
@@ -56,12 +62,12 @@ const status: RecorderStatus = {
       defaultSourceId: 'desktop',
       error: null,
     },
-    ffmpeg: {
+    mediaWriter: {
       available: false,
-      capabilities: unavailableFfmpegCapabilities,
-      error: 'FFmpeg is not wired yet.',
-      path: null,
-      versionLine: null,
+      capabilities: unavailableMediaWriterCapabilities,
+      error: 'Media writer is not wired yet.',
+      version: null,
+      writer: null,
     },
     gpuCapture: {
       available: false,
@@ -196,6 +202,7 @@ test('CaptureScreen renders selected sources and explicitly saves the scene', as
     document.querySelector('[data-slot="resizable-panel-group"]'),
   ).toBeTruthy();
   expect(screen.getByText('Status: idle')).toBeTruthy();
+  expect(screen.getByText('FPS: 5')).toBeTruthy();
   expect(screen.getAllByText('1440 x 900')).toHaveLength(3);
   expect(screen.getByText('Original')).toBeTruthy();
   expect(screen.getByText('100%')).toBeTruthy();
@@ -325,6 +332,9 @@ test('CaptureScreen asks before refreshing a duplicate-looking monitor', async (
     name: /duplicate monitor/i,
   });
   expect(within(dialog).getByText(/looks like Monitor 1/i)).toBeTruthy();
+  expect(
+    within(dialog).queryByRole('button', { name: /add anyway/i }),
+  ).toBeNull();
 
   fireEvent.click(
     within(dialog).getByRole('button', { name: /refresh existing/i }),
@@ -575,6 +585,43 @@ test('CaptureScreen renders a saved scene on startup without adding sources', as
   expect(screen.getByText('Scene saved')).toBeTruthy();
 });
 
+test('CaptureScreen shows stale screen permission error without opening source picker on start', async () => {
+  const savedScene = sceneFixture(['saved-main']);
+  client.getRecorderScene.mockResolvedValue(savedScene);
+  client.getRecorderStatus.mockResolvedValue({
+    ...status,
+    backendHealth: {
+      ...status.backendHealth,
+      mediaWriter: {
+        ...status.backendHealth.mediaWriter,
+        available: true,
+        error: null,
+      },
+    },
+  });
+  client.startRecording.mockRejectedValue({
+    category: 'permission',
+    code: 'recorder_portal_restore_token_invalid',
+    message: 'Screen permission expired. Reselect monitor sources.',
+  });
+
+  render(<CaptureScreen />);
+
+  const startButton = await screen.findByRole('button', { name: /^start$/i });
+  await waitFor(() =>
+    expect((startButton as HTMLButtonElement).disabled).toBe(false),
+  );
+  fireEvent.click(startButton);
+
+  await screen.findByText(
+    'Screen permission expired. Reselect monitor sources.',
+  );
+  expect(client.startRecording).toHaveBeenCalledWith(
+    expect.objectContaining({ sceneId: savedScene.id }),
+  );
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+});
+
 test('CaptureScreen renders live preview frames for a saved scene', async () => {
   const savedScene = sceneFixture(['main']);
   let previewFrameHandler: ((frame: RecorderPreviewFrame) => void) | undefined;
@@ -613,6 +660,205 @@ test('CaptureScreen renders live preview frames for a saved scene', async () => 
   expect(preview.getAttribute('src')).toBe('data:image/png;base64,abc');
   expect(preview.className).toContain('object-fill');
   expect(preview.className).not.toContain('object-cover');
+});
+
+test('CaptureScreen does not auto-preview an empty saved scene', async () => {
+  client.getRecorderScene.mockResolvedValue({
+    ...sceneFixture([]),
+    canvasWidth: 1440,
+  });
+
+  render(<CaptureScreen />);
+
+  expect(await screen.findByText('No monitor sources selected.')).toBeTruthy();
+  expect(client.startRecorderPreview).not.toHaveBeenCalled();
+});
+
+test('CaptureScreen deleting the last monitor and saving does not restart preview', async () => {
+  const savedScene = sceneFixture(['main']);
+  const emptyScene: RecorderScene = {
+    ...savedScene,
+    sources: [],
+  };
+  client.getRecorderScene.mockResolvedValue(savedScene);
+
+  render(<CaptureScreen />);
+
+  await waitFor(() =>
+    expect(client.startRecorderPreview).toHaveBeenCalledTimes(1),
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /delete main/i }));
+
+  await waitFor(() => expect(client.stopRecorderPreview).toHaveBeenCalled());
+  expect(screen.getByText('No monitor sources selected.')).toBeTruthy();
+
+  client.saveRecorderScene.mockResolvedValue(emptyScene);
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(client.saveRecorderScene).toHaveBeenCalledWith({
+      scene: expect.objectContaining({
+        sources: [],
+      }),
+    }),
+  );
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+});
+
+test('CaptureScreen auto-preview after stop starts one backend request while preview is in flight', async () => {
+  const savedScene = sceneFixture(['main']);
+  let statusHandler: ((status: RecorderStatus) => void) | undefined;
+  const recordingStatus: RecorderStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    activeSceneId: savedScene.id,
+    activeSegmentId: 'segment-1',
+    state: 'recording',
+  };
+  const preview =
+    deferred<Awaited<ReturnType<typeof client.startRecorderPreview>>>();
+  client.getRecorderScene.mockResolvedValue(savedScene);
+  client.getRecorderStatus.mockResolvedValue(recordingStatus);
+  client.listenToRecorderStatusChanged.mockImplementation((handler) => {
+    statusHandler = handler;
+
+    return Promise.resolve(vi.fn());
+  });
+  client.startRecorderPreview.mockReturnValue(preview.promise);
+
+  render(<CaptureScreen />);
+
+  await waitFor(() => expect(statusHandler).toBeDefined());
+  expect(client.startRecorderPreview).not.toHaveBeenCalled();
+
+  statusHandler?.({
+    ...status,
+    updatedAtMs: 10,
+  });
+
+  await waitFor(() =>
+    expect(client.startRecorderPreview).toHaveBeenCalledTimes(1),
+  );
+  await waitFor(() =>
+    expect(screen.getByText('Preview: starting')).toBeTruthy(),
+  );
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+
+  preview.resolve({
+    error: null,
+    sceneId: savedScene.id,
+    sourceIds: ['main'],
+    state: 'live',
+    updatedAtMs: 11,
+  });
+
+  await waitFor(() => expect(screen.getByText('Preview: live')).toBeTruthy());
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+});
+
+test('CaptureScreen makes scene configuration read-only while recording', async () => {
+  const savedScene = sceneFixture(['main']);
+  savedScene.desktopAudioSourceId = 'desktop';
+  savedScene.microphoneAudioSourceId = 'mic';
+  const recordingStatus: RecorderStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    activeSceneId: savedScene.id,
+    activeSegmentId: 'segment-1',
+    state: 'recording',
+  };
+  client.getRecorderScene.mockResolvedValue(savedScene);
+  client.getRecorderStatus.mockResolvedValue(recordingStatus);
+
+  render(<CaptureScreen />);
+
+  const source = await screen.findByTestId('scene-source-main');
+  expect(screen.getByText('Status: recording')).toBeTruthy();
+  expect(screen.queryAllByRole('button', { name: /resize/i })).toHaveLength(0);
+  expect(
+    (screen.getByRole('button', { name: /^pause$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+  expect(
+    (screen.getByRole('button', { name: /^stop$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+  expect(
+    (screen.getByRole('button', { name: /^save$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (
+      screen.getByRole('button', {
+        name: /add monitor sources/i,
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  expect(
+    (
+      screen.getByRole('button', {
+        name: /add audio source/i,
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole('button', { name: /delete main/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (
+      screen.getByRole('button', {
+        name: /delete desktop audio/i,
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  expect(
+    (
+      screen.getByRole('button', {
+        name: /delete microphone audio/i,
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByLabelText(/canvas preset/i) as HTMLSelectElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByLabelText(/canvas w/i) as HTMLInputElement).disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole('checkbox', { name: /aspect/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole('button', { name: /^fit$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+
+  const rectBeforeDrag =
+    useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect;
+  const moveHandle = screen.getByRole('button', { name: /move main/i });
+  fireEvent.pointerDown(moveHandle, { clientX: 20, clientY: 40, pointerId: 1 });
+  fireEvent.pointerMove(source.parentElement ?? source, {
+    clientX: 120,
+    clientY: 140,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(source.parentElement ?? source, {
+    clientX: 120,
+    clientY: 140,
+    pointerId: 1,
+  });
+
+  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual(
+    rectBeforeDrag,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add monitor sources/i }));
+
+  expect(client.saveRecorderScene).not.toHaveBeenCalled();
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
 });
 
 test('CaptureScreen deletes a draft source and saves the reduced scene', async () => {
@@ -743,7 +989,7 @@ test('CaptureScreen shows saving banner while stop finalization is finishing', a
   client.stopRecording.mockResolvedValue({
     ...recordingStatus,
     activeRecordingId: null,
-    activeSegmentId: null,
+    activeSegmentId: 'segment-1',
     finalization: {
       action: 'stop',
       phase: 'stopping-capture',
@@ -781,7 +1027,7 @@ test('CaptureScreen shows saving banner while stop finalization is finishing', a
         name: /add monitor sources/i,
       }) as HTMLButtonElement
     ).disabled,
-  ).toBe(false);
+  ).toBe(true);
 
   expect(statusEvents.handler).toBeDefined();
   statusEvents.handler?.({
@@ -939,4 +1185,15 @@ function sceneSource(scene: RecorderScene, index = 0) {
   }
 
   return source;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
 }

@@ -5,13 +5,15 @@ use serde_json::Value;
 use tauri::{Manager, State};
 
 use crate::recorder::{
-    self, ffmpeg, ffmpeg::FfmpegPathSource, CaptureTimingDiagnostics, RecorderBackendHealth,
-    RecorderFfmpegCapabilities, RecorderManager,
+    self, media_writer, CaptureTimingDiagnostics, RecorderBackendHealth, RecorderManager,
+    RecorderMediaWriterCapabilities, RecorderPreviewStatus,
 };
 use crate::storage::{
-    collect_database_diagnostics, get_latest_recording_id, list_recording_segments, AppStorage,
-    DatabaseDiagnostics, RecordingSegmentRow,
+    collect_database_diagnostics, get_latest_recording_id, get_portal_restore_token,
+    list_recording_segments, AppStorage, DatabaseDiagnostics, RecordingSegmentRow,
+    LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
 };
+use crate::telemetry::{self, DebugLoggingDiagnostics};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,8 +28,10 @@ pub struct AppDiagnostics {
 pub struct DaydreamDiagnostics {
     app: AppDiagnostics,
     database: DatabaseDiagnostics,
-    ffmpeg: FfmpegDiagnostics,
+    debug_logging: DebugLoggingDiagnostics,
     latest_recording: LatestRecordingDiagnostics,
+    media_writer: MediaWriterDiagnostics,
+    portal_restore_token: PortalRestoreTokenDiagnostics,
     recorder: RecorderBackendHealth,
     storage: StorageDiagnostics,
     system: SystemDiagnostics,
@@ -35,13 +39,32 @@ pub struct DaydreamDiagnostics {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FfmpegDiagnostics {
+pub struct DebugLogBundle {
+    diagnostics: DaydreamDiagnostics,
+    log_tail_lines: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaWriterDiagnostics {
     available: bool,
-    capabilities: RecorderFfmpegCapabilities,
+    capabilities: RecorderMediaWriterCapabilities,
     error: Option<String>,
-    path: Option<String>,
-    source: FfmpegSource,
-    version_line: Option<String>,
+    version: Option<String>,
+    writer: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortalRestoreTokenDiagnostics {
+    created_at_ms: Option<i64>,
+    error: Option<String>,
+    expected_id: String,
+    last_used_at_ms: Option<i64>,
+    portal: Option<String>,
+    present: bool,
+    token_length: Option<usize>,
+    updated_at_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -52,6 +75,7 @@ pub struct LatestRecordingDiagnostics {
     active_segment_id: Option<String>,
     error: Option<String>,
     latest_segment: Option<LatestSegmentDiagnostics>,
+    preview_status: Option<RecorderPreviewStatus>,
     recording_id: Option<String>,
     segment_count: usize,
 }
@@ -63,7 +87,7 @@ pub struct LatestSegmentDiagnostics {
     duration_ms: Option<i64>,
     ended_at_ms: Option<i64>,
     error_code: Option<String>,
-    ffmpeg_exit_code: Option<i64>,
+    writer_exit_code: Option<i64>,
     file_path: String,
     id: String,
     microphone_audio_stream_index: Option<i64>,
@@ -73,14 +97,6 @@ pub struct LatestSegmentDiagnostics {
     started_at_ms: i64,
     state: String,
     video_stream_index: Option<i64>,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FfmpegSource {
-    DaydreamFfmpegEnv,
-    Path,
-    Unconfigured,
 }
 
 #[derive(Serialize)]
@@ -103,15 +119,37 @@ pub async fn get_diagnostics(
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<DaydreamDiagnostics, String> {
+    collect_diagnostics(app, &storage, &manager).await
+}
+
+#[tauri::command]
+pub async fn get_debug_log_bundle(
+    app: tauri::AppHandle,
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<DebugLogBundle, String> {
+    Ok(DebugLogBundle {
+        diagnostics: collect_diagnostics(app, &storage, &manager).await?,
+        log_tail_lines: telemetry::read_debug_log_tail()?,
+    })
+}
+
+async fn collect_diagnostics(
+    app: tauri::AppHandle,
+    storage: &AppStorage,
+    manager: &RecorderManager,
+) -> Result<DaydreamDiagnostics, String> {
     Ok(DaydreamDiagnostics {
         app: AppDiagnostics {
             identifier: app.config().identifier.to_string(),
             name: "Daydream".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
-        database: collect_database_diagnostics(&storage),
-        ffmpeg: collect_ffmpeg_diagnostics(),
-        latest_recording: collect_latest_recording_diagnostics(&storage, &manager),
+        database: collect_database_diagnostics(storage),
+        debug_logging: telemetry::diagnostics(),
+        latest_recording: collect_latest_recording_diagnostics(storage, manager),
+        media_writer: collect_media_writer_diagnostics(),
+        portal_restore_token: collect_portal_restore_token_diagnostics(storage),
         recorder: recorder::collect_backend_health().await,
         storage: StorageDiagnostics {
             app_data_dir: app
@@ -128,26 +166,15 @@ pub async fn get_diagnostics(
     })
 }
 
-fn collect_ffmpeg_diagnostics() -> FfmpegDiagnostics {
-    let health = ffmpeg::collect_ffmpeg_health();
-    let source = ffmpeg::selected_ffmpeg_path_details()
-        .map(|selected| source_from_ffmpeg_path_source(selected.source))
-        .unwrap_or(FfmpegSource::Unconfigured);
+fn collect_media_writer_diagnostics() -> MediaWriterDiagnostics {
+    let health = media_writer::collect_media_writer_health();
 
-    FfmpegDiagnostics {
+    MediaWriterDiagnostics {
         available: health.available,
         capabilities: health.capabilities,
         error: health.error,
-        path: health.path,
-        source,
-        version_line: health.version_line,
-    }
-}
-
-fn source_from_ffmpeg_path_source(source: FfmpegPathSource) -> FfmpegSource {
-    match source {
-        FfmpegPathSource::DaydreamFfmpegEnv => FfmpegSource::DaydreamFfmpegEnv,
-        FfmpegPathSource::Path => FfmpegSource::Path,
+        version: health.version,
+        writer: health.writer,
     }
 }
 
@@ -163,6 +190,7 @@ fn collect_latest_recording_diagnostics(
         .as_ref()
         .and_then(|status| status.active_segment_id.clone());
     let active_capture_timing = manager.active_capture_timing().ok().flatten();
+    let preview_status = manager.preview_status().ok();
 
     let recording_id = match active_recording_id.clone() {
         Some(recording_id) => Some(recording_id),
@@ -175,6 +203,7 @@ fn collect_latest_recording_diagnostics(
                     active_segment_id,
                     error: Some(error.to_string()),
                     latest_segment: None,
+                    preview_status,
                     recording_id: None,
                     segment_count: 0,
                 };
@@ -189,6 +218,7 @@ fn collect_latest_recording_diagnostics(
             active_segment_id,
             error: None,
             latest_segment: None,
+            preview_status,
             recording_id: None,
             segment_count: 0,
         };
@@ -205,6 +235,7 @@ fn collect_latest_recording_diagnostics(
                 active_segment_id,
                 error: Some(error.to_string()),
                 latest_segment: None,
+                preview_status,
                 recording_id: Some(recording_id),
                 segment_count: 0,
             };
@@ -217,8 +248,46 @@ fn collect_latest_recording_diagnostics(
         active_segment_id,
         error: None,
         latest_segment: segments.last().map(latest_segment_diagnostics),
+        preview_status,
         recording_id: Some(recording_id),
         segment_count: segments.len(),
+    }
+}
+
+fn collect_portal_restore_token_diagnostics(storage: &AppStorage) -> PortalRestoreTokenDiagnostics {
+    match storage.with_connection(|connection| {
+        get_portal_restore_token(connection, LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID)
+    }) {
+        Ok(Some(row)) => PortalRestoreTokenDiagnostics {
+            created_at_ms: Some(row.created_at_ms),
+            error: None,
+            expected_id: LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID.to_string(),
+            last_used_at_ms: row.last_used_at_ms,
+            portal: Some(row.portal),
+            present: true,
+            token_length: Some(row.token.len()),
+            updated_at_ms: Some(row.updated_at_ms),
+        },
+        Ok(None) => PortalRestoreTokenDiagnostics {
+            created_at_ms: None,
+            error: None,
+            expected_id: LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID.to_string(),
+            last_used_at_ms: None,
+            portal: None,
+            present: false,
+            token_length: None,
+            updated_at_ms: None,
+        },
+        Err(error) => PortalRestoreTokenDiagnostics {
+            created_at_ms: None,
+            error: Some(error.to_string()),
+            expected_id: LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID.to_string(),
+            last_used_at_ms: None,
+            portal: None,
+            present: false,
+            token_length: None,
+            updated_at_ms: None,
+        },
     }
 }
 
@@ -228,7 +297,7 @@ fn latest_segment_diagnostics(segment: &RecordingSegmentRow) -> LatestSegmentDia
         duration_ms: segment.duration_ms,
         ended_at_ms: segment.ended_at_ms,
         error_code: segment.error_code.clone(),
-        ffmpeg_exit_code: segment.ffmpeg_exit_code,
+        writer_exit_code: segment.ffmpeg_exit_code,
         file_path: segment.file_path.clone(),
         id: segment.id.clone(),
         microphone_audio_stream_index: segment.microphone_audio_stream_index,
@@ -250,46 +319,9 @@ fn path_to_string(path: &PathBuf) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::recorder::ffmpeg::{parse_capabilities, FfmpegPathSource};
-
     use crate::storage::RecordingSegmentRow;
 
-    use super::{latest_segment_diagnostics, source_from_ffmpeg_path_source};
-
-    #[test]
-    fn parses_ffmpeg_capability_summary() {
-        let capabilities = parse_capabilities(
-            " D  lavfi\n DE pulse\n",
-            " DE rawvideo\n  E matroska\n",
-            " V....D libx264\n A..... libopus\n",
-        );
-
-        assert!(capabilities.rawvideo_demuxer);
-        assert!(capabilities.pulse_input);
-        assert!(capabilities.matroska_muxer);
-        assert!(capabilities.libx264_encoder);
-        assert!(capabilities.libopus_encoder);
-    }
-
-    #[test]
-    fn reports_path_sourced_ffmpeg_distinctly() {
-        let source = source_from_ffmpeg_path_source(FfmpegPathSource::Path);
-
-        assert_eq!(
-            serde_json::to_value(source).expect("serialize ffmpeg source"),
-            serde_json::json!("path"),
-        );
-    }
-
-    #[test]
-    fn reports_env_sourced_ffmpeg_distinctly() {
-        let source = source_from_ffmpeg_path_source(FfmpegPathSource::DaydreamFfmpegEnv);
-
-        assert_eq!(
-            serde_json::to_value(source).expect("serialize ffmpeg source"),
-            serde_json::json!("daydream-ffmpeg-env"),
-        );
-    }
+    use super::latest_segment_diagnostics;
 
     #[test]
     fn parses_latest_segment_probe_metadata() {
@@ -341,5 +373,6 @@ mod tests {
                 .and_then(|duration| duration.as_u64()),
             Some(1200)
         );
+        assert_eq!(diagnostics.writer_exit_code, Some(0));
     }
 }

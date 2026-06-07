@@ -24,6 +24,7 @@ import { SceneSourceList } from './scene-source-list';
 
 export interface CaptureSourcesPanelProps {
   audioSources: AudioSource[];
+  configurationLocked: boolean;
   desktopAudioSourceId: string | null;
   lifecycleLocked: boolean;
   loadStatus: string;
@@ -42,6 +43,7 @@ export interface CaptureSourcesPanelProps {
 
 export function CaptureSourcesPanel({
   audioSources,
+  configurationLocked,
   desktopAudioSourceId,
   lifecycleLocked,
   loadStatus,
@@ -59,7 +61,7 @@ export function CaptureSourcesPanel({
     <ScrollArea className="h-full">
       <div className="p-4">
         <DuplicateCaptureSourceDialog
-          candidates={pendingDuplicateCaptureSources}
+          candidates={configurationLocked ? [] : pendingDuplicateCaptureSources}
           onResolve={onResolveDuplicateCaptureSource}
         />
         <div className="flex items-center justify-between gap-3">
@@ -67,7 +69,9 @@ export function CaptureSourcesPanel({
           <Button
             aria-label="Add monitor sources"
             className="gap-2"
-            disabled={lifecycleLocked || loadStatus === 'loading'}
+            disabled={
+              configurationLocked || lifecycleLocked || loadStatus === 'loading'
+            }
             onClick={onSelectCaptureSources}
             size="sm"
             variant="outline"
@@ -79,6 +83,7 @@ export function CaptureSourcesPanel({
 
         <div className="mt-3">
           <SceneSourceList
+            deleteDisabled={configurationLocked}
             selectedSceneSourceId={selectedSceneSourceId}
             sources={scene?.sources ?? []}
             onDelete={onDeleteSceneSource}
@@ -92,6 +97,7 @@ export function CaptureSourcesPanel({
           <h2 className="text-sm font-medium">Audio</h2>
           <AudioSourcePickerDialog
             desktopAudioSourceId={desktopAudioSourceId}
+            disabled={configurationLocked}
             microphoneAudioSourceId={microphoneAudioSourceId}
             sources={audioSources}
             onSelectAudioSource={onSelectAudioSource}
@@ -99,7 +105,7 @@ export function CaptureSourcesPanel({
             <Button
               aria-label="Add audio source"
               className="gap-2"
-              disabled={lifecycleLocked}
+              disabled={configurationLocked || lifecycleLocked}
               size="sm"
               type="button"
               variant="outline"
@@ -112,6 +118,7 @@ export function CaptureSourcesPanel({
         <div className="mt-3 grid gap-3">
           <AudioSourceList
             desktopAudioSourceId={desktopAudioSourceId}
+            disabled={configurationLocked}
             microphoneAudioSourceId={microphoneAudioSourceId}
             sources={audioSources}
             onSelectAudioSource={onSelectAudioSource}
@@ -140,8 +147,8 @@ function DuplicateCaptureSourceDialog({
           <DialogTitle>Duplicate monitor</DialogTitle>
           <DialogDescription>
             {candidate
-              ? `${candidate.source.displayName} looks like ${candidate.existingSource.displayName}.`
-              : 'This monitor looks like an existing source.'}
+              ? `${candidate.source.displayName} looks like ${candidate.existingSource.displayName}. Duplicate portal monitor streams are not supported yet.`
+              : 'This monitor looks like an existing source. Duplicate portal monitor streams are not supported yet.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -152,13 +159,6 @@ function DuplicateCaptureSourceDialog({
             onClick={() => onResolve('skip')}
           >
             Skip
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onResolve('add-anyway')}
-          >
-            Add anyway
           </Button>
           <Button type="button" onClick={() => onResolve('refresh-existing')}>
             Refresh existing

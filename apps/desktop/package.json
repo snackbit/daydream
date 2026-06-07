@@ -14,6 +14,7 @@
     "test": "vitest run --exclude 'dist/**'",
     "test:recorder": "vitest run src/features/recorder/scene-layout.test.ts src/features/recorder/recorder-client.test.ts src/features/recorder/recorder-workspace-store.test.ts src/screens/CaptureScreen.browser.test.tsx",
     "test:recorder:coverage": "vitest run --coverage --project unit src/features/recorder/scene-layout.test.ts src/features/recorder/recorder-client.test.ts src/features/recorder/recorder-workspace-store.test.ts",
+    "test:recorder:e2e": "cargo test --manifest-path src-tauri/Cargo.toml public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer",
     "typecheck": "tsc -p tsconfig.json --pretty false && tsc -p tsconfig.node.json --pretty false",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml"
   },

@@ -43,9 +43,9 @@ impl RecorderManager {
         resumed.active_segment = Some(ActiveSegment {
             file_path: segment_path,
             id: segment_id,
-            media: None,
+            runtime: None,
             started_at_ms: timestamp_ms,
-            stream_indexes: FfmpegStreamIndexes {
+            stream_indexes: MediaWriterStreamIndexes {
                 desktop_audio_stream_index: None,
                 microphone_audio_stream_index: None,
                 video_stream_index: 0,
@@ -93,7 +93,7 @@ impl RecorderManager {
             ));
         }
 
-        self.start_next_ffmpeg_segment(storage, active, timestamp_ms)
+        self.start_next_media_segment(storage, active, timestamp_ms)
     }
 
     pub(crate) fn prepare_resume_segment_start(
@@ -102,11 +102,7 @@ impl RecorderManager {
         active: ActiveRecording,
         timestamp_ms: u64,
     ) -> Result<PendingSegmentStart, RecorderError> {
-        let ffmpeg_probe = ffmpeg::probe_selected_ffmpeg()
-            .map_err(|error| dependency_error("recorder_ffmpeg_unavailable", error))?;
-        let audio_selected =
-            active.desktop_audio_source_id.is_some() || active.microphone_audio_source_id.is_some();
-        ffmpeg::validate_segment_capabilities(&ffmpeg_probe.capabilities, audio_selected)?;
+        let media_writer_health = media_writer::collect_media_writer_health();
         let scene = storage
             .with_connection(|connection| storage::get_recorder_scene(connection, &active.scene_id))
             .map_err(|error| scene_or_storage_error(error, &active.scene_id))
@@ -115,22 +111,42 @@ impl RecorderManager {
         let segment_index = active.next_segment_index;
         let segment_id = Uuid::now_v7().to_string();
         let segment_path = active.segments_dir.join(segment_file_name(segment_index));
-        let segment_input = FfmpegSegmentInput {
+        let benchmarks_dir = active
+            .segments_dir
+            .parent()
+            .map(|recording_dir| recording_dir.join("benchmarks"))
+            .unwrap_or_else(|| active.segments_dir.join("benchmarks"));
+        let segment_input = MediaSegmentInput {
+            benchmarks_dir,
             canvas_height: active.canvas_height,
             canvas_width: active.canvas_width,
             desktop_audio_source_id: active.desktop_audio_source_id.clone(),
             fps: active.fps,
             microphone_audio_source_id: active.microphone_audio_source_id.clone(),
             output_path: segment_path.clone(),
+            recording_id: active.recording_id.clone(),
+            segment_id: segment_id.clone(),
+            segment_index,
+            started_at_ms: timestamp_ms,
         };
+        media_writer::validate_segment_capabilities(
+            &media_writer_health.capabilities,
+            &segment_input,
+        )?;
         let segment = ActiveSegment {
             file_path: segment_path.clone(),
             id: segment_id,
-            media: None,
+            runtime: None,
             started_at_ms: timestamp_ms,
-            stream_indexes: ffmpeg::stream_indexes(&segment_input),
+            stream_indexes: media_writer::stream_indexes(&segment_input),
             timing: None,
         };
+
+        let mut active = active;
+        active.media_writer = media_writer_health
+            .writer
+            .clone()
+            .unwrap_or_else(|| "gstreamer".to_string());
 
         Ok(PendingSegmentStart {
             active,
@@ -138,7 +154,6 @@ impl RecorderManager {
             segment_path,
             segment_index,
             segment_input,
-            ffmpeg_path: ffmpeg_probe.path,
             scene,
         })
     }
@@ -181,12 +196,11 @@ impl RecorderManager {
     pub(crate) fn activate_pending_segment(
         &self,
         mut pending: PendingSegmentStart,
-        media: RunningSegmentMedia,
+        runtime: RecordingSegmentRuntime,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
-        pending.segment.timing = media.capture_timing();
-        pending.segment.media = Some(Arc::new(Mutex::new(Some(media))));
-        pending.active.ffmpeg_path = pending.ffmpeg_path.clone();
+        pending.segment.timing = runtime.capture_timing();
+        pending.segment.runtime = Some(Arc::new(Mutex::new(Some(runtime))));
         pending.active.active_segment = Some(pending.segment);
         pending.active.next_segment_index += 1;
 
@@ -221,30 +235,40 @@ impl RecorderManager {
         )
     }
 
-    fn start_next_ffmpeg_segment(
+    fn start_next_media_segment(
         &self,
         storage: &AppStorage,
         active: ActiveRecording,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
-        let ffmpeg_probe = ffmpeg::probe_selected_ffmpeg()
-            .map_err(|error| dependency_error("recorder_ffmpeg_unavailable", error))?;
-        let audio_selected =
-            active.desktop_audio_source_id.is_some() || active.microphone_audio_source_id.is_some();
-        ffmpeg::validate_segment_capabilities(&ffmpeg_probe.capabilities, audio_selected)?;
+        let media_writer_health = media_writer::collect_media_writer_health();
 
         let segment_index = active.next_segment_index;
         let segment_id = Uuid::now_v7().to_string();
         let segment_path = active.segments_dir.join(segment_file_name(segment_index));
-        let segment_input = FfmpegSegmentInput {
+        let benchmarks_dir = active
+            .segments_dir
+            .parent()
+            .map(|recording_dir| recording_dir.join("benchmarks"))
+            .unwrap_or_else(|| active.segments_dir.join("benchmarks"));
+        let segment_input = MediaSegmentInput {
+            benchmarks_dir,
             canvas_height: active.canvas_height,
             canvas_width: active.canvas_width,
             desktop_audio_source_id: active.desktop_audio_source_id.clone(),
             fps: active.fps,
             microphone_audio_source_id: active.microphone_audio_source_id.clone(),
             output_path: segment_path.clone(),
+            recording_id: active.recording_id.clone(),
+            segment_id: segment_id.clone(),
+            segment_index,
+            started_at_ms: timestamp_ms,
         };
-        let stream_indexes = ffmpeg::stream_indexes(&segment_input);
+        media_writer::validate_segment_capabilities(
+            &media_writer_health.capabilities,
+            &segment_input,
+        )?;
+        let stream_indexes = media_writer::stream_indexes(&segment_input);
 
         storage
             .with_connection(|connection| {
@@ -262,29 +286,31 @@ impl RecorderManager {
             })
             .map_err(storage_error)?;
 
-        let ffmpeg_segment =
-            match ffmpeg::start_synthetic_segment(Path::new(&ffmpeg_probe.path), &segment_input) {
-                Ok(segment) => segment,
-                Err(error) => {
-                    self.fail_active_recording(
-                        storage,
-                        &active,
-                        &segment_id,
-                        timestamp_ms,
-                        &error,
-                        None,
-                    )?;
-                    return Err(error);
-                }
-            };
+        let media_segment = match media_writer::start_synthetic_segment(&segment_input) {
+            Ok(segment) => segment,
+            Err(error) => {
+                self.fail_active_recording(
+                    storage,
+                    &active,
+                    &segment_id,
+                    timestamp_ms,
+                    &error,
+                    None,
+                )?;
+                return Err(error);
+            }
+        };
 
         let mut resumed = active;
-        resumed.ffmpeg_path = ffmpeg_probe.path.clone();
+        resumed.media_writer = media_writer_health
+            .writer
+            .clone()
+            .unwrap_or_else(|| "gstreamer".to_string());
         resumed.active_segment = Some(ActiveSegment {
             file_path: segment_path,
             id: segment_id,
-            media: Some(Arc::new(Mutex::new(Some(RunningSegmentMedia::new(
-                ffmpeg_segment,
+            runtime: Some(Arc::new(Mutex::new(Some(RecordingSegmentRuntime::new(
+                media_segment,
                 None,
                 None,
             ))))),

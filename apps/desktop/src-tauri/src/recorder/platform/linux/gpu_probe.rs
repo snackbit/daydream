@@ -55,7 +55,7 @@ impl GpuCaptureProbe {
             egl_platform: Some(self.egl_platform),
             egl_vendor: self.egl_vendor,
             egl_version: self.egl_version,
-            error: health_error(dmabuf_import_available, self.cleanup_error),
+            error: health_error(self.opengl_available, dmabuf_import_available),
             modifier_import_available,
             opengl_available: self.opengl_available,
             renderer: self.renderer,
@@ -247,13 +247,13 @@ fn has_extension(extensions: &[String], extension: &str) -> bool {
     extensions.iter().any(|candidate| candidate == extension)
 }
 
-fn health_error(dmabuf_import_available: bool, cleanup_error: Option<String>) -> Option<String> {
+fn health_error(opengl_available: bool, dmabuf_import_available: bool) -> Option<String> {
     let mut errors = Vec::new();
+    if !opengl_available {
+        errors.push("EGL is available, but OpenGL context probing failed.".to_string());
+    }
     if !dmabuf_import_available {
         errors.push("EGL is available, but DMA-BUF import is not supported.".to_string());
-    }
-    if let Some(cleanup_error) = cleanup_error {
-        errors.push(cleanup_error);
     }
 
     if errors.is_empty() {
@@ -388,10 +388,6 @@ mod tests {
             .as_deref()
             .expect("cleanup error")
             .contains("cleanup failed"));
-        assert!(health
-            .error
-            .as_deref()
-            .expect("health error")
-            .contains("cleanup failed"));
+        assert_eq!(health.error, None);
     }
 }

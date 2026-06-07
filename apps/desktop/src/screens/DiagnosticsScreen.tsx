@@ -1,25 +1,57 @@
-import { useEffect, type ReactNode } from 'react';
-import type { RecorderFfmpegCapabilities } from '@daydream/shared';
-import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { RecorderMediaWriterCapabilities } from '@daydream/shared';
+import { CheckCircle2, Clipboard, RefreshCw, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { getDebugLogBundle } from '@/features/diagnostics/diagnostics-client';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
+import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 
 function formatValue(value: string | null, emptyValue: string): string {
   return value && value.length > 0 ? value : emptyValue;
 }
 
 export function DiagnosticsScreen() {
+  const runAsyncAction = useAsyncErrorBoundary();
   const diagnostics = useDiagnosticsStore((state) => state.diagnostics);
   const error = useDiagnosticsStore((state) => state.error);
   const load = useDiagnosticsStore((state) => state.load);
   const status = useDiagnosticsStore((state) => state.status);
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | 'idle'>(
+    'idle',
+  );
+  const [bundleCopyStatus, setBundleCopyStatus] = useState<
+    'copied' | 'failed' | 'idle'
+  >('idle');
 
   useEffect(() => {
     if (status === 'idle') {
-      void load();
+      runAsyncAction(load);
     }
-  }, [load, status]);
+  }, [load, runAsyncAction, status]);
+
+  async function copyRawDiagnosticsJson() {
+    if (!diagnostics) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      setCopyStatus('copied');
+    } catch (_error) {
+      setCopyStatus('failed');
+    }
+  }
+
+  async function copyDebugLogBundle() {
+    try {
+      const bundle = await getDebugLogBundle();
+      await navigator.clipboard.writeText(JSON.stringify(bundle, null, 2));
+      setBundleCopyStatus('copied');
+    } catch (_error) {
+      setBundleCopyStatus('failed');
+    }
+  }
 
   return (
     <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
@@ -29,16 +61,55 @@ export function DiagnosticsScreen() {
             Diagnostics
           </h1>
           <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-            Runtime facts, FFmpeg location, storage paths, and native recorder
-            capability probes. This screen is intentionally verbose for early
-            development.
+            Runtime facts, media writer health, storage paths, and native
+            recorder capability probes. This screen is intentionally verbose for
+            early development.
           </p>
         </div>
 
-        <Button className="gap-2" onClick={() => void load()} variant="outline">
-          <RefreshCw className="size-3.5" />
-          Refresh
-        </Button>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-2">
+            <Button
+              className="gap-2"
+              disabled={!diagnostics}
+              onClick={() => void copyDebugLogBundle()}
+              variant="outline"
+            >
+              <Clipboard className="size-3.5" />
+              Copy Debug Bundle
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={!diagnostics}
+              onClick={() => void copyRawDiagnosticsJson()}
+              variant="outline"
+            >
+              <Clipboard className="size-3.5" />
+              Copy JSON
+            </Button>
+            <Button
+              className="gap-2"
+              onClick={() => runAsyncAction(load)}
+              variant="outline"
+            >
+              <RefreshCw className="size-3.5" />
+              Refresh
+            </Button>
+          </div>
+          <p
+            aria-live="polite"
+            className="text-muted-foreground min-h-5 text-xs"
+          >
+            {copyStatus === 'copied' ? 'Diagnostics JSON copied.' : null}
+            {copyStatus === 'failed'
+              ? 'Unable to copy diagnostics JSON.'
+              : null}
+            {bundleCopyStatus === 'copied' ? 'Debug bundle copied.' : null}
+            {bundleCopyStatus === 'failed'
+              ? 'Unable to copy debug bundle.'
+              : null}
+          </p>
+        </div>
       </div>
 
       {error ? (
@@ -82,40 +153,36 @@ export function DiagnosticsScreen() {
         </div>
 
         <div className="bg-card border p-4">
-          <h2 className="text-sm font-medium">FFmpeg</h2>
+          <h2 className="text-sm font-medium">Media writer</h2>
           <div className="mt-3 flex items-center gap-2 text-sm">
-            {diagnostics?.ffmpeg.available ? (
+            {diagnostics?.mediaWriter.available ? (
               <CheckCircle2 className="text-primary size-4" />
             ) : (
               <XCircle className="text-destructive size-4" />
             )}
             <span>
-              {diagnostics?.ffmpeg.available
+              {diagnostics?.mediaWriter.available
                 ? 'Available'
                 : 'Not available yet'}
             </span>
           </div>
           <dl className="mt-3 grid gap-2 text-sm">
             <DiagnosticRow
-              label="Path"
-              value={diagnostics?.ffmpeg.path ?? null}
-            />
-            <DiagnosticRow
-              label="Source"
-              value={diagnostics?.ffmpeg.source ?? null}
+              label="Writer"
+              value={diagnostics?.mediaWriter.writer ?? null}
             />
             <DiagnosticRow
               label="Version"
-              value={diagnostics?.ffmpeg.versionLine ?? null}
+              value={diagnostics?.mediaWriter.version ?? null}
             />
             <DiagnosticRow
               label="Error"
               emptyValue="None"
-              value={diagnostics?.ffmpeg.error ?? null}
+              value={diagnostics?.mediaWriter.error ?? null}
             />
           </dl>
-          <FfmpegCapabilityList
-            capabilities={diagnostics?.ffmpeg.capabilities ?? null}
+          <MediaWriterCapabilityList
+            capabilities={diagnostics?.mediaWriter.capabilities ?? null}
           />
         </div>
 
@@ -125,6 +192,44 @@ export function DiagnosticsScreen() {
             <DiagnosticRow
               label="App data"
               value={diagnostics?.storage.appDataDir ?? null}
+            />
+          </dl>
+        </div>
+
+        <div className="bg-card border p-4 md:col-span-2">
+          <h2 className="text-sm font-medium">Debug logging</h2>
+          <div className="mt-3 flex items-center gap-2 text-sm">
+            {diagnostics?.debugLogging.enabled ? (
+              <CheckCircle2 className="text-primary size-4" />
+            ) : (
+              <XCircle className="text-destructive size-4" />
+            )}
+            <span>
+              {diagnostics?.debugLogging.enabled ? 'Enabled' : 'Not enabled'}
+            </span>
+          </div>
+          <dl className="mt-3 grid gap-2 text-sm">
+            <DiagnosticRow
+              label="File"
+              value={diagnostics?.debugLogging.filePath ?? null}
+            />
+            <DiagnosticRow
+              label="Filter"
+              value={diagnostics?.debugLogging.filter ?? null}
+            />
+            <DiagnosticRow
+              label="Format"
+              value={diagnostics?.debugLogging.format ?? null}
+            />
+            <DiagnosticRow
+              label="Latest bytes"
+              value={
+                diagnostics?.debugLogging.latestFileBytes?.toString() ?? null
+              }
+            />
+            <DiagnosticRow
+              label="Retention days"
+              value={diagnostics?.debugLogging.retentionDays.toString() ?? null}
             />
           </dl>
         </div>
@@ -250,7 +355,7 @@ export function DiagnosticsScreen() {
               />
               <DiagnosticRow
                 emptyValue="None"
-                label="Cleanup error"
+                label="Cleanup warning"
                 value={diagnostics?.recorder.gpuCapture.cleanupError ?? null}
               />
               <DiagnosticRow
@@ -335,6 +440,59 @@ export function DiagnosticsScreen() {
             )}
           </div>
         </div>
+
+        <div className="bg-card border p-4 md:col-span-2">
+          <h2 className="text-sm font-medium">Portal restore token</h2>
+          <div className="mt-3 flex items-center gap-2 text-sm">
+            {diagnostics?.portalRestoreToken.present ? (
+              <CheckCircle2 className="text-primary size-4" />
+            ) : (
+              <XCircle className="text-destructive size-4" />
+            )}
+            <span>
+              {diagnostics?.portalRestoreToken.present ? 'Saved' : 'Missing'}
+            </span>
+          </div>
+          <dl className="mt-3 grid gap-2 text-sm">
+            <DiagnosticRow
+              label="Expected ID"
+              value={diagnostics?.portalRestoreToken.expectedId ?? null}
+            />
+            <DiagnosticRow
+              label="Portal"
+              value={diagnostics?.portalRestoreToken.portal ?? null}
+            />
+            <DiagnosticRow
+              label="Token length"
+              value={
+                diagnostics?.portalRestoreToken.tokenLength?.toString() ?? null
+              }
+            />
+            <DiagnosticRow
+              label="Created"
+              value={
+                diagnostics?.portalRestoreToken.createdAtMs?.toString() ?? null
+              }
+            />
+            <DiagnosticRow
+              label="Updated"
+              value={
+                diagnostics?.portalRestoreToken.updatedAtMs?.toString() ?? null
+              }
+            />
+            <DiagnosticRow
+              label="Last used"
+              value={
+                diagnostics?.portalRestoreToken.lastUsedAtMs?.toString() ?? null
+              }
+            />
+            <DiagnosticRow
+              emptyValue="None"
+              label="Error"
+              value={diagnostics?.portalRestoreToken.error ?? null}
+            />
+          </dl>
+        </div>
       </div>
 
       <div className="bg-card border p-4">
@@ -355,14 +513,14 @@ function formatOptionalBoolean(value: boolean | null): string | null {
   return value === null ? null : formatBoolean(value);
 }
 
-interface FfmpegCapabilityListProps {
-  capabilities: RecorderFfmpegCapabilities | null;
+interface MediaWriterCapabilityListProps {
+  capabilities: RecorderMediaWriterCapabilities | null;
 }
 
-const ffmpegCapabilityRows = [
+const mediaWriterCapabilityRows = [
   {
-    key: 'rawvideoDemuxer',
-    label: 'rawvideo demuxer',
+    key: 'appsrc',
+    label: 'appsrc',
     requiredFor: 'video',
   },
   {
@@ -371,35 +529,67 @@ const ffmpegCapabilityRows = [
     requiredFor: 'segment output',
   },
   {
-    key: 'libx264Encoder',
-    label: 'libx264 encoder',
+    key: 'videoConvert',
+    label: 'videoconvert',
+    requiredFor: 'pixel format conversion',
+  },
+  {
+    key: 'x264Encoder',
+    label: 'x264enc',
     requiredFor: 'video',
   },
   {
-    key: 'pulseInput',
-    label: 'Pulse input',
+    key: 'h264Parse',
+    label: 'h264parse',
+    requiredFor: 'video',
+  },
+  {
+    key: 'pulseSource',
+    label: 'pulsesrc',
     requiredFor: 'audio sources',
   },
   {
-    key: 'libopusEncoder',
-    label: 'libopus encoder',
+    key: 'audioConvert',
+    label: 'audioconvert',
     requiredFor: 'audio sources',
   },
+  {
+    key: 'audioResample',
+    label: 'audioresample',
+    requiredFor: 'audio sources',
+  },
+  {
+    key: 'opusEncoder',
+    label: 'opusenc',
+    requiredFor: 'audio sources',
+  },
+  {
+    key: 'queue',
+    label: 'queue',
+    requiredFor: 'pipeline buffering',
+  },
+  {
+    key: 'fileSink',
+    label: 'filesink',
+    requiredFor: 'segment output',
+  },
 ] satisfies Array<{
-  key: keyof RecorderFfmpegCapabilities;
+  key: keyof RecorderMediaWriterCapabilities;
   label: string;
   requiredFor: string;
 }>;
 
-function FfmpegCapabilityList({ capabilities }: FfmpegCapabilityListProps) {
+function MediaWriterCapabilityList({
+  capabilities,
+}: MediaWriterCapabilityListProps) {
   return (
     <div className="mt-4">
       <h3 className="text-muted-foreground text-xs font-medium tracking-normal">
         Required capabilities
       </h3>
       <div className="mt-2 grid gap-2">
-        {ffmpegCapabilityRows.map((capability) => (
-          <FfmpegCapabilityRow
+        {mediaWriterCapabilityRows.map((capability) => (
+          <MediaWriterCapabilityRow
             key={capability.key}
             label={capability.label}
             requiredFor={capability.requiredFor}
@@ -411,17 +601,17 @@ function FfmpegCapabilityList({ capabilities }: FfmpegCapabilityListProps) {
   );
 }
 
-interface FfmpegCapabilityRowProps {
+interface MediaWriterCapabilityRowProps {
   label: string;
   requiredFor: string;
   supported: boolean;
 }
 
-function FfmpegCapabilityRow({
+function MediaWriterCapabilityRow({
   label,
   requiredFor,
   supported,
-}: FfmpegCapabilityRowProps) {
+}: MediaWriterCapabilityRowProps) {
   return (
     <div className="bg-muted/40 grid grid-cols-[1fr_auto] items-center gap-3 p-2 text-sm">
       <div className="min-w-0">

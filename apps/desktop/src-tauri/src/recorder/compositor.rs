@@ -55,10 +55,10 @@ impl SceneCompositorPlan {
         inputs.sort_by_key(|input| input.z_index);
 
         Ok(Self {
-            canvas_height: scene.canvas_height,
-            canvas_width: scene.canvas_width,
+            canvas_height: even_canvas_dimension(scene.canvas_height),
+            canvas_width: even_canvas_dimension(scene.canvas_width),
             inputs,
-            output_format: CapturedFrameFormat::Yuv444p,
+            output_format: CapturedFrameFormat::Rgba,
         })
     }
 
@@ -73,7 +73,7 @@ impl SceneCompositorPlan {
                 frame.width, frame.height, self.canvas_width, self.canvas_height
             )));
         }
-        frame.ffmpeg_handoff_plan()?;
+        frame.writer_handoff_plan()?;
 
         Ok(())
     }
@@ -83,6 +83,12 @@ impl SceneCompositorPlan {
         frames_by_source_id: &HashMap<String, CapturedFrame>,
         timestamp_ms: u64,
     ) -> Result<CapturedFrame, RecorderError> {
+        if let Some(frame) =
+            self.compose_full_canvas_passthrough(frames_by_source_id, timestamp_ms)?
+        {
+            return Ok(frame);
+        }
+
         let width = self.canvas_width as usize;
         let height = self.canvas_height as usize;
         let mut canvas = vec![0_u8; width * height * 4];
@@ -106,11 +112,84 @@ impl SceneCompositorPlan {
             timestamp_ms,
             self.canvas_width,
             self.canvas_height,
-            self.canvas_width,
-            CapturedFrameFormat::Yuv444p,
-            rgba_to_yuv444p(&canvas, self.canvas_width, self.canvas_height),
+            self.canvas_width.saturating_mul(4),
+            CapturedFrameFormat::Rgba,
+            canvas,
         )
     }
+
+    fn compose_full_canvas_passthrough(
+        &self,
+        frames_by_source_id: &HashMap<String, CapturedFrame>,
+        timestamp_ms: u64,
+    ) -> Result<Option<CapturedFrame>, RecorderError> {
+        let [input] = self.inputs.as_slice() else {
+            return Ok(None);
+        };
+        let Some(frame) = frames_by_source_id.get(&input.source_id) else {
+            return Ok(None);
+        };
+        if !input.is_full_canvas_passthrough(self.canvas_width, self.canvas_height, frame) {
+            return Ok(None);
+        }
+        frame.writer_handoff_plan()?;
+
+        Ok(Some(CapturedFrame::new(
+            "composed",
+            timestamp_ms,
+            frame.width,
+            frame.height,
+            frame.stride,
+            frame.format,
+            frame.data.clone(),
+        )?))
+    }
+
+    pub(crate) fn is_full_canvas_passthrough(
+        &self,
+        frames_by_source_id: &HashMap<String, CapturedFrame>,
+    ) -> bool {
+        let [input] = self.inputs.as_slice() else {
+            return false;
+        };
+        frames_by_source_id
+            .get(&input.source_id)
+            .is_some_and(|frame| {
+                input.is_full_canvas_passthrough(self.canvas_width, self.canvas_height, frame)
+            })
+    }
+}
+
+impl SceneCompositorInput {
+    fn is_full_canvas_passthrough(
+        &self,
+        canvas_width: u32,
+        canvas_height: u32,
+        frame: &CapturedFrame,
+    ) -> bool {
+        frame.width == canvas_width
+            && frame.height == canvas_height
+            && near_zero(self.crop.left)
+            && near_zero(self.crop.right)
+            && near_zero(self.crop.top)
+            && near_zero(self.crop.bottom)
+            && near_zero(self.rect.x)
+            && near_zero(self.rect.y)
+            && near_equal(self.rect.width, canvas_width as f64)
+            && near_equal(self.rect.height, canvas_height as f64)
+    }
+}
+
+fn near_zero(value: f64) -> bool {
+    value.abs() < 0.001
+}
+
+fn near_equal(left: f64, right: f64) -> bool {
+    (left - right).abs() < 0.001
+}
+
+pub(crate) fn even_canvas_dimension(dimension: u32) -> u32 {
+    dimension.saturating_add(dimension % 2)
 }
 
 fn composite_input(
@@ -224,6 +303,7 @@ fn pixel_rgba(frame: &CapturedFrame, x: u32, y: u32) -> Result<[u8; 4], Recorder
         CapturedFrameFormat::Bgrx => packed_pixel(frame, x, y, [2, 1, 0, 3], false),
         CapturedFrameFormat::Bgra => packed_pixel(frame, x, y, [2, 1, 0, 3], true),
         CapturedFrameFormat::Yuv444p => yuv_pixel(frame, x, y),
+        CapturedFrameFormat::Yuv420p => yuv420p_pixel(frame, x, y),
     }
 }
 
@@ -262,19 +342,65 @@ fn yuv_pixel(frame: &CapturedFrame, x: u32, y: u32) -> Result<[u8; 4], RecorderE
     Ok([red, green, blue, 255])
 }
 
-fn rgba_to_yuv444p(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let plane_len = width as usize * height as usize;
-    let mut output = vec![0; plane_len * 3];
+fn yuv420p_pixel(frame: &CapturedFrame, x: u32, y: u32) -> Result<[u8; 4], RecorderError> {
+    let y_index = y as usize * frame.stride as usize + x as usize;
+    let y_plane_len = frame.stride as usize * frame.height as usize;
+    let chroma_stride = frame.stride as usize / 2;
+    let chroma_index = (y as usize / 2) * chroma_stride + (x as usize / 2);
+    let chroma_plane_len = chroma_stride * (frame.height as usize / 2);
+    let y_value = frame.data[y_index] as i32;
+    let u_value = frame.data[y_plane_len + chroma_index] as i32 - 128;
+    let v_value = frame.data[y_plane_len + chroma_plane_len + chroma_index] as i32 - 128;
+    let red = (y_value + ((359 * v_value) >> 8)).clamp(0, 255) as u8;
+    let green = (y_value - ((88 * u_value + 183 * v_value) >> 8)).clamp(0, 255) as u8;
+    let blue = (y_value + ((454 * u_value) >> 8)).clamp(0, 255) as u8;
 
-    for index in 0..plane_len {
-        let rgba_index = index * 4;
-        let (y, u, v) = rgb_to_yuv(rgba[rgba_index], rgba[rgba_index + 1], rgba[rgba_index + 2]);
-        output[index] = y;
-        output[plane_len + index] = u;
-        output[plane_len * 2 + index] = v;
+    Ok([red, green, blue, 255])
+}
+
+fn rgba_to_yuv420p(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, RecorderError> {
+    if width % 2 != 0 || height % 2 != 0 {
+        return Err(capture_format_unsupported_error(format!(
+            "Composed frame has odd dimensions {width}x{height}; yuv420p requires even dimensions."
+        )));
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let plane_len = width
+        .checked_mul(height)
+        .ok_or_else(|| capture_format_unsupported_error("Composed frame dimensions overflow."))?;
+    let chroma_width = width / 2;
+    let chroma_height = height / 2;
+    let chroma_len = chroma_width.checked_mul(chroma_height).ok_or_else(|| {
+        capture_format_unsupported_error("Composed frame chroma dimensions overflow.")
+    })?;
+    let mut output = vec![0; plane_len + chroma_len * 2];
+    let u_plane_offset = plane_len;
+    let v_plane_offset = plane_len + chroma_len;
+
+    for block_y in 0..chroma_height {
+        for block_x in 0..chroma_width {
+            let mut u_sum = 0_u16;
+            let mut v_sum = 0_u16;
+            for local_y in 0..2 {
+                for local_x in 0..2 {
+                    let x = block_x * 2 + local_x;
+                    let y = block_y * 2 + local_y;
+                    let rgba_index = (y * width + x) * 4;
+                    let (y_value, u_value, v_value) =
+                        rgb_to_yuv(rgba[rgba_index], rgba[rgba_index + 1], rgba[rgba_index + 2]);
+                    output[y * width + x] = y_value;
+                    u_sum += u_value as u16;
+                    v_sum += v_value as u16;
+                }
+            }
+            let chroma_index = block_y * chroma_width + block_x;
+            output[u_plane_offset + chroma_index] = (u_sum / 4) as u8;
+            output[v_plane_offset + chroma_index] = (v_sum / 4) as u8;
+        }
     }
 
-    output
+    Ok(output)
 }
 
 fn rgb_to_yuv(red: u8, green: u8, blue: u8) -> (u8, u8, u8) {
@@ -341,6 +467,21 @@ mod tests {
     }
 
     #[test]
+    fn compositor_plan_pads_odd_canvas_dimensions_for_encoder_handoff() {
+        let mut scene = test_scene(vec![scene_source("back", "monitor-1", 0)]);
+        scene.canvas_width = 101;
+        scene.canvas_height = 51;
+
+        let plan = SceneCompositorPlan::from_scene(&scene, &[runtime_source("monitor-1", "one")])
+            .expect("plan scene");
+
+        assert_eq!(scene.canvas_width, 101);
+        assert_eq!(scene.canvas_height, 51);
+        assert_eq!(plan.canvas_width, 102);
+        assert_eq!(plan.canvas_height, 52);
+    }
+
+    #[test]
     fn composed_frame_handoff_requires_canvas_dimensions_and_supported_format() {
         let scene = test_scene(vec![scene_source("back", "monitor-1", 0)]);
         let plan = SceneCompositorPlan::from_scene(&scene, &[runtime_source("monitor-1", "one")])
@@ -351,8 +492,8 @@ mod tests {
             100,
             50,
             100,
-            CapturedFrameFormat::Yuv444p,
-            vec![0; 15_000],
+            CapturedFrameFormat::Yuv420p,
+            vec![0; 7_500],
         )
         .expect("valid composed frame");
         let invalid_frame = CapturedFrame::new(
@@ -403,12 +544,54 @@ mod tests {
             .compose_latest_frames(&frames, 10)
             .expect("compose latest frames");
 
-        assert_eq!(composed.format, CapturedFrameFormat::Yuv444p);
+        assert_eq!(composed.format, CapturedFrameFormat::Rgba);
         assert_eq!(composed.width, 100);
         assert_eq!(composed.height, 50);
-        assert_eq!(composed.data.len(), 15_000);
-        assert_eq!(composed.data[0], 76);
-        assert_eq!(composed.data[1], 28);
+        assert_eq!(composed.stride, 400);
+        assert_eq!(composed.data.len(), 20_000);
+        assert_eq!(&composed.data[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&composed.data[4..8], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn full_canvas_single_source_uses_passthrough_fast_path() {
+        let scene = test_scene(vec![scene_source("front", "monitor-1", 0)]);
+        let plan = SceneCompositorPlan::from_scene(&scene, &[runtime_source("monitor-1", "one")])
+            .expect("plan scene");
+        let frame = rgba_frame("monitor-1", [255, 0, 0, 255]);
+        let frames = HashMap::from([("monitor-1".to_string(), frame.clone())]);
+
+        let composed = plan
+            .compose_latest_frames(&frames, 10)
+            .expect("compose latest frames");
+
+        assert_eq!(composed.format, CapturedFrameFormat::Rgba);
+        assert_eq!(composed.timestamp_ms, 10);
+        assert_eq!(composed.width, 100);
+        assert_eq!(composed.height, 50);
+        assert_eq!(composed.stride, 400);
+        assert_eq!(composed.data, frame.data);
+    }
+
+    #[test]
+    fn cropped_single_source_uses_general_rgba_compositor() {
+        let mut source = scene_source("front", "monitor-1", 0);
+        source.crop.left = 1.0;
+        let scene = test_scene(vec![source]);
+        let plan = SceneCompositorPlan::from_scene(&scene, &[runtime_source("monitor-1", "one")])
+            .expect("plan scene");
+        let frames = HashMap::from([(
+            "monitor-1".to_string(),
+            rgba_frame("monitor-1", [255, 0, 0, 255]),
+        )]);
+
+        let composed = plan
+            .compose_latest_frames(&frames, 10)
+            .expect("compose latest frames");
+
+        assert_eq!(composed.format, CapturedFrameFormat::Rgba);
+        assert_eq!(composed.stride, 400);
+        assert_eq!(composed.data.len(), 20_000);
     }
 
     fn runtime_source(source_id: &str, runtime_id: &str) -> CaptureRuntimeSource {

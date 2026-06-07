@@ -1,27 +1,36 @@
 mod audio;
 mod capture;
+mod fake;
+mod gpu_compositor;
 mod gpu_probe;
 mod portal;
 
-use std::path::Path;
 use tauri::AppHandle;
 
 use crate::storage::AppStorage;
 
 use super::super::{
-    ffmpeg,
-    ffmpeg::FfmpegSegmentInput,
     manager::RecorderManager,
-    manager::RunningSegmentMedia,
+    manager::RecordingSegmentRuntime,
+    media_writer::{self, MediaSegmentInput},
     types::{
         AudioSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
         RecorderBackendHealth, RecorderError, RecorderScene,
     },
 };
 
-pub(crate) use capture::{PreparedLiveCapture, RunningPreviewSession};
+pub(crate) use capture::RunningPreviewSession;
+
+pub(crate) enum PreparedLiveCapture {
+    Fake(fake::PreparedLiveCapture),
+    Portal(capture::PreparedLiveCapture),
+}
 
 pub async fn collect_backend_health() -> RecorderBackendHealth {
+    if fake_backend_enabled() {
+        return fake::collect_backend_health();
+    }
+
     let portal = portal::collect_portal_health().await;
     let audio = audio::probe_audio_server();
     let pipewire = audio
@@ -38,8 +47,8 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
 
     RecorderBackendHealth {
         desktop_audio,
-        ffmpeg: ffmpeg::collect_ffmpeg_health(),
         gpu_capture,
+        media_writer: media_writer::collect_media_writer_health(),
         microphone,
         pipewire,
         portal,
@@ -49,6 +58,10 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
 pub fn get_capture_sources(
     manager: &RecorderManager,
 ) -> Result<super::super::types::CaptureSourceList, RecorderError> {
+    if fake_backend_enabled() {
+        return fake::get_capture_sources(manager);
+    }
+
     manager.capture_sources()
 }
 
@@ -57,10 +70,18 @@ pub async fn select_capture_sources(
     manager: &RecorderManager,
     force_chooser: bool,
 ) -> Result<super::super::types::CaptureSourceList, RecorderError> {
+    if fake_backend_enabled() {
+        return fake::select_capture_sources(storage, manager, force_chooser).await;
+    }
+
     portal::select_capture_sources(storage, manager, force_chooser).await
 }
 
 pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
+    if fake_backend_enabled() {
+        return fake::get_audio_sources().await;
+    }
+
     audio::get_audio_sources()
 }
 
@@ -68,8 +89,14 @@ pub async fn prepare_live_capture(
     storage: &AppStorage,
     scene: &RecorderScene,
 ) -> Result<PreparedLiveCapture, RecorderError> {
+    if fake_backend_enabled() || fake::scene_uses_fake_backend(scene) {
+        return fake::prepare_live_capture(storage, scene)
+            .await
+            .map(PreparedLiveCapture::Fake);
+    }
+
     let live_session = portal::open_live_capture_session(storage).await?;
-    capture::prepared_live_capture(live_session, scene)
+    capture::prepared_live_capture(live_session, scene).map(PreparedLiveCapture::Portal)
 }
 
 pub async fn start_preview_session(
@@ -77,6 +104,10 @@ pub async fn start_preview_session(
     storage: &AppStorage,
     scene: &RecorderScene,
 ) -> Result<RunningPreviewSession, RecorderError> {
+    if fake_backend_enabled() || fake::scene_uses_fake_backend(scene) {
+        return fake::start_preview_session(app, storage, scene).await;
+    }
+
     let live_session = portal::open_live_capture_session(storage).await?;
     let prepared = capture::prepared_live_capture(live_session, scene)?;
 
@@ -84,11 +115,17 @@ pub async fn start_preview_session(
 }
 
 pub fn start_live_segment(
-    ffmpeg_path: &Path,
-    input: &FfmpegSegmentInput,
+    input: &MediaSegmentInput,
     prepared: PreparedLiveCapture,
-) -> Result<RunningSegmentMedia, RecorderError> {
-    capture::start_live_segment(ffmpeg_path, input, prepared)
+) -> Result<RecordingSegmentRuntime, RecorderError> {
+    match prepared {
+        PreparedLiveCapture::Fake(prepared) => fake::start_live_segment(input, prepared),
+        PreparedLiveCapture::Portal(prepared) => capture::start_live_segment(input, prepared),
+    }
+}
+
+fn fake_backend_enabled() -> bool {
+    std::env::var("DAYDREAM_RECORDER_BACKEND").as_deref() == Ok("fake")
 }
 
 fn audio_health(default_source_id: Option<String>, error: Option<String>) -> RecorderAudioHealth {

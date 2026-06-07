@@ -16,8 +16,8 @@ mod segments;
 
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use portal_tokens::{
-    get_portal_restore_token, mark_portal_restore_token_used, upsert_portal_restore_token,
-    PortalRestoreTokenRow,
+    delete_portal_restore_token, get_portal_restore_token, mark_portal_restore_token_used,
+    upsert_portal_restore_token, PortalRestoreTokenRow, LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
 };
 pub use recordings::{
     create_recording, get_latest_recording_id, get_recording, mark_recording_completed,

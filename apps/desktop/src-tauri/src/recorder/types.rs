@@ -277,7 +277,7 @@ pub struct RecorderSegment {
     pub(crate) duration_ms: Option<u64>,
     pub(crate) ended_at_ms: Option<u64>,
     pub(crate) error_code: Option<String>,
-    pub(crate) ffmpeg_exit_code: Option<i32>,
+    pub(crate) writer_exit_code: Option<i32>,
     pub(crate) file_path: String,
     pub(crate) id: String,
     pub(crate) microphone_audio_stream_index: Option<i32>,
@@ -293,11 +293,15 @@ pub struct RecorderSegment {
 pub struct CaptureTimingDiagnostics {
     pub(crate) composed_frames: u64,
     pub(crate) frames_received_by_source: BTreeMap<String, u64>,
-    pub(crate) frames_sent_to_ffmpeg: u64,
+    pub(crate) frames_sent_to_writer: u64,
     pub(crate) last_composed_timestamp_ms: Option<u64>,
+    pub(crate) max_compose_duration_ms: u64,
     pub(crate) reused_frame_compositions: u64,
+    pub(crate) scheduler_missed_deadlines: u64,
+    pub(crate) scheduler_ticks: u64,
     pub(crate) source_timestamp_max_ms: Option<u64>,
     pub(crate) source_timestamp_min_ms: Option<u64>,
+    pub(crate) total_compose_duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -309,22 +313,28 @@ pub struct RecorderBackendComponentHealth {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RecorderFfmpegHealth {
+pub struct RecorderMediaWriterHealth {
     pub(crate) available: bool,
-    pub(crate) capabilities: RecorderFfmpegCapabilities,
+    pub(crate) capabilities: RecorderMediaWriterCapabilities,
     pub(crate) error: Option<String>,
-    pub(crate) path: Option<String>,
-    pub(crate) version_line: Option<String>,
+    pub(crate) version: Option<String>,
+    pub(crate) writer: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RecorderFfmpegCapabilities {
-    pub(crate) libopus_encoder: bool,
-    pub(crate) libx264_encoder: bool,
+pub struct RecorderMediaWriterCapabilities {
+    pub(crate) appsrc: bool,
+    pub(crate) audio_convert: bool,
+    pub(crate) audio_resample: bool,
+    pub(crate) file_sink: bool,
+    pub(crate) h264_parse: bool,
     pub(crate) matroska_muxer: bool,
-    pub(crate) pulse_input: bool,
-    pub(crate) rawvideo_demuxer: bool,
+    pub(crate) opus_encoder: bool,
+    pub(crate) pulse_source: bool,
+    pub(crate) queue: bool,
+    pub(crate) video_convert: bool,
+    pub(crate) x264_encoder: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -368,8 +378,8 @@ pub struct RecorderGpuCaptureHealth {
 #[serde(rename_all = "camelCase")]
 pub struct RecorderBackendHealth {
     pub(crate) desktop_audio: RecorderAudioHealth,
-    pub(crate) ffmpeg: RecorderFfmpegHealth,
     pub(crate) gpu_capture: RecorderGpuCaptureHealth,
+    pub(crate) media_writer: RecorderMediaWriterHealth,
     pub(crate) microphone: RecorderAudioHealth,
     pub(crate) pipewire: RecorderBackendComponentHealth,
     pub(crate) portal: RecorderPortalHealth,
@@ -385,5 +395,15 @@ pub struct RecorderStatus {
     pub(crate) finalization: Option<RecorderFinalizationStatus>,
     pub(crate) last_error: Option<RecorderError>,
     pub(crate) state: RecorderState,
+    pub(crate) updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecorderPerformanceStats {
+    pub(crate) desired_fps: Option<f64>,
+    pub(crate) segment_started_at_ms: Option<u64>,
+    pub(crate) state: RecorderState,
+    pub(crate) timing: Option<CaptureTimingDiagnostics>,
     pub(crate) updated_at_ms: u64,
 }

@@ -22,6 +22,7 @@ import { SceneCanvasPanel } from './scene-canvas-panel';
 export interface CaptureResizableLayoutProps {
   audioSources: AudioSource[];
   captureSources: CaptureSource[];
+  configurationLocked: boolean;
   desktopAudioSourceId: string | null;
   lifecycleLocked: boolean;
   loadStatus: string;
@@ -44,6 +45,7 @@ export interface CaptureResizableLayoutProps {
 export function CaptureResizableLayout({
   audioSources,
   captureSources,
+  configurationLocked,
   desktopAudioSourceId,
   lifecycleLocked,
   loadStatus,
@@ -65,6 +67,7 @@ export function CaptureResizableLayout({
       <ResizablePanel defaultSize="22%" minSize="16%">
         <CaptureSourcesPanel
           audioSources={audioSources}
+          configurationLocked={configurationLocked}
           desktopAudioSourceId={desktopAudioSourceId}
           lifecycleLocked={lifecycleLocked}
           loadStatus={loadStatus}
@@ -84,6 +87,7 @@ export function CaptureResizableLayout({
         <main className="bg-foreground/10 flex h-full flex-col items-center justify-center overflow-auto p-4">
           <div className="bg-foreground/10 w-full">
             <SceneCanvasPanel
+              configurationLocked={configurationLocked}
               previewFramesBySceneSourceId={previewFramesBySceneSourceId}
               scene={scene}
               selectedSourceId={selectedSceneSourceId}
@@ -97,6 +101,7 @@ export function CaptureResizableLayout({
       <ResizablePanel defaultSize="26%" minSize="20%">
         <GeometryPanel
           captureSources={captureSources}
+          disabled={configurationLocked}
           scene={scene}
           source={selectedSceneSource}
           onChange={onChangeScene}

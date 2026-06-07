@@ -8,6 +8,8 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { create } from 'zustand';
+import { runAsyncStoreAction, sleep } from '@/lib/async-store-action';
+import { sanitizeSceneAudioSources } from './recorder-audio-source-selection';
 import {
   getAudioSources,
   getCaptureSources,
@@ -25,7 +27,17 @@ import {
   stopRecorderPreview,
   stopRecording,
 } from './recorder-client';
-import { errorMessage } from './recorder-error-utils';
+import {
+  errorMessage,
+  isRecorderPortalSelectionCancelled,
+} from './recorder-error-utils';
+import {
+  isRecoverableRecorderActionError,
+  recorderConfigurationLocked,
+  recorderLifecycleLocked,
+  statusBlocksLifecycle,
+  statusShowsCommandInProgress,
+} from './recorder-lifecycle-state';
 import {
   previewErrorStatus,
   previewIsActive,
@@ -34,13 +46,11 @@ import {
 import {
   classifyCaptureSourceMerge,
   createDefaultRecorderScene,
+  type DuplicateCaptureSourceCandidate,
+  type DuplicateCaptureSourceResolution,
   mergeCaptureSourcesIntoScene,
   removeSceneSource,
   resolveDuplicateCaptureSource as resolveDuplicateCaptureSourceInScene,
-} from './scene-layout';
-import type {
-  DuplicateCaptureSourceCandidate,
-  DuplicateCaptureSourceResolution,
 } from './scene-layout';
 
 type AsyncStatus = 'error' | 'idle' | 'loading' | 'ready';
@@ -48,6 +58,7 @@ export type RecorderLifecycleAction = 'pause' | 'resume' | 'start' | 'stop';
 
 const FINALIZATION_POLL_INTERVAL_MS = 250;
 const FINALIZATION_POLL_TIMEOUT_MS = 15_000;
+export const DEFAULT_RECORDER_FPS = 5;
 
 interface RecorderWorkspaceState {
   audioSources: AudioSource[];
@@ -63,6 +74,7 @@ interface RecorderWorkspaceState {
   pendingLifecycleAction: RecorderLifecycleAction | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
+  previewStartInFlightSceneId: string | null;
   previewStatus: RecorderPreviewStatus | null;
   resume: () => Promise<void>;
   resolveDuplicateCaptureSource: (
@@ -85,6 +97,11 @@ interface RecorderWorkspaceState {
   updateCaptureSources: () => Promise<void>;
 }
 
+type RecorderWorkspacePatch =
+  | Partial<RecorderWorkspaceState>
+  | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>);
+type RecorderWorkspaceSet = (partial: RecorderWorkspacePatch) => void;
+
 export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
   (set, get) => ({
     audioSources: [],
@@ -93,58 +110,22 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     error: null,
     isDirty: false,
     async load() {
-      set({ error: null, loadStatus: 'loading' });
-
-      try {
-        const [
-          status,
-          previewStatus,
-          captureSourceList,
-          audioSourceList,
-          savedScene,
-        ] = await Promise.all([
-          getRecorderStatus(),
-          getRecorderPreviewStatus(),
-          getCaptureSources(),
-          getAudioSources(),
-          getRecorderScene(),
-        ]);
-        const restoredScene =
-          savedScene ?? createDefaultRecorderScene(captureSourceList.sources);
-        const scene = sanitizeSceneAudioSources(
-          restoredScene,
-          audioSourceList.sources,
-        );
-        const droppedSavedAudioSource =
-          !!savedScene &&
-          (scene.desktopAudioSourceId !== savedScene.desktopAudioSourceId ||
-            scene.microphoneAudioSourceId !==
-              savedScene.microphoneAudioSourceId);
-
-        set({
-          audioSources: audioSourceList.sources,
-          captureSources: captureSourceList.sources,
-          desktopAudioSourceId: scene.desktopAudioSourceId,
-          error: null,
-          isDirty:
-            droppedSavedAudioSource ||
-            (!savedScene && captureSourceList.sources.length > 0),
-          loadStatus: 'ready',
-          microphoneAudioSourceId: scene.microphoneAudioSourceId,
-          previewFramesBySceneSourceId: {},
-          previewStatus,
-          scene,
-          selectedSceneSourceId: scene.sources[0]?.id ?? null,
-          status,
-        });
-      } catch (error) {
-        set({
-          error: errorMessage(error),
-          loadStatus: 'error',
-        });
-      }
+      await runAsyncStoreAction({
+        before: () => set({ error: null, loadStatus: 'loading' }),
+        failure: (error) =>
+          set({
+            error: errorMessage(error),
+            loadStatus: 'error',
+          }),
+        run: loadRecorderWorkspaceSnapshot,
+        success: (snapshot) => applyLoadedRecorderWorkspace(set, snapshot),
+      });
     },
     deleteSceneSource(sceneSourceId) {
+      if (workspaceConfigurationLocked(get())) {
+        return;
+      }
+
       const scene = get().scene;
       if (!scene) {
         return;
@@ -177,6 +158,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     microphoneAudioSourceId: null,
     pendingDuplicateCaptureSources: [],
     previewFramesBySceneSourceId: {},
+    previewStartInFlightSceneId: null,
     previewStatus: null,
     async pause() {
       const recordingId = get().status?.activeRecordingId;
@@ -184,7 +166,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      if (recorderLifecycleLocked(get())) {
+      if (recorderLifecycleLocked(get().pendingLifecycleAction, get().status)) {
         return;
       }
 
@@ -198,7 +180,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      if (recorderLifecycleLocked(get())) {
+      if (recorderLifecycleLocked(get().pendingLifecycleAction, get().status)) {
         return;
       }
 
@@ -207,6 +189,10 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
       );
     },
     resolveDuplicateCaptureSource(resolution) {
+      if (workspaceConfigurationLocked(get())) {
+        return;
+      }
+
       const [candidate, ...remainingCandidates] =
         get().pendingDuplicateCaptureSources;
       const scene = get().scene;
@@ -238,46 +224,79 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     },
     pendingLifecycleAction: null,
     async saveScene() {
+      if (workspaceConfigurationLocked(get())) {
+        return;
+      }
+
       const scene = get().scene;
       if (!scene) {
         set({ error: 'No recorder scene is available to save.' });
         return;
       }
-
-      set({ error: null, saveStatus: 'loading' });
-
-      try {
-        const sceneWithAudioSources = {
-          ...scene,
-          desktopAudioSourceId: get().desktopAudioSourceId,
-          microphoneAudioSourceId: get().microphoneAudioSourceId,
-        };
-        const savedScene = await saveRecorderScene({
-          scene: sceneWithAudioSources,
-        });
-        set({
-          desktopAudioSourceId: savedScene.desktopAudioSourceId,
-          error: null,
-          isDirty: false,
-          microphoneAudioSourceId: savedScene.microphoneAudioSourceId,
-          saveStatus: 'ready',
-          scene: savedScene,
-          selectedSceneSourceId: selectExistingSceneSource(
-            savedScene,
-            get().selectedSceneSourceId,
-          ),
-        });
-      } catch (error) {
-        set({
-          error: errorMessage(error),
-          saveStatus: 'error',
-        });
+      if (
+        scene.sources.length === 0 &&
+        previewIsActive(get().previewStatus) &&
+        !(await stopPreviewForRecording(
+          set,
+          get().previewStatus?.sceneId ?? scene.id,
+        ))
+      ) {
+        set({ saveStatus: 'error' });
+        return;
       }
+
+      await runAsyncStoreAction({
+        before: () => set({ error: null, saveStatus: 'loading' }),
+        failure: (error) =>
+          set({
+            error: errorMessage(error),
+            saveStatus: 'error',
+          }),
+        run: () =>
+          saveRecorderScene({
+            scene: {
+              ...scene,
+              desktopAudioSourceId: get().desktopAudioSourceId,
+              microphoneAudioSourceId: get().microphoneAudioSourceId,
+            },
+          }),
+        success: (savedScene) => {
+          const previewStatus = get().previewStatus;
+          const clearPreviewError =
+            previewStatus?.state === 'error' &&
+            previewStatus.sceneId === savedScene.id;
+          const clearPreviewState =
+            savedScene.sources.length === 0 || clearPreviewError;
+          set({
+            desktopAudioSourceId: savedScene.desktopAudioSourceId,
+            error: null,
+            isDirty: false,
+            microphoneAudioSourceId: savedScene.microphoneAudioSourceId,
+            previewFramesBySceneSourceId: clearPreviewState
+              ? {}
+              : get().previewFramesBySceneSourceId,
+            previewStartInFlightSceneId: clearPreviewState
+              ? null
+              : get().previewStartInFlightSceneId,
+            previewStatus: clearPreviewState ? null : previewStatus,
+            saveStatus: 'ready',
+            scene: savedScene,
+            selectedSceneSourceId: selectExistingSceneSource(
+              savedScene,
+              get().selectedSceneSourceId,
+            ),
+          });
+        },
+      });
     },
     saveStatus: 'idle',
     scene: null,
     selectAudioSource(role, sourceId) {
       const state = get();
+      if (workspaceConfigurationLocked(state)) {
+        return;
+      }
+
       if (role === 'desktop-audio') {
         if (state.desktopAudioSourceId === sourceId) {
           return;
@@ -312,6 +331,10 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     },
     selectedSceneSourceId: null,
     setDraftScene(scene) {
+      if (workspaceConfigurationLocked(get())) {
+        return;
+      }
+
       set({
         isDirty: true,
         previewFramesBySceneSourceId: {},
@@ -330,9 +353,11 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      if (recorderLifecycleLocked(state)) {
+      if (recorderLifecycleLocked(state.pendingLifecycleAction, state.status)) {
         return;
       }
+
+      set({ error: null, pendingLifecycleAction: 'start' });
 
       if (
         previewIsActive(state.previewStatus) &&
@@ -341,13 +366,14 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
           state.previewStatus?.sceneId ?? null,
         ))
       ) {
+        set({ pendingLifecycleAction: null });
         return;
       }
 
       await runStatusMutation(set, get, 'start', () =>
         startRecording({
           desktopAudioSourceId: state.desktopAudioSourceId,
-          fps: 1,
+          fps: DEFAULT_RECORDER_FPS,
           microphoneAudioSourceId: state.microphoneAudioSourceId,
           qualityPreset: 'balanced-ocr',
           sceneId: scene.id,
@@ -357,40 +383,58 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     async startPreview(sceneId) {
       const state = get();
       if (
-        state.previewStatus?.sceneId === sceneId &&
-        (state.previewStatus.state === 'starting' ||
-          state.previewStatus.state === 'live')
+        recorderLifecycleLocked(state.pendingLifecycleAction, state.status) ||
+        state.previewStartInFlightSceneId !== null ||
+        (state.previewStatus?.sceneId === sceneId &&
+          previewIsActive(state.previewStatus))
       ) {
         return;
       }
 
-      set({
-        previewStatus: {
-          error: null,
-          sceneId,
-          sourceIds: [],
-          state: 'starting',
-          updatedAtMs: Date.now(),
+      await runAsyncStoreAction({
+        before: () =>
+          set({
+            previewStartInFlightSceneId: sceneId,
+            previewStatus: {
+              error: null,
+              sceneId,
+              sourceIds: [],
+              state: 'starting',
+              updatedAtMs: Date.now(),
+            },
+          }),
+        cleanup: () => {
+          if (get().previewStartInFlightSceneId === sceneId) {
+            set({ previewStartInFlightSceneId: null });
+          }
         },
-      });
+        failure: (error) => {
+          if (get().previewStartInFlightSceneId !== sceneId) {
+            return false;
+          }
 
-      try {
-        const previewStatus = await startRecorderPreview({ sceneId });
-        if (previewStatus.sceneId !== sceneId) {
           set({
             previewFramesBySceneSourceId: {},
-            previewStatus: previewErrorStatus(sceneId, null),
+            previewStatus: previewErrorStatus(sceneId, error),
           });
-          return;
-        }
 
-        set({ previewStatus });
-      } catch (error) {
-        set({
-          previewFramesBySceneSourceId: {},
-          previewStatus: previewErrorStatus(sceneId, error),
-        });
-      }
+          return undefined;
+        },
+        rethrow: false,
+        run: () => startRecorderPreview({ sceneId }),
+        success: (previewStatus) => {
+          if (get().previewStartInFlightSceneId !== sceneId) return;
+          if (previewStatus.sceneId !== sceneId) {
+            set({
+              previewFramesBySceneSourceId: {},
+              previewStatus: previewErrorStatus(sceneId, null),
+            });
+            return;
+          }
+
+          set({ previewStatus });
+        },
+      });
     },
     status: null,
     async stop() {
@@ -399,7 +443,7 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      if (recorderLifecycleLocked(get())) {
+      if (recorderLifecycleLocked(get().pendingLifecycleAction, get().status)) {
         return;
       }
 
@@ -412,20 +456,25 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         return;
       }
 
-      try {
-        const previewStatus = await stopRecorderPreview();
-        set({
-          previewFramesBySceneSourceId: {},
-          previewStatus,
-        });
-      } catch (error) {
-        set({
-          previewStatus: previewErrorStatus(
-            get().previewStatus?.sceneId,
-            error,
-          ),
-        });
-      }
+      await runAsyncStoreAction({
+        failure: (error) =>
+          set({
+            previewStartInFlightSceneId: null,
+            previewStatus: previewErrorStatus(
+              get().previewStatus?.sceneId,
+              error,
+            ),
+          }),
+        rethrow: false,
+        run: () => stopRecorderPreview(),
+        success: (previewStatus) => {
+          set({
+            previewFramesBySceneSourceId: {},
+            previewStartInFlightSceneId: null,
+            previewStatus,
+          });
+        },
+      });
     },
     async subscribeToPreviewFrames() {
       return listenToRecorderPreviewFrames((frame) => {
@@ -447,46 +496,63 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
       });
     },
     async updateCaptureSources() {
-      set({ error: null, loadStatus: 'loading' });
-
-      try {
-        const captureSourceList = await selectCaptureSources({
-          forceChooser: true,
-        });
-        const currentScene = get().scene ?? createDefaultRecorderScene([]);
-        const classification = classifyCaptureSourceMerge(
-          currentScene,
-          captureSourceList.sources,
-        );
-        const scene = mergeCaptureSourcesIntoScene(
-          currentScene,
-          classification.newSources,
-        );
-        set({
-          captureSources: captureSourceList.sources,
-          error: null,
-          isDirty:
-            scene !== currentScene && scene.sources.length > 0
-              ? true
-              : get().isDirty,
-          loadStatus: 'ready',
-          pendingDuplicateCaptureSources: classification.duplicateCandidates,
-          previewFramesBySceneSourceId: {},
-          scene,
-          selectedSceneSourceId:
-            selectExistingSceneSource(scene, get().selectedSceneSourceId) ??
-            scene.sources.at(-1)?.id ??
-            null,
-        });
-      } catch (error) {
-        set({
-          error: errorMessage(error),
-          loadStatus: 'error',
-        });
+      if (workspaceConfigurationLocked(get())) {
+        return;
       }
+
+      const previewStatus = get().previewStatus;
+      if (previewStatus && previewIsActive(previewStatus)) {
+        const previewSceneId = previewStatus.sceneId;
+        try {
+          const stoppedPreviewStatus = await stopRecorderPreview();
+          set({
+            previewFramesBySceneSourceId: {},
+            previewStartInFlightSceneId: null,
+            previewStatus: stoppedPreviewStatus,
+          });
+        } catch (error) {
+          set({
+            error: errorMessage(error),
+            loadStatus: 'error',
+            previewFramesBySceneSourceId: {},
+            previewStartInFlightSceneId: null,
+            previewStatus: previewErrorStatus(previewSceneId, error),
+          });
+          return;
+        }
+      }
+
+      await runAsyncStoreAction({
+        before: () => set({ error: null, loadStatus: 'loading' }),
+        failure: (error) => {
+          if (isRecorderPortalSelectionCancelled(error)) {
+            set({ error: null, loadStatus: 'ready' });
+            return false;
+          }
+
+          set({
+            error: errorMessage(error),
+            loadStatus: 'error',
+          });
+          return undefined;
+        },
+        run: () =>
+          selectCaptureSources({
+            forceChooser: true,
+          }),
+        success: (captureSourceList) =>
+          applySelectedCaptureSources(set, get, captureSourceList.sources),
+      });
     },
   }),
 );
+
+function workspaceConfigurationLocked(state: RecorderWorkspaceState): boolean {
+  return recorderConfigurationLocked(
+    state.pendingLifecycleAction,
+    state.status,
+  );
+}
 
 function selectExistingSceneSource(
   scene: RecorderScene,
@@ -497,148 +563,158 @@ function selectExistingSceneSource(
     : (scene.sources[0]?.id ?? null);
 }
 
-function sanitizeSceneAudioSources(
-  scene: RecorderScene,
-  audioSources: AudioSource[],
-): RecorderScene {
-  const desktopAudioSourceId = availableAudioSourceId(
-    audioSources,
-    'desktop-audio',
-    scene.desktopAudioSourceId,
-  );
-  const microphoneAudioSourceId = availableAudioSourceId(
-    audioSources,
-    'microphone',
-    scene.microphoneAudioSourceId,
-  );
-
-  if (
-    desktopAudioSourceId === scene.desktopAudioSourceId &&
-    microphoneAudioSourceId === scene.microphoneAudioSourceId
-  ) {
-    return scene;
-  }
+async function loadRecorderWorkspaceSnapshot() {
+  const [
+    status,
+    previewStatus,
+    captureSourceList,
+    audioSourceList,
+    savedScene,
+  ] = await Promise.all([
+    getRecorderStatus(),
+    getRecorderPreviewStatus(),
+    getCaptureSources(),
+    getAudioSources(),
+    getRecorderScene(),
+  ]);
 
   return {
-    ...scene,
-    desktopAudioSourceId,
-    microphoneAudioSourceId,
+    audioSourceList,
+    captureSourceList,
+    previewStatus,
+    savedScene,
+    status,
   };
 }
 
-function availableAudioSourceId(
-  audioSources: AudioSource[],
-  role: AudioSourceRole,
-  sourceId: string | null,
-): string | null {
-  if (!sourceId) {
-    return null;
-  }
-
-  return audioSources.some(
-    (source) => source.id === sourceId && source.roles.includes(role),
-  )
-    ? sourceId
-    : null;
+function applyLoadedRecorderWorkspace(
+  set: RecorderWorkspaceSet,
+  snapshot: Awaited<ReturnType<typeof loadRecorderWorkspaceSnapshot>>,
+): void {
+  const {
+    audioSourceList,
+    captureSourceList,
+    previewStatus,
+    savedScene,
+    status,
+  } = snapshot;
+  const restoredScene =
+    savedScene ?? createDefaultRecorderScene(captureSourceList.sources);
+  const scene = sanitizeSceneAudioSources(
+    restoredScene,
+    audioSourceList.sources,
+  );
+  const droppedSavedAudioSource =
+    !!savedScene &&
+    (scene.desktopAudioSourceId !== savedScene.desktopAudioSourceId ||
+      scene.microphoneAudioSourceId !== savedScene.microphoneAudioSourceId);
+  set({
+    audioSources: audioSourceList.sources,
+    captureSources: captureSourceList.sources,
+    desktopAudioSourceId: scene.desktopAudioSourceId,
+    error: null,
+    isDirty:
+      droppedSavedAudioSource ||
+      (!savedScene && captureSourceList.sources.length > 0),
+    loadStatus: 'ready',
+    microphoneAudioSourceId: scene.microphoneAudioSourceId,
+    previewFramesBySceneSourceId: {},
+    previewStatus,
+    scene,
+    selectedSceneSourceId: scene.sources[0]?.id ?? null,
+    status,
+  });
 }
-
+function applySelectedCaptureSources(
+  set: RecorderWorkspaceSet,
+  get: () => RecorderWorkspaceState,
+  sources: CaptureSource[],
+): void {
+  const currentScene = get().scene ?? createDefaultRecorderScene([]);
+  const classification = classifyCaptureSourceMerge(currentScene, sources);
+  const scene = mergeCaptureSourcesIntoScene(
+    currentScene,
+    classification.newSources,
+  );
+  set({
+    captureSources: sources,
+    error: null,
+    isDirty:
+      scene !== currentScene && scene.sources.length > 0 ? true : get().isDirty,
+    loadStatus: 'ready',
+    pendingDuplicateCaptureSources: classification.duplicateCandidates,
+    previewFramesBySceneSourceId: {},
+    scene,
+    selectedSceneSourceId:
+      selectExistingSceneSource(scene, get().selectedSceneSourceId) ??
+      scene.sources.at(-1)?.id ??
+      null,
+  });
+}
 async function runStatusMutation(
-  set: (
-    partial:
-      | Partial<RecorderWorkspaceState>
-      | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>),
-  ) => void,
+  set: RecorderWorkspaceSet,
   get: () => RecorderWorkspaceState,
   action: RecorderLifecycleAction,
   mutation: () => Promise<RecorderStatus>,
 ): Promise<void> {
-  set({ error: null, pendingLifecycleAction: action });
+  await runAsyncStoreAction({
+    before: () => set({ error: null, pendingLifecycleAction: action }),
+    failure: (error) => {
+      set({ error: errorMessage(error), pendingLifecycleAction: null });
 
-  try {
-    const status = await mutation();
-    set({
-      pendingLifecycleAction: statusShowsCommandInProgress(status)
-        ? action
-        : null,
-      status,
-    });
-    if (statusNeedsReconciliation(status)) {
-      void reconcileStatusUntilSettled(set, get, action);
-    }
-  } catch (error) {
-    set({ error: errorMessage(error), pendingLifecycleAction: null });
-  }
-}
-
-function recorderLifecycleLocked(state: RecorderWorkspaceState): boolean {
-  return (
-    state.pendingLifecycleAction !== null || statusBlocksLifecycle(state.status)
-  );
-}
-
-function statusBlocksLifecycle(status: RecorderStatus | null): boolean {
-  return status?.finalization != null || statusShowsCommandInProgress(status);
-}
-
-function statusShowsCommandInProgress(status: RecorderStatus | null): boolean {
-  return (
-    status?.state === 'pausing' ||
-    status?.state === 'selecting' ||
-    status?.state === 'stopping'
-  );
-}
-
-function statusNeedsReconciliation(status: RecorderStatus | null): boolean {
-  return statusBlocksLifecycle(status);
-}
-
-async function reconcileStatusUntilSettled(
-  set: (
-    partial:
-      | Partial<RecorderWorkspaceState>
-      | ((state: RecorderWorkspaceState) => Partial<RecorderWorkspaceState>),
-  ) => void,
-  get: () => RecorderWorkspaceState,
-  action: RecorderLifecycleAction,
-): Promise<void> {
-  const deadline = Date.now() + FINALIZATION_POLL_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    await sleep(FINALIZATION_POLL_INTERVAL_MS);
-
-    if (!statusNeedsReconciliation(get().status)) {
-      return;
-    }
-
-    try {
-      const status = await getRecorderStatus();
+      return isRecoverableRecorderActionError(error) ? false : undefined;
+    },
+    run: mutation,
+    success: (status) => {
       set({
-        error: status.lastError?.message ?? null,
         pendingLifecycleAction: statusShowsCommandInProgress(status)
           ? action
           : null,
         status,
       });
-
-      if (!statusNeedsReconciliation(status)) {
-        return;
+      if (statusBlocksLifecycle(status)) {
+        void reconcileStatusUntilSettled(set, get, action);
       }
-    } catch (error) {
-      set({
-        error: errorMessage(error),
-        pendingLifecycleAction: null,
-      });
+    },
+  });
+}
+async function reconcileStatusUntilSettled(
+  set: RecorderWorkspaceSet,
+  get: () => RecorderWorkspaceState,
+  action: RecorderLifecycleAction,
+): Promise<void> {
+  const deadline = Date.now() + FINALIZATION_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await sleep(FINALIZATION_POLL_INTERVAL_MS);
+    if (!statusBlocksLifecycle(get().status)) {
+      return;
+    }
+    const status = await runAsyncStoreAction({
+      failure: (error) => {
+        set({
+          error: errorMessage(error),
+          pendingLifecycleAction: null,
+        });
+        return false;
+      },
+      run: () => getRecorderStatus(),
+      success: (nextStatus) => {
+        set({
+          error: nextStatus.lastError?.message ?? null,
+          pendingLifecycleAction: statusShowsCommandInProgress(nextStatus)
+            ? action
+            : null,
+          status: nextStatus,
+        });
+      },
+    });
+    if (!status || !statusBlocksLifecycle(status)) {
       return;
     }
   }
-
   set({
     error:
       'Recorder is still saving the recording. Diagnostics may show more detail.',
     pendingLifecycleAction: null,
   });
-}
-
-function sleep(durationMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }

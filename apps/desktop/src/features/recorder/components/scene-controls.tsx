@@ -40,11 +40,16 @@ const canvasPresets = [
 ] as const;
 
 export interface SceneControlsProps {
+  disabled?: boolean;
   onChange: (scene: RecorderScene) => void;
   scene: RecorderScene;
 }
 
-export function SceneControls({ onChange, scene }: SceneControlsProps) {
+export function SceneControls({
+  disabled = false,
+  onChange,
+  scene,
+}: SceneControlsProps) {
   const selectedPreset = isSceneUsingAutoCanvas(scene)
     ? 'auto'
     : (canvasPresets.find(
@@ -61,6 +66,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
           label="Auto layout"
           mode="auto-16-9"
           scene={scene}
+          disabled={disabled}
           onChange={onChange}
         >
           <Grid2X2 className="size-3" />
@@ -70,6 +76,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
           label="Horizontal layout"
           mode="horizontal"
           scene={scene}
+          disabled={disabled}
           onChange={onChange}
         >
           <Columns2 className="size-3" />
@@ -79,6 +86,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
           label="Vertical layout"
           mode="vertical"
           scene={scene}
+          disabled={disabled}
           onChange={onChange}
         >
           <Rows2 className="size-3" />
@@ -88,6 +96,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <NativeSelect
           aria-label="Canvas preset"
+          disabled={disabled}
           size="sm"
           value={selectedPreset}
           onChange={(event) => {
@@ -124,6 +133,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
 
         <CanvasDimensionInput
           label="W"
+          disabled={disabled}
           value={scene.canvasWidth}
           onChange={(width) =>
             onChange(setSceneCanvasSize(scene, width, scene.canvasHeight))
@@ -131,6 +141,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
         />
         <CanvasDimensionInput
           label="H"
+          disabled={disabled}
           value={scene.canvasHeight}
           onChange={(height) =>
             onChange(setSceneCanvasSize(scene, scene.canvasWidth, height))
@@ -144,6 +155,7 @@ export function SceneControls({ onChange, scene }: SceneControlsProps) {
 interface LayoutButtonProps {
   active: boolean;
   children: ReactNode;
+  disabled: boolean;
   label: string;
   mode: SceneLayoutMode;
   onChange: (scene: RecorderScene) => void;
@@ -153,6 +165,7 @@ interface LayoutButtonProps {
 function LayoutButton({
   active,
   children,
+  disabled,
   label,
   mode,
   onChange,
@@ -161,6 +174,7 @@ function LayoutButton({
   return (
     <Button
       aria-label={label}
+      disabled={disabled}
       size="icon-sm"
       type="button"
       variant={active ? 'default' : 'outline'}
@@ -181,12 +195,14 @@ function LayoutButton({
 }
 
 interface CanvasDimensionInputProps {
+  disabled: boolean;
   label: string;
   onChange: (value: number) => void;
   value: number;
 }
 
 function CanvasDimensionInput({
+  disabled,
   label,
   onChange,
   value,
@@ -197,6 +213,7 @@ function CanvasDimensionInput({
       <Input
         aria-label={`Canvas ${label}`}
         className="h-6 w-20 text-xs"
+        disabled={disabled}
         min={1}
         type="number"
         value={Math.round(value)}

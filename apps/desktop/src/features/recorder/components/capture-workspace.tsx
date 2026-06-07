@@ -15,6 +15,7 @@ import type {
   DuplicateCaptureSourceResolution,
 } from '@/features/recorder/scene-layout';
 import { cn } from '@/lib/utils';
+import { recorderConfigurationLocked } from '../recorder-lifecycle-state';
 import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 import { CaptureResizableLayout } from './capture-resizable-layout';
 import { CaptureToolbar } from './capture-toolbar';
@@ -93,13 +94,19 @@ export function CaptureWorkspace({
     status?.state === 'stopping';
   const workspaceLocked =
     pendingLifecycleAction !== null ||
+    status?.finalization != null ||
     status?.state === 'pausing' ||
     status?.state === 'selecting' ||
     status?.state === 'stopping';
+  const configurationLocked = recorderConfigurationLocked(
+    pendingLifecycleAction,
+    status,
+  );
 
   return (
     <section className="flex min-h-full flex-col">
       <CaptureToolbar
+        configurationLocked={configurationLocked}
         isDirty={isDirty}
         lifecycleLocked={lifecycleLocked}
         loadStatus={loadStatus}
@@ -149,6 +156,7 @@ export function CaptureWorkspace({
         <CaptureResizableLayout
           audioSources={audioSources}
           captureSources={captureSources}
+          configurationLocked={configurationLocked}
           desktopAudioSourceId={desktopAudioSourceId}
           lifecycleLocked={workspaceLocked}
           loadStatus={loadStatus}

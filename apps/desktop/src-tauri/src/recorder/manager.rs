@@ -5,6 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use tracing::info;
 use uuid::Uuid;
 
 use crate::storage::{
@@ -15,18 +16,18 @@ use crate::storage::{
 use super::capture_runtime::{
     capture_timing_snapshot, CapturePreviewSession, CaptureSession, SharedCaptureTiming,
 };
-use super::errors::{
-    dependency_error, filesystem_error, lifecycle_error, scene_or_storage_error, storage_error,
-};
-use super::ffmpeg::{self, FfmpegSegmentInput, FfmpegStreamIndexes, RunningFfmpegSegment};
+use super::compositor::even_canvas_dimension;
+use super::errors::{filesystem_error, lifecycle_error, scene_or_storage_error, storage_error};
+use super::media_writer::{self, MediaSegmentInput, MediaWriterSegment, MediaWriterStreamIndexes};
 use super::storage_mapping::quality_preset_as_storage_label;
 use super::storage_mapping::scene_from_storage;
 use super::types::{
     CaptureSource, CaptureSourceList, CaptureTimingDiagnostics, RecorderAudioHealth,
-    RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError, RecorderFfmpegHealth,
+    RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError,
     RecorderFinalizationAction, RecorderFinalizationPhase, RecorderFinalizationStatus,
-    RecorderGpuCaptureHealth, RecorderPortalHealth, RecorderPreviewState, RecorderPreviewStatus,
-    RecorderState, RecorderStatus, StartRecordingInput,
+    RecorderGpuCaptureHealth, RecorderMediaWriterHealth, RecorderPerformanceStats,
+    RecorderPortalHealth, RecorderPreviewState, RecorderPreviewStatus, RecorderState,
+    RecorderStatus, StartRecordingInput,
 };
 
 mod resume;
@@ -71,8 +72,8 @@ pub(crate) struct ActiveRecording {
     canvas_height: u32,
     canvas_width: u32,
     desktop_audio_source_id: Option<String>,
-    ffmpeg_path: String,
     fps: f64,
+    media_writer: String,
     microphone_audio_source_id: Option<String>,
     recording_id: String,
     scene_id: String,
@@ -84,20 +85,20 @@ pub(crate) struct ActiveRecording {
 pub(crate) struct ActiveSegment {
     file_path: PathBuf,
     id: String,
-    media: Option<SharedSegmentMedia>,
+    runtime: Option<SharedSegmentRuntime>,
     started_at_ms: u64,
-    stream_indexes: FfmpegStreamIndexes,
+    stream_indexes: MediaWriterStreamIndexes,
     timing: Option<SharedCaptureTiming>,
 }
 
 #[derive(Debug)]
-pub(crate) struct RunningSegmentMedia {
+pub(crate) struct RecordingSegmentRuntime {
     capture: Option<Box<dyn CaptureSession>>,
-    ffmpeg: RunningFfmpegSegment,
+    media_writer: MediaWriterSegment,
     timing: Option<SharedCaptureTiming>,
 }
 
-type SharedSegmentMedia = Arc<Mutex<Option<RunningSegmentMedia>>>;
+type SharedSegmentRuntime = Arc<Mutex<Option<RecordingSegmentRuntime>>>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingRecordingStart {
@@ -107,8 +108,7 @@ pub(crate) struct PendingRecordingStart {
     pub(crate) segment: ActiveSegment,
     pub(crate) segment_path: PathBuf,
     pub(crate) segment_index: u32,
-    pub(crate) segment_input: FfmpegSegmentInput,
-    pub(crate) ffmpeg_path: String,
+    pub(crate) segment_input: MediaSegmentInput,
     pub(crate) input: StartRecordingInput,
     pub(crate) scene: super::types::RecorderScene,
 }
@@ -119,20 +119,19 @@ pub(crate) struct PendingSegmentStart {
     pub(crate) segment: ActiveSegment,
     pub(crate) segment_path: PathBuf,
     pub(crate) segment_index: u32,
-    pub(crate) segment_input: FfmpegSegmentInput,
-    pub(crate) ffmpeg_path: String,
+    pub(crate) segment_input: MediaSegmentInput,
     pub(crate) scene: super::types::RecorderScene,
 }
 
-impl RunningSegmentMedia {
+impl RecordingSegmentRuntime {
     pub(crate) fn new(
-        ffmpeg: RunningFfmpegSegment,
+        media_writer: MediaWriterSegment,
         capture: Option<Box<dyn CaptureSession>>,
         timing: Option<SharedCaptureTiming>,
     ) -> Self {
         Self {
             capture,
-            ffmpeg,
+            media_writer,
             timing,
         }
     }
@@ -141,15 +140,32 @@ impl RunningSegmentMedia {
         self.timing.clone()
     }
 
-    fn stop(mut self) -> Result<std::process::ExitStatus, RecorderError> {
-        let capture_error = self.capture.take().and_then(|capture| capture.stop().err());
-        let ffmpeg_result = self.ffmpeg.stop();
+    fn stop(mut self, stop_at_ms: u64) -> Result<(), RecorderError> {
+        let capture_error = self
+            .capture
+            .take()
+            .and_then(|capture| capture.stop(stop_at_ms).err());
+        let media_writer_result = self.media_writer.stop(stop_at_ms);
+        if let Some(timing) = &self.timing {
+            let snapshot = capture_timing_snapshot(timing);
+            info!(
+                frames_received_by_source = ?snapshot.frames_received_by_source,
+                composed_frames = snapshot.composed_frames,
+                frames_sent_to_writer = snapshot.frames_sent_to_writer,
+                reused_frame_compositions = snapshot.reused_frame_compositions,
+                scheduler_ticks = snapshot.scheduler_ticks,
+                scheduler_missed_deadlines = snapshot.scheduler_missed_deadlines,
+                max_compose_duration_ms = snapshot.max_compose_duration_ms,
+                total_compose_duration_ms = snapshot.total_compose_duration_ms,
+                "recorder_segment_capture_timing_final"
+            );
+        }
 
         if let Some(error) = capture_error {
             return Err(error);
         }
 
-        ffmpeg_result
+        media_writer_result
     }
 }
 
@@ -170,6 +186,27 @@ impl RecorderManager {
 
     pub fn status(&self) -> Result<RecorderStatus, RecorderError> {
         Ok(self.lock_runtime()?.status.clone())
+    }
+
+    pub(crate) fn performance_stats(
+        &self,
+        timestamp_ms: u64,
+    ) -> Result<RecorderPerformanceStats, RecorderError> {
+        let runtime = self.lock_runtime()?;
+        let active_segment = runtime
+            .active
+            .as_ref()
+            .and_then(|active| active.active_segment.as_ref());
+
+        Ok(RecorderPerformanceStats {
+            desired_fps: runtime.active.as_ref().map(|active| active.fps),
+            segment_started_at_ms: active_segment.map(|segment| segment.started_at_ms),
+            state: runtime.status.state.clone(),
+            timing: active_segment
+                .and_then(|segment| segment.timing.as_ref())
+                .map(capture_timing_snapshot),
+            updated_at_ms: timestamp_ms,
+        })
     }
 
     pub(crate) fn preview_status(&self) -> Result<RecorderPreviewStatus, RecorderError> {
@@ -274,6 +311,18 @@ impl RecorderManager {
         Ok(inactive_status.expect("inactive status is available"))
     }
 
+    pub(crate) fn preview_start_is_current(&self, scene_id: &str, generation: u64) -> bool {
+        self.lock_runtime()
+            .map(|runtime| {
+                runtime.preview_start_generation == generation
+                    && runtime.preview_status.state == RecorderPreviewState::Starting
+                    && runtime.preview_status.scene_id.as_deref() == Some(scene_id)
+                    && runtime.active.is_none()
+                    && !status_has_pending_lifecycle(&runtime.status)
+            })
+            .unwrap_or(false)
+    }
+
     pub(crate) fn fail_preview_start(
         &self,
         scene_id: String,
@@ -317,6 +366,12 @@ impl RecorderManager {
             runtime.preview_start_generation = runtime.preview_start_generation.saturating_add(1);
             runtime.preview.take()
         };
+        let preview_scene_id = preview.as_ref().map(|preview| preview.scene_id.clone());
+        info!(
+            scene_id = preview_scene_id.as_deref().unwrap_or(""),
+            had_live_preview = preview.is_some(),
+            "recorder_preview_stop_started"
+        );
         if let Some(preview) = preview {
             preview.session.stop()?;
         }
@@ -324,6 +379,10 @@ impl RecorderManager {
         let mut runtime = self.lock_runtime()?;
         let status = idle_preview_status(timestamp_ms);
         runtime.preview_status = status.clone();
+        info!(
+            scene_id = preview_scene_id.as_deref().unwrap_or(""),
+            "recorder_preview_stop_succeeded"
+        );
 
         Ok(status)
     }
@@ -344,6 +403,12 @@ impl RecorderManager {
         Ok(CaptureSourceList {
             sources: self.lock_runtime()?.capture_sources.clone(),
         })
+    }
+
+    pub(crate) fn configuration_is_locked(&self) -> Result<bool, RecorderError> {
+        let runtime = self.lock_runtime()?;
+
+        Ok(runtime.active.is_some() || status_has_pending_lifecycle(&runtime.status))
     }
 
     pub fn set_capture_sources(
@@ -488,7 +553,7 @@ fn status_for_finalizing_pause(
     RecorderStatus {
         active_recording_id: Some(active.recording_id.clone()),
         active_scene_id: Some(active.scene_id.clone()),
-        active_segment_id: None,
+        active_segment_id: Some(segment.id.clone()),
         backend_health,
         finalization: Some(RecorderFinalizationStatus {
             action: RecorderFinalizationAction::Pause,
@@ -511,7 +576,10 @@ fn status_for_finalizing_stop(
     RecorderStatus {
         active_recording_id: None,
         active_scene_id: None,
-        active_segment_id: None,
+        active_segment_id: active
+            .active_segment
+            .as_ref()
+            .map(|segment| segment.id.clone()),
         backend_health,
         finalization: Some(RecorderFinalizationStatus {
             action: RecorderFinalizationAction::Stop,
@@ -547,14 +615,14 @@ pub(crate) fn unavailable_backend_health() -> RecorderBackendHealth {
             default_source_id: None,
             error: Some("Recorder backend is not implemented yet.".to_string()),
         },
-        ffmpeg: RecorderFfmpegHealth {
+        gpu_capture: unavailable_gpu_capture_health("Recorder backend is not implemented yet."),
+        media_writer: RecorderMediaWriterHealth {
             available: false,
             capabilities: Default::default(),
             error: Some("Recorder backend is not implemented yet.".to_string()),
-            path: None,
-            version_line: None,
+            version: None,
+            writer: None,
         },
-        gpu_capture: unavailable_gpu_capture_health("Recorder backend is not implemented yet."),
         microphone: RecorderAudioHealth {
             available: false,
             default_source_id: None,
@@ -610,7 +678,7 @@ fn fail_segment_for_error(
     segment_id: &str,
     timestamp_ms: u64,
     error: &RecorderError,
-    ffmpeg_exit_code: Option<i64>,
+    writer_exit_code: Option<i64>,
 ) -> Result<(), RecorderError> {
     storage
         .with_connection(|connection| {
@@ -619,7 +687,7 @@ fn fail_segment_for_error(
                 &FailRecordingSegmentInput {
                     ended_at_ms: timestamp_ms as i64,
                     error_code: error.code.clone(),
-                    ffmpeg_exit_code,
+                    ffmpeg_exit_code: writer_exit_code,
                     id: segment_id.to_string(),
                     updated_at_ms: timestamp_ms as i64,
                 },

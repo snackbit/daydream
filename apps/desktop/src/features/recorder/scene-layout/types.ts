@@ -38,11 +38,4 @@ export interface CaptureSourceMergeClassification {
   newSources: CaptureSource[];
 }
 
-export type DuplicateCaptureSourceResolution =
-  | 'add-anyway'
-  | 'refresh-existing'
-  | 'skip';
-
-export interface MergeCaptureSourcesOptions {
-  allowLikelyDuplicates?: boolean;
-}
+export type DuplicateCaptureSourceResolution = 'refresh-existing' | 'skip';

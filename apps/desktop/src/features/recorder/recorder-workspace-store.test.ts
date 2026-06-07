@@ -1,8 +1,9 @@
 import type {
   AudioSourceList,
   CaptureSourceList,
-  RecorderFfmpegCapabilities,
+  RecorderMediaWriterCapabilities,
   RecorderPreviewFrame,
+  RecorderPreviewStatus,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -29,13 +30,19 @@ const client = vi.hoisted(() => ({
 
 vi.mock('./recorder-client', () => client);
 
-const unavailableFfmpegCapabilities = {
-  libopusEncoder: false,
-  libx264Encoder: false,
+const unavailableMediaWriterCapabilities = {
+  appsrc: false,
+  audioConvert: false,
+  audioResample: false,
+  fileSink: false,
+  h264Parse: false,
   matroskaMuxer: false,
-  pulseInput: false,
-  rawvideoDemuxer: false,
-} satisfies RecorderFfmpegCapabilities;
+  opusEncoder: false,
+  pulseSource: false,
+  queue: false,
+  videoConvert: false,
+  x264Encoder: false,
+} satisfies RecorderMediaWriterCapabilities;
 
 const status: RecorderStatus = {
   activeRecordingId: null,
@@ -47,12 +54,12 @@ const status: RecorderStatus = {
       defaultSourceId: 'desktop',
       error: null,
     },
-    ffmpeg: {
+    mediaWriter: {
       available: false,
-      capabilities: unavailableFfmpegCapabilities,
-      error: 'FFmpeg is not wired yet.',
-      path: null,
-      versionLine: null,
+      capabilities: unavailableMediaWriterCapabilities,
+      error: 'Media writer is not wired yet.',
+      version: null,
+      writer: null,
     },
     gpuCapture: {
       available: false,
@@ -225,6 +232,77 @@ test('startPreview records live status and preview frame events by scene source 
   ).toBe('data:image/png;base64,abc');
 });
 
+test('startPreview does not invoke backend while recorder lifecycle is pending', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    pendingLifecycleAction: 'start',
+    scene,
+    status,
+  });
+
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+
+  expect(client.startRecorderPreview).not.toHaveBeenCalled();
+});
+
+test('startPreview is single-flight for duplicate calls while backend request is pending', async () => {
+  const scene = sceneWithSources(['main']);
+  const preview = deferred<RecorderPreviewStatus>();
+  client.startRecorderPreview.mockReturnValue(preview.promise);
+
+  const first = useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  const second = useRecorderWorkspaceStore.getState().startPreview(scene.id);
+
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+
+  preview.resolve({
+    error: null,
+    sceneId: scene.id,
+    sourceIds: ['main'],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+  await Promise.all([first, second]);
+
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+    'live',
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().previewStartInFlightSceneId,
+  ).toBeNull();
+
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+});
+
+test('startPreview blocks different scene requests while preview start is in flight', async () => {
+  const scene = sceneWithSources(['main']);
+  const otherScene = { ...sceneWithSources(['secondary']), id: 'scene-2' };
+  const preview = deferred<RecorderPreviewStatus>();
+  client.startRecorderPreview.mockReturnValue(preview.promise);
+
+  const first = useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  const second = useRecorderWorkspaceStore
+    .getState()
+    .startPreview(otherScene.id);
+
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
+
+  preview.resolve({
+    error: null,
+    sceneId: scene.id,
+    sourceIds: ['main'],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+  await Promise.all([first, second]);
+
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.sceneId).toBe(
+    scene.id,
+  );
+});
+
 test('start stops active preview before starting recording', async () => {
   const scene = sceneWithSources(['main']);
   useRecorderWorkspaceStore.setState({
@@ -244,6 +322,19 @@ test('start stops active preview before starting recording', async () => {
     activeRecordingId: 'recording-1',
     state: 'recording',
   });
+  client.stopRecorderPreview.mockImplementation(() => {
+    expect(useRecorderWorkspaceStore.getState().pendingLifecycleAction).toBe(
+      'start',
+    );
+
+    return Promise.resolve({
+      error: null,
+      sceneId: null,
+      sourceIds: [],
+      state: 'idle',
+      updatedAtMs: 2,
+    });
+  });
 
   await useRecorderWorkspaceStore.getState().start();
 
@@ -257,6 +348,33 @@ test('start stops active preview before starting recording', async () => {
   expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
     'idle',
   );
+});
+
+test('start surfaces stale screen permission without opening source chooser', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    isDirty: false,
+    scene,
+    status,
+  });
+  client.startRecording.mockRejectedValue({
+    category: 'permission',
+    code: 'recorder_portal_restore_token_invalid',
+    message: 'Screen permission expired. Reselect monitor sources.',
+  });
+
+  await useRecorderWorkspaceStore.getState().start();
+
+  expect(client.startRecording).toHaveBeenCalledWith(
+    expect.objectContaining({ sceneId: scene.id }),
+  );
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState().error).toBe(
+    'Screen permission expired. Reselect monitor sources.',
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+  ).toBeNull();
 });
 
 test('load drops unavailable saved audio source ids before exposing the scene', async () => {
@@ -282,7 +400,7 @@ test('load drops unavailable saved audio source ids before exposing the scene', 
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: null,
-    fps: 1,
+    fps: 5,
     microphoneAudioSourceId: null,
     qualityPreset: 'balanced-ocr',
     sceneId: savedScene.id,
@@ -292,7 +410,9 @@ test('load drops unavailable saved audio source ids before exposing the scene', 
 test('load records client failures without creating a draft scene', async () => {
   client.getCaptureSources.mockRejectedValue(new Error('portal unavailable'));
 
-  await useRecorderWorkspaceStore.getState().load();
+  await expect(useRecorderWorkspaceStore.getState().load()).rejects.toThrow(
+    'portal unavailable',
+  );
 
   const state = useRecorderWorkspaceStore.getState();
   expect(state.loadStatus).toBe('error');
@@ -400,12 +520,77 @@ test('updateCaptureSources preserves dirty state when no sources are merged', as
 test('updateCaptureSources records chooser errors', async () => {
   client.selectCaptureSources.mockRejectedValue('chooser failed');
 
-  await useRecorderWorkspaceStore.getState().updateCaptureSources();
+  await expect(
+    useRecorderWorkspaceStore.getState().updateCaptureSources(),
+  ).rejects.toBe('chooser failed');
 
   expect(useRecorderWorkspaceStore.getState()).toMatchObject({
     error: 'chooser failed',
     loadStatus: 'error',
   });
+});
+
+test('updateCaptureSources ignores manual chooser cancellation', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    error: 'previous error',
+    isDirty: false,
+    loadStatus: 'ready',
+    scene,
+    selectedSceneSourceId: scene.sources[0]?.id ?? null,
+  });
+  client.selectCaptureSources.mockRejectedValue({
+    category: 'permission',
+    code: 'recorder_portal_permission_denied',
+    message: 'ScreenCast source selection was denied or cancelled.',
+  });
+
+  await expect(
+    useRecorderWorkspaceStore.getState().updateCaptureSources(),
+  ).resolves.toBeUndefined();
+
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    error: null,
+    isDirty: false,
+    loadStatus: 'ready',
+    pendingDuplicateCaptureSources: [],
+    scene,
+    selectedSceneSourceId: scene.sources[0]?.id ?? null,
+  });
+});
+
+test('updateCaptureSources stops active preview before opening chooser', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    previewFramesBySceneSourceId: {
+      [scene.sources[0]?.id ?? 'main']: {
+        dataUrl: 'data:image/png;base64,preview',
+        height: 1,
+        sceneSourceId: scene.sources[0]?.id ?? 'main',
+        sourceId: 'main',
+        timestampMs: 1,
+        width: 1,
+      },
+    },
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+    scene,
+  });
+
+  await useRecorderWorkspaceStore.getState().updateCaptureSources();
+
+  expect(client.stopRecorderPreview.mock.invocationCallOrder[0]).toBeLessThan(
+    client.selectCaptureSources.mock.invocationCallOrder[0] ??
+      Number.POSITIVE_INFINITY,
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId,
+  ).toEqual({});
 });
 
 test('updateCaptureSources queues likely duplicate monitor matches for resolution', async () => {
@@ -576,6 +761,88 @@ test('saveScene after delete persists the reduced source list', async () => {
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(false);
 });
 
+test('saveScene stops active preview before persisting an empty scene', async () => {
+  const scene = sceneWithSources(['main']);
+  const emptyScene: RecorderScene = {
+    ...scene,
+    sources: [],
+  };
+  useRecorderWorkspaceStore.setState({
+    isDirty: true,
+    previewFramesBySceneSourceId: {
+      [scene.sources[0]?.id ?? 'main']: {
+        dataUrl: 'data:image/png;base64,preview',
+        height: 1,
+        sceneSourceId: scene.sources[0]?.id ?? 'main',
+        sourceId: 'main',
+        timestampMs: 1,
+        width: 1,
+      },
+    },
+    previewStartInFlightSceneId: scene.id,
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+    scene: emptyScene,
+  });
+  client.saveRecorderScene.mockResolvedValue(emptyScene);
+
+  await useRecorderWorkspaceStore.getState().saveScene();
+
+  expect(client.stopRecorderPreview.mock.invocationCallOrder[0]).toBeLessThan(
+    client.saveRecorderScene.mock.invocationCallOrder[0] ??
+      Number.POSITIVE_INFINITY,
+  );
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    isDirty: false,
+    previewFramesBySceneSourceId: {},
+    previewStartInFlightSceneId: null,
+    previewStatus: null,
+  });
+});
+
+test('saveScene clears stale preview error for the saved scene', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    isDirty: true,
+    previewFramesBySceneSourceId: {
+      [scene.sources[0]?.id ?? 'main']: {
+        dataUrl: 'data:image/png;base64,preview',
+        height: 1,
+        sceneSourceId: scene.sources[0]?.id ?? 'main',
+        sourceId: 'main',
+        timestampMs: 1,
+        width: 1,
+      },
+    },
+    previewStatus: {
+      error: {
+        category: 'video',
+        code: 'recorder_capture_source_missing',
+        message: 'Capture source is missing.',
+      },
+      sceneId: scene.id,
+      sourceIds: [],
+      state: 'error',
+      updatedAtMs: 1,
+    },
+    scene,
+  });
+  client.saveRecorderScene.mockResolvedValue(scene);
+
+  await useRecorderWorkspaceStore.getState().saveScene();
+
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    isDirty: false,
+    previewFramesBySceneSourceId: {},
+    previewStatus: null,
+  });
+});
+
 test('saveScene persists the current scene and clears dirty state', async () => {
   await useRecorderWorkspaceStore.getState().load();
   const scene = useRecorderWorkspaceStore.getState().scene;
@@ -615,7 +882,9 @@ test('saveScene reports missing scenes and save failures', async () => {
   useRecorderWorkspaceStore.setState({ scene });
   client.saveRecorderScene.mockRejectedValue(new Error('disk full'));
 
-  await useRecorderWorkspaceStore.getState().saveScene();
+  await expect(
+    useRecorderWorkspaceStore.getState().saveScene(),
+  ).rejects.toThrow('disk full');
 
   expect(useRecorderWorkspaceStore.getState()).toMatchObject({
     error: 'disk full',
@@ -680,6 +949,63 @@ test('selectAudioSource explicitly adds and deletes optional audio roles', () =>
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(true);
 });
 
+test('configuration mutations are ignored while recording is active', async () => {
+  const scene = sceneWithSources(['main', 'secondary']);
+  const replacementScene = sceneWithSources(['replacement']);
+  const source = sceneSource(scene);
+  useRecorderWorkspaceStore.setState({
+    desktopAudioSourceId: 'desktop',
+    isDirty: false,
+    pendingDuplicateCaptureSources: [
+      {
+        existingSource: source,
+        source: {
+          displayName: 'main',
+          height: null,
+          id: 'main-new-portal-id',
+          kind: 'monitor',
+          logicalHeight: 900,
+          logicalWidth: 1440,
+          scaleFactor: null,
+          width: null,
+        },
+      },
+    ],
+    scene,
+    selectedSceneSourceId: source.id,
+    status: {
+      ...status,
+      activeRecordingId: 'recording-1',
+      activeSceneId: scene.id,
+      activeSegmentId: 'segment-1',
+      state: 'recording',
+    },
+  });
+
+  useRecorderWorkspaceStore.getState().setDraftScene(replacementScene);
+  useRecorderWorkspaceStore.getState().deleteSceneSource(source.id);
+  useRecorderWorkspaceStore.getState().selectAudioSource('desktop-audio', null);
+  useRecorderWorkspaceStore
+    .getState()
+    .resolveDuplicateCaptureSource('refresh-existing');
+  await useRecorderWorkspaceStore.getState().updateCaptureSources();
+  await useRecorderWorkspaceStore.getState().saveScene();
+
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+  expect(client.saveRecorderScene).not.toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    desktopAudioSourceId: 'desktop',
+    isDirty: false,
+    pendingDuplicateCaptureSources: [
+      expect.objectContaining({
+        existingSource: source,
+      }),
+    ],
+    scene,
+    selectedSceneSourceId: source.id,
+  });
+});
+
 test('start sends null for omitted optional audio roles', async () => {
   const scene = sceneWithSources(['main']);
   useRecorderWorkspaceStore.setState({
@@ -693,7 +1019,7 @@ test('start sends null for omitted optional audio roles', async () => {
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: null,
-    fps: 1,
+    fps: 5,
     microphoneAudioSourceId: null,
     qualityPreset: 'balanced-ocr',
     sceneId: scene.id,
@@ -714,7 +1040,7 @@ test('start sends restored saved audio roles', async () => {
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: 'desktop',
-    fps: 1,
+    fps: 5,
     microphoneAudioSourceId: 'mic',
     qualityPreset: 'balanced-ocr',
     sceneId: scene.id,
@@ -806,7 +1132,7 @@ test('async pause shows paused while segment finalization is pending', async () 
   });
   client.pauseRecording.mockResolvedValue({
     ...recordingStatus,
-    activeSegmentId: null,
+    activeSegmentId: 'segment-1',
     finalization: {
       action: 'pause',
       phase: 'stopping-capture',
@@ -854,7 +1180,7 @@ test('async stop settles through status polling when completion event is missed'
     const finalizingStatus: RecorderStatus = {
       ...recordingStatus,
       activeRecordingId: null,
-      activeSegmentId: null,
+      activeSegmentId: 'segment-1',
       finalization: {
         action: 'stop',
         phase: 'stopping-capture',
@@ -934,7 +1260,11 @@ test('recorder command failures preserve typed recorder error messages', async (
     message: 'Cannot pause now.',
   });
 
-  await useRecorderWorkspaceStore.getState().pause();
+  await expect(
+    useRecorderWorkspaceStore.getState().pause(),
+  ).rejects.toMatchObject({
+    message: 'Cannot pause now.',
+  });
 
   expect(useRecorderWorkspaceStore.getState().error).toBe('Cannot pause now.');
 });
@@ -1000,4 +1330,15 @@ function captureSource(sourceList: CaptureSourceList, index = 0) {
   }
 
   return source;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, reject, resolve };
 }

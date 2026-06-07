@@ -178,7 +178,7 @@ export interface RecorderSegment {
   durationMs: number | null;
   endedAtMs: number | null;
   errorCode: string | null;
-  ffmpegExitCode: number | null;
+  writerExitCode: number | null;
   filePath: string;
   id: string;
   microphoneAudioStreamIndex: number | null;
@@ -192,11 +192,15 @@ export interface RecorderSegment {
 export interface CaptureTimingDiagnostics {
   composedFrames: number;
   framesReceivedBySource: Record<string, number>;
-  framesSentToFfmpeg: number;
+  framesSentToWriter: number;
   lastComposedTimestampMs: number | null;
+  maxComposeDurationMs: number;
   reusedFrameCompositions: number;
+  schedulerMissedDeadlines: number;
+  schedulerTicks: number;
   sourceTimestampMaxMs: number | null;
   sourceTimestampMinMs: number | null;
+  totalComposeDurationMs: number;
 }
 
 export interface RecorderBackendComponentHealth {
@@ -204,18 +208,24 @@ export interface RecorderBackendComponentHealth {
   error: string | null;
 }
 
-export interface RecorderFfmpegHealth extends RecorderBackendComponentHealth {
-  capabilities: RecorderFfmpegCapabilities;
-  path: string | null;
-  versionLine: string | null;
+export interface RecorderMediaWriterHealth extends RecorderBackendComponentHealth {
+  capabilities: RecorderMediaWriterCapabilities;
+  version: string | null;
+  writer: string | null;
 }
 
-export interface RecorderFfmpegCapabilities {
-  libopusEncoder: boolean;
-  libx264Encoder: boolean;
+export interface RecorderMediaWriterCapabilities {
+  appsrc: boolean;
+  audioConvert: boolean;
+  audioResample: boolean;
+  fileSink: boolean;
+  h264Parse: boolean;
   matroskaMuxer: boolean;
-  pulseInput: boolean;
-  rawvideoDemuxer: boolean;
+  opusEncoder: boolean;
+  pulseSource: boolean;
+  queue: boolean;
+  videoConvert: boolean;
+  x264Encoder: boolean;
 }
 
 export interface RecorderAudioHealth extends RecorderBackendComponentHealth {
@@ -245,8 +255,8 @@ export interface RecorderGpuCaptureHealth extends RecorderBackendComponentHealth
 
 export interface RecorderBackendHealth {
   desktopAudio: RecorderAudioHealth;
-  ffmpeg: RecorderFfmpegHealth;
   gpuCapture: RecorderGpuCaptureHealth;
+  mediaWriter: RecorderMediaWriterHealth;
   microphone: RecorderAudioHealth;
   pipewire: RecorderBackendComponentHealth;
   portal: RecorderPortalHealth;
@@ -260,5 +270,13 @@ export interface RecorderStatus {
   finalization: RecorderFinalizationStatus | null;
   lastError: RecorderError | null;
   state: RecorderState;
+  updatedAtMs: number;
+}
+
+export interface RecorderPerformanceStats {
+  desiredFps: number | null;
+  segmentStartedAtMs: number | null;
+  state: RecorderState;
+  timing: CaptureTimingDiagnostics | null;
   updatedAtMs: number;
 }

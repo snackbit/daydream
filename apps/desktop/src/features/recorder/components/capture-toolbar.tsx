@@ -7,9 +7,13 @@ import type {
 import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import type { RecorderLifecycleAction } from '../recorder-workspace-store';
+import {
+  DEFAULT_RECORDER_FPS,
+  type RecorderLifecycleAction,
+} from '../recorder-workspace-store';
 
 export interface CaptureToolbarProps {
+  configurationLocked: boolean;
   isDirty: boolean;
   lifecycleLocked: boolean;
   loadStatus: string;
@@ -26,6 +30,7 @@ export interface CaptureToolbarProps {
 }
 
 export function CaptureToolbar({
+  configurationLocked,
   isDirty,
   lifecycleLocked,
   loadStatus,
@@ -50,7 +55,7 @@ export function CaptureToolbar({
     status?.state !== 'idle' ||
     !status.backendHealth.portal.available ||
     !status.backendHealth.pipewire.available ||
-    !status.backendHealth.ffmpeg.available;
+    !status.backendHealth.mediaWriter.available;
   const pauseDisabled = lifecycleLocked || status?.state !== 'recording';
   const resumeDisabled = lifecycleLocked || status?.state !== 'paused';
   const stopDisabled =
@@ -65,7 +70,9 @@ export function CaptureToolbar({
           <Badge variant="secondary">
             Status: {status?.state ?? loadStatus}
           </Badge>
-          <Badge variant="outline">FPS: 1</Badge>
+          <Badge variant="outline">
+            FPS: {formatFps(DEFAULT_RECORDER_FPS)}
+          </Badge>
           <Badge variant="outline">Quality: balanced-ocr</Badge>
           <Badge variant={isDirty ? 'destructive' : 'secondary'}>
             {isDirty ? 'Unsaved scene' : 'Scene saved'}
@@ -84,7 +91,11 @@ export function CaptureToolbar({
         <Button
           className="gap-2"
           disabled={
-            lifecycleLocked || !scene || !isDirty || saveStatus === 'loading'
+            configurationLocked ||
+            lifecycleLocked ||
+            !scene ||
+            !isDirty ||
+            saveStatus === 'loading'
           }
           onClick={onSave}
           variant="outline"
@@ -146,6 +157,10 @@ export function CaptureToolbar({
       </div>
     </div>
   );
+}
+
+function formatFps(fps: number) {
+  return Number.isInteger(fps) ? fps.toString() : fps.toFixed(1);
 }
 
 function previewLabel(status: RecorderPreviewStatus | null): string {

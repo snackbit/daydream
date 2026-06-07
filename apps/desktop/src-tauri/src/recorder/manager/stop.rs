@@ -1,4 +1,5 @@
 use super::*;
+use tracing::warn;
 
 impl RecorderManager {
     pub fn pause_internal(
@@ -71,7 +72,7 @@ impl RecorderManager {
             .clone()
             .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
 
-        self.finalize_ffmpeg_segment(storage, &active, &segment, timestamp_ms)?;
+        self.finalize_media_segment(storage, &active, &segment, timestamp_ms)?;
         mark_recording_paused(storage, &active.recording_id)?;
 
         let mut paused = active;
@@ -146,7 +147,7 @@ impl RecorderManager {
             .clone()
             .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
 
-        if let Err(error) = self.finalize_ffmpeg_segment(storage, &active, &segment, timestamp_ms) {
+        if let Err(error) = self.finalize_media_segment(storage, &active, &segment, timestamp_ms) {
             self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
             return Err(error);
         }
@@ -244,7 +245,7 @@ impl RecorderManager {
         }
 
         if let Some(segment) = &active.active_segment {
-            self.finalize_ffmpeg_segment(storage, &active, segment, timestamp_ms)?;
+            self.finalize_media_segment(storage, &active, segment, timestamp_ms)?;
         }
 
         storage
@@ -313,8 +314,7 @@ impl RecorderManager {
         let active = self.active_for_completion(recording_id, RecorderFinalizationAction::Stop)?;
 
         if let Some(segment) = &active.active_segment {
-            if let Err(error) =
-                self.finalize_ffmpeg_segment(storage, &active, segment, timestamp_ms)
+            if let Err(error) = self.finalize_media_segment(storage, &active, segment, timestamp_ms)
             {
                 self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
                 return Err(error);
@@ -347,15 +347,15 @@ impl RecorderManager {
     ) -> Result<RecorderStatus, RecorderError> {
         self.stop_internal(storage, timestamp_ms)
     }
-    fn finalize_ffmpeg_segment(
+    fn finalize_media_segment(
         &self,
         storage: &AppStorage,
         active: &ActiveRecording,
         segment: &ActiveSegment,
         timestamp_ms: u64,
     ) -> Result<(), RecorderError> {
-        if let Some(media) = &segment.media {
-            let segment_media = media
+        if let Some(runtime) = &segment.runtime {
+            let segment_runtime = runtime
                 .lock()
                 .map_err(|_error| {
                     lifecycle_error(
@@ -365,34 +365,15 @@ impl RecorderManager {
                 })?
                 .take();
 
-            if let Some(segment_media) = segment_media {
-                let exit_status = match segment_media.stop() {
-                    Ok(exit_status) => exit_status,
-                    Err(error) => {
-                        self.fail_active_recording(
-                            storage,
-                            active,
-                            &segment.id,
-                            timestamp_ms,
-                            &error,
-                            None,
-                        )?;
-                        return Err(error);
-                    }
-                };
-
-                if !exit_status.success() {
-                    let error = dependency_error(
-                        "recorder_ffmpeg_failed",
-                        format!("FFmpeg exited with {exit_status}."),
-                    );
+            if let Some(segment_runtime) = segment_runtime {
+                if let Err(error) = segment_runtime.stop(timestamp_ms) {
                     self.fail_active_recording(
                         storage,
                         active,
                         &segment.id,
                         timestamp_ms,
                         &error,
-                        exit_status.code().map(i64::from),
+                        None,
                     )?;
                     return Err(error);
                 }
@@ -404,11 +385,21 @@ impl RecorderManager {
             }
         }
 
-        let probe = ffmpeg::probe_segment_best_effort(&active.ffmpeg_path, &segment.file_path);
-        let duration_ms = probe
-            .duration_ms
-            .unwrap_or_else(|| duration_ms(segment.started_at_ms, timestamp_ms));
-        let probe_json = ffmpeg::probe_json_string(&probe);
+        let probe = media_writer::probe_segment_best_effort(&segment.file_path);
+        let wall_duration_ms = duration_ms(segment.started_at_ms, timestamp_ms);
+        if let Some(probe_duration_ms) = probe.duration_ms {
+            if probe_duration_ms > wall_duration_ms.saturating_add(100) {
+                warn!(
+                    recording_id = active.recording_id,
+                    segment_id = segment.id,
+                    probe_duration_ms,
+                    wall_duration_ms,
+                    "recorder_segment_probe_duration_exceeded_wall_time"
+                );
+            }
+        }
+        let duration_ms = wall_duration_ms;
+        let probe_json = media_writer::probe_json_string(&probe);
 
         storage
             .with_connection(|connection| {
@@ -495,9 +486,9 @@ impl RecorderManager {
         segment_id: &str,
         timestamp_ms: u64,
         error: &RecorderError,
-        ffmpeg_exit_code: Option<i64>,
+        writer_exit_code: Option<i64>,
     ) -> Result<(), RecorderError> {
-        fail_segment_for_error(storage, segment_id, timestamp_ms, error, ffmpeg_exit_code)?;
+        fail_segment_for_error(storage, segment_id, timestamp_ms, error, writer_exit_code)?;
         storage
             .with_connection(|connection| {
                 storage::update_recording_status(connection, &active.recording_id, "failed")

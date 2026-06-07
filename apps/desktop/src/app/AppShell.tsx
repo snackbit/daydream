@@ -1,6 +1,7 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RecorderStatusBar } from '@/features/recorder/components/recorder-status-bar';
 import { navigationItems } from './navigation';
 
 export function AppShell() {
@@ -63,9 +64,8 @@ export function AppShell() {
           <Outlet />
         </main>
 
-        <footer className="text-muted-foreground flex h-8 shrink-0 items-center justify-between border-t px-4 text-xs">
-          <span>Recorder idle</span>
-          <span>FFmpeg diagnostics available</span>
+        <footer className="text-muted-foreground flex h-8 shrink-0 items-center border-t px-4 text-xs">
+          <RecorderStatusBar />
         </footer>
       </div>
     </div>

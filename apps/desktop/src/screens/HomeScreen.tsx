@@ -32,9 +32,9 @@ export function HomeScreen() {
         </h1>
         <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
           This shell is ready for Linux/Wayland-first capture work. The first
-          implemented backend command is diagnostics with a real FFmpeg probe;
-          recording, storage, redaction, OCR, transcription, and indexing remain
-          intentionally stubbed.
+          implemented backend command is diagnostics with a real media writer
+          probe; recording, storage, redaction, OCR, transcription, and indexing
+          remain intentionally stubbed.
         </p>
       </div>
 

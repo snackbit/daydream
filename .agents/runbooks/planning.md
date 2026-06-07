@@ -99,6 +99,23 @@ milestone-style plan.
      Rust/Tauri changes are in scope and local prerequisites are installed.
    - Include negative or failure-path validation for privacy-sensitive,
      stateful, native, or user-facing behavior.
+   - Treat sandbox-sensitive native diagnostics carefully. If a command that
+     should normally see host hardware, devices, sessions, windows, displays,
+     services, or drivers fails with missing resources, permission errors,
+     inaccessible devices, or a crash that looks sandbox-related, do not treat
+     the first result as host truth. Rerun the same safe diagnostic command with
+     elevated permissions before drawing conclusions.
+   - Do not elevate destructive commands, commands that mutate project state,
+     or commands that could expose private captured content. If elevated
+     validation is unsafe, record the limitation explicitly.
+
+11. State completion proof before closeout.
+   - Before marking a gate or scoped task complete, briefly state what proves
+     completion.
+   - Include only relevant proof categories: automated tests, manual checks,
+     contract or API compatibility, documentation, privacy or security review,
+     migrations or config, and downstream impact.
+   - If a category does not apply, omit it. Do not add boilerplate proof.
 
 ## Validation
 
@@ -109,6 +126,10 @@ milestone-style plan.
   gates and updated the milestone doc where future work changed.
 - Confirm required privacy, config, storage, packaging, and native-permission
   surfaces were reviewed when runtime assumptions change.
+- Confirm sandbox-sensitive native diagnostics were retried with safe elevation
+  before using failure output as evidence, or that the limitation was recorded.
+- Confirm closeout notes identify concrete completion proof instead of only
+  summarizing code changes.
 - Confirm completion notes do not claim done while required wiring is still
   pending.
 
@@ -123,3 +144,6 @@ milestone-style plan.
   notes instead of the milestone body.
 - Completing a gate without correcting later gates after implementation changed
   their assumptions, contracts, or validation requirements.
+- Reporting completion without naming the evidence that makes the claim true.
+- Treating sandbox-limited hardware, display, session, service, or driver
+  command failures as host facts without a safe elevated retry.

@@ -11,41 +11,51 @@ impl RecorderManager {
             .with_connection(|connection| storage::get_recorder_scene(connection, &input.scene_id))
             .map_err(|error| scene_or_storage_error(error, &input.scene_id))
             .and_then(scene_from_storage)?;
-        let ffmpeg_probe = ffmpeg::probe_selected_ffmpeg()
-            .map_err(|error| dependency_error("recorder_ffmpeg_unavailable", error))?;
-        let audio_selected =
-            input.desktop_audio_source_id.is_some() || input.microphone_audio_source_id.is_some();
-        ffmpeg::validate_segment_capabilities(&ffmpeg_probe.capabilities, audio_selected)?;
+        let media_writer_health = media_writer::collect_media_writer_health();
 
         let recording_id = Uuid::now_v7().to_string();
         let segment_id = Uuid::now_v7().to_string();
         let recording_dir = self.recordings_root().join(&recording_id);
         let segments_dir = recording_dir.join("segments");
+        let benchmarks_dir = recording_dir.join("benchmarks");
         let segment_path = segments_dir.join(segment_file_name(1));
-        let segment_input = FfmpegSegmentInput {
-            canvas_height: scene.canvas_height.try_into().map_err(|_error| {
-                lifecycle_error(
-                    "recorder_invalid_scene",
-                    "Recorder scene canvas height is invalid.",
-                )
-            })?,
-            canvas_width: scene.canvas_width.try_into().map_err(|_error| {
-                lifecycle_error(
-                    "recorder_invalid_scene",
-                    "Recorder scene canvas width is invalid.",
-                )
-            })?,
+        let segment_input = MediaSegmentInput {
+            benchmarks_dir,
+            canvas_height: even_canvas_dimension(scene.canvas_height.try_into().map_err(
+                |_error| {
+                    lifecycle_error(
+                        "recorder_invalid_scene",
+                        "Recorder scene canvas height is invalid.",
+                    )
+                },
+            )?),
+            canvas_width: even_canvas_dimension(scene.canvas_width.try_into().map_err(
+                |_error| {
+                    lifecycle_error(
+                        "recorder_invalid_scene",
+                        "Recorder scene canvas width is invalid.",
+                    )
+                },
+            )?),
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
             fps: input.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             output_path: segment_path.clone(),
+            recording_id: recording_id.clone(),
+            segment_id: segment_id.clone(),
+            segment_index: 1,
+            started_at_ms: timestamp_ms,
         };
+        media_writer::validate_segment_capabilities(
+            &media_writer_health.capabilities,
+            &segment_input,
+        )?;
         let segment = ActiveSegment {
             file_path: segment_path.clone(),
             id: segment_id,
-            media: None,
+            runtime: None,
             started_at_ms: timestamp_ms,
-            stream_indexes: ffmpeg::stream_indexes(&segment_input),
+            stream_indexes: media_writer::stream_indexes(&segment_input),
             timing: None,
         };
         let active = ActiveRecording {
@@ -53,8 +63,11 @@ impl RecorderManager {
             canvas_height: segment_input.canvas_height,
             canvas_width: segment_input.canvas_width,
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
-            ffmpeg_path: ffmpeg_probe.path.clone(),
             fps: input.fps,
+            media_writer: media_writer_health
+                .writer
+                .clone()
+                .unwrap_or_else(|| "gstreamer".to_string()),
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),
             scene_id: input.scene_id.clone(),
@@ -70,7 +83,6 @@ impl RecorderManager {
             segment_path,
             segment_index: 1,
             segment_input,
-            ffmpeg_path: ffmpeg_probe.path,
             input,
             scene,
         })
@@ -130,11 +142,11 @@ impl RecorderManager {
     pub(crate) fn activate_pending_recording(
         &self,
         mut pending: PendingRecordingStart,
-        media: RunningSegmentMedia,
+        runtime: RecordingSegmentRuntime,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
-        pending.segment.timing = media.capture_timing();
-        pending.segment.media = Some(Arc::new(Mutex::new(Some(media))));
+        pending.segment.timing = runtime.capture_timing();
+        pending.segment.runtime = Some(Arc::new(Mutex::new(Some(runtime))));
         pending.active.active_segment = Some(pending.segment);
 
         let mut runtime = self.lock_runtime()?;
@@ -235,9 +247,9 @@ impl RecorderManager {
         let active_segment = ActiveSegment {
             file_path: segment_path.clone(),
             id: segment_id.clone(),
-            media: None,
+            runtime: None,
             started_at_ms: timestamp_ms,
-            stream_indexes: FfmpegStreamIndexes {
+            stream_indexes: MediaWriterStreamIndexes {
                 desktop_audio_stream_index: None,
                 microphone_audio_stream_index: None,
                 video_stream_index: 0,
@@ -246,11 +258,19 @@ impl RecorderManager {
         };
         let active = ActiveRecording {
             active_segment: Some(active_segment),
-            canvas_height: scene.canvas_height.try_into().unwrap_or(0),
-            canvas_width: scene.canvas_width.try_into().unwrap_or(0),
+            canvas_height: scene
+                .canvas_height
+                .try_into()
+                .map(even_canvas_dimension)
+                .unwrap_or(0),
+            canvas_width: scene
+                .canvas_width
+                .try_into()
+                .map(even_canvas_dimension)
+                .unwrap_or(0),
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
-            ffmpeg_path: String::new(),
             fps: input.fps,
+            media_writer: "gstreamer".to_string(),
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),
             scene_id: input.scene_id.clone(),
@@ -288,38 +308,48 @@ impl RecorderManager {
         let scene = storage
             .with_connection(|connection| storage::get_recorder_scene(connection, &input.scene_id))
             .map_err(|error| scene_or_storage_error(error, &input.scene_id))?;
-        let ffmpeg_probe = ffmpeg::probe_selected_ffmpeg()
-            .map_err(|error| dependency_error("recorder_ffmpeg_unavailable", error))?;
-        let audio_selected =
-            input.desktop_audio_source_id.is_some() || input.microphone_audio_source_id.is_some();
-        ffmpeg::validate_segment_capabilities(&ffmpeg_probe.capabilities, audio_selected)?;
+        let media_writer_health = media_writer::collect_media_writer_health();
 
         let recording_id = Uuid::now_v7().to_string();
         let segment_id = Uuid::now_v7().to_string();
         let recording_dir = self.recordings_root().join(&recording_id);
         let segments_dir = recording_dir.join("segments");
+        let benchmarks_dir = recording_dir.join("benchmarks");
         fs::create_dir_all(&segments_dir).map_err(filesystem_error)?;
 
         let segment_path = segments_dir.join(segment_file_name(1));
-        let segment_input = FfmpegSegmentInput {
-            canvas_height: scene.canvas_height.try_into().map_err(|_error| {
-                lifecycle_error(
-                    "recorder_invalid_scene",
-                    "Recorder scene canvas height is invalid.",
-                )
-            })?,
-            canvas_width: scene.canvas_width.try_into().map_err(|_error| {
-                lifecycle_error(
-                    "recorder_invalid_scene",
-                    "Recorder scene canvas width is invalid.",
-                )
-            })?,
+        let segment_input = MediaSegmentInput {
+            benchmarks_dir,
+            canvas_height: even_canvas_dimension(scene.canvas_height.try_into().map_err(
+                |_error| {
+                    lifecycle_error(
+                        "recorder_invalid_scene",
+                        "Recorder scene canvas height is invalid.",
+                    )
+                },
+            )?),
+            canvas_width: even_canvas_dimension(scene.canvas_width.try_into().map_err(
+                |_error| {
+                    lifecycle_error(
+                        "recorder_invalid_scene",
+                        "Recorder scene canvas width is invalid.",
+                    )
+                },
+            )?),
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
             fps: input.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             output_path: segment_path.clone(),
+            recording_id: recording_id.clone(),
+            segment_id: segment_id.clone(),
+            segment_index: 1,
+            started_at_ms: timestamp_ms,
         };
-        let stream_indexes = ffmpeg::stream_indexes(&segment_input);
+        media_writer::validate_segment_capabilities(
+            &media_writer_health.capabilities,
+            &segment_input,
+        )?;
+        let stream_indexes = media_writer::stream_indexes(&segment_input);
 
         storage
             .with_connection(|connection| {
@@ -351,23 +381,22 @@ impl RecorderManager {
             })
             .map_err(storage_error)?;
 
-        let ffmpeg_segment =
-            match ffmpeg::start_synthetic_segment(Path::new(&ffmpeg_probe.path), &segment_input) {
-                Ok(segment) => segment,
-                Err(error) => {
-                    fail_segment_for_error(storage, &segment_id, timestamp_ms, &error, None)?;
-                    let _ = storage.with_connection(|connection| {
-                        storage::update_recording_status(connection, &recording_id, "failed")
-                    });
-                    return Err(error);
-                }
-            };
+        let media_segment = match media_writer::start_synthetic_segment(&segment_input) {
+            Ok(segment) => segment,
+            Err(error) => {
+                fail_segment_for_error(storage, &segment_id, timestamp_ms, &error, None)?;
+                let _ = storage.with_connection(|connection| {
+                    storage::update_recording_status(connection, &recording_id, "failed")
+                });
+                return Err(error);
+            }
+        };
 
         let active_segment = ActiveSegment {
             file_path: segment_path.clone(),
             id: segment_id.clone(),
-            media: Some(Arc::new(Mutex::new(Some(RunningSegmentMedia::new(
-                ffmpeg_segment,
+            runtime: Some(Arc::new(Mutex::new(Some(RecordingSegmentRuntime::new(
+                media_segment,
                 None,
                 None,
             ))))),
@@ -380,8 +409,11 @@ impl RecorderManager {
             canvas_height: segment_input.canvas_height,
             canvas_width: segment_input.canvas_width,
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
-            ffmpeg_path: ffmpeg_probe.path,
             fps: input.fps,
+            media_writer: media_writer_health
+                .writer
+                .clone()
+                .unwrap_or_else(|| "gstreamer".to_string()),
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             recording_id: recording_id.clone(),
             scene_id: input.scene_id.clone(),

@@ -5,12 +5,12 @@ use uuid::Uuid;
 
 use super::{
     apply_migrations, collect_database_diagnostics_from_connection, create_recording,
-    create_recording_segment, enable_connection_pragmas, fail_recording_segment,
-    finalize_recording_segment, get_latest_recorder_scene, get_recorder_scene, get_recording,
-    list_recording_segments, mark_portal_restore_token_used, migrations, save_recorder_scene,
-    upsert_portal_restore_token, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput,
-    FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
-    SaveRecorderSceneSourceInput,
+    create_recording_segment, delete_portal_restore_token, enable_connection_pragmas,
+    fail_recording_segment, finalize_recording_segment, get_latest_recorder_scene,
+    get_recorder_scene, get_recording, list_recording_segments, mark_portal_restore_token_used,
+    migrations, save_recorder_scene, upsert_portal_restore_token, AppStorage, CreateRecordingInput,
+    CreateRecordingSegmentInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
+    SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
 };
 
 fn migrated_memory_connection() -> Connection {
@@ -759,6 +759,13 @@ fn portal_restore_token_helpers_keep_token_backend_only() {
 
     assert_eq!(restored.token, "token-2");
     assert_eq!(restored.last_used_at_ms, Some(30));
+
+    delete_portal_restore_token(&connection, "linux-screencast-monitor")
+        .expect("delete restore token");
+
+    let deleted = super::get_portal_restore_token(&connection, "linux-screencast-monitor")
+        .expect("read deleted restore token");
+    assert_eq!(deleted, None);
 }
 
 #[test]

@@ -16,7 +16,6 @@ import type {
   CaptureSourceMergeClassification,
   DuplicateCaptureSourceCandidate,
   DuplicateCaptureSourceResolution,
-  MergeCaptureSourcesOptions,
 } from './types';
 
 export { sourceDimensions };
@@ -122,23 +121,17 @@ export function resolveDuplicateCaptureSource(
       ),
     };
   }
-
-  return mergeCaptureSourcesIntoScene(scene, [candidate.source], {
-    allowLikelyDuplicates: true,
-  });
+  return scene;
 }
 
 export function mergeCaptureSourcesIntoScene(
   scene: RecorderScene,
   sources: CaptureSource[],
-  options: MergeCaptureSourcesOptions = {},
 ): RecorderScene {
   const existingSourceIds = new Set(
     scene.sources.map((source) => source.sourceId),
   );
-  const sourcesToMerge = options.allowLikelyDuplicates
-    ? uniqueCaptureSources(sources)
-    : classifyCaptureSourceMerge(scene, sources).newSources;
+  const sourcesToMerge = classifyCaptureSourceMerge(scene, sources).newSources;
 
   if (sourcesToMerge.length === 0) {
     return scene;

@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import type {
   DaydreamDiagnostics,
-  RecorderFfmpegCapabilities,
+  RecorderMediaWriterCapabilities,
   RecorderError,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
@@ -10,15 +10,21 @@ import type {
   RecorderStatus,
 } from './index.js';
 
-const unavailableFfmpegCapabilities = {
-  libopusEncoder: false,
-  libx264Encoder: false,
+const unavailableMediaWriterCapabilities = {
+  appsrc: false,
+  audioConvert: false,
+  audioResample: false,
+  fileSink: false,
+  h264Parse: false,
   matroskaMuxer: false,
-  pulseInput: false,
-  rawvideoDemuxer: false,
-} satisfies RecorderFfmpegCapabilities;
+  opusEncoder: false,
+  pulseSource: false,
+  queue: false,
+  videoConvert: false,
+  x264Encoder: false,
+} satisfies RecorderMediaWriterCapabilities;
 
-test('diagnostics shape supports unavailable ffmpeg state', () => {
+test('diagnostics shape supports unavailable media writer state', () => {
   const diagnostics: DaydreamDiagnostics = {
     app: {
       identifier: 'com.snackbit.daydream',
@@ -34,13 +40,21 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
         recordings: 0,
       },
     },
-    ffmpeg: {
+    debugLogging: {
+      enabled: true,
+      filePath: '/tmp/daydream/logs/daydream.log',
+      filter: 'daydream_desktop_lib=info,warn',
+      format: 'stdout=compact,file=jsonl',
+      latestFileBytes: 128,
+      retentionDays: 7,
+      stdout: true,
+    },
+    mediaWriter: {
       available: false,
-      capabilities: unavailableFfmpegCapabilities,
-      error: 'missing DAYDREAM_FFMPEG_PATH',
-      path: null,
-      source: 'unconfigured',
-      versionLine: null,
+      capabilities: unavailableMediaWriterCapabilities,
+      error: 'GStreamer is unavailable',
+      version: null,
+      writer: null,
     },
     latestRecording: {
       activeCaptureTiming: null,
@@ -48,8 +62,19 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
       activeSegmentId: null,
       error: null,
       latestSegment: null,
+      previewStatus: null,
       recordingId: null,
       segmentCount: 0,
+    },
+    portalRestoreToken: {
+      createdAtMs: null,
+      error: null,
+      expectedId: 'linux-screencast-monitor',
+      lastUsedAtMs: null,
+      portal: null,
+      present: false,
+      tokenLength: null,
+      updatedAtMs: null,
     },
     recorder: {
       desktopAudio: {
@@ -57,12 +82,12 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
         defaultSourceId: null,
         error: 'not implemented',
       },
-      ffmpeg: {
+      mediaWriter: {
         available: false,
-        capabilities: unavailableFfmpegCapabilities,
+        capabilities: unavailableMediaWriterCapabilities,
         error: 'not implemented',
-        path: null,
-        versionLine: null,
+        version: null,
+        writer: null,
       },
       gpuCapture: {
         available: false,
@@ -107,7 +132,9 @@ test('diagnostics shape supports unavailable ffmpeg state', () => {
     },
   };
 
-  expect(diagnostics.ffmpeg.available).toBe(false);
+  expect(diagnostics.mediaWriter.available).toBe(false);
+  expect(diagnostics.debugLogging.enabled).toBe(true);
+  expect(diagnostics.portalRestoreToken.present).toBe(false);
 });
 
 test('recorder contracts support gate-a unavailable state', () => {
@@ -127,12 +154,12 @@ test('recorder contracts support gate-a unavailable state', () => {
         defaultSourceId: null,
         error: 'not implemented',
       },
-      ffmpeg: {
+      mediaWriter: {
         available: false,
-        capabilities: unavailableFfmpegCapabilities,
+        capabilities: unavailableMediaWriterCapabilities,
         error: 'not implemented',
-        path: null,
-        versionLine: null,
+        version: null,
+        writer: null,
       },
       gpuCapture: {
         available: false,
@@ -216,7 +243,7 @@ test('recorder contracts support scene and segment metadata', () => {
     durationMs: null,
     endedAtMs: null,
     errorCode: null,
-    ffmpegExitCode: null,
+    writerExitCode: null,
     filePath: '/tmp/daydream/recordings/r1/segments/0001.mkv',
     id: 'segment-1',
     microphoneAudioStreamIndex: 2,

@@ -39,6 +39,7 @@ export interface SceneCanvasProps {
   onChange: (scene: RecorderScene) => void;
   onSelect: (sourceId: string | null) => void;
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
+  readOnly?: boolean;
   scene: RecorderScene;
   selectedSourceId: string | null;
 }
@@ -47,6 +48,7 @@ export function SceneCanvas({
   onChange,
   onSelect,
   previewFramesBySceneSourceId,
+  readOnly = false,
   scene,
   selectedSourceId,
 }: SceneCanvasProps) {
@@ -105,6 +107,10 @@ export function SceneCanvas({
     event: PointerEvent<HTMLElement>,
     drag: PendingDragState,
   ) => {
+    if (readOnly) {
+      return;
+    }
+
     const canvas = canvasRef.current;
     try {
       canvas?.setPointerCapture(event.pointerId);
@@ -145,6 +151,7 @@ export function SceneCanvas({
           key={source.id}
           onSelect={onSelect}
           previewFrame={previewFramesBySceneSourceId[source.id] ?? null}
+          readOnly={readOnly}
           scene={scene}
           selected={selectedSourceId === source.id}
           selectedStackIndex={selectedStackIndex}
@@ -175,6 +182,7 @@ interface ResizeButtonProps {
 interface SceneSourceFrameProps {
   onSelect: (sourceId: string | null) => void;
   previewFrame: RecorderPreviewFrame | null;
+  readOnly: boolean;
   scene: RecorderScene;
   selected: boolean;
   selectedStackIndex: number;
@@ -185,6 +193,7 @@ interface SceneSourceFrameProps {
 function SceneSourceFrame({
   onSelect,
   previewFrame,
+  readOnly,
   scene,
   selected,
   selectedStackIndex,
@@ -208,11 +217,18 @@ function SceneSourceFrame({
     >
       {selected ? (
         <button
-          className="bg-background/95 flex w-full cursor-grab items-center gap-2 border-b px-2 py-1 text-left text-xs font-medium active:cursor-grabbing"
+          className={cn(
+            'bg-background/95 flex w-full items-center gap-2 border-b px-2 py-1 text-left text-xs font-medium',
+            readOnly ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+          )}
           aria-label={`Move ${source.displayName}`}
           onPointerDown={(event) => {
             event.stopPropagation();
             onSelect(source.id);
+            if (readOnly) {
+              return;
+            }
+
             startDrag(event, {
               clientX: event.clientX,
               clientY: event.clientY,
@@ -252,7 +268,8 @@ function SceneSourceFrame({
         <SyntheticSourcePreview />
       )}
       {selected
-        ? resizeHandles.map((handle) => (
+        ? !readOnly &&
+          resizeHandles.map((handle) => (
             <ResizeButton
               handle={handle}
               key={handle}

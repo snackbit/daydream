@@ -1,5 +1,9 @@
 import type { DaydreamDiagnostics } from '@daydream/shared';
 import { create } from 'zustand';
+import {
+  runAsyncStoreAction,
+  unknownErrorMessage,
+} from '@/lib/async-store-action';
 import { getDiagnostics } from './diagnostics-client';
 
 type DiagnosticsStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -15,17 +19,16 @@ export const useDiagnosticsStore = create<DiagnosticsState>((set) => ({
   diagnostics: null,
   error: null,
   async load() {
-    set({ error: null, status: 'loading' });
-
-    try {
-      const diagnostics = await getDiagnostics();
-      set({ diagnostics, status: 'ready' });
-    } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : String(error),
-        status: 'error',
-      });
-    }
+    await runAsyncStoreAction({
+      before: () => set({ error: null, status: 'loading' }),
+      failure: (error) =>
+        set({
+          error: unknownErrorMessage(error),
+          status: 'error',
+        }),
+      run: () => getDiagnostics(),
+      success: (diagnostics) => set({ diagnostics, status: 'ready' }),
+    });
   },
   status: 'idle',
 }));

@@ -151,6 +151,21 @@ correction as part of gate implementation, not optional cleanup.
   changes in the milestone doc.
 - If no downstream changes are needed, record that result in the scratchpad.
 
+## Gate Closeout Template
+
+For broad, risky, or stateful gates, use a compact closeout note in the
+scratchpad or final handoff:
+
+- Completed behavior:
+- Validation run:
+- Manual checks:
+- Changed assumptions:
+- Downstream gate updates:
+- Residual risks:
+
+Omit fields that do not apply. Do not turn this into boilerplate for small
+changes.
+
 ## Stop Boundaries
 
 Use explicit stop-boundary wording when a milestone crosses a known handoff

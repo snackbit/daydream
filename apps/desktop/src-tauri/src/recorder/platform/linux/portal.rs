@@ -7,6 +7,7 @@ use ashpd::desktop::{
 };
 use enumflags2::BitFlags;
 use std::os::fd::OwnedFd;
+use tracing::{debug, info, warn};
 
 use crate::storage::{self, AppStorage};
 
@@ -18,7 +19,7 @@ use super::super::super::{
     },
 };
 
-const RESTORE_TOKEN_ID: &str = "linux-screencast-monitor";
+const RESTORE_TOKEN_ID: &str = storage::LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID;
 const RESTORE_TOKEN_PORTAL: &str = "linux-screencast";
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ const RESTORE_TOKEN_PORTAL: &str = "linux-screencast";
 pub(crate) struct LivePortalSession {
     pub(crate) fd: OwnedFd,
     pub(crate) streams: Vec<LivePortalStream>,
-    _session: Session<Screencast>,
+    session: Session<Screencast>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +38,20 @@ pub(crate) struct LivePortalStream {
     pub(crate) logical_width: Option<u32>,
     pub(crate) node_id: u32,
     pub(crate) source_id: String,
+}
+
+impl LivePortalSession {
+    pub(crate) fn close_blocking(self, context: &'static str) -> Result<(), RecorderError> {
+        let session = self.session;
+        drop(self.fd);
+        drop(self.streams);
+
+        close_portal_session_blocking(session, context)
+    }
+
+    pub(crate) fn into_fd_and_session(self) -> (OwnedFd, Session<Screencast>) {
+        (self.fd, self.session)
+    }
 }
 
 pub async fn collect_portal_health() -> RecorderPortalHealth {
@@ -77,6 +92,7 @@ pub async fn select_capture_sources(
     force_chooser: bool,
 ) -> Result<CaptureSourceList, RecorderError> {
     let restore_token = if force_chooser {
+        info!("portal_select_sources_force_chooser");
         None
     } else {
         storage
@@ -86,10 +102,20 @@ pub async fn select_capture_sources(
             .map_err(storage_error)?
             .map(|row| row.token)
     };
+    debug!(
+        restore_token_id = RESTORE_TOKEN_ID,
+        restore_token_present = restore_token.is_some(),
+        "portal_select_sources_restore_token_lookup"
+    );
 
     let streams = match restore_token.as_deref() {
         Some(token) => match select_sources_once(Some(token)).await {
             Ok(streams) => {
+                info!(
+                    restore_token_id = RESTORE_TOKEN_ID,
+                    restore_token_length = token.len(),
+                    "portal_select_sources_restore_token_reused"
+                );
                 storage
                     .with_connection(|connection| {
                         storage::mark_portal_restore_token_used(
@@ -101,13 +127,34 @@ pub async fn select_capture_sources(
                     .map_err(storage_error)?;
                 streams
             }
-            Err(_error) => select_sources_once(None).await?,
+            Err(_error) => {
+                warn!(
+                    restore_token_id = RESTORE_TOKEN_ID,
+                    "portal_select_sources_restore_token_invalidated"
+                );
+                invalidate_restore_token(storage)?;
+                select_sources_once(None).await?
+            }
         },
         None => select_sources_once(None).await?,
     };
     let sources = streams_to_capture_sources(streams.streams())?;
+    info!(
+        source_count = sources.len(),
+        source_ids = %sources
+            .iter()
+            .map(|source| source.id.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        "portal_select_sources_completed"
+    );
 
     if let Some(token) = streams.restore_token() {
+        info!(
+            restore_token_id = RESTORE_TOKEN_ID,
+            restore_token_length = token.len(),
+            "portal_restore_token_stored"
+        );
         storage
             .with_connection(|connection| {
                 storage::upsert_portal_restore_token(
@@ -128,37 +175,49 @@ pub async fn select_capture_sources(
 pub(crate) async fn open_live_capture_session(
     storage: &AppStorage,
 ) -> Result<LivePortalSession, RecorderError> {
-    let restore_token = storage
-        .with_connection(|connection| {
-            storage::get_portal_restore_token(connection, RESTORE_TOKEN_ID)
-        })
-        .map_err(storage_error)?
-        .map(|row| row.token);
+    let restore_token = restore_token_for_live_session(
+        storage
+            .with_connection(|connection| {
+                storage::get_portal_restore_token(connection, RESTORE_TOKEN_ID)
+            })
+            .map_err(storage_error)?
+            .map(|row| row.token),
+    )?;
+    debug!(
+        restore_token_id = RESTORE_TOKEN_ID,
+        restore_token_length = restore_token.len(),
+        "portal_live_restore_token_loaded"
+    );
     let proxy = Screencast::new().await.map_err(portal_error)?;
     let session = proxy
         .create_session(Default::default())
         .await
         .map_err(portal_error)?;
-    let streams = match select_sources_for_session(&proxy, &session, restore_token.as_deref()).await
-    {
+    let streams = match select_sources_for_session(&proxy, &session, Some(&restore_token)).await {
         Ok(streams) => {
-            if restore_token.is_some() {
-                storage
-                    .with_connection(|connection| {
-                        storage::mark_portal_restore_token_used(
-                            connection,
-                            RESTORE_TOKEN_ID,
-                            now_ms() as i64,
-                        )
-                    })
-                    .map_err(storage_error)?;
-            }
+            info!(
+                restore_token_id = RESTORE_TOKEN_ID,
+                "portal_live_restore_token_accepted"
+            );
+            storage
+                .with_connection(|connection| {
+                    storage::mark_portal_restore_token_used(
+                        connection,
+                        RESTORE_TOKEN_ID,
+                        now_ms() as i64,
+                    )
+                })
+                .map_err(storage_error)?;
             streams
         }
-        Err(_error) if restore_token.is_some() => {
-            select_sources_for_session(&proxy, &session, None).await?
+        Err(_error) => {
+            warn!(
+                restore_token_id = RESTORE_TOKEN_ID,
+                "portal_live_restore_token_invalidated"
+            );
+            invalidate_restore_token(storage)?;
+            return Err(invalid_restore_token_error());
         }
-        Err(error) => return Err(error),
     };
 
     if let Some(token) = streams.restore_token() {
@@ -179,12 +238,87 @@ pub(crate) async fn open_live_capture_session(
         .open_pipe_wire_remote(&session, Default::default())
         .await
         .map_err(portal_error)?;
+    info!(
+        stream_count = streams.streams().len(),
+        source_ids = %streams
+            .streams()
+            .iter()
+            .map(|stream| format!("pipewire-node-{}", stream.pipe_wire_node_id()))
+            .collect::<Vec<_>>()
+            .join(","),
+        "portal_live_capture_session_opened"
+    );
 
     Ok(LivePortalSession {
         fd,
         streams: streams_to_live_portal_streams(streams.streams()),
-        _session: session,
+        session,
     })
+}
+
+pub(crate) fn close_portal_session_blocking(
+    session: Session<Screencast>,
+    context: &'static str,
+) -> Result<(), RecorderError> {
+    tauri::async_runtime::block_on(close_portal_session(&session, context))
+}
+
+async fn close_portal_session(
+    session: &Session<Screencast>,
+    context: &'static str,
+) -> Result<(), RecorderError> {
+    info!(context, "portal_session_close_requested");
+    match session.close().await {
+        Ok(()) => {
+            info!(context, "portal_session_close_succeeded");
+            Ok(())
+        }
+        Err(error) => {
+            let error = portal_error(error);
+            warn!(
+                context,
+                error_code = %error.code,
+                error_category = ?error.category,
+                "portal_session_close_failed"
+            );
+            Err(error)
+        }
+    }
+}
+
+fn restore_token_for_live_session(
+    stored_restore_token: Option<String>,
+) -> Result<String, RecorderError> {
+    if stored_restore_token.is_none() {
+        warn!(
+            restore_token_id = RESTORE_TOKEN_ID,
+            "portal_live_restore_token_missing"
+        );
+    }
+
+    stored_restore_token.ok_or_else(missing_restore_token_error)
+}
+
+fn missing_restore_token_error() -> RecorderError {
+    permission_error(
+        "recorder_portal_restore_token_missing",
+        "Screen permission is missing. Reselect monitor sources.",
+    )
+}
+
+fn invalid_restore_token_error() -> RecorderError {
+    permission_error(
+        "recorder_portal_restore_token_invalid",
+        "Screen permission expired. Reselect monitor sources.",
+    )
+}
+
+fn invalidate_restore_token(storage: &AppStorage) -> Result<(), RecorderError> {
+    storage
+        .with_connection(|connection| {
+            storage::delete_portal_restore_token(connection, RESTORE_TOKEN_ID)
+        })
+        .map_err(storage_error)
 }
 
 async fn select_sources_once(
@@ -195,7 +329,10 @@ async fn select_sources_once(
         .create_session(Default::default())
         .await
         .map_err(portal_error)?;
-    select_sources_for_session(&proxy, &session, restore_token).await
+    let result = select_sources_for_session(&proxy, &session, restore_token).await;
+    let _ = close_portal_session(&session, "select-sources").await;
+
+    result
 }
 
 async fn select_sources_for_session(
@@ -391,8 +528,9 @@ mod tests {
     use enumflags2::BitFlags;
 
     use super::{
-        capture_source_from_portal_fields, cursor_mode_labels, portal_error, preferred_cursor_mode,
-        restore_token_for_selection, source_type_labels,
+        capture_source_from_portal_fields, cursor_mode_labels, invalid_restore_token_error,
+        missing_restore_token_error, portal_error, preferred_cursor_mode,
+        restore_token_for_live_session, restore_token_for_selection, source_type_labels,
     };
     use crate::recorder::types::RecorderErrorCategory;
 
@@ -454,5 +592,31 @@ mod tests {
             restore_token_for_selection(Some("restore-token"), true),
             None,
         );
+    }
+
+    #[test]
+    fn live_session_requires_saved_restore_token() {
+        let token = restore_token_for_live_session(Some("restore-token".to_string()))
+            .expect("restore token");
+
+        assert_eq!(token, "restore-token");
+
+        let error =
+            restore_token_for_live_session(None).expect_err("missing token should fail live start");
+        assert_eq!(error.category, RecorderErrorCategory::Permission);
+        assert_eq!(error.code, "recorder_portal_restore_token_missing");
+    }
+
+    #[test]
+    fn live_session_restore_token_errors_are_user_repairable() {
+        let missing = missing_restore_token_error();
+        let invalid = invalid_restore_token_error();
+
+        assert_eq!(missing.category, RecorderErrorCategory::Permission);
+        assert_eq!(missing.code, "recorder_portal_restore_token_missing");
+        assert!(missing.message.contains("Reselect monitor sources"));
+        assert_eq!(invalid.category, RecorderErrorCategory::Permission);
+        assert_eq!(invalid.code, "recorder_portal_restore_token_invalid");
+        assert!(invalid.message.contains("Reselect monitor sources"));
     }
 }

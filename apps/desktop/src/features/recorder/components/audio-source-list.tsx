@@ -26,6 +26,7 @@ const audioRoleLabels = {
 
 export interface AudioSourceListProps {
   desktopAudioSourceId: string | null;
+  disabled?: boolean;
   microphoneAudioSourceId: string | null;
   onSelectAudioSource: (role: AudioSourceRole, sourceId: string | null) => void;
   sources: AudioSource[];
@@ -33,6 +34,7 @@ export interface AudioSourceListProps {
 
 export function AudioSourceList({
   desktopAudioSourceId,
+  disabled = false,
   microphoneAudioSourceId,
   onSelectAudioSource,
   sources,
@@ -85,6 +87,7 @@ export function AudioSourceList({
             </div>
             <Button
               aria-label={`Delete ${audioRoleLabels[role]} audio`}
+              disabled={disabled}
               onClick={() => onSelectAudioSource(role, null)}
               size="icon-xs"
               type="button"
@@ -106,6 +109,7 @@ export interface AudioSourcePickerDialogProps extends AudioSourceListProps {
 export function AudioSourcePickerDialog({
   children,
   desktopAudioSourceId,
+  disabled = false,
   microphoneAudioSourceId,
   onSelectAudioSource,
   sources,
@@ -133,8 +137,13 @@ export function AudioSourcePickerDialog({
 
   return (
     <Dialog
-      open={open}
+      open={disabled ? false : open}
       onOpenChange={(nextOpen) => {
+        if (disabled) {
+          setOpen(false);
+          return;
+        }
+
         if (nextOpen) {
           setSelectedOptionValue(defaultOptionValue);
         }

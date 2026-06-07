@@ -8,6 +8,7 @@ import { errorMessage, isRecorderError } from './recorder-error-utils';
 type PreviewMutation = {
   error?: string | null;
   previewFramesBySceneSourceId?: Record<string, RecorderPreviewFrame>;
+  previewStartInFlightSceneId?: null;
   previewStatus?: RecorderPreviewStatus | null;
 };
 
@@ -23,6 +24,7 @@ export async function stopPreviewForRecording(
     const previewStatus = await stopRecorderPreview();
     set({
       previewFramesBySceneSourceId: {},
+      previewStartInFlightSceneId: null,
       previewStatus,
     });
 
@@ -30,6 +32,7 @@ export async function stopPreviewForRecording(
   } catch (error) {
     set({
       error: errorMessage(error),
+      previewStartInFlightSceneId: null,
       previewStatus: previewErrorStatus(sceneId, error),
     });
 

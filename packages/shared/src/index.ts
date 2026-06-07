@@ -1,7 +1,8 @@
 import type {
   CaptureTimingDiagnostics,
   RecorderBackendHealth,
-  RecorderFfmpegCapabilities,
+  RecorderMediaWriterCapabilities,
+  RecorderPreviewStatus,
   RecorderSegmentState,
 } from './recorder.js';
 
@@ -19,13 +20,12 @@ export interface DatabaseDiagnostics {
   tableCounts: Record<string, number>;
 }
 
-export interface FfmpegDiagnostics {
+export interface MediaWriterDiagnostics {
   available: boolean;
-  capabilities: RecorderFfmpegCapabilities;
+  capabilities: RecorderMediaWriterCapabilities;
   error: string | null;
-  path: string | null;
-  source: 'daydream-ffmpeg-env' | 'path' | 'unconfigured';
-  versionLine: string | null;
+  version: string | null;
+  writer: string | null;
 }
 
 export type SegmentProbeMetadata = Record<string, unknown>;
@@ -35,7 +35,7 @@ export interface LatestSegmentDiagnostics {
   durationMs: number | null;
   endedAtMs: number | null;
   errorCode: string | null;
-  ffmpegExitCode: number | null;
+  writerExitCode: number | null;
   filePath: string;
   id: string;
   microphoneAudioStreamIndex: number | null;
@@ -53,6 +53,7 @@ export interface LatestRecordingDiagnostics {
   activeSegmentId: string | null;
   error: string | null;
   latestSegment: LatestSegmentDiagnostics | null;
+  previewStatus: RecorderPreviewStatus | null;
   recordingId: string | null;
   segmentCount: number;
 }
@@ -70,11 +71,39 @@ export interface SystemDiagnostics {
 export interface DaydreamDiagnostics {
   app: AppDiagnostics;
   database: DatabaseDiagnostics;
-  ffmpeg: FfmpegDiagnostics;
+  debugLogging: DebugLoggingDiagnostics;
   latestRecording: LatestRecordingDiagnostics;
+  mediaWriter: MediaWriterDiagnostics;
+  portalRestoreToken: PortalRestoreTokenDiagnostics;
   recorder: RecorderBackendHealth;
   storage: StorageDiagnostics;
   system: SystemDiagnostics;
 }
 
 export * from './recorder.js';
+
+export interface DebugLoggingDiagnostics {
+  enabled: boolean;
+  filePath: string | null;
+  filter: string;
+  format: string;
+  latestFileBytes: number | null;
+  retentionDays: number;
+  stdout: boolean;
+}
+
+export interface PortalRestoreTokenDiagnostics {
+  createdAtMs: number | null;
+  error: string | null;
+  expectedId: string;
+  lastUsedAtMs: number | null;
+  portal: string | null;
+  present: boolean;
+  tokenLength: number | null;
+  updatedAtMs: number | null;
+}
+
+export interface DebugLogBundle {
+  diagnostics: DaydreamDiagnostics;
+  logTailLines: string[];
+}

@@ -7,6 +7,7 @@ import { formatPixels } from '@/features/recorder/scene-layout';
 import { cn } from '@/lib/utils';
 
 export interface SceneSourceListProps {
+  deleteDisabled?: boolean;
   onDelete: (sourceId: string) => void;
   onSelect: (sourceId: string) => void;
   selectedSceneSourceId: string | null;
@@ -14,6 +15,7 @@ export interface SceneSourceListProps {
 }
 
 export function SceneSourceList({
+  deleteDisabled = false,
   onDelete,
   onSelect,
   selectedSceneSourceId,
@@ -77,6 +79,7 @@ export function SceneSourceList({
               </button>
               <Button
                 aria-label={`Delete ${source.displayName}`}
+                disabled={deleteDisabled}
                 onClick={() => onDelete(source.id)}
                 size="icon-xs"
                 type="button"

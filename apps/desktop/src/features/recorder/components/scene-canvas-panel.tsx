@@ -4,6 +4,7 @@ import { SceneCanvas } from './scene-canvas';
 import { SceneControls } from './scene-controls';
 
 export interface SceneCanvasPanelProps {
+  configurationLocked?: boolean;
   onChange: (scene: RecorderScene) => void;
   onSelect: (sourceId: string | null) => void;
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
@@ -12,6 +13,7 @@ export interface SceneCanvasPanelProps {
 }
 
 export function SceneCanvasPanel({
+  configurationLocked = false,
   onChange,
   onSelect,
   previewFramesBySceneSourceId,
@@ -30,10 +32,15 @@ export function SceneCanvasPanel({
 
   return (
     <div className="flex h-full w-full flex-col">
-      <SceneControls scene={scene} onChange={onChange} />
+      <SceneControls
+        disabled={configurationLocked}
+        scene={scene}
+        onChange={onChange}
+      />
       <div className="min-h-0 flex-1 p-4">
         <SceneCanvas
           previewFramesBySceneSourceId={previewFramesBySceneSourceId}
+          readOnly={configurationLocked}
           scene={scene}
           selectedSourceId={selectedSourceId}
           onChange={onChange}

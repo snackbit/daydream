@@ -42,6 +42,7 @@ import { PixelInputField } from './pixel-input-field';
 
 export interface GeometryPanelProps {
   captureSources: CaptureSource[];
+  disabled?: boolean;
   onChange: (scene: RecorderScene) => void;
   scene: RecorderScene | null;
   source: RecorderSceneSource | null;
@@ -49,6 +50,7 @@ export interface GeometryPanelProps {
 
 export function GeometryPanel({
   captureSources,
+  disabled = false,
   onChange,
   scene,
   source,
@@ -136,21 +138,25 @@ export function GeometryPanel({
 
             <div className="grid grid-cols-2 gap-2">
               <PixelInputField
+                disabled={disabled}
                 label="X"
                 value={source.rect.x}
                 onChange={(value) => updateRect({ x: value })}
               />
               <PixelInputField
+                disabled={disabled}
                 label="Y"
                 value={source.rect.y}
                 onChange={(value) => updateRect({ y: value })}
               />
               <PixelInputField
+                disabled={disabled}
                 label="W"
                 value={source.rect.width}
                 onChange={(value) => updateRect({ width: value }, 'width')}
               />
               <PixelInputField
+                disabled={disabled}
                 label="H"
                 value={source.rect.height}
                 onChange={(value) => updateRect({ height: value }, 'height')}
@@ -160,6 +166,7 @@ export function GeometryPanel({
             <Field orientation="horizontal">
               <Checkbox
                 checked={source.preserveAspectRatio}
+                disabled={disabled}
                 id={aspectInputId}
                 onCheckedChange={(checked) =>
                   onChange(
@@ -182,6 +189,7 @@ export function GeometryPanel({
             <div className="grid grid-cols-2 gap-2">
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() =>
                   onChange(fitSceneSourceToCanvas(scene, source.id))
                 }
@@ -193,6 +201,7 @@ export function GeometryPanel({
               </Button>
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() =>
                   onChange(fillSceneSourceToCanvas(scene, source.id))
                 }
@@ -204,6 +213,7 @@ export function GeometryPanel({
               </Button>
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() => onChange(centerSceneSource(scene, source.id))}
                 size="sm"
                 variant="outline"
@@ -213,6 +223,7 @@ export function GeometryPanel({
               </Button>
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() =>
                   onChange(fillSceneSourceAvailableSpace(scene, source.id))
                 }
@@ -233,21 +244,25 @@ export function GeometryPanel({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <PixelInputField
+                  disabled={disabled}
                   label="L"
                   value={source.crop.left}
                   onChange={(value) => updateCrop({ left: value })}
                 />
                 <PixelInputField
+                  disabled={disabled}
                   label="T"
                   value={source.crop.top}
                   onChange={(value) => updateCrop({ top: value })}
                 />
                 <PixelInputField
+                  disabled={disabled}
                   label="R"
                   value={source.crop.right}
                   onChange={(value) => updateCrop({ right: value })}
                 />
                 <PixelInputField
+                  disabled={disabled}
                   label="B"
                   value={source.crop.bottom}
                   onChange={(value) => updateCrop({ bottom: value })}
@@ -258,6 +273,7 @@ export function GeometryPanel({
             <div className="grid grid-cols-2 gap-2">
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() => onChange(raiseSceneSource(scene, source.id))}
                 size="sm"
                 variant="outline"
@@ -267,6 +283,7 @@ export function GeometryPanel({
               </Button>
               <Button
                 className="gap-2"
+                disabled={disabled}
                 onClick={() => onChange(lowerSceneSource(scene, source.id))}
                 size="sm"
                 variant="outline"

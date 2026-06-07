@@ -711,34 +711,6 @@ test('resolveDuplicateCaptureSource refreshes source id without changing geometr
   });
 });
 
-test('resolveDuplicateCaptureSource can add a duplicate anyway', () => {
-  const scene = createDefaultRecorderScene([
-    monitor('Main display', { height: 1440, width: 5120 }),
-  ]);
-  const duplicate = monitor('Main display', { height: 1440, width: 5120 });
-  duplicate.id = 'main-new-portal-id';
-
-  const resolved = resolveDuplicateCaptureSource(
-    scene,
-    {
-      existingSource: sceneSource(scene),
-      source: duplicate,
-    },
-    'add-anyway',
-  );
-
-  expect(resolved.sources.map((source) => source.sourceId)).toEqual([
-    'Main display',
-    'main-new-portal-id',
-  ]);
-  expect(resolved.canvasWidth).toBe(5120);
-  expect(resolved.canvasHeight).toBe(2880);
-  expect(resolved.sources.map((source) => source.rect)).toEqual([
-    { height: 1440, width: 5120, x: 0, y: 0 },
-    { height: 1440, width: 5120, x: 0, y: 1440 },
-  ]);
-});
-
 test('auto layout for two ultrawide sources chooses a 16:9-ish vertical grid', () => {
   const scene = createDefaultRecorderScene([
     monitor('left', { height: 1440, width: 5120 }),

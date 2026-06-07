@@ -1,20 +1,29 @@
 #![allow(dead_code)]
 
 use std::{
-    cell::RefCell, collections::HashMap, os::fd::OwnedFd, rc::Rc, sync::mpsc, time::Duration,
+    cell::RefCell,
+    collections::HashMap,
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
+    rc::Rc,
+    sync::{mpsc, Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 
 use pipewire as pw;
 use pw::{properties::properties, spa};
 use tauri::{AppHandle, Emitter};
+use tracing::{debug, info, warn};
 
-use super::portal::{LivePortalSession, LivePortalStream};
+use super::portal::{close_portal_session_blocking, LivePortalSession, LivePortalStream};
 use crate::recorder::{
+    benchmark::{RecorderBenchmarkSession, RecorderBenchmarkStage},
     capture_runtime::{
-        bounded_frame_channel, new_capture_timing, record_capture_frame, record_composed_frame,
-        CapturePreviewSession, CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession,
-        CapturedFrame, CapturedFrameFormat, CapturedFrameStorage, FrameSender, LatestFrameSampler,
-        RuntimeWorker, SharedCaptureTiming,
+        bounded_frame_channel, new_capture_timing, record_capture_frame, record_compose_duration,
+        record_composed_frame, record_scheduler_tick, CapturePreviewSession, CaptureRuntimeSource,
+        CaptureRuntimeSourceHandle, CaptureSession, CapturedDmaBufFrame, CapturedFrame,
+        CapturedFrameFormat, CapturedFrameStorage, FrameSender, FrameTrySendError, RuntimeWorker,
+        SharedCaptureTiming,
     },
     commands::RECORDER_PREVIEW_FRAME_EVENT,
     compositor::{SceneCompositorInput, SceneCompositorPlan},
@@ -22,8 +31,9 @@ use crate::recorder::{
         capture_adapter_failed_error, capture_format_unsupported_error,
         capture_source_missing_error,
     },
-    ffmpeg::{self, FfmpegSegmentInput},
-    manager::{now_ms, RunningSegmentMedia},
+    manager::{now_ms, RecordingSegmentRuntime},
+    media_writer::{self, MediaSegmentInput},
+    platform::linux::gpu_compositor::LinuxGpuFrameCompositor,
     preview::encode_cropped_preview_frame,
     types::{CaptureSourceKind, RecorderError, RecorderPreviewFrame, RecorderScene},
 };
@@ -37,6 +47,8 @@ pub(crate) struct LiveCapturePreflight {
 }
 
 pub(crate) struct PipeWireCaptureSession {
+    scheduler_shutdown: mpsc::Sender<()>,
+    scheduler_worker: RuntimeWorker,
     shutdown: pw::channel::Sender<PipeWireControl>,
     worker: RuntimeWorker,
 }
@@ -62,6 +74,7 @@ impl std::fmt::Debug for PipeWireCaptureSession {
         formatter
             .debug_struct("PipeWireCaptureSession")
             .field("worker", &self.worker)
+            .field("scheduler_worker", &self.scheduler_worker)
             .finish_non_exhaustive()
     }
 }
@@ -89,14 +102,26 @@ struct PipeWireStreamConfig {
 #[derive(Debug)]
 struct PipeWireStreamData {
     format: spa::param::video::VideoInfoRaw,
+    logged_negotiated_format: bool,
     source_id: String,
 }
 
 struct PipeWireCaptureState {
-    composed_frames: FrameSender,
     error: Option<RecorderError>,
+    latest_frames: SharedPipeWireFrameSampler,
+    timing: SharedCaptureTiming,
+}
+
+type SharedPipeWireFrameSampler = Arc<Mutex<LatestPipeWireFrameSampler>>;
+
+struct PipeWireCaptureSchedulerState {
+    benchmark: Option<RecorderBenchmarkSession>,
+    composed_frames: FrameSender,
+    frame_interval_ms: u64,
+    gpu_compositor: Option<LinuxGpuFrameCompositor>,
+    latest_frames: SharedPipeWireFrameSampler,
+    next_composed_at_ms: Option<u64>,
     plan: SceneCompositorPlan,
-    sampler: LatestFrameSampler,
     timing: SharedCaptureTiming,
 }
 
@@ -107,15 +132,166 @@ struct PipeWirePreviewState {
     last_emitted_by_scene_source_id: HashMap<String, u64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComposedFrameSendOutcome {
+    Sent,
+    Stopped,
+}
+
 struct PipeWireStartupNotifier {
     sender: Option<mpsc::Sender<Result<(), RecorderError>>>,
+}
+
+enum PipeWireCapturedFrame {
+    Cpu(CapturedFrame),
+    DmaBuf(CapturedDmaBufFrame),
+}
+
+struct LatestPipeWireFrameSampler {
+    frame_interval_ms: u64,
+    last_composed_at_ms: Option<u64>,
+    latest_frames: HashMap<String, PipeWireCapturedFrame>,
+}
+
+impl LatestPipeWireFrameSampler {
+    fn new(fps: f64) -> Self {
+        Self {
+            frame_interval_ms: frame_interval_ms(fps),
+            last_composed_at_ms: None,
+            latest_frames: HashMap::new(),
+        }
+    }
+
+    fn push(&mut self, frame: PipeWireCapturedFrame) -> Result<(), RecorderError> {
+        match &frame {
+            PipeWireCapturedFrame::Cpu(frame) => frame.validate()?,
+            PipeWireCapturedFrame::DmaBuf(frame) => frame.validate()?,
+        }
+        self.latest_frames
+            .insert(frame.source_id().to_string(), frame);
+
+        Ok(())
+    }
+
+    fn should_compose(&self, now_ms: u64) -> bool {
+        match self.last_composed_at_ms {
+            None => !self.latest_frames.is_empty(),
+            Some(last_composed_at_ms) => {
+                now_ms.saturating_sub(last_composed_at_ms) >= self.frame_interval_ms
+                    && !self.latest_frames.is_empty()
+            }
+        }
+    }
+
+    fn mark_composed(&mut self, timestamp_ms: u64) {
+        self.last_composed_at_ms = Some(timestamp_ms);
+    }
+
+    fn frame_interval(&self) -> Duration {
+        Duration::from_millis(self.frame_interval_ms)
+    }
+
+    fn latest_frames(&self) -> &HashMap<String, PipeWireCapturedFrame> {
+        &self.latest_frames
+    }
+
+    fn has_frames(&self) -> bool {
+        !self.latest_frames.is_empty()
+    }
+
+    #[cfg(test)]
+    fn latest_frame_count(&self) -> usize {
+        self.latest_frames.len()
+    }
+
+    #[cfg(test)]
+    fn has_latest_frame(&self, source_id: &str) -> bool {
+        self.latest_frames.contains_key(source_id)
+    }
+}
+
+fn frame_interval_ms(fps: f64) -> u64 {
+    if fps.is_finite() && fps > 0.0 {
+        Duration::from_secs_f64(1.0 / fps).as_millis().max(1) as u64
+    } else {
+        1000
+    }
+}
+
+impl PipeWireCapturedFrame {
+    fn source_id(&self) -> &str {
+        match self {
+            Self::Cpu(frame) => &frame.source_id,
+            Self::DmaBuf(frame) => &frame.source_id,
+        }
+    }
+
+    fn timestamp_ms(&self) -> u64 {
+        match self {
+            Self::Cpu(frame) => frame.timestamp_ms,
+            Self::DmaBuf(frame) => frame.timestamp_ms,
+        }
+    }
+
+    fn format_label(&self) -> &'static str {
+        match self {
+            Self::Cpu(frame) => frame.format.label(),
+            Self::DmaBuf(frame) => frame.format.label(),
+        }
+    }
+
+    fn try_clone(&self) -> Result<Self, RecorderError> {
+        match self {
+            Self::Cpu(frame) => Ok(Self::Cpu(frame.clone())),
+            Self::DmaBuf(frame) => Ok(Self::DmaBuf(CapturedDmaBufFrame::new(
+                frame.source_id.clone(),
+                frame.timestamp_ms,
+                frame.width,
+                frame.height,
+                frame.stride,
+                frame.format,
+                frame.fourcc,
+                frame.modifier,
+                frame.offset,
+                frame.fd.as_fd().try_clone_to_owned().map_err(|error| {
+                    capture_adapter_failed_error(format!(
+                        "Failed to duplicate DMA-BUF fd for capture source {}: {error}.",
+                        frame.source_id
+                    ))
+                })?,
+            )?)),
+        }
+    }
 }
 
 pub(crate) fn preflight_live_capture(
     scene: &RecorderScene,
     live_streams: &[LivePortalStream],
 ) -> Result<LiveCapturePreflight, RecorderError> {
-    let runtime_sources = runtime_sources_for_scene(scene, live_streams)?;
+    let runtime_sources = match runtime_sources_for_scene(scene, live_streams) {
+        Ok(runtime_sources) => runtime_sources,
+        Err(error) => {
+            warn!(
+                scene_id = %scene.id,
+                scene_source_count = scene.sources.len(),
+                scene_source_ids = %scene
+                    .sources
+                    .iter()
+                    .map(|source| source.source_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                live_stream_count = live_streams.len(),
+                live_stream_source_ids = %live_streams
+                    .iter()
+                    .map(|stream| stream.source_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                error_code = %error.code,
+                "live_capture_preflight_source_mapping_failed"
+            );
+            return Err(error);
+        }
+    };
     let plan = SceneCompositorPlan::from_scene(scene, &runtime_sources)?;
 
     Ok(LiveCapturePreflight {
@@ -128,7 +304,13 @@ pub(crate) fn prepared_live_capture(
     live_session: LivePortalSession,
     scene: &RecorderScene,
 ) -> Result<PreparedLiveCapture, RecorderError> {
-    let preflight = preflight_live_capture(scene, &live_session.streams)?;
+    let preflight = match preflight_live_capture(scene, &live_session.streams) {
+        Ok(preflight) => preflight,
+        Err(error) => {
+            let _ = live_session.close_blocking("preflight");
+            return Err(error);
+        }
+    };
 
     Ok(PreparedLiveCapture {
         live_session,
@@ -137,30 +319,39 @@ pub(crate) fn prepared_live_capture(
 }
 
 pub(crate) fn start_live_segment(
-    ffmpeg_path: &std::path::Path,
-    input: &FfmpegSegmentInput,
+    input: &MediaSegmentInput,
     prepared: PreparedLiveCapture,
-) -> Result<RunningSegmentMedia, RecorderError> {
+) -> Result<RecordingSegmentRuntime, RecorderError> {
     let (sender, receiver) = bounded_frame_channel(3);
     let timing = new_capture_timing();
-    let ffmpeg =
-        ffmpeg::start_segment_from_frames(ffmpeg_path, input, receiver, Some(timing.clone()))?;
+    let media_writer =
+        match media_writer::start_segment_from_frames(input, receiver, Some(timing.clone())) {
+            Ok(media_writer) => media_writer,
+            Err(error) => {
+                let _ = prepared
+                    .live_session
+                    .close_blocking("recording-media-start");
+                return Err(error);
+            }
+        };
+    let benchmark = media_writer.benchmark();
     let capture = match start_pipewire_capture_session(
         prepared.live_session,
         prepared.preflight,
         input.fps,
         sender,
         timing.clone(),
+        benchmark,
     ) {
         Ok(capture) => capture,
         Err(error) => {
-            let _ = ffmpeg.stop();
+            let _ = media_writer.stop(input.started_at_ms);
             return Err(error);
         }
     };
 
-    Ok(RunningSegmentMedia::new(
-        ffmpeg,
+    Ok(RecordingSegmentRuntime::new(
+        media_writer,
         Some(capture),
         Some(timing),
     ))
@@ -176,7 +367,13 @@ pub(crate) fn start_preview_session(
         .iter()
         .map(|source| source.source_id.clone())
         .collect::<Vec<_>>();
-    let stream_configs = stream_configs_from_plan(&prepared.preflight.plan)?;
+    let stream_configs = match stream_configs_from_plan(&prepared.preflight.plan) {
+        Ok(stream_configs) => stream_configs,
+        Err(error) => {
+            let _ = prepared.live_session.close_blocking("preview-config");
+            return Err(error);
+        }
+    };
     let (shutdown, shutdown_receiver) = pw::channel::channel();
     let (ready_sender, ready_receiver) = mpsc::channel();
     let worker = RuntimeWorker::spawn("pipewire-preview", move || {
@@ -260,26 +457,42 @@ fn match_live_stream_for_scene_source(
         return Some(index);
     }
 
-    if !is_volatile_pipewire_source_id(&scene_source.source_id) {
-        return None;
-    }
-
-    if let Some(index) = live_streams
-        .iter()
-        .enumerate()
-        .find(|(index, stream)| {
-            !claimed_streams[*index] && stream.display_name == scene_source.display_name
-        })
-        .map(|(index, _stream)| index)
+    if let Some(index) =
+        unique_live_stream_by_display_name(scene_source, live_streams, claimed_streams)
     {
         return Some(index);
     }
 
+    if !is_volatile_pipewire_source_id(&scene_source.source_id) {
+        return None;
+    }
+
     live_streams
         .get(scene_index)
-        .filter(|_stream| !claimed_streams[scene_index])
+        .filter(|_stream| {
+            claimed_streams
+                .get(scene_index)
+                .is_some_and(|claimed| !claimed)
+        })
         .map(|_stream| scene_index)
         .or_else(|| claimed_streams.iter().position(|claimed| !claimed))
+}
+
+fn unique_live_stream_by_display_name(
+    scene_source: &crate::recorder::types::RecorderSceneSource,
+    live_streams: &[LivePortalStream],
+    claimed_streams: &[bool],
+) -> Option<usize> {
+    let mut matches = live_streams
+        .iter()
+        .enumerate()
+        .filter(|(index, stream)| {
+            !claimed_streams[*index] && stream.display_name == scene_source.display_name
+        })
+        .map(|(index, _stream)| index);
+    let first = matches.next()?;
+
+    matches.next().is_none().then_some(first)
 }
 
 fn is_volatile_pipewire_source_id(source_id: &str) -> bool {
@@ -295,17 +508,42 @@ pub(crate) fn start_pipewire_capture_session(
     fps: f64,
     composed_frames: FrameSender,
     timing: SharedCaptureTiming,
+    benchmark: Option<RecorderBenchmarkSession>,
 ) -> Result<Box<dyn CaptureSession>, RecorderError> {
-    let stream_configs = stream_configs_from_plan(&preflight.plan)?;
+    let stream_configs = match stream_configs_from_plan(&preflight.plan) {
+        Ok(stream_configs) => stream_configs,
+        Err(error) => {
+            let _ = live_session.close_blocking("recording-config");
+            return Err(error);
+        }
+    };
     let (shutdown, shutdown_receiver) = pw::channel::channel();
+    let (scheduler_shutdown, scheduler_shutdown_receiver) = mpsc::channel();
     let (ready_sender, ready_receiver) = mpsc::channel();
+    let latest_frames = Arc::new(Mutex::new(LatestPipeWireFrameSampler::new(fps)));
+    let scheduler_worker = RuntimeWorker::spawn("pipewire-capture-scheduler", {
+        let latest_frames = Arc::clone(&latest_frames);
+        let timing = timing.clone();
+        let plan = preflight.plan.clone();
+        let benchmark = benchmark.clone();
+        move || {
+            run_pipewire_capture_scheduler(
+                plan,
+                fps,
+                composed_frames,
+                timing,
+                latest_frames,
+                benchmark,
+                scheduler_shutdown_receiver,
+            )
+        }
+    });
     let worker = RuntimeWorker::spawn("pipewire-capture", move || {
         run_pipewire_capture(
             live_session,
-            preflight.plan,
             fps,
-            composed_frames,
             timing,
+            latest_frames,
             stream_configs,
             shutdown_receiver,
             ready_sender,
@@ -313,14 +551,23 @@ pub(crate) fn start_pipewire_capture_session(
     });
 
     match ready_receiver.recv_timeout(PIPEWIRE_READY_TIMEOUT) {
-        Ok(Ok(())) => Ok(Box::new(PipeWireCaptureSession { shutdown, worker })),
+        Ok(Ok(())) => Ok(Box::new(PipeWireCaptureSession {
+            scheduler_shutdown,
+            scheduler_worker,
+            shutdown,
+            worker,
+        })),
         Ok(Err(error)) => {
+            let _ = scheduler_shutdown.send(());
             let _ = worker.join();
+            let _ = scheduler_worker.join();
             Err(error)
         }
         Err(_error) => {
             let _ = shutdown.send(PipeWireControl::Shutdown);
+            let _ = scheduler_shutdown.send(());
             let _ = worker.join();
+            let _ = scheduler_worker.join();
             Err(capture_adapter_failed_error(
                 "PipeWire capture did not become ready before the startup timeout.",
             ))
@@ -329,9 +576,15 @@ pub(crate) fn start_pipewire_capture_session(
 }
 
 impl CaptureSession for PipeWireCaptureSession {
-    fn stop(self: Box<Self>) -> Result<(), RecorderError> {
+    fn stop(self: Box<Self>, stop_at_ms: u64) -> Result<(), RecorderError> {
+        info!(stop_at_ms, "pipewire_capture_scheduler_stop_requested");
+        let _ = self.scheduler_shutdown.send(());
         let _ = self.shutdown.send(PipeWireControl::Shutdown);
-        self.worker.join()
+        let pipewire_result = self.worker.join();
+        let scheduler_result = self.scheduler_worker.join();
+        info!(stop_at_ms, "pipewire_capture_scheduler_stopped");
+
+        pipewire_result.and(scheduler_result)
     }
 }
 
@@ -344,21 +597,20 @@ impl CapturePreviewSession for PipeWirePreviewSession {
 
 fn run_pipewire_capture(
     live_session: LivePortalSession,
-    plan: SceneCompositorPlan,
     fps: f64,
-    composed_frames: FrameSender,
     timing: SharedCaptureTiming,
+    latest_frames: SharedPipeWireFrameSampler,
     stream_configs: Vec<PipeWireStreamConfig>,
     shutdown_receiver: pw::channel::Receiver<PipeWireControl>,
     ready_sender: mpsc::Sender<Result<(), RecorderError>>,
 ) -> Result<(), RecorderError> {
+    let (fd, portal_session) = live_session.into_fd_and_session();
     let mut startup = PipeWireStartupNotifier::new(ready_sender);
     let result = run_pipewire_capture_inner(
-        live_session.fd,
-        plan,
+        fd,
         fps,
-        composed_frames,
         timing,
+        latest_frames,
         stream_configs,
         shutdown_receiver,
         &mut startup,
@@ -366,16 +618,16 @@ fn run_pipewire_capture(
     if let Err(error) = &result {
         startup.error(error);
     }
+    let close_result = close_portal_session_blocking(portal_session, "recording");
 
-    result
+    result.and(close_result)
 }
 
 fn run_pipewire_capture_inner(
     fd: OwnedFd,
-    plan: SceneCompositorPlan,
     fps: f64,
-    composed_frames: FrameSender,
     timing: SharedCaptureTiming,
+    latest_frames: SharedPipeWireFrameSampler,
     stream_configs: Vec<PipeWireStreamConfig>,
     shutdown_receiver: pw::channel::Receiver<PipeWireControl>,
     startup: &mut PipeWireStartupNotifier,
@@ -390,12 +642,17 @@ fn run_pipewire_capture_inner(
     let context = pw::context::ContextRc::new(&mainloop, None).map_err(pipewire_error)?;
     let core = context.connect_fd_rc(fd, None).map_err(pipewire_error)?;
     let state = Rc::new(RefCell::new(PipeWireCaptureState {
-        composed_frames,
         error: None,
-        plan,
-        sampler: LatestFrameSampler::new(fps),
+        latest_frames,
         timing,
     }));
+    let frame_interval = Duration::from_millis(frame_interval_ms(fps));
+    info!(
+        fps,
+        frame_interval_ms = frame_interval.as_millis(),
+        source_count = stream_configs.len(),
+        "pipewire_capture_scheduler_started"
+    );
     let mut streams = Vec::with_capacity(stream_configs.len());
     let mut listeners = Vec::with_capacity(stream_configs.len());
 
@@ -412,6 +669,7 @@ fn run_pipewire_capture_inner(
         .map_err(pipewire_error)?;
         let data = PipeWireStreamData {
             format: Default::default(),
+            logged_negotiated_format: false,
             source_id: stream_config.source_id.clone(),
         };
         let state_for_process = state.clone();
@@ -452,7 +710,7 @@ fn run_pipewire_capture_inner(
             .register()
             .map_err(pipewire_error)?;
 
-        let param_bytes = raw_video_params(stream_config.node_id)?;
+        let param_bytes = raw_video_params(stream_config.node_id, fps)?;
         let pod = spa::pod::Pod::from_bytes(&param_bytes).ok_or_else(|| {
             capture_adapter_failed_error(format!(
                 "Failed to parse PipeWire raw video parameters for node {}.",
@@ -493,10 +751,11 @@ fn run_pipewire_preview(
     shutdown_receiver: pw::channel::Receiver<PipeWireControl>,
     ready_sender: mpsc::Sender<Result<(), RecorderError>>,
 ) -> Result<(), RecorderError> {
+    let (fd, portal_session) = live_session.into_fd_and_session();
     let mut startup = PipeWireStartupNotifier::new(ready_sender);
     let result = run_pipewire_preview_inner(
         app,
-        live_session.fd,
+        fd,
         plan,
         stream_configs,
         shutdown_receiver,
@@ -505,8 +764,9 @@ fn run_pipewire_preview(
     if let Err(error) = &result {
         startup.error(error);
     }
+    let close_result = close_portal_session_blocking(portal_session, "preview");
 
-    result
+    result.and(close_result)
 }
 
 fn run_pipewire_preview_inner(
@@ -548,6 +808,7 @@ fn run_pipewire_preview_inner(
         .map_err(pipewire_error)?;
         let data = PipeWireStreamData {
             format: Default::default(),
+            logged_negotiated_format: false,
             source_id: stream_config.source_id.clone(),
         };
         let state_for_process = state.clone();
@@ -588,7 +849,7 @@ fn run_pipewire_preview_inner(
             .register()
             .map_err(pipewire_error)?;
 
-        let param_bytes = raw_video_params(stream_config.node_id)?;
+        let param_bytes = raw_video_params(stream_config.node_id, 1.0)?;
         let pod = spa::pod::Pod::from_bytes(&param_bytes).ok_or_else(|| {
             capture_adapter_failed_error(format!(
                 "Failed to parse PipeWire raw video parameters for node {}.",
@@ -680,35 +941,337 @@ fn capture_stream_frame(
         return Ok(());
     }
 
+    log_negotiated_stream_format(user_data, &datas[0]);
     let frame =
-        captured_frame_from_pipewire_data(&user_data.source_id, user_data.format, &mut datas[0])?;
-    let frame_source_id = frame.source_id.clone();
-    let frame_timestamp_ms = frame.timestamp_ms;
-    let mut state = state.borrow_mut();
+        captured_pipewire_frame_from_data(&user_data.source_id, user_data.format, &mut datas[0])?;
+    let (frame_source_id, frame_timestamp_ms) = match &frame {
+        PipeWireCapturedFrame::Cpu(frame) => (frame.source_id.clone(), frame.timestamp_ms),
+        PipeWireCapturedFrame::DmaBuf(frame) => (frame.source_id.clone(), frame.timestamp_ms),
+    };
+    let state = state.borrow_mut();
     record_capture_frame(&state.timing, &frame_source_id, frame_timestamp_ms);
-    state.sampler.push(frame)?;
-    let timestamp_ms = now_ms();
-    if !state.sampler.should_compose(timestamp_ms) {
-        return Ok(());
-    }
-
-    let reused_latest_frame = state.plan.inputs.iter().any(|input| {
-        input.source_id != frame_source_id
-            && state
-                .sampler
-                .latest_frames()
-                .get(&input.source_id)
-                .is_some_and(|latest| latest.timestamp_ms < frame_timestamp_ms)
-    });
-    let composed = state
-        .plan
-        .compose_latest_frames(state.sampler.latest_frames(), timestamp_ms)?;
-    state.plan.validate_composed_frame(&composed)?;
-    state.composed_frames.send(composed)?;
-    record_composed_frame(&state.timing, timestamp_ms, reused_latest_frame);
-    state.sampler.mark_composed(timestamp_ms);
+    state
+        .latest_frames
+        .lock()
+        .map_err(|_error| capture_adapter_failed_error("PipeWire capture sampler lock poisoned."))?
+        .push(frame)?;
+    debug!(
+        source_id = %frame_source_id,
+        frame_timestamp_ms,
+        "pipewire_capture_latest_frame_updated"
+    );
 
     Ok(())
+}
+
+fn log_negotiated_stream_format(user_data: &mut PipeWireStreamData, data: &spa::buffer::Data) {
+    if user_data.logged_negotiated_format {
+        return;
+    }
+    let size = user_data.format.size();
+    let Ok(frame_format) = captured_frame_format_from_pipewire(user_data.format.format()) else {
+        return;
+    };
+    let stride = data.chunk().stride();
+    let storage = storage_from_pipewire_data_type(data.type_());
+
+    info!(
+        source_id = %user_data.source_id,
+        pipewire_format = ?user_data.format.format(),
+        runtime_format = %frame_format.label(),
+        storage = ?storage,
+        width = size.width,
+        height = size.height,
+        stride,
+        "pipewire_capture_stream_format_negotiated"
+    );
+    user_data.logged_negotiated_format = true;
+}
+
+fn run_pipewire_capture_scheduler(
+    plan: SceneCompositorPlan,
+    fps: f64,
+    composed_frames: FrameSender,
+    timing: SharedCaptureTiming,
+    latest_frames: SharedPipeWireFrameSampler,
+    benchmark: Option<RecorderBenchmarkSession>,
+    shutdown_receiver: mpsc::Receiver<()>,
+) -> Result<(), RecorderError> {
+    let frame_interval_ms = frame_interval_ms(fps);
+    let mut state = PipeWireCaptureSchedulerState {
+        benchmark,
+        composed_frames,
+        frame_interval_ms,
+        gpu_compositor: None,
+        latest_frames,
+        next_composed_at_ms: None,
+        plan,
+        timing,
+    };
+    let idle_sleep = Duration::from_millis(frame_interval_ms.min(50).max(1));
+
+    loop {
+        if scheduler_shutdown_requested(&shutdown_receiver) {
+            return Ok(());
+        }
+
+        let now = now_ms();
+        let Some(timestamp_ms) = next_scheduler_timestamp(&mut state, now)? else {
+            match shutdown_receiver.recv_timeout(idle_sleep) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            }
+        };
+        if scheduler_shutdown_requested(&shutdown_receiver) {
+            return Ok(());
+        }
+        if compose_latest_pipewire_frames(&mut state, timestamp_ms, &shutdown_receiver)?
+            == ComposedFrameSendOutcome::Stopped
+        {
+            return Ok(());
+        }
+    }
+}
+
+fn scheduler_shutdown_requested(shutdown_receiver: &mpsc::Receiver<()>) -> bool {
+    matches!(
+        shutdown_receiver.try_recv(),
+        Ok(()) | Err(mpsc::TryRecvError::Disconnected)
+    )
+}
+
+fn next_scheduler_timestamp(
+    state: &mut PipeWireCaptureSchedulerState,
+    now_ms: u64,
+) -> Result<Option<u64>, RecorderError> {
+    let has_frames = state
+        .latest_frames
+        .lock()
+        .map_err(|_error| capture_adapter_failed_error("PipeWire capture sampler lock poisoned."))?
+        .has_frames();
+    if !has_frames {
+        return Ok(None);
+    }
+
+    let Some(next_composed_at_ms) = state.next_composed_at_ms else {
+        state.next_composed_at_ms = Some(now_ms.saturating_add(state.frame_interval_ms));
+        record_scheduler_tick(&state.timing, 0);
+        return Ok(Some(now_ms));
+    };
+    if now_ms < next_composed_at_ms {
+        return Ok(None);
+    }
+
+    let late_by_ms = now_ms.saturating_sub(next_composed_at_ms);
+    let missed_deadlines = if late_by_ms > state.frame_interval_ms {
+        late_by_ms / state.frame_interval_ms
+    } else {
+        0
+    };
+    let timestamp_ms = if late_by_ms > state.frame_interval_ms {
+        now_ms
+    } else {
+        next_composed_at_ms
+    };
+    state.next_composed_at_ms = Some(timestamp_ms.saturating_add(state.frame_interval_ms));
+    record_scheduler_tick(&state.timing, missed_deadlines);
+
+    Ok(Some(timestamp_ms))
+}
+
+fn compose_latest_pipewire_frames(
+    state: &mut PipeWireCaptureSchedulerState,
+    timestamp_ms: u64,
+    shutdown_receiver: &mpsc::Receiver<()>,
+) -> Result<ComposedFrameSendOutcome, RecorderError> {
+    if scheduler_shutdown_requested(shutdown_receiver) {
+        return Ok(ComposedFrameSendOutcome::Stopped);
+    }
+    let snapshot_started = Instant::now();
+    let latest_snapshot = latest_pipewire_frame_snapshot(&state.latest_frames)?;
+    if scheduler_shutdown_requested(shutdown_receiver) {
+        return Ok(ComposedFrameSendOutcome::Stopped);
+    }
+    if let Some(benchmark) = &state.benchmark {
+        benchmark.record_stage(
+            RecorderBenchmarkStage::Snapshot,
+            snapshot_started.elapsed(),
+            Some(timestamp_ms),
+            Some(latest_snapshot.len()),
+            latest_snapshot
+                .values()
+                .map(|frame| frame.format_label().to_string())
+                .collect(),
+            None,
+        );
+    }
+    let reused_latest_frame = latest_snapshot
+        .values()
+        .any(|frame| frame.timestamp_ms() < timestamp_ms);
+    let compose_started = Instant::now();
+    let materialize_started = Instant::now();
+    let latest_frames = materialized_latest_frames(&mut state.gpu_compositor, &latest_snapshot)?;
+    if scheduler_shutdown_requested(shutdown_receiver) {
+        return Ok(ComposedFrameSendOutcome::Stopped);
+    }
+    if let Some(benchmark) = &state.benchmark {
+        benchmark.record_stage(
+            RecorderBenchmarkStage::Materialize,
+            materialize_started.elapsed(),
+            Some(timestamp_ms),
+            Some(latest_frames.len()),
+            latest_frames
+                .values()
+                .map(|frame| frame.format.label().to_string())
+                .collect(),
+            Some(
+                latest_frames
+                    .values()
+                    .map(|frame| frame.data.len() as u64)
+                    .sum(),
+            ),
+        );
+    }
+    let compose_stage = if state.plan.is_full_canvas_passthrough(&latest_frames) {
+        RecorderBenchmarkStage::Passthrough
+    } else {
+        RecorderBenchmarkStage::Compose
+    };
+    let compose_only_started = Instant::now();
+    let composed = state
+        .plan
+        .compose_latest_frames(&latest_frames, timestamp_ms)?;
+    if scheduler_shutdown_requested(shutdown_receiver) {
+        return Ok(ComposedFrameSendOutcome::Stopped);
+    }
+    if let Some(benchmark) = &state.benchmark {
+        benchmark.record_stage(
+            compose_stage,
+            compose_only_started.elapsed(),
+            Some(timestamp_ms),
+            Some(latest_frames.len()),
+            vec![composed.format.label().to_string()],
+            Some(composed.data.len().try_into().unwrap_or(u64::MAX)),
+        );
+    }
+    state.plan.validate_composed_frame(&composed)?;
+    let send_started = Instant::now();
+    let send_outcome = send_composed_frame_with_backpressure(
+        &state.composed_frames,
+        composed,
+        writer_backpressure_timeout(state.frame_interval_ms),
+        shutdown_receiver,
+    )?;
+    if send_outcome == ComposedFrameSendOutcome::Stopped {
+        return Ok(ComposedFrameSendOutcome::Stopped);
+    }
+    if let Some(benchmark) = &state.benchmark {
+        benchmark.record_stage(
+            RecorderBenchmarkStage::SendWait,
+            send_started.elapsed(),
+            Some(timestamp_ms),
+            None,
+            Vec::new(),
+            None,
+        );
+    }
+    record_composed_frame(&state.timing, timestamp_ms, reused_latest_frame);
+    record_compose_duration(
+        &state.timing,
+        compose_started
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    debug!(
+        timestamp_ms,
+        reused_latest_frame,
+        compose_duration_ms = compose_started.elapsed().as_millis(),
+        "pipewire_capture_scheduled_frame_composed"
+    );
+
+    Ok(ComposedFrameSendOutcome::Sent)
+}
+
+fn materialized_latest_frames(
+    gpu_compositor: &mut Option<LinuxGpuFrameCompositor>,
+    latest_frames: &HashMap<String, PipeWireCapturedFrame>,
+) -> Result<HashMap<String, CapturedFrame>, RecorderError> {
+    if latest_frames
+        .values()
+        .any(|frame| matches!(frame, PipeWireCapturedFrame::DmaBuf(_)))
+        && gpu_compositor.is_none()
+    {
+        *gpu_compositor = Some(LinuxGpuFrameCompositor::new()?);
+    }
+
+    let mut frames = HashMap::with_capacity(latest_frames.len());
+    for (source_id, frame) in latest_frames {
+        let frame = match frame {
+            PipeWireCapturedFrame::Cpu(frame) => frame.clone(),
+            PipeWireCapturedFrame::DmaBuf(frame) => gpu_compositor
+                .as_ref()
+                .expect("GPU compositor initialized")
+                .read_frame_to_rgba(frame)?,
+        };
+        frames.insert(source_id.clone(), frame);
+    }
+
+    Ok(frames)
+}
+
+fn latest_pipewire_frame_snapshot(
+    latest_frames: &SharedPipeWireFrameSampler,
+) -> Result<HashMap<String, PipeWireCapturedFrame>, RecorderError> {
+    latest_frames
+        .lock()
+        .map_err(|_error| capture_adapter_failed_error("PipeWire capture sampler lock poisoned."))?
+        .latest_frames()
+        .iter()
+        .map(|(source_id, frame)| Ok((source_id.clone(), frame.try_clone()?)))
+        .collect()
+}
+
+fn send_composed_frame_with_backpressure(
+    sender: &FrameSender,
+    frame: CapturedFrame,
+    timeout: Duration,
+    shutdown_receiver: &mpsc::Receiver<()>,
+) -> Result<ComposedFrameSendOutcome, RecorderError> {
+    let started = Instant::now();
+    let mut frame = frame;
+    loop {
+        if scheduler_shutdown_requested(shutdown_receiver) {
+            return Ok(ComposedFrameSendOutcome::Stopped);
+        }
+        match sender.try_send(frame) {
+            Ok(()) => return Ok(ComposedFrameSendOutcome::Sent),
+            Err(FrameTrySendError::Full(returned_frame)) => {
+                if started.elapsed() >= timeout {
+                    return Err(capture_adapter_failed_error(format!(
+                        "Timed out sending composed frame to the media writer after {}ms.",
+                        timeout.as_millis()
+                    )));
+                }
+                if scheduler_shutdown_requested(shutdown_receiver) {
+                    return Ok(ComposedFrameSendOutcome::Stopped);
+                }
+                frame = returned_frame;
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(FrameTrySendError::Disconnected) => {
+                return Err(capture_adapter_failed_error(
+                    "Capture frame receiver is no longer available.",
+                ));
+            }
+            Err(FrameTrySendError::InvalidFrame(error)) => return Err(error),
+        }
+    }
+}
+
+fn writer_backpressure_timeout(frame_interval_ms: u64) -> Duration {
+    Duration::from_millis(frame_interval_ms.saturating_mul(5).max(1_000))
 }
 
 fn capture_preview_stream_frame(
@@ -784,6 +1347,19 @@ fn captured_frame_from_pipewire_data(
     format: spa::param::video::VideoInfoRaw,
     data: &mut spa::buffer::Data,
 ) -> Result<CapturedFrame, RecorderError> {
+    match captured_pipewire_frame_from_data(source_id, format, data)? {
+        PipeWireCapturedFrame::Cpu(frame) => Ok(frame),
+        PipeWireCapturedFrame::DmaBuf(_frame) => Err(CapturedFrameStorage::DmaBuf
+            .ensure_cpu_readable(source_id)
+            .expect_err("DMA-BUF preview is not CPU-readable")),
+    }
+}
+
+fn captured_pipewire_frame_from_data(
+    source_id: &str,
+    format: spa::param::video::VideoInfoRaw,
+    data: &mut spa::buffer::Data,
+) -> Result<PipeWireCapturedFrame, RecorderError> {
     let size = format.size();
     let frame_format = captured_frame_format_from_pipewire(format.format())?;
     let chunk = data.chunk();
@@ -804,21 +1380,41 @@ fn captured_frame_from_pipewire_data(
         ))
     })?;
     let storage = storage_from_pipewire_data_type(data.type_());
-    let mapped_bytes = data.data();
-    let bytes = cpu_readable_pipewire_data_bytes(source_id, &storage, mapped_bytes.as_deref())?;
-
-    captured_frame_from_cpu_readable_pipewire_bytes(
-        source_id,
-        storage,
-        now_ms(),
-        size.width,
-        size.height,
-        stride,
-        frame_format,
-        offset,
-        len,
-        bytes,
-    )
+    match storage {
+        CapturedFrameStorage::CpuReadable => {
+            let mapped_bytes = data.data();
+            let bytes =
+                cpu_readable_pipewire_data_bytes(source_id, &storage, mapped_bytes.as_deref())?;
+            captured_frame_from_cpu_readable_pipewire_bytes(
+                source_id,
+                storage,
+                now_ms(),
+                size.width,
+                size.height,
+                stride,
+                frame_format,
+                offset,
+                len,
+                bytes,
+            )
+            .map(PipeWireCapturedFrame::Cpu)
+        }
+        CapturedFrameStorage::DmaBuf => captured_dmabuf_frame_from_pipewire_data(
+            source_id,
+            now_ms(),
+            size.width,
+            size.height,
+            stride,
+            frame_format,
+            offset,
+            format.modifier(),
+            data,
+        )
+        .map(PipeWireCapturedFrame::DmaBuf),
+        CapturedFrameStorage::Unknown(_) => Err(storage
+            .ensure_cpu_readable(source_id)
+            .expect_err("unsupported storage should fail")),
+    }
 }
 
 fn cpu_readable_pipewire_data_bytes<'a>(
@@ -832,6 +1428,52 @@ fn cpu_readable_pipewire_data_bytes<'a>(
             "Capture source {source_id} did not expose CPU-readable PipeWire frame bytes."
         ))
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn captured_dmabuf_frame_from_pipewire_data(
+    source_id: &str,
+    timestamp_ms: u64,
+    width: u32,
+    height: u32,
+    stride: u32,
+    frame_format: CapturedFrameFormat,
+    offset: usize,
+    modifier: u64,
+    data: &spa::buffer::Data,
+) -> Result<CapturedDmaBufFrame, RecorderError> {
+    let fd = data.fd();
+    if fd < 0 {
+        return Err(capture_format_unsupported_error(format!(
+            "Capture source {source_id} reported an invalid DMA-BUF fd."
+        )));
+    }
+    let fd = unsafe { BorrowedFd::borrow_raw(fd) }
+        .try_clone_to_owned()
+        .map_err(|error| {
+            capture_adapter_failed_error(format!(
+                "Failed to duplicate DMA-BUF fd for capture source {source_id}: {error}."
+            ))
+        })?;
+    let offset: u32 = offset.try_into().map_err(|_error| {
+        capture_format_unsupported_error(format!(
+            "Capture source {source_id} reported invalid DMA-BUF frame offset."
+        ))
+    })?;
+    let fourcc = drm_fourcc_from_frame_format(frame_format)?;
+
+    CapturedDmaBufFrame::new(
+        source_id,
+        timestamp_ms,
+        width,
+        height,
+        stride,
+        frame_format,
+        fourcc,
+        modifier,
+        offset,
+        fd,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -871,6 +1513,27 @@ fn captured_frame_from_cpu_readable_pipewire_bytes(
     )
 }
 
+const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    a as u32 | ((b as u32) << 8) | ((c as u32) << 16) | ((d as u32) << 24)
+}
+
+fn drm_fourcc_from_frame_format(format: CapturedFrameFormat) -> Result<u32, RecorderError> {
+    match format {
+        CapturedFrameFormat::Rgbx => Ok(fourcc_code(b'R', b'X', b'2', b'4')),
+        CapturedFrameFormat::Rgba => Ok(fourcc_code(b'R', b'A', b'2', b'4')),
+        CapturedFrameFormat::Xrgb => Ok(fourcc_code(b'X', b'R', b'2', b'4')),
+        CapturedFrameFormat::Argb => Ok(fourcc_code(b'A', b'R', b'2', b'4')),
+        CapturedFrameFormat::Bgrx => Ok(fourcc_code(b'B', b'X', b'2', b'4')),
+        CapturedFrameFormat::Bgra => Ok(fourcc_code(b'B', b'A', b'2', b'4')),
+        CapturedFrameFormat::Yuv444p => Err(capture_format_unsupported_error(
+            "Planar yuv444p DMA-BUF import is not supported.",
+        )),
+        CapturedFrameFormat::Yuv420p => Err(capture_format_unsupported_error(
+            "Planar yuv420p DMA-BUF import is not supported.",
+        )),
+    }
+}
+
 fn storage_from_pipewire_data_type(data_type: spa::buffer::DataType) -> CapturedFrameStorage {
     if data_type == spa::buffer::DataType::MemPtr || data_type == spa::buffer::DataType::MemFd {
         CapturedFrameStorage::CpuReadable
@@ -898,6 +1561,8 @@ fn captured_frame_format_from_pipewire(
         Ok(CapturedFrameFormat::Bgra)
     } else if format == spa::param::video::VideoFormat::Y444 {
         Ok(CapturedFrameFormat::Yuv444p)
+    } else if format == spa::param::video::VideoFormat::I420 {
+        Ok(CapturedFrameFormat::Yuv420p)
     } else {
         Err(capture_format_unsupported_error(format!(
             "PipeWire frame format {format:?} is not supported."
@@ -905,7 +1570,8 @@ fn captured_frame_format_from_pipewire(
     }
 }
 
-fn raw_video_params(node_id: u32) -> Result<Vec<u8>, RecorderError> {
+fn raw_video_params(node_id: u32, fps: f64) -> Result<Vec<u8>, RecorderError> {
+    let framerate = pipewire_framerate_fraction(fps);
     let obj = pw::spa::pod::object!(
         pw::spa::utils::SpaTypes::ObjectParamFormat,
         pw::spa::param::ParamType::EnumFormat,
@@ -931,6 +1597,7 @@ fn raw_video_params(node_id: u32) -> Result<Vec<u8>, RecorderError> {
             pw::spa::param::video::VideoFormat::ARGB,
             pw::spa::param::video::VideoFormat::BGRx,
             pw::spa::param::video::VideoFormat::BGRA,
+            pw::spa::param::video::VideoFormat::I420,
             pw::spa::param::video::VideoFormat::Y444,
         ),
         pw::spa::pod::property!(
@@ -956,7 +1623,7 @@ fn raw_video_params(node_id: u32) -> Result<Vec<u8>, RecorderError> {
             Choice,
             Range,
             Fraction,
-            pw::spa::utils::Fraction { num: 1, denom: 1 },
+            framerate,
             pw::spa::utils::Fraction { num: 0, denom: 1 },
             pw::spa::utils::Fraction { num: 60, denom: 1 }
         ),
@@ -974,23 +1641,65 @@ fn raw_video_params(node_id: u32) -> Result<Vec<u8>, RecorderError> {
     })
 }
 
+fn pipewire_framerate_fraction(fps: f64) -> pw::spa::utils::Fraction {
+    if !fps.is_finite() || fps <= 0.0 {
+        return pw::spa::utils::Fraction { num: 1, denom: 1 };
+    }
+    if fps.fract() == 0.0 {
+        return pw::spa::utils::Fraction {
+            num: fps.round().clamp(1.0, 60.0) as u32,
+            denom: 1,
+        };
+    }
+    if (fps - 0.5).abs() < f64::EPSILON {
+        return pw::spa::utils::Fraction { num: 1, denom: 2 };
+    }
+    if (fps - 0.2).abs() < f64::EPSILON {
+        return pw::spa::utils::Fraction { num: 1, denom: 5 };
+    }
+    if (fps - 0.1).abs() < f64::EPSILON {
+        return pw::spa::utils::Fraction { num: 1, denom: 10 };
+    }
+
+    pw::spa::utils::Fraction {
+        num: (fps * 1000.0).round().clamp(1.0, 60_000.0) as u32,
+        denom: 1000,
+    }
+}
+
 fn pipewire_error(error: pw::Error) -> RecorderError {
     capture_adapter_failed_error(format!("PipeWire capture adapter failed: {error}."))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, time::Duration};
+    use std::{
+        fs::File,
+        sync::{mpsc, Arc, Mutex},
+        time::Duration,
+    };
 
+    use pipewire as pw;
+    use pw::spa::{
+        pod::{deserialize::PodDeserializer, ChoiceValue, Value},
+        utils::ChoiceEnum,
+    };
     use uuid::Uuid;
 
     use super::{
         captured_frame_format_from_pipewire, captured_frame_from_cpu_readable_pipewire_bytes,
-        cpu_readable_pipewire_data_bytes, preflight_live_capture, stream_configs_from_plan,
-        PipeWireStartupNotifier,
+        compose_latest_pipewire_frames, cpu_readable_pipewire_data_bytes,
+        drm_fourcc_from_frame_format, next_scheduler_timestamp, pipewire_framerate_fraction,
+        preflight_live_capture, raw_video_params, stream_configs_from_plan,
+        ComposedFrameSendOutcome, LatestPipeWireFrameSampler, PipeWireCaptureSchedulerState,
+        PipeWireCapturedFrame, PipeWireStartupNotifier,
     };
     use crate::recorder::{
-        capture_runtime::{CaptureRuntimeSourceHandle, CapturedFrameFormat, CapturedFrameStorage},
+        capture_runtime::{
+            bounded_frame_channel, capture_timing_snapshot, new_capture_timing,
+            CaptureRuntimeSourceHandle, CapturedDmaBufFrame, CapturedFrame, CapturedFrameFormat,
+            CapturedFrameStorage,
+        },
         errors::capture_adapter_failed_error,
         platform::linux::portal::LivePortalStream,
         types::{
@@ -998,6 +1707,104 @@ mod tests {
             RecorderSceneSource,
         },
     };
+
+    #[test]
+    fn pipewire_framerate_fraction_tracks_configured_fps() {
+        assert_eq!(
+            pipewire_framerate_fraction(1.0),
+            pw::spa::utils::Fraction { num: 1, denom: 1 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(5.0),
+            pw::spa::utils::Fraction { num: 5, denom: 1 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(0.5),
+            pw::spa::utils::Fraction { num: 1, denom: 2 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(0.2),
+            pw::spa::utils::Fraction { num: 1, denom: 5 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(0.1),
+            pw::spa::utils::Fraction { num: 1, denom: 10 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(0.0),
+            pw::spa::utils::Fraction { num: 1, denom: 1 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(-5.0),
+            pw::spa::utils::Fraction { num: 1, denom: 1 }
+        );
+        assert_eq!(
+            pipewire_framerate_fraction(f64::NAN),
+            pw::spa::utils::Fraction { num: 1, denom: 1 }
+        );
+    }
+
+    #[test]
+    fn raw_video_params_use_configured_fps_as_default_pipewire_framerate() {
+        let params = raw_video_params(42, 5.0).expect("raw video params");
+        let framerate = raw_video_params_default_framerate(&params)
+            .expect("video framerate property should be present");
+
+        assert_eq!(framerate, pw::spa::utils::Fraction { num: 5, denom: 1 });
+    }
+
+    #[test]
+    fn raw_video_params_prefer_dmabuf_importable_packed_rgb() {
+        let params = raw_video_params(42, 5.0).expect("raw video params");
+        let format =
+            raw_video_params_default_format(&params).expect("video format property should exist");
+
+        assert_eq!(format, pw::spa::param::video::VideoFormat::RGBx.as_raw());
+    }
+
+    fn raw_video_params_default_framerate(params: &[u8]) -> Option<pw::spa::utils::Fraction> {
+        let (_, value) = PodDeserializer::deserialize_any_from(params).ok()?;
+        let Value::Object(object) = value else {
+            return None;
+        };
+
+        object.properties.into_iter().find_map(|property| {
+            if property.key != pw::spa::param::format::FormatProperties::VideoFramerate.as_raw() {
+                return None;
+            }
+
+            let Value::Choice(ChoiceValue::Fraction(choice)) = property.value else {
+                return None;
+            };
+
+            match choice.1 {
+                ChoiceEnum::Range { default, .. } => Some(default),
+                _ => None,
+            }
+        })
+    }
+
+    fn raw_video_params_default_format(params: &[u8]) -> Option<u32> {
+        let (_, value) = PodDeserializer::deserialize_any_from(params).ok()?;
+        let Value::Object(object) = value else {
+            return None;
+        };
+
+        object.properties.into_iter().find_map(|property| {
+            if property.key != pw::spa::param::format::FormatProperties::VideoFormat.as_raw() {
+                return None;
+            }
+
+            let Value::Choice(ChoiceValue::Id(choice)) = property.value else {
+                return None;
+            };
+
+            match choice.1 {
+                ChoiceEnum::Enum { default, .. } => Some(default.0),
+                _ => None,
+            }
+        })
+    }
 
     #[test]
     fn preflight_maps_stable_portal_ids_to_runtime_sources() {
@@ -1029,6 +1836,53 @@ mod tests {
 
         assert_eq!(error.code, "recorder_capture_source_missing");
         assert!(error.message.contains("portal-monitor-missing"));
+    }
+
+    #[test]
+    fn preflight_remaps_changed_portal_id_by_unique_display_name() {
+        let scene = test_scene(vec![scene_source_with_display(
+            "saved-monitor",
+            "portal-monitor-old",
+            0,
+            "Monitor 1",
+        )]);
+        let preflight = preflight_live_capture(
+            &scene,
+            &[live_stream_with_display(
+                "portal-monitor-new",
+                101,
+                "Monitor 1",
+            )],
+        )
+        .expect("changed portal id should remap to live stream");
+
+        assert_eq!(preflight.runtime_sources[0].source_id, "portal-monitor-old");
+        assert_eq!(
+            preflight.runtime_sources[0].handle,
+            CaptureRuntimeSourceHandle::BackendId("pipewire-node-101".to_string())
+        );
+        assert_eq!(preflight.plan.inputs[0].source_id, "portal-monitor-old");
+    }
+
+    #[test]
+    fn preflight_rejects_ambiguous_changed_portal_display_name() {
+        let scene = test_scene(vec![scene_source_with_display(
+            "saved-monitor",
+            "portal-monitor-old",
+            0,
+            "Monitor",
+        )]);
+        let error = preflight_live_capture(
+            &scene,
+            &[
+                live_stream_with_display("portal-monitor-new-a", 101, "Monitor"),
+                live_stream_with_display("portal-monitor-new-b", 102, "Monitor"),
+            ],
+        )
+        .expect_err("ambiguous changed portal id should fail");
+
+        assert_eq!(error.code, "recorder_capture_source_missing");
+        assert!(error.message.contains("portal-monitor-old"));
     }
 
     #[test]
@@ -1096,6 +1950,177 @@ mod tests {
     }
 
     #[test]
+    fn mixed_cpu_and_dmabuf_pipewire_frames_share_latest_sampler() {
+        let mut sampler = LatestPipeWireFrameSampler::new(1.0);
+
+        sampler
+            .push(PipeWireCapturedFrame::Cpu(cpu_frame("cpu-monitor", 100)))
+            .expect("push CPU frame");
+        assert!(sampler.should_compose(100));
+        sampler.mark_composed(100);
+
+        sampler
+            .push(PipeWireCapturedFrame::DmaBuf(dmabuf_frame(
+                "dmabuf-monitor",
+                200,
+            )))
+            .expect("push DMA-BUF frame");
+
+        assert_eq!(sampler.latest_frame_count(), 2);
+        assert!(sampler.has_latest_frame("cpu-monitor"));
+        assert!(sampler.has_latest_frame("dmabuf-monitor"));
+        assert!(!sampler.should_compose(999));
+        assert!(sampler.should_compose(1100));
+    }
+
+    #[test]
+    fn capture_scheduler_can_compose_reused_frame_without_new_pipewire_callback() {
+        let scene = test_scene(vec![scene_source("front", "portal-monitor-a", 0)]);
+        let preflight = preflight_live_capture(&scene, &[live_stream("portal-monitor-a", 42)])
+            .expect("preflight live capture");
+        let (sender, receiver) = bounded_frame_channel(3);
+        let timing = new_capture_timing();
+        let latest_frames = Arc::new(Mutex::new(LatestPipeWireFrameSampler::new(5.0)));
+        let mut state = PipeWireCaptureSchedulerState {
+            benchmark: None,
+            composed_frames: sender,
+            gpu_compositor: None,
+            frame_interval_ms: 200,
+            latest_frames: Arc::clone(&latest_frames),
+            next_composed_at_ms: None,
+            plan: preflight.plan,
+            timing: timing.clone(),
+        };
+        let (_shutdown_sender, shutdown_receiver) = mpsc::channel();
+
+        latest_frames
+            .lock()
+            .expect("sampler lock")
+            .push(PipeWireCapturedFrame::Cpu(sized_cpu_frame(
+                "portal-monitor-a",
+                100,
+                100,
+                50,
+            )))
+            .expect("push first source frame");
+        compose_latest_pipewire_frames(&mut state, 100, &shutdown_receiver)
+            .expect("compose first frame");
+        compose_latest_pipewire_frames(&mut state, 300, &shutdown_receiver)
+            .expect("compose reused frame");
+
+        let first = receiver
+            .recv_timeout(Duration::from_millis(10))
+            .expect("first composed frame");
+        let second = receiver
+            .recv_timeout(Duration::from_millis(10))
+            .expect("second composed frame");
+        let snapshot = capture_timing_snapshot(&timing);
+
+        assert_eq!(first.timestamp_ms, 100);
+        assert_eq!(second.timestamp_ms, 300);
+        assert_eq!(snapshot.composed_frames, 2);
+        assert_eq!(snapshot.reused_frame_compositions, 1);
+    }
+
+    #[test]
+    fn capture_scheduler_shutdown_does_not_compose_or_record_frame() {
+        let scene = test_scene(vec![scene_source("front", "portal-monitor-a", 0)]);
+        let preflight = preflight_live_capture(&scene, &[live_stream("portal-monitor-a", 42)])
+            .expect("preflight live capture");
+        let (sender, receiver) = bounded_frame_channel(3);
+        let timing = new_capture_timing();
+        let latest_frames = Arc::new(Mutex::new(LatestPipeWireFrameSampler::new(5.0)));
+        let mut state = PipeWireCaptureSchedulerState {
+            benchmark: None,
+            composed_frames: sender,
+            gpu_compositor: None,
+            frame_interval_ms: 200,
+            latest_frames: Arc::clone(&latest_frames),
+            next_composed_at_ms: None,
+            plan: preflight.plan,
+            timing: timing.clone(),
+        };
+        let (shutdown_sender, shutdown_receiver) = mpsc::channel();
+
+        latest_frames
+            .lock()
+            .expect("sampler lock")
+            .push(PipeWireCapturedFrame::Cpu(sized_cpu_frame(
+                "portal-monitor-a",
+                100,
+                100,
+                50,
+            )))
+            .expect("push first source frame");
+        shutdown_sender.send(()).expect("request shutdown");
+
+        let outcome = compose_latest_pipewire_frames(&mut state, 100, &shutdown_receiver)
+            .expect("compose should observe shutdown");
+        let snapshot = capture_timing_snapshot(&timing);
+
+        assert_eq!(outcome, ComposedFrameSendOutcome::Stopped);
+        assert!(receiver.recv_timeout(Duration::from_millis(10)).is_err());
+        assert_eq!(snapshot.composed_frames, 0);
+        assert_eq!(snapshot.frames_sent_to_writer, 0);
+    }
+
+    #[test]
+    fn capture_scheduler_timestamps_reused_frames_at_configured_fps() {
+        let scene = test_scene(vec![scene_source("front", "portal-monitor-a", 0)]);
+        let preflight = preflight_live_capture(&scene, &[live_stream("portal-monitor-a", 42)])
+            .expect("preflight live capture");
+        let (sender, receiver) = bounded_frame_channel(8);
+        let latest_frames = Arc::new(Mutex::new(LatestPipeWireFrameSampler::new(5.0)));
+        latest_frames
+            .lock()
+            .expect("sampler lock")
+            .push(PipeWireCapturedFrame::Cpu(sized_cpu_frame(
+                "portal-monitor-a",
+                1_000,
+                100,
+                50,
+            )))
+            .expect("push source frame");
+        let timing = new_capture_timing();
+        let mut state = PipeWireCaptureSchedulerState {
+            benchmark: None,
+            composed_frames: sender,
+            frame_interval_ms: 200,
+            gpu_compositor: None,
+            latest_frames,
+            next_composed_at_ms: None,
+            plan: preflight.plan,
+            timing: timing.clone(),
+        };
+        let (_shutdown_sender, shutdown_receiver) = mpsc::channel();
+
+        for now_ms in [1_000, 1_200, 1_400, 1_600, 1_800] {
+            let timestamp_ms =
+                next_scheduler_timestamp(&mut state, now_ms).expect("scheduler timestamp");
+            compose_latest_pipewire_frames(
+                &mut state,
+                timestamp_ms.expect("due frame"),
+                &shutdown_receiver,
+            )
+            .expect("compose scheduled frame");
+        }
+
+        let timestamps = (0..5)
+            .map(|_index| {
+                receiver
+                    .recv_timeout(Duration::from_millis(10))
+                    .expect("scheduled frame")
+                    .timestamp_ms
+            })
+            .collect::<Vec<_>>();
+        let snapshot = capture_timing_snapshot(&timing);
+
+        assert_eq!(timestamps, vec![1_000, 1_200, 1_400, 1_600, 1_800]);
+        assert_eq!(snapshot.composed_frames, 5);
+        assert_eq!(snapshot.reused_frame_compositions, 4);
+    }
+
+    #[test]
     fn pipewire_video_formats_map_to_runtime_formats() {
         assert_eq!(
             captured_frame_format_from_pipewire(pipewire::spa::param::video::VideoFormat::RGBx)
@@ -1112,11 +2137,11 @@ mod tests {
                 .expect("yuv444p"),
             crate::recorder::capture_runtime::CapturedFrameFormat::Yuv444p
         );
-        let error =
+        assert_eq!(
             captured_frame_format_from_pipewire(pipewire::spa::param::video::VideoFormat::I420)
-                .expect_err("unsupported format");
-
-        assert_eq!(error.code, "recorder_capture_format_unsupported");
+                .expect("i420"),
+            crate::recorder::capture_runtime::CapturedFrameFormat::Yuv420p
+        );
     }
 
     #[test]
@@ -1172,6 +2197,22 @@ mod tests {
 
         assert_eq!(error.code, "recorder_capture_dmabuf_required");
         assert!(!error.message.contains("CPU-readable PipeWire frame bytes"));
+    }
+
+    #[test]
+    fn dmabuf_fourcc_mapping_tracks_negotiated_pipewire_format() {
+        assert_eq!(
+            drm_fourcc_from_frame_format(CapturedFrameFormat::Rgbx).expect("rgbx fourcc"),
+            u32::from_le_bytes(*b"RX24")
+        );
+        assert_eq!(
+            drm_fourcc_from_frame_format(CapturedFrameFormat::Bgra).expect("bgra fourcc"),
+            u32::from_le_bytes(*b"BA24")
+        );
+        let error = drm_fourcc_from_frame_format(CapturedFrameFormat::Yuv444p)
+            .expect_err("planar yuv DMA-BUF import should stay unsupported");
+
+        assert_eq!(error.code, "recorder_capture_format_unsupported");
     }
 
     #[test]
@@ -1268,5 +2309,51 @@ mod tests {
             source_width: Some(100.0),
             z_index,
         }
+    }
+
+    fn cpu_frame(source_id: &str, timestamp_ms: u64) -> CapturedFrame {
+        sized_cpu_frame(source_id, timestamp_ms, 1, 1)
+    }
+
+    fn sized_cpu_frame(
+        source_id: &str,
+        timestamp_ms: u64,
+        width: u32,
+        height: u32,
+    ) -> CapturedFrame {
+        let pixel_count = width as usize * height as usize;
+        let mut data = Vec::with_capacity(pixel_count * 4);
+        for _ in 0..pixel_count {
+            data.extend_from_slice(&[255, 0, 0, 255]);
+        }
+
+        CapturedFrame::new(
+            source_id,
+            timestamp_ms,
+            width,
+            height,
+            width * 4,
+            CapturedFrameFormat::Rgba,
+            data,
+        )
+        .expect("valid CPU frame")
+    }
+
+    fn dmabuf_frame(source_id: &str, timestamp_ms: u64) -> CapturedDmaBufFrame {
+        let fd = File::open("/dev/null").expect("open fd for DMA-BUF sampler test");
+
+        CapturedDmaBufFrame::new(
+            source_id,
+            timestamp_ms,
+            1,
+            1,
+            4,
+            CapturedFrameFormat::Rgbx,
+            drm_fourcc_from_frame_format(CapturedFrameFormat::Rgbx).expect("rgbx fourcc"),
+            0,
+            0,
+            fd.into(),
+        )
+        .expect("valid DMA-BUF metadata")
     }
 }
