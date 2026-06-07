@@ -112,8 +112,7 @@ Baseline behavior should be local-first:
 - Desktop runtime: Tauri 2.
 - Language: TypeScript by default, with native modules where required.
 - Package manager: Yarn 4 via Corepack.
-- Capture and media: FFmpeg, currently resolved in development through
-  `ffmpeg-static`.
+- Capture and media: native screen/audio capture with a GStreamer media writer.
 - Speech: Whisper-style local transcription.
 - OCR: local OCR engine selected for accuracy on UI text.
 - Vision: local or explicitly configured VLM inference service.
@@ -130,6 +129,11 @@ Prerequisites:
 - Rust/Cargo
 - Linux Tauri system libraries that provide `webkit2gtk-4.1.pc` and
   `javascriptcoregtk-4.1.pc`
+- Linux GStreamer development headers and runtime plugins for the recorder media
+  writer. Debian/Ubuntu development hosts need:
+  `libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pulseaudio`.
+  Fedora/RPM-family development hosts need:
+  `gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly`.
 
 Install dependencies:
 
@@ -164,10 +168,11 @@ Run Rust tests after Linux Tauri prerequisites are installed:
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-The recorder uses `DAYDREAM_FFMPEG_PATH` as an FFmpeg override and otherwise
-falls back to `ffmpeg` on `PATH`. The checked `ffmpeg-static` binary does not
-expose Pulse input support on Linux, so audio recording needs a capable FFmpeg
-such as `/usr/bin/ffmpeg` during development.
+The Linux recorder writes MKV segments through GStreamer. Packaged Linux builds
+declare the required runtime plugin packages in
+`apps/desktop/src-tauri/tauri.conf.json`; AppImage builds enable Tauri's media
+framework bundling. Development hosts still need GStreamer headers because the
+Rust GStreamer crates are bindings to native libraries, not a bundled runtime.
 
 On Linux Wayland, the dev launcher also defaults
 `WEBKIT_DISABLE_DMABUF_RENDERER=1`. This avoids WebKitGTK DMA-BUF protocol

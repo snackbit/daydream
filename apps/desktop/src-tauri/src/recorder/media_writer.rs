@@ -35,6 +35,55 @@ const REQUIRED_VIDEO_ELEMENTS: &[&str] = &[
     "filesink",
 ];
 const REQUIRED_AUDIO_ELEMENTS: &[&str] = &["pulsesrc", "audioconvert", "audioresample", "opusenc"];
+const GSTREAMER_PACKAGE_HINTS: &[GstreamerPackageHint] = &[
+    GstreamerPackageHint::new(
+        "appsrc",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1-plugins-base",
+    ),
+    GstreamerPackageHint::new(
+        "audioconvert",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1-plugins-base",
+    ),
+    GstreamerPackageHint::new(
+        "audioresample",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1-plugins-base",
+    ),
+    GstreamerPackageHint::new("filesink", "libgstreamer1.0-0", "gstreamer1"),
+    GstreamerPackageHint::new(
+        "h264parse",
+        "gstreamer1.0-plugins-bad",
+        "gstreamer1-plugins-bad-free",
+    ),
+    GstreamerPackageHint::new(
+        "matroskamux",
+        "gstreamer1.0-plugins-good",
+        "gstreamer1-plugins-good",
+    ),
+    GstreamerPackageHint::new(
+        "opusenc",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1-plugins-base",
+    ),
+    GstreamerPackageHint::new(
+        "pulsesrc",
+        "gstreamer1.0-pulseaudio",
+        "gstreamer1-plugins-good",
+    ),
+    GstreamerPackageHint::new("queue", "libgstreamer1.0-0", "gstreamer1"),
+    GstreamerPackageHint::new(
+        "videoconvert",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1-plugins-base",
+    ),
+    GstreamerPackageHint::new(
+        "x264enc",
+        "gstreamer1.0-plugins-ugly",
+        "gstreamer1-plugins-ugly",
+    ),
+];
 const VIDEO_BITRATE_KBPS: u32 = 1_500;
 const DESKTOP_AUDIO_BITRATE_BPS: u32 = 96_000;
 const MICROPHONE_AUDIO_BITRATE_BPS: u32 = 64_000;
@@ -135,6 +184,19 @@ struct AudioBranch {
 struct AudioCutoffProbe {
     source_name: &'static str,
     dropped_buffers: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GstreamerPackageHint {
+    deb: &'static str,
+    element: &'static str,
+    rpm: &'static str,
+}
+
+impl GstreamerPackageHint {
+    const fn new(element: &'static str, deb: &'static str, rpm: &'static str) -> Self {
+        Self { deb, element, rpm }
+    }
 }
 
 #[derive(Debug)]
@@ -1237,8 +1299,9 @@ fn segment_capability_error(
         None
     } else {
         Some(format!(
-            "GStreamer is missing required media writer elements: {}.",
-            missing.join(", ")
+            "GStreamer is missing required media writer elements: {}. {}",
+            missing.join(", "),
+            missing_package_hint(&missing)
         ))
     }
 }
@@ -1256,10 +1319,42 @@ fn missing_capability_error(
         None
     } else {
         Some(format!(
-            "GStreamer is missing required media writer elements: {}.",
-            missing.join(", ")
+            "GStreamer is missing required media writer elements: {}. {}",
+            missing.join(", "),
+            missing_package_hint(&missing)
         ))
     }
+}
+
+fn missing_package_hint(missing: &[&str]) -> String {
+    let deb_packages = package_hints_for(missing, |hint| hint.deb);
+    let rpm_packages = package_hints_for(missing, |hint| hint.rpm);
+
+    format!(
+        "Install the Linux GStreamer runtime/plugins declared in apps/desktop/src-tauri/tauri.conf.json: Debian/Ubuntu {}; RPM-family {}.",
+        deb_packages.join(" "),
+        rpm_packages.join(" ")
+    )
+}
+
+fn package_hints_for(
+    missing: &[&str],
+    package_for: impl Fn(&GstreamerPackageHint) -> &'static str,
+) -> Vec<&'static str> {
+    let mut packages = Vec::new();
+    for element in missing {
+        let Some(hint) = GSTREAMER_PACKAGE_HINTS
+            .iter()
+            .find(|hint| hint.element == *element)
+        else {
+            continue;
+        };
+        let package = package_for(hint);
+        if !packages.contains(&package) {
+            packages.push(package);
+        }
+    }
+    packages
 }
 
 fn capability_for_element(capabilities: &RecorderMediaWriterCapabilities, element: &str) -> bool {
@@ -1578,6 +1673,8 @@ mod tests {
         assert_eq!(error.code, "recorder_media_writer_unavailable");
         assert!(error.message.contains("pulsesrc"));
         assert!(error.message.contains("opusenc"));
+        assert!(error.message.contains("gstreamer1.0-pulseaudio"));
+        assert!(error.message.contains("gstreamer1-plugins-good"));
     }
 
     #[test]
