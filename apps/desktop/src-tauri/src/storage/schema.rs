@@ -3,7 +3,8 @@ use std::path::Path;
 use rusqlite::Connection;
 use rusqlite_migration::{Migrations, M};
 
-pub(super) const CORE_TABLES: [&str; 9] = [
+pub(super) const CORE_TABLES: [&str; 10] = [
+    "app_settings",
     "recordings",
     "recording_tracks",
     "recording_segments",
@@ -385,5 +386,28 @@ pub(super) fn migrations() -> Migrations<'static> {
 
             Ok(())
         }),
+        M::up(
+            r#"
+        CREATE TABLE app_settings (
+            id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+            record_fps REAL NOT NULL CHECK (
+                record_fps >= 0.016666666666666666
+                AND record_fps <= 5.0
+            ),
+            record_video_bitrate_kbps INTEGER NOT NULL CHECK (
+                record_video_bitrate_kbps >= 250
+                AND record_video_bitrate_kbps <= 10000
+            ),
+            storage_retention_days INTEGER NOT NULL CHECK (
+                storage_retention_days >= 1
+                AND storage_retention_days <= 365
+            ),
+            storage_size_limit_bytes INTEGER NOT NULL CHECK (
+                storage_size_limit_bytes >= 1073741824
+            ),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        "#,
+        ),
     ])
 }

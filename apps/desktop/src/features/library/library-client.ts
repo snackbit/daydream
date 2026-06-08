@@ -9,6 +9,8 @@ import type {
   LibraryRecordingSummary,
   LibraryRecordingThumbnail,
   LibraryRecordingThumbnailRequest,
+  LibraryWaveformTileRequest,
+  LibraryWaveformTiles,
   LibraryWaveformRequest,
   LibraryWaveforms,
 } from '@daydream/shared';
@@ -43,6 +45,12 @@ export async function getRecordingWaveforms(
   input: LibraryWaveformRequest,
 ): Promise<LibraryWaveforms> {
   return invoke<LibraryWaveforms>('getRecordingWaveforms', { input });
+}
+
+export async function getRecordingWaveformTiles(
+  input: LibraryWaveformTileRequest,
+): Promise<LibraryWaveformTiles> {
+  return invoke<LibraryWaveformTiles>('getRecordingWaveformTiles', { input });
 }
 
 export async function createLibraryPlaybackSession(

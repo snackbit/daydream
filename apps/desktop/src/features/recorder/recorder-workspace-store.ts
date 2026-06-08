@@ -58,7 +58,6 @@ export type RecorderLifecycleAction = 'pause' | 'resume' | 'start' | 'stop';
 
 const FINALIZATION_POLL_INTERVAL_MS = 250;
 const FINALIZATION_POLL_TIMEOUT_MS = 15_000;
-export const DEFAULT_RECORDER_FPS = 5;
 
 interface RecorderWorkspaceState {
   audioSources: AudioSource[];
@@ -373,7 +372,6 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
       await runStatusMutation(set, get, 'start', () =>
         startRecording({
           desktopAudioSourceId: state.desktopAudioSourceId,
-          fps: DEFAULT_RECORDER_FPS,
           microphoneAudioSourceId: state.microphoneAudioSourceId,
           qualityPreset: 'balanced-ocr',
           sceneId: scene.id,

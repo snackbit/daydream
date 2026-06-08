@@ -400,7 +400,6 @@ test('load drops unavailable saved audio source ids before exposing the scene', 
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: null,
-    fps: 5,
     microphoneAudioSourceId: null,
     qualityPreset: 'balanced-ocr',
     sceneId: savedScene.id,
@@ -1019,7 +1018,6 @@ test('start sends null for omitted optional audio roles', async () => {
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: null,
-    fps: 5,
     microphoneAudioSourceId: null,
     qualityPreset: 'balanced-ocr',
     sceneId: scene.id,
@@ -1040,7 +1038,6 @@ test('start sends restored saved audio roles', async () => {
 
   expect(client.startRecording).toHaveBeenCalledWith({
     desktopAudioSourceId: 'desktop',
-    fps: 5,
     microphoneAudioSourceId: 'mic',
     qualityPreset: 'balanced-ocr',
     sceneId: scene.id,

@@ -84,6 +84,13 @@ export interface LibraryWaveformRequest {
   recordingId: string;
 }
 
+export interface LibraryWaveformTileRequest {
+  endTimelineMs: number;
+  recordingId: string;
+  startTimelineMs: number;
+  viewportWidthPx: number;
+}
+
 export interface LibraryWaveformSegment {
   generatedAtMs: number;
   maxAmplitude: number;
@@ -102,6 +109,31 @@ export interface LibraryWaveforms {
   error: string | null;
   recordingId: string;
   tracks: LibraryWaveformTrack[];
+}
+
+export interface LibraryWaveformTile {
+  binMs: number;
+  durationMs: number;
+  generatedAtMs: number;
+  peakSamples: number[];
+  rmsSamples: number[];
+  segmentId: string;
+  streamIndex: number;
+  timelineStartMs: number;
+}
+
+export interface LibraryWaveformTileTrack {
+  kind: Extract<LibraryTrackKind, 'desktop-audio' | 'microphone'>;
+  scaleAmplitude: number;
+  tiles: LibraryWaveformTile[];
+  trackId: string;
+}
+
+export interface LibraryWaveformTiles {
+  binMs: number;
+  error: string | null;
+  recordingId: string;
+  tracks: LibraryWaveformTileTrack[];
 }
 
 export interface LibraryPlaybackAssetRequest {

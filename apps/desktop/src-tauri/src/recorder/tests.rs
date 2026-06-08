@@ -772,6 +772,40 @@ fn pending_live_start_preparation_does_not_create_recording_rows() {
 }
 
 #[test]
+fn pending_live_start_uses_saved_record_settings() {
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let storage = test_storage();
+    let scene_id = saved_test_scene(&storage);
+    storage
+        .with_connection(|connection| {
+            storage::save_app_settings(
+                connection,
+                &storage::SaveAppSettingsInput {
+                    record_fps: 0.5,
+                    record_video_bitrate_kbps: 2_500,
+                    storage_retention_days: 14,
+                    storage_size_limit_bytes: 75 * 1024 * 1024 * 1024,
+                    updated_at_ms: 5,
+                },
+            )
+        })
+        .expect("save app settings");
+
+    manager
+        .begin_selecting(&scene_id, 10)
+        .expect("begin selecting");
+    let pending = manager
+        .prepare_recording_start(&storage, start_input(&scene_id), 10)
+        .expect("prepare pending recording");
+
+    assert_eq!(pending.segment_input.fps, 0.5);
+    assert_eq!(pending.segment_input.video_bitrate_kbps, 2_500);
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
+
+#[test]
 fn recording_start_pads_odd_canvas_dimensions_without_mutating_scene() {
     let app_data_dir = test_app_data_dir();
     let manager = RecorderManager::new(app_data_dir.clone());
@@ -1033,7 +1067,6 @@ fn saved_test_scene(storage: &storage::AppStorage) -> String {
 fn start_input(scene_id: &str) -> StartRecordingInput {
     StartRecordingInput {
         desktop_audio_source_id: None,
-        fps: 1.0,
         microphone_audio_source_id: None,
         quality_preset: RecorderQualityPreset::BalancedOcr,
         scene_id: scene_id.to_string(),

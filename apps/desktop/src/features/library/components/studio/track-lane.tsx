@@ -1,8 +1,10 @@
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  LibraryRecordingSegment,
   LibraryRecordingTrack,
-  LibraryWaveforms,
+  LibraryWaveformTileTrack,
+  LibraryWaveformTiles,
 } from '@daydream/shared';
 import { Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,7 +20,7 @@ export function TrackLane({
   timelineWidthPx,
   totalDurationMs,
   track,
-  waveforms,
+  waveformTiles,
 }: {
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
@@ -28,10 +30,11 @@ export function TrackLane({
   timelineWidthPx: number;
   totalDurationMs: number;
   track: LibraryRecordingTrack;
-  waveforms: LibraryWaveforms | null;
+  waveformTiles: LibraryWaveformTiles | null;
 }) {
-  const waveformTrack = waveforms?.tracks.find(
-    (waveform) => waveform.trackId === track.kind,
+  const waveformTrack = waveformTiles?.tracks.find(
+    (waveform) =>
+      waveform.trackId === track.kind || waveform.kind === track.kind,
   );
   const audioTrack = track.kind !== 'video';
   const muted = mutedTrackIds.has(track.id);
@@ -102,18 +105,75 @@ export function TrackLane({
                 }
               />
             ) : waveformTrack ? (
-              <WaveformShape
-                samples={
-                  waveformTrack.segments.find(
-                    (waveform) => waveform.segmentId === segment.id,
-                  )?.samples ?? []
-                }
+              <WaveformTileLayer
+                segment={segment}
+                waveformTrack={waveformTrack}
               />
+            ) : audioTrack ? (
+              <WaveformSilenceLine />
             ) : null}
           </div>
         ))}
       </div>
     </>
+  );
+}
+
+function WaveformTileLayer({
+  segment,
+  waveformTrack,
+}: {
+  segment: LibraryRecordingSegment;
+  waveformTrack: LibraryWaveformTileTrack;
+}) {
+  const segmentDurationMs = Math.max(1, segment.durationMs ?? 0);
+  const tiles = waveformTrack.tiles.filter(
+    (tile) => tile.segmentId === segment.id,
+  );
+  if (tiles.length === 0) {
+    return <WaveformSilenceLine />;
+  }
+
+  return (
+    <div className="absolute inset-0">
+      <WaveformSilenceLine />
+      {tiles.map((tile) => {
+        const tileStartInSegmentMs =
+          tile.timelineStartMs - segment.playbackOffsetMs;
+        const clippedStartMs = Math.max(0, tileStartInSegmentMs);
+        const clippedEndMs = Math.min(
+          segmentDurationMs,
+          tileStartInSegmentMs + tile.durationMs,
+        );
+        if (clippedEndMs <= clippedStartMs) {
+          return null;
+        }
+
+        return (
+          <div
+            className="absolute inset-y-0"
+            key={`${tile.segmentId}-${tile.streamIndex}-${tile.binMs}-${tile.timelineStartMs}`}
+            style={{
+              left: `${(clippedStartMs / segmentDurationMs) * 100}%`,
+              width: `${
+                ((clippedEndMs - clippedStartMs) / segmentDurationMs) * 100
+              }%`,
+            }}
+          >
+            <WaveformShape samples={tile.peakSamples} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function WaveformSilenceLine() {
+  return (
+    <div
+      aria-label="Audio silence baseline"
+      className="bg-primary/30 absolute inset-x-0 top-1/2 h-px -translate-y-1/2"
+    />
   );
 }
 
@@ -153,7 +213,7 @@ function WaveformShape({ samples }: { samples: number[] }) {
   }
   const points = samples.map((sample, index) => {
     const x = samples.length === 1 ? 0 : (index / (samples.length - 1)) * 100;
-    const y = 50 - Math.max(0.03, Math.min(1, sample)) * 45;
+    const y = 50 - Math.max(0, Math.min(1, sample)) * 48;
 
     return `${x.toFixed(3)},${y.toFixed(3)}`;
   });
@@ -162,7 +222,7 @@ function WaveformShape({ samples }: { samples: number[] }) {
       samples.length === 1
         ? 0
         : ((samples.length - 1 - index) / (samples.length - 1)) * 100;
-    const y = 50 + Math.max(0.03, Math.min(1, sample)) * 45;
+    const y = 50 + Math.max(0, Math.min(1, sample)) * 48;
 
     return `${x.toFixed(3)},${y.toFixed(3)}`;
   });
@@ -170,7 +230,7 @@ function WaveformShape({ samples }: { samples: number[] }) {
   return (
     <svg
       aria-label="Audio waveform"
-      className="text-primary/75 h-full w-full px-1"
+      className="text-primary/75 h-full w-full"
       preserveAspectRatio="none"
       viewBox="0 0 100 100"
     >

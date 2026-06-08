@@ -33,6 +33,7 @@ impl RecorderManager {
             segment_id: segment_id.clone(),
             segment_index,
             started_at_ms: timestamp_ms,
+            video_bitrate_kbps: active.video_bitrate_kbps,
         };
         media_writer::validate_segment_capabilities(
             &media_writer_health.capabilities,

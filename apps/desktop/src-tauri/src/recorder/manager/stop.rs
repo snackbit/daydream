@@ -147,6 +147,26 @@ impl RecorderManager {
             })
             .map_err(storage_error)?;
 
+        match settings::load_app_settings(storage) {
+            Ok(app_settings) => {
+                let cleanup = storage_limits::enforce_storage_cleanup_at(
+                    storage,
+                    &self.recordings_root(),
+                    &app_settings.storage,
+                    timestamp_ms as i64,
+                );
+                if cleanup.failed_recording_count > 0 {
+                    warn!(
+                        failed_recording_count = cleanup.failed_recording_count,
+                        "Storage cleanup after recording stop had failures."
+                    );
+                }
+            }
+            Err(_error) => warn!(
+                "Storage cleanup after recording stop skipped because settings failed to load."
+            ),
+        }
+
         let mut runtime = self.lock_runtime()?;
         let status =
             idle_status_with_backend_health(timestamp_ms, runtime.status.backend_health.clone());

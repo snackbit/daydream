@@ -11,6 +11,8 @@ impl RecorderManager {
             .with_connection(|connection| storage::get_recorder_scene(connection, &input.scene_id))
             .map_err(|error| scene_or_storage_error(error, &input.scene_id))
             .and_then(scene_from_storage)?;
+        let app_settings = settings::load_app_settings(storage)
+            .map_err(|error| storage_error_message(&error.message))?;
         let media_writer_health = media_writer::collect_media_writer_health();
 
         let recording_id = Uuid::now_v7().to_string();
@@ -24,13 +26,14 @@ impl RecorderManager {
             canvas_height: even_canvas_dimension(scene.canvas_height),
             canvas_width: even_canvas_dimension(scene.canvas_width),
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
-            fps: input.fps,
+            fps: app_settings.record.fps,
             microphone_audio_source_id: input.microphone_audio_source_id.clone(),
             output_path: segment_path.clone(),
             recording_id: recording_id.clone(),
             segment_id: segment_id.clone(),
             segment_index: 1,
             started_at_ms: timestamp_ms,
+            video_bitrate_kbps: app_settings.record.video_bitrate_kbps,
         };
         media_writer::validate_segment_capabilities(
             &media_writer_health.capabilities,
@@ -49,7 +52,7 @@ impl RecorderManager {
             canvas_height: segment_input.canvas_height,
             canvas_width: segment_input.canvas_width,
             desktop_audio_source_id: input.desktop_audio_source_id.clone(),
-            fps: input.fps,
+            fps: app_settings.record.fps,
             media_writer: media_writer_health
                 .writer
                 .clone()
@@ -59,6 +62,7 @@ impl RecorderManager {
             scene_id: input.scene_id.clone(),
             segments_dir,
             next_segment_index: 2,
+            video_bitrate_kbps: app_settings.record.video_bitrate_kbps,
         };
 
         Ok(PendingRecordingStart {
@@ -95,7 +99,7 @@ impl RecorderManager {
                         id: pending.recording_id.clone(),
                         active_scene_id: Some(pending.input.scene_id.clone()),
                         created_at_ms: pending.segment.started_at_ms as i64,
-                        default_fps: pending.input.fps,
+                        default_fps: pending.segment_input.fps,
                         notes: None,
                         output_root: Some(path_to_string(&self.recordings_root())),
                         quality_label: quality_preset_as_storage_label(

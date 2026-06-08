@@ -1,7 +1,7 @@
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
-  LibraryWaveforms,
+  LibraryWaveformTiles,
 } from '@daydream/shared';
 import {
   cleanup,
@@ -18,7 +18,7 @@ const client = vi.hoisted(() => ({
   createLibraryPlaybackSession: vi.fn(),
   deleteLibraryRecording: vi.fn(),
   getLibraryRecording: vi.fn(),
-  getRecordingWaveforms: vi.fn(),
+  getRecordingWaveformTiles: vi.fn(),
 }));
 
 const router = vi.hoisted(() => ({
@@ -100,25 +100,30 @@ const detail = {
   ],
 } satisfies LibraryRecordingDetail;
 
-const waveforms = {
+const waveformTiles = {
+  binMs: 10,
   error: null,
   recordingId: 'recording-1',
   tracks: [
     {
       kind: 'desktop-audio',
-      segments: [
+      scaleAmplitude: 1,
+      tiles: [
         {
+          binMs: 10,
+          durationMs: 2_000,
           generatedAtMs: 2_000,
-          maxAmplitude: 1,
-          samples: [0.2, 0.8, 0.4],
+          peakSamples: [0.2, 0.8, 0.4],
+          rmsSamples: [0.1, 0.4, 0.2],
           segmentId: 'segment-1',
           streamIndex: 1,
+          timelineStartMs: 0,
         },
       ],
       trackId: 'desktop-audio',
     },
   ],
-} satisfies LibraryWaveforms;
+} satisfies LibraryWaveformTiles;
 
 const playbackAssets = {
   error: null,
@@ -216,7 +221,7 @@ beforeEach(() => {
   client.deleteLibraryRecording.mockResolvedValue(undefined);
   client.closeLibraryPlaybackSession.mockResolvedValue(undefined);
   client.getLibraryRecording.mockResolvedValue(detail);
-  client.getRecordingWaveforms.mockResolvedValue(waveforms);
+  client.getRecordingWaveformTiles.mockResolvedValue(waveformTiles);
   client.createLibraryPlaybackSession.mockResolvedValue(playbackAssets);
   router.navigate.mockResolvedValue(undefined);
 });
@@ -271,7 +276,7 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   expect(screen.getByText('Desktop audio')).toBeTruthy();
   expect(screen.getByText('Annotation and metadata workspace')).toBeTruthy();
   expect(await screen.findByLabelText(/mute desktop audio/i)).toBeTruthy();
-  expect(screen.getAllByLabelText('Audio waveform')).toHaveLength(1);
+  expect(await screen.findByLabelText('Audio waveform')).toBeTruthy();
   expect(screen.getAllByLabelText('Video timeline thumbnail')).toHaveLength(3);
   expect(client.createLibraryPlaybackSession).toHaveBeenCalledWith({
     recordingId: 'recording-1',
@@ -282,9 +287,13 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   expect(document.querySelector('img')?.getAttribute('src')).toBe(
     playbackAssets.segments[0]!.thumbnails[0]!.url,
   );
-  expect(client.getRecordingWaveforms).toHaveBeenCalledWith({
-    recordingId: 'recording-1',
-  });
+  await waitFor(() =>
+    expect(client.getRecordingWaveformTiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordingId: 'recording-1',
+      }),
+    ),
+  );
 });
 
 test('RecordingStudioScreen renders a zoomable track ruler', async () => {
@@ -309,6 +318,30 @@ test('RecordingStudioScreen renders a zoomable track ruler', async () => {
   fireEvent.click(screen.getByRole('button', { name: /zoom out tracks/i }));
 
   await waitFor(() => expect(screen.getByText('167%')).toBeTruthy());
+});
+
+test('RecordingStudioScreen queues visible waveform chunks in FIFO order', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(
+      client.getRecordingWaveformTiles.mock.calls.length,
+    ).toBeGreaterThanOrEqual(4),
+  );
+  expect(
+    client.getRecordingWaveformTiles.mock.calls.slice(0, 4).map(([input]) => ({
+      endTimelineMs: input.endTimelineMs,
+      startTimelineMs: input.startTimelineMs,
+    })),
+  ).toEqual([
+    { endTimelineMs: 15_000, startTimelineMs: 0 },
+    { endTimelineMs: 30_000, startTimelineMs: 15_000 },
+    { endTimelineMs: 45_000, startTimelineMs: 30_000 },
+    { endTimelineMs: 60_000, startTimelineMs: 45_000 },
+  ]);
 });
 
 test('RecordingStudioScreen commits ruler seeks through the playback pipeline', async () => {
@@ -753,7 +786,7 @@ test('RecordingStudioScreen shows disabled placeholders for missing files', asyn
 
   expect(await screen.findAllByText('Missing video files')).toHaveLength(2);
   expect(client.createLibraryPlaybackSession).not.toHaveBeenCalled();
-  expect(client.getRecordingWaveforms).not.toHaveBeenCalled();
+  expect(client.getRecordingWaveformTiles).not.toHaveBeenCalled();
 });
 
 test('RecordingStudioScreen deletes a broken recording from the detail view', async () => {

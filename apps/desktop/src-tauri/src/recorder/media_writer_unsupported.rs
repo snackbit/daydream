@@ -23,6 +23,7 @@ pub(crate) struct MediaSegmentInput {
     pub(crate) segment_id: String,
     pub(crate) segment_index: u32,
     pub(crate) started_at_ms: u64,
+    pub(crate) video_bitrate_kbps: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

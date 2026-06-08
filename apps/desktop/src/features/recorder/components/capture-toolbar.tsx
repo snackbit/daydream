@@ -7,10 +7,7 @@ import type {
 import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  DEFAULT_RECORDER_FPS,
-  type RecorderLifecycleAction,
-} from '../recorder-workspace-store';
+import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 
 export interface CaptureToolbarProps {
   configurationLocked: boolean;
@@ -70,9 +67,7 @@ export function CaptureToolbar({
           <Badge variant="secondary">
             Status: {status?.state ?? loadStatus}
           </Badge>
-          <Badge variant="outline">
-            FPS: {formatFps(DEFAULT_RECORDER_FPS)}
-          </Badge>
+          <Badge variant="outline">Record defaults: Settings</Badge>
           <Badge variant="outline">Quality: balanced-ocr</Badge>
           <Badge variant={isDirty ? 'destructive' : 'secondary'}>
             {isDirty ? 'Unsaved scene' : 'Scene saved'}
@@ -157,10 +152,6 @@ export function CaptureToolbar({
       </div>
     </div>
   );
-}
-
-function formatFps(fps: number) {
-  return Number.isInteger(fps) ? fps.toString() : fps.toFixed(1);
 }
 
 function previewLabel(status: RecorderPreviewStatus | null): string {

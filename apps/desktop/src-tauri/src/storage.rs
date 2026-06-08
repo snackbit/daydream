@@ -14,6 +14,7 @@ mod recordings;
 mod scenes;
 mod schema;
 mod segments;
+mod settings;
 
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use portal_tokens::{
@@ -34,6 +35,9 @@ pub use segments::{
     create_recording_segment, fail_recording_segment, finalize_recording_segment,
     list_recording_segments, CreateRecordingSegmentInput, FailRecordingSegmentInput,
     FinalizeRecordingSegmentInput, RecordingSegmentRow,
+};
+pub use settings::{
+    get_app_settings, reset_app_settings, save_app_settings, AppSettingsRow, SaveAppSettingsInput,
 };
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   LibraryRecordingSummary,
+  LibraryWaveformTiles,
   LibraryWaveforms,
   RecorderMediaWriterCapabilities,
   RecorderError,
@@ -367,6 +368,36 @@ test('library waveform contracts support audio lanes', () => {
   } satisfies LibraryWaveforms;
 
   expect(waveforms.tracks[0]?.segments[0]?.samples).toHaveLength(3);
+});
+
+test('library waveform tile contracts support lazy peak and rms lanes', () => {
+  const waveformTiles = {
+    binMs: 10,
+    error: null,
+    recordingId: 'recording-1',
+    tracks: [
+      {
+        kind: 'desktop-audio',
+        scaleAmplitude: 0.9,
+        tiles: [
+          {
+            binMs: 10,
+            durationMs: 2_000,
+            generatedAtMs: 2_000,
+            peakSamples: [0.2, 0.8, 0.4],
+            rmsSamples: [0.1, 0.5, 0.2],
+            segmentId: 'segment-1',
+            streamIndex: 1,
+            timelineStartMs: 0,
+          },
+        ],
+        trackId: 'desktop-audio',
+      },
+    ],
+  } satisfies LibraryWaveformTiles;
+
+  expect(waveformTiles.tracks[0]?.tiles[0]?.peakSamples).toHaveLength(3);
+  expect(waveformTiles.tracks[0]?.tiles[0]?.rmsSamples).toHaveLength(3);
 });
 
 test('library playback contracts support tokenized streaming URLs', () => {

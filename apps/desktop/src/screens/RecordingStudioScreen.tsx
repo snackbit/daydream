@@ -3,7 +3,6 @@ import { useNavigate, useParams } from '@tanstack/react-router';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
-  LibraryWaveforms,
 } from '@daydream/shared';
 import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -23,7 +22,6 @@ import {
   createLibraryPlaybackSession,
   deleteLibraryRecording,
   getLibraryRecording,
-  getRecordingWaveforms,
 } from '@/features/library/library-client';
 import {
   availabilityLabel,
@@ -47,7 +45,6 @@ export function RecordingStudioScreen() {
   const [thumbnailStatus, setThumbnailStatus] = useState<
     'error' | 'idle' | 'loading' | 'ready'
   >('idle');
-  const [waveforms, setWaveforms] = useState<LibraryWaveforms | null>(null);
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
 
@@ -65,7 +62,6 @@ export function RecordingStudioScreen() {
     setStatus('loading');
     setThumbnailStatus('idle');
     setPlaybackAssets(null);
-    setWaveforms(null);
     try {
       const nextDetail = await getLibraryRecording(recordingId);
       if (!isCurrentLoad()) {
@@ -97,23 +93,6 @@ export function RecordingStudioScreen() {
               recordingId,
               segments: [],
               sessionId: '',
-            });
-          });
-        getRecordingWaveforms({ recordingId })
-          .then((nextWaveforms) => {
-            if (!isCurrentLoad() || nextWaveforms.recordingId !== recordingId) {
-              return;
-            }
-            setWaveforms(nextWaveforms);
-          })
-          .catch((waveformError: unknown) => {
-            if (!isCurrentLoad()) {
-              return;
-            }
-            setWaveforms({
-              error: errorMessage(waveformError),
-              recordingId,
-              tracks: [],
             });
           });
       }
@@ -216,7 +195,6 @@ export function RecordingStudioScreen() {
           detail={detail}
           playbackAssets={playbackAssets}
           thumbnailStatus={thumbnailStatus}
-          waveforms={waveforms}
         />
       ) : null}
 

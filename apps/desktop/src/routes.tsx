@@ -8,8 +8,8 @@ import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
 import { LibraryScreen } from '@/screens/LibraryScreen';
-import { PlaceholderScreen } from '@/screens/PlaceholderScreen';
 import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
+import { SettingsScreen } from '@/screens/SettingsScreen';
 import { unknownErrorMessage } from './lib/async-store-action';
 
 const rootRoute = createRootRoute({
@@ -48,12 +48,7 @@ const diagnosticsRoute = createRoute({
 });
 
 const settingsRoute = createRoute({
-  component: () => (
-    <PlaceholderScreen
-      title="Settings"
-      summary="Capture quality, storage, model, privacy, and retention settings will land here."
-    />
-  ),
+  component: SettingsScreen,
   getParentRoute: () => rootRoute,
   path: '/settings',
 });

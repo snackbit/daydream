@@ -84,7 +84,6 @@ const GSTREAMER_PACKAGE_HINTS: &[GstreamerPackageHint] = &[
         "gstreamer1-plugins-ugly",
     ),
 ];
-const VIDEO_BITRATE_KBPS: u32 = 1_500;
 const DESKTOP_AUDIO_BITRATE_BPS: u32 = 96_000;
 const MICROPHONE_AUDIO_BITRATE_BPS: u32 = 64_000;
 const LOW_LATENCY_QUEUE: &str = "queue max-size-time=0 max-size-bytes=0 max-size-buffers=0";
@@ -109,6 +108,7 @@ pub(crate) struct MediaSegmentInput {
     pub(crate) segment_id: String,
     pub(crate) segment_index: u32,
     pub(crate) started_at_ms: u64,
+    pub(crate) video_bitrate_kbps: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -558,7 +558,7 @@ fn build_pipeline_description(input: &MediaSegmentInput) -> String {
          ! x264enc bitrate={bitrate} key-int-max={key_int_max} speed-preset=medium \
              tune=zerolatency rc-lookahead=0 bframes=0 sync-lookahead=0 \
          ! h264parse ! {queue} ! mux. ",
-        bitrate = VIDEO_BITRATE_KBPS,
+        bitrate = input.video_bitrate_kbps,
         queue = LOW_LATENCY_QUEUE,
     );
     if let Some(source_id) = &input.desktop_audio_source_id {
@@ -1577,9 +1577,12 @@ mod tests {
 
     #[test]
     fn pipeline_uses_low_latency_video_encoder_and_explicit_queues() {
-        let pipeline = build_pipeline_description(&segment_input(Some("desktop"), Some("mic")));
+        let mut input = segment_input(Some("desktop"), Some("mic"));
+        input.video_bitrate_kbps = 2_500;
+        let pipeline = build_pipeline_description(&input);
 
         assert!(pipeline.contains("tune=zerolatency"));
+        assert!(pipeline.contains("x264enc bitrate=2500"));
         assert!(pipeline.contains("rc-lookahead=0"));
         assert!(pipeline.contains("bframes=0"));
         assert!(pipeline.contains("sync-lookahead=0"));
@@ -1800,6 +1803,7 @@ mod tests {
             segment_id: "segment-1".to_string(),
             segment_index: 1,
             started_at_ms: 0,
+            video_bitrate_kbps: 1_500,
         }
     }
 

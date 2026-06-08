@@ -182,7 +182,6 @@ test('recorder write helpers pass input payloads unchanged', async () => {
   };
   const startInput: StartRecordingInput = {
     desktopAudioSourceId: 'desktop-monitor',
-    fps: 1,
     microphoneAudioSourceId: 'mic',
     qualityPreset: 'balanced-ocr',
     sceneId: scene.id,

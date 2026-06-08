@@ -2,7 +2,6 @@ import { useState } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
-  LibraryWaveforms,
 } from '@daydream/shared';
 import {
   ResizableHandle,
@@ -18,14 +17,12 @@ export interface RecordingStudioProps {
   detail: LibraryRecordingDetail;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
-  waveforms: LibraryWaveforms | null;
 }
 
 export function RecordingStudio({
   detail,
   playbackAssets,
   thumbnailStatus,
-  waveforms,
 }: RecordingStudioProps) {
   const [mutedTrackIds, setMutedTrackIds] = useState<Set<string>>(
     () => new Set(),
@@ -68,7 +65,6 @@ export function RecordingStudio({
               playback={playback}
               playbackAssets={playbackAssets}
               thumbnailStatus={thumbnailStatus}
-              waveforms={waveforms}
               onToggleTrackMuted={toggleTrackMuted}
             />
           </ResizablePanel>

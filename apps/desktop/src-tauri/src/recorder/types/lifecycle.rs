@@ -27,7 +27,6 @@ pub enum RecorderQualityPreset {
 #[serde(rename_all = "camelCase")]
 pub struct StartRecordingInput {
     pub(crate) desktop_audio_source_id: Option<String>,
-    pub(crate) fps: f64,
     pub(crate) microphone_audio_source_id: Option<String>,
     pub(crate) quality_preset: RecorderQualityPreset,
     pub(crate) scene_id: String,

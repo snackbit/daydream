@@ -7,11 +7,12 @@ use super::{
     apply_migrations, collect_database_diagnostics_from_connection, create_recording,
     create_recording_segment, delete_portal_restore_token, delete_recording,
     enable_connection_pragmas, fail_recording_segment, finalize_recording_segment,
-    get_latest_recorder_scene, get_recorder_scene, get_recording, list_recording_segments,
-    mark_portal_restore_token_used, mark_recording_completed, mark_recording_started, migrations,
-    recover_interrupted_recordings, save_recorder_scene, update_recording_status,
-    upsert_portal_restore_token, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput,
-    FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
+    get_app_settings, get_latest_recorder_scene, get_recorder_scene, get_recording,
+    list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
+    mark_recording_started, migrations, recover_interrupted_recordings, reset_app_settings,
+    save_app_settings, save_recorder_scene, update_recording_status, upsert_portal_restore_token,
+    AppStorage, CreateRecordingInput, CreateRecordingSegmentInput, FailRecordingSegmentInput,
+    FinalizeRecordingSegmentInput, SaveAppSettingsInput, SaveRecorderSceneInput,
     SaveRecorderSceneSourceInput,
 };
 
@@ -29,7 +30,8 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 7);
+    assert_eq!(schema_version, 8);
+    assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["recordings"], 0);
     assert_eq!(table_counts["recording_tracks"], 0);
     assert_eq!(table_counts["recording_segments"], 0);
@@ -49,6 +51,100 @@ fn migration_enables_foreign_keys() {
         .expect("query foreign_keys pragma");
 
     assert_eq!(enabled, 1);
+}
+
+#[test]
+fn app_settings_round_trip_and_reset() {
+    let connection = migrated_memory_connection();
+
+    assert_eq!(
+        get_app_settings(&connection).expect("read empty app settings"),
+        None
+    );
+
+    let saved = save_app_settings(
+        &connection,
+        &SaveAppSettingsInput {
+            record_fps: 0.2,
+            record_video_bitrate_kbps: 1_500,
+            storage_retention_days: 7,
+            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
+            updated_at_ms: 10,
+        },
+    )
+    .expect("save app settings");
+
+    assert_eq!(saved.record_fps, 0.2);
+    assert_eq!(saved.record_video_bitrate_kbps, 1_500);
+    assert_eq!(saved.storage_retention_days, 7);
+    assert_eq!(saved.storage_size_limit_bytes, 50 * 1024 * 1024 * 1024);
+    assert_eq!(saved.updated_at_ms, 10);
+
+    let updated = save_app_settings(
+        &connection,
+        &SaveAppSettingsInput {
+            record_fps: 5.0,
+            record_video_bitrate_kbps: 10_000,
+            storage_retention_days: 365,
+            storage_size_limit_bytes: 128 * 1024 * 1024 * 1024,
+            updated_at_ms: 20,
+        },
+    )
+    .expect("update app settings");
+
+    assert_eq!(updated.record_fps, 5.0);
+    assert_eq!(updated.record_video_bitrate_kbps, 10_000);
+    assert_eq!(updated.storage_retention_days, 365);
+    assert_eq!(updated.storage_size_limit_bytes, 128 * 1024 * 1024 * 1024);
+    assert_eq!(updated.updated_at_ms, 20);
+
+    reset_app_settings(&connection).expect("reset app settings");
+
+    assert_eq!(
+        get_app_settings(&connection).expect("read reset app settings"),
+        None
+    );
+}
+
+#[test]
+fn app_settings_constraints_reject_invalid_values() {
+    let connection = migrated_memory_connection();
+
+    for input in [
+        SaveAppSettingsInput {
+            record_fps: 0.0,
+            record_video_bitrate_kbps: 1_500,
+            storage_retention_days: 7,
+            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
+            updated_at_ms: 1,
+        },
+        SaveAppSettingsInput {
+            record_fps: 0.2,
+            record_video_bitrate_kbps: 10_001,
+            storage_retention_days: 7,
+            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
+            updated_at_ms: 1,
+        },
+        SaveAppSettingsInput {
+            record_fps: 0.2,
+            record_video_bitrate_kbps: 1_500,
+            storage_retention_days: 366,
+            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
+            updated_at_ms: 1,
+        },
+        SaveAppSettingsInput {
+            record_fps: 0.2,
+            record_video_bitrate_kbps: 1_500,
+            storage_retention_days: 7,
+            storage_size_limit_bytes: 1024 * 1024 * 1024 - 1,
+            updated_at_ms: 1,
+        },
+    ] {
+        let error = save_app_settings(&connection, &input)
+            .expect_err("invalid app settings should fail sqlite constraints");
+
+        assert!(error.to_string().contains("CHECK constraint failed"));
+    }
 }
 
 #[test]
@@ -167,7 +263,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 7);
+    assert_eq!(schema_version, 8);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

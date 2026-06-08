@@ -10,7 +10,6 @@ import {
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
-  LibraryWaveforms,
 } from '@daydream/shared';
 import { Minus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -33,6 +32,7 @@ import {
   TRACK_ZOOM_STEP,
 } from './track-timeline-math';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
+import { useWaveformTileQueue } from './use-waveform-tile-queue';
 
 export function TrackTimeline({
   detail,
@@ -41,7 +41,6 @@ export function TrackTimeline({
   playback,
   playbackAssets,
   thumbnailStatus,
-  waveforms,
 }: {
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
@@ -49,7 +48,6 @@ export function TrackTimeline({
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
-  waveforms: LibraryWaveforms | null;
 }) {
   const { actions, state } = playback;
   const totalDurationMs = Math.max(1, timelineDurationMs(detail.segments));
@@ -107,6 +105,29 @@ export function TrackTimeline({
       visibleWindowMs,
     ],
   );
+  const waveformRequestRange = useMemo(() => {
+    const visibleStartMs = clampTimelineMs(
+      (scrollLeft / timelineWidthPx) * totalDurationMs,
+      totalDurationMs,
+    );
+    const visibleEndMs = clampTimelineMs(
+      ((scrollLeft + timelineViewportWidth) / timelineWidthPx) *
+        totalDurationMs,
+      totalDurationMs,
+    );
+    const visibleRangeMs = Math.max(1, visibleEndMs - visibleStartMs);
+
+    return {
+      endTimelineMs: Math.min(totalDurationMs, visibleEndMs + visibleRangeMs),
+      startTimelineMs: Math.max(0, visibleStartMs - visibleRangeMs),
+    };
+  }, [scrollLeft, timelineViewportWidth, timelineWidthPx, totalDurationMs]);
+  const { waveformStatus, waveformTiles } = useWaveformTileQueue({
+    detail,
+    requestRange: waveformRequestRange,
+    timelineWidthPx,
+    totalDurationMs,
+  });
 
   const markProgrammaticScroll = useCallback(() => {
     if (programmaticScrollRef.current !== null) {
@@ -364,7 +385,10 @@ export function TrackTimeline({
         <div className="text-sm font-medium">Tracks</div>
         <div className="flex min-w-0 items-center gap-2">
           <div className="text-muted-foreground truncate text-xs">
-            {waveforms?.error ?? 'Video and audio timeline'}
+            {waveformTiles?.error ??
+              (waveformStatus === 'loading'
+                ? 'Loading waveforms...'
+                : 'Video and audio timeline')}
           </div>
           <div
             aria-label="Track zoom"
@@ -446,7 +470,7 @@ export function TrackTimeline({
                 timelineWidthPx={timelineWidthPx}
                 totalDurationMs={totalDurationMs}
                 track={track}
-                waveforms={waveforms}
+                waveformTiles={waveformTiles}
                 onToggleTrackMuted={onToggleTrackMuted}
               />
             ))}

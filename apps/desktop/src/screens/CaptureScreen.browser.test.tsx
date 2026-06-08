@@ -202,7 +202,7 @@ test('CaptureScreen renders selected sources and explicitly saves the scene', as
     document.querySelector('[data-slot="resizable-panel-group"]'),
   ).toBeTruthy();
   expect(screen.getByText('Status: idle')).toBeTruthy();
-  expect(screen.getByText('FPS: 5')).toBeTruthy();
+  expect(screen.getByText('Record defaults: Settings')).toBeTruthy();
   expect(screen.getAllByText('1440 x 900')).toHaveLength(3);
   expect(screen.getByText('Original')).toBeTruthy();
   expect(screen.getByText('100%')).toBeTruthy();

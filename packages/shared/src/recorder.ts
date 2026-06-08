@@ -141,7 +141,6 @@ export type RecorderQualityPreset = 'balanced-ocr';
 
 export interface StartRecordingInput {
   desktopAudioSourceId: string | null;
-  fps: number;
   microphoneAudioSourceId: string | null;
   qualityPreset: RecorderQualityPreset;
   sceneId: string;

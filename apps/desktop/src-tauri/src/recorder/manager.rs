@@ -12,12 +12,15 @@ use crate::storage::{
     self, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput, FailRecordingSegmentInput,
     FinalizeRecordingSegmentInput,
 };
+use crate::{settings, storage_limits};
 
 use super::capture_runtime::{
     capture_timing_snapshot, CapturePreviewSession, CaptureSession, SharedCaptureTiming,
 };
 use super::compositor::even_canvas_dimension;
-use super::errors::{filesystem_error, lifecycle_error, scene_or_storage_error, storage_error};
+use super::errors::{
+    filesystem_error, lifecycle_error, scene_or_storage_error, storage_error, storage_error_message,
+};
 use super::media_writer::{self, MediaSegmentInput, MediaWriterSegment, MediaWriterStreamIndexes};
 use super::storage_mapping::quality_preset_as_storage_label;
 use super::storage_mapping::scene_from_storage;
@@ -79,6 +82,7 @@ pub(crate) struct ActiveRecording {
     scene_id: String,
     segments_dir: PathBuf,
     next_segment_index: u32,
+    video_bitrate_kbps: u32,
 }
 
 #[derive(Clone, Debug)]
