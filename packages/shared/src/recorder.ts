@@ -189,11 +189,17 @@ export interface RecorderSegment {
   videoStreamIndex: number | null;
 }
 
+export type CaptureFrameStorageKind = 'cpu-readable' | 'dma-buf';
+
 export interface CaptureTimingDiagnostics {
   composedFrames: number;
+  cpuReadableFramesReceived: number;
+  dmabufFramesReadBackToCpu: number;
+  dmabufFramesReceived: number;
   framesReceivedBySource: Record<string, number>;
   framesSentToWriter: number;
   lastComposedTimestampMs: number | null;
+  latestFrameStorageBySource: Record<string, CaptureFrameStorageKind>;
   maxComposeDurationMs: number;
   reusedFrameCompositions: number;
   schedulerMissedDeadlines: number;

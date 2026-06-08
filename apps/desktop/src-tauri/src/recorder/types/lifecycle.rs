@@ -101,13 +101,24 @@ pub struct RecorderSegment {
     pub(crate) video_stream_index: Option<i32>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureFrameStorageKind {
+    CpuReadable,
+    DmaBuf,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureTimingDiagnostics {
     pub(crate) composed_frames: u64,
+    pub(crate) cpu_readable_frames_received: u64,
+    pub(crate) dmabuf_frames_read_back_to_cpu: u64,
+    pub(crate) dmabuf_frames_received: u64,
     pub(crate) frames_received_by_source: BTreeMap<String, u64>,
     pub(crate) frames_sent_to_writer: u64,
     pub(crate) last_composed_timestamp_ms: Option<u64>,
+    pub(crate) latest_frame_storage_by_source: BTreeMap<String, CaptureFrameStorageKind>,
     pub(crate) max_compose_duration_ms: u64,
     pub(crate) reused_frame_compositions: u64,
     pub(crate) scheduler_missed_deadlines: u64,

@@ -20,10 +20,10 @@ use crate::recorder::{
     benchmark::{RecorderBenchmarkSession, RecorderBenchmarkStage},
     capture_runtime::{
         bounded_frame_channel, new_capture_timing, record_capture_frame, record_compose_duration,
-        record_composed_frame, record_scheduler_tick, CapturePreviewSession, CaptureRuntimeSource,
-        CaptureRuntimeSourceHandle, CaptureSession, CapturedDmaBufFrame, CapturedFrame,
-        CapturedFrameFormat, CapturedFrameStorage, FrameSender, FrameTrySendError, RuntimeWorker,
-        SharedCaptureTiming,
+        record_composed_frame, record_dmabuf_frame_read_back_to_cpu, record_scheduler_tick,
+        CapturePreviewSession, CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession,
+        CapturedDmaBufFrame, CapturedFrame, CapturedFrameFormat, CapturedFrameStorage, FrameSender,
+        FrameTrySendError, RuntimeWorker, SharedCaptureTiming,
     },
     commands::RECORDER_PREVIEW_FRAME_EVENT,
     compositor::{SceneCompositorInput, SceneCompositorPlan},
@@ -35,7 +35,10 @@ use crate::recorder::{
     media_writer::{self, MediaSegmentInput},
     platform::linux::gpu_compositor::LinuxGpuFrameCompositor,
     preview::encode_cropped_preview_frame,
-    types::{CaptureSourceKind, RecorderError, RecorderPreviewFrame, RecorderScene},
+    types::{
+        CaptureFrameStorageKind, CaptureSourceKind, RecorderError, RecorderPreviewFrame,
+        RecorderScene,
+    },
 };
 
 const PIPEWIRE_READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1066,12 +1069,25 @@ fn capture_stream_frame(
     log_negotiated_stream_format(user_data, &datas[0]);
     let frame =
         captured_pipewire_frame_from_data(&user_data.source_id, user_data.format, &mut datas[0])?;
-    let (frame_source_id, frame_timestamp_ms) = match &frame {
-        PipeWireCapturedFrame::Cpu(frame) => (frame.source_id.clone(), frame.timestamp_ms),
-        PipeWireCapturedFrame::DmaBuf(frame) => (frame.source_id.clone(), frame.timestamp_ms),
+    let (frame_source_id, frame_storage, frame_timestamp_ms) = match &frame {
+        PipeWireCapturedFrame::Cpu(frame) => (
+            frame.source_id.clone(),
+            CaptureFrameStorageKind::CpuReadable,
+            frame.timestamp_ms,
+        ),
+        PipeWireCapturedFrame::DmaBuf(frame) => (
+            frame.source_id.clone(),
+            CaptureFrameStorageKind::DmaBuf,
+            frame.timestamp_ms,
+        ),
     };
     let mut state = state.borrow_mut();
-    record_capture_frame(&state.timing, &frame_source_id, frame_timestamp_ms);
+    record_capture_frame(
+        &state.timing,
+        &frame_source_id,
+        frame_storage,
+        frame_timestamp_ms,
+    );
     state
         .latest_frames
         .lock()
@@ -1241,7 +1257,8 @@ fn compose_latest_pipewire_frames(
         .any(|frame| frame.timestamp_ms() < timestamp_ms);
     let compose_started = Instant::now();
     let materialize_started = Instant::now();
-    let latest_frames = materialized_latest_frames(&mut state.gpu_compositor, &latest_snapshot)?;
+    let latest_frames =
+        materialized_latest_frames(&mut state.gpu_compositor, &state.timing, &latest_snapshot)?;
     if scheduler_shutdown_requested(shutdown_receiver) {
         return Ok(ComposedFrameSendOutcome::Stopped);
     }
@@ -1335,6 +1352,7 @@ fn compose_latest_pipewire_frames(
 
 fn materialized_latest_frames(
     gpu_compositor: &mut Option<LinuxGpuFrameCompositor>,
+    timing: &SharedCaptureTiming,
     latest_frames: &HashMap<String, PipeWireCapturedFrame>,
 ) -> Result<HashMap<String, CapturedFrame>, RecorderError> {
     if latest_frames
@@ -1349,10 +1367,14 @@ fn materialized_latest_frames(
     for (source_id, frame) in latest_frames {
         let frame = match frame {
             PipeWireCapturedFrame::Cpu(frame) => frame.clone(),
-            PipeWireCapturedFrame::DmaBuf(frame) => gpu_compositor
-                .as_ref()
-                .expect("GPU compositor initialized")
-                .read_frame_to_rgba(frame)?,
+            PipeWireCapturedFrame::DmaBuf(frame) => {
+                let frame = gpu_compositor
+                    .as_ref()
+                    .expect("GPU compositor initialized")
+                    .read_frame_to_rgba(frame)?;
+                record_dmabuf_frame_read_back_to_cpu(timing);
+                frame
+            }
         };
         frames.insert(source_id.clone(), frame);
     }

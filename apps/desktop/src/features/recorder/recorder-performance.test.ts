@@ -184,11 +184,17 @@ function stats({
     state: 'recording',
     timing: {
       composedFrames: framesSentToWriter,
+      cpuReadableFramesReceived: framesSentToWriter,
+      dmabufFramesReadBackToCpu: 0,
+      dmabufFramesReceived: 0,
       framesReceivedBySource: {
         'monitor-1': framesSentToWriter,
       },
       framesSentToWriter,
       lastComposedTimestampMs: updatedAtMs,
+      latestFrameStorageBySource: {
+        'monitor-1': 'cpu-readable',
+      },
       maxComposeDurationMs: 20,
       reusedFrameCompositions: framesSentToWriter,
       schedulerMissedDeadlines,

@@ -14,6 +14,10 @@
   read them back to CPU RGBA, and feed the existing CPU compositor. GPU
   crop/scale/z-order composition and real DMA-BUF-only KDE validation remain
   open.
+- Gate H.2 closeout now uses `getRecorderPerformanceStats` timing diagnostics
+  as the evidence surface for CPU-readable vs DMA-BUF frame intake and
+  DMA-BUF-to-CPU readback. Full GPU scene composition and hardware encoding are
+  explicitly deferred out of M1.
 - Gate I gained a local Library playback validation surface for recorded MKV
   segments. Playback is local loopback streaming, thumbnails are bounded by a
   FIFO worker pool, and playback sessions are explicitly closed.
@@ -209,6 +213,26 @@
 - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
   recorder::platform::linux --lib`: passed during H.1/H.2 reconciliation with
   41 Linux recorder tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after H.2
+  frame-storage diagnostics.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed with elevated
+  browser-mode server binding after H.2 frame-storage diagnostics; 163 JS tests
+  passed across desktop, shared, and ffmpeg workspaces.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  H.2 frame-storage diagnostics with 156 Rust tests.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`:
+  passed after H.2 frame-storage diagnostics.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after H.2
+  frame-storage diagnostics; ESLint still reports existing max-lines warnings
+  in `recorder-workspace-store.ts`, `DiagnosticsScreen.tsx`, and
+  `LibraryScreen.tsx`.
+- `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop
+  build`: passed after H.2 frame-storage diagnostics; Vite still reports the
+  existing post-minification chunk-size warning.
+- H.2 prerequisite diagnostics passed on host: KDE Wayland session,
+  ScreenCast portal v5 with source/cursor capabilities, PipeWire 1.6.6,
+  Pulse-on-PipeWire default desktop and microphone sources, and
+  `/usr/bin/ffmpeg` exposing Pulse input.
 
 ## Gate Notes
 
@@ -355,6 +379,14 @@
   EGL images/textures, reads each source back to top-down CPU RGBA, and lets the
   existing CPU compositor produce the `yuv444p` FFmpeg handoff. This is not GPU
   scene composition; crop, scale, placement, and z-order still happen on CPU.
+- Gate H.2 diagnostics closeout adds privacy-safe capture timing counters for
+  CPU-readable frames received, DMA-BUF frames received, DMA-BUF frames read
+  back to CPU, and latest storage kind per source. These counters expose only
+  source IDs and storage kinds, not frame bytes or private capture content.
+- Full GPU crop, scale, placement, and z-order composition is deferred out of
+  M1 because the M1 writer boundary remains CPU `yuv444p` handoff into FFmpeg.
+  Hardware encoding is also deferred because it changes the writer boundary and
+  validation matrix.
 - PipeWire debug log compaction: `pipewire_capture_latest_frame_updated` and
   `pipewire_capture_scheduled_frame_composed` now emit aggregate debug events
   at most once per five-second window instead of logging per frame.
@@ -368,6 +400,11 @@
   unmount and closes playback sessions that resolve after route changes or
   screen unmount, preventing stale loopback sessions from surviving until app
   exit.
+- Gate H.2 closeout: reviewed Gates I-J after adding frame-storage timing
+  diagnostics and deferring GPU scene composition/hardware encoding. Gate I can
+  continue using existing recorder status/performance APIs; Gate J manual smoke
+  must inspect the new timing counters and either prove DMA-BUF readback or
+  record that the local KDE portal negotiated only CPU-readable frames.
 
 ## Risk Watchlist
 

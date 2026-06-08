@@ -18,7 +18,7 @@ use super::{
         capture_adapter_failed_error, capture_cleanup_failed_error, capture_dmabuf_required_error,
         capture_format_unsupported_error,
     },
-    types::{CaptureSourceKind, CaptureTimingDiagnostics, RecorderError},
+    types::{CaptureFrameStorageKind, CaptureSourceKind, CaptureTimingDiagnostics, RecorderError},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -640,13 +640,21 @@ pub(crate) fn capture_timing_snapshot(timing: &SharedCaptureTiming) -> CaptureTi
 pub(crate) fn record_capture_frame(
     timing: &SharedCaptureTiming,
     source_id: &str,
+    storage: CaptureFrameStorageKind,
     timestamp_ms: u64,
 ) {
     if let Ok(mut timing) = timing.lock() {
+        match storage {
+            CaptureFrameStorageKind::CpuReadable => timing.cpu_readable_frames_received += 1,
+            CaptureFrameStorageKind::DmaBuf => timing.dmabuf_frames_received += 1,
+        }
         *timing
             .frames_received_by_source
             .entry(source_id.to_string())
             .or_insert(0) += 1;
+        timing
+            .latest_frame_storage_by_source
+            .insert(source_id.to_string(), storage);
         timing.source_timestamp_min_ms = Some(
             timing
                 .source_timestamp_min_ms
@@ -657,6 +665,12 @@ pub(crate) fn record_capture_frame(
                 .source_timestamp_max_ms
                 .map_or(timestamp_ms, |current| current.max(timestamp_ms)),
         );
+    }
+}
+
+pub(crate) fn record_dmabuf_frame_read_back_to_cpu(timing: &SharedCaptureTiming) {
+    if let Ok(mut timing) = timing.lock() {
+        timing.dmabuf_frames_read_back_to_cpu += 1;
     }
 }
 
@@ -864,10 +878,11 @@ mod tests {
 
     use super::{
         bounded_frame_channel, capture_timing_snapshot, new_capture_timing, record_capture_frame,
-        record_compose_duration, record_composed_frame, record_frame_sent_to_writer,
-        record_scheduler_tick, CapturedFrame, CapturedFrameFormat, CapturedFrameStorage,
-        LatestFrameSampler, RuntimeWorker, WriterFrameHandoffPlan,
+        record_compose_duration, record_composed_frame, record_dmabuf_frame_read_back_to_cpu,
+        record_frame_sent_to_writer, record_scheduler_tick, CapturedFrame, CapturedFrameFormat,
+        CapturedFrameStorage, LatestFrameSampler, RuntimeWorker, WriterFrameHandoffPlan,
     };
+    use crate::recorder::types::CaptureFrameStorageKind;
 
     #[test]
     fn supported_formats_are_accepted_and_plan_writer_handoff() {
@@ -1030,9 +1045,20 @@ mod tests {
     fn capture_timing_counters_track_live_frame_flow() {
         let timing = new_capture_timing();
 
-        record_capture_frame(&timing, "monitor-1", 100);
-        record_capture_frame(&timing, "monitor-2", 90);
-        record_capture_frame(&timing, "monitor-1", 130);
+        record_capture_frame(
+            &timing,
+            "monitor-1",
+            CaptureFrameStorageKind::CpuReadable,
+            100,
+        );
+        record_capture_frame(&timing, "monitor-2", CaptureFrameStorageKind::DmaBuf, 90);
+        record_capture_frame(
+            &timing,
+            "monitor-1",
+            CaptureFrameStorageKind::CpuReadable,
+            130,
+        );
+        record_dmabuf_frame_read_back_to_cpu(&timing);
         record_composed_frame(&timing, 150, true);
         record_scheduler_tick(&timing, 2);
         record_compose_duration(&timing, 7);
@@ -1042,6 +1068,9 @@ mod tests {
         let snapshot = capture_timing_snapshot(&timing);
 
         assert_eq!(snapshot.composed_frames, 1);
+        assert_eq!(snapshot.cpu_readable_frames_received, 2);
+        assert_eq!(snapshot.dmabuf_frames_received, 1);
+        assert_eq!(snapshot.dmabuf_frames_read_back_to_cpu, 1);
         assert_eq!(
             snapshot.frames_received_by_source.get("monitor-1"),
             Some(&2)
@@ -1049,6 +1078,14 @@ mod tests {
         assert_eq!(
             snapshot.frames_received_by_source.get("monitor-2"),
             Some(&1)
+        );
+        assert_eq!(
+            snapshot.latest_frame_storage_by_source.get("monitor-1"),
+            Some(&CaptureFrameStorageKind::CpuReadable)
+        );
+        assert_eq!(
+            snapshot.latest_frame_storage_by_source.get("monitor-2"),
+            Some(&CaptureFrameStorageKind::DmaBuf)
         );
         assert_eq!(snapshot.frames_sent_to_writer, 1);
         assert_eq!(snapshot.last_composed_timestamp_ms, Some(150));

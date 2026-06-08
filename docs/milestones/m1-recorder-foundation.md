@@ -625,19 +625,26 @@ Exit Criteria:
   work before production integration.
 - [x] Import supported packed single-plane DMA-BUF frames into EGL/OpenGL
   textures.
-- [ ] Perform crop, scale, placement, z-order composition on GPU.
+- [x] Defer full GPU crop, scale, placement, and z-order composition out of M1
+  because M1 validates DMA-BUF import/readback while retaining the existing
+  CPU compositor and FFmpeg writer boundary.
 - [x] Read imported DMA-BUF source frames back to CPU RGBA, then feed the
   existing CPU compositor and `yuv444p` FFmpeg rawvideo handoff while keeping
   encoded output at `yuv420p`.
+- [x] Add privacy-safe capture timing diagnostics that expose CPU-readable vs
+  DMA-BUF frame counts and DMA-BUF readback counts through
+  `getRecorderPerformanceStats`.
 - [ ] Validate that DMA-BUF-only portal streams on KDE/Wayland produce the same
-  MKV stream shape as the SHM path.
-- [ ] Keep hardware encoding out of M1 and document it as a later optimization
+  MKV stream shape as the SHM path, or record a concrete native blocker when
+  the local portal does not negotiate DMA-BUF-only frames.
+- [x] Keep hardware encoding out of M1 and document it as a later optimization
   because it changes the writer boundary and validation matrix.
 
 Exit Criteria:
 
 - Supported packed DMA-BUF source frames can be imported, read back to CPU, and
-  composed into the same MKV stream shape as the SHM path.
+  composed through the CPU compositor into the same MKV stream shape as the SHM
+  path.
 - Real DMA-BUF-only portal behavior is validated on KDE/Wayland, or a concrete
   native blocker is recorded in the scratchpad.
 - Unsupported DMA-BUF formats or modifiers return typed recorder errors before
