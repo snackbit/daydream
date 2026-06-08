@@ -1,6 +1,7 @@
 import {
   type KeyboardEvent,
   type PointerEvent,
+  type WheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -20,8 +21,10 @@ import {
   AlertTriangle,
   Lock,
   Maximize,
+  Minus,
   Pause,
   Play,
+  Plus,
   RefreshCw,
   SkipBack,
   SkipForward,
@@ -290,6 +293,32 @@ interface RecordingStudioProps {
   waveforms: LibraryWaveforms | null;
 }
 
+const INITIAL_TRACK_WINDOW_MS = 180_000;
+const MIN_TRACK_WINDOW_MS = 10_000;
+const TRACK_LABEL_WIDTH_PX = 160;
+const TRACK_RULER_HEIGHT_PX = 32;
+const TRACK_LANE_HEIGHT_PX = 56;
+const TRACK_ZOOM_STEP = 1.25;
+const TRACK_FOLLOW_EDGE_PX = 48;
+const DEFAULT_TRACK_VIEWPORT_WIDTH_PX = 800;
+const RULER_TARGET_TICK_PX = 90;
+
+interface TrackPlaybackCommands {
+  commitTimelineInput: (nextTimelineMs: number) => void;
+  handleTimelineInput: (nextTimelineMs: number) => void;
+  seekTimeline: (
+    nextTimelineMs: number,
+    options?: { resume?: boolean },
+  ) => void;
+}
+
+interface TrackPlaybackSnapshot {
+  displayedTimelineMs: number;
+  isPlaying: boolean;
+  seekRevision: number;
+  totalDurationMs: number;
+}
+
 function RecordingStudio({
   detail,
   playbackAssets,
@@ -299,6 +328,14 @@ function RecordingStudio({
   const [mutedTrackIds, setMutedTrackIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const playbackCommandsRef = useRef<TrackPlaybackCommands | null>(null);
+  const [playbackSnapshot, setPlaybackSnapshot] =
+    useState<TrackPlaybackSnapshot>({
+      displayedTimelineMs: 0,
+      isPlaying: false,
+      seekRevision: 0,
+      totalDurationMs: Math.max(1, timelineDurationMs(detail.segments)),
+    });
 
   function toggleTrackMuted(trackId: string) {
     setMutedTrackIds((current) => {
@@ -321,6 +358,8 @@ function RecordingStudio({
             <StudioPlayer
               detail={detail}
               mutedTrackIds={mutedTrackIds}
+              onPlaybackSnapshotChange={setPlaybackSnapshot}
+              playbackCommandsRef={playbackCommandsRef}
               playbackAssets={playbackAssets}
             />
           </ResizablePanel>
@@ -328,8 +367,11 @@ function RecordingStudio({
           <ResizablePanel defaultSize={32} minSize={18}>
             <TrackTimeline
               detail={detail}
+              key={detail.id}
               mutedTrackIds={mutedTrackIds}
               onToggleTrackMuted={toggleTrackMuted}
+              playbackCommandsRef={playbackCommandsRef}
+              playbackSnapshot={playbackSnapshot}
               playbackAssets={playbackAssets}
               thumbnailStatus={thumbnailStatus}
               waveforms={waveforms}
@@ -348,13 +390,18 @@ function RecordingStudio({
 function StudioPlayer({
   detail,
   mutedTrackIds,
+  onPlaybackSnapshotChange,
+  playbackCommandsRef,
   playbackAssets,
 }: {
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
+  onPlaybackSnapshotChange: (snapshot: TrackPlaybackSnapshot) => void;
+  playbackCommandsRef: { current: TrackPlaybackCommands | null };
   playbackAssets: LibraryPlaybackAssets | null;
 }) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const playbackIntentRef = useRef(false);
   const resumeTimerRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playableSegments = useMemo(
@@ -373,6 +420,7 @@ function StudioPlayer({
   const [pendingAutoplay, setPendingAutoplay] = useState(false);
   const [resumeProgress, setResumeProgress] = useState<number | null>(null);
   const [scrubTimelineMs, setScrubTimelineMs] = useState<number | null>(null);
+  const [seekRevision, setSeekRevision] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
   const [streamStartMs, setStreamStartMs] = useState(0);
   const [volume, setVolume] = useState(0.8);
@@ -424,6 +472,7 @@ function StudioPlayer({
     try {
       await video.play();
     } catch (error) {
+      playbackIntentRef.current = false;
       setIsPlaying(false);
       setPendingAutoplay(false);
       setPlaybackError(`Playback failed: ${errorMessage(error)}`);
@@ -444,6 +493,7 @@ function StudioPlayer({
       );
     }
 
+    playbackIntentRef.current = true;
     return true;
   }
 
@@ -463,6 +513,7 @@ function StudioPlayer({
 
   function advanceToSegment(nextIndex: number, shouldPlay: boolean) {
     clearResumeTimer();
+    playbackIntentRef.current = shouldPlay;
     setCurrentIndex(nextIndex);
     setCurrentTime(0);
     setPlaybackEndedAtEnd(false);
@@ -500,7 +551,23 @@ function StudioPlayer({
     [],
   );
 
+  useEffect(() => {
+    onPlaybackSnapshotChange({
+      displayedTimelineMs,
+      isPlaying,
+      seekRevision,
+      totalDurationMs: Math.max(1, totalDurationMs),
+    });
+  }, [
+    displayedTimelineMs,
+    isPlaying,
+    onPlaybackSnapshotChange,
+    seekRevision,
+    totalDurationMs,
+  ]);
+
   if (detail.availability !== 'available' || !currentSegment) {
+    playbackCommandsRef.current = null;
     const locked = detail.availability === 'locked';
     return (
       <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -524,6 +591,7 @@ function StudioPlayer({
   }
 
   if (!playbackAssets) {
+    playbackCommandsRef.current = null;
     return (
       <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <div className="text-foreground text-sm font-medium">
@@ -538,6 +606,7 @@ function StudioPlayer({
   }
 
   if (playbackAssets.error || !currentPlaybackSegment) {
+    playbackCommandsRef.current = null;
     return (
       <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <AlertTriangle className="size-8" />
@@ -573,6 +642,7 @@ function StudioPlayer({
     } else {
       setPendingAutoplay(false);
       pauseMediaElements();
+      playbackIntentRef.current = false;
       setIsPlaying(false);
     }
   }
@@ -592,11 +662,13 @@ function StudioPlayer({
       setCurrentIndex(lastIndex);
       setCurrentTime((lastSegment.durationMs ?? 0) / 1000);
       setPendingAutoplay(false);
+      playbackIntentRef.current = false;
       setIsPlaying(false);
       setPlaybackEndedAtEnd(true);
       setPlaybackError(null);
       setResumeProgress(null);
       setStreamStartMs(lastSegment.durationMs ?? 0);
+      setSeekRevision((revision) => revision + 1);
       setStreamRevision((revision) => revision + 1);
       return;
     }
@@ -607,6 +679,7 @@ function StudioPlayer({
     }
     const shouldResume = options.resume ?? isPlaying;
     clearResumeTimer();
+    playbackIntentRef.current = shouldResume;
     pauseMediaElements();
     setCurrentIndex(target.index);
     setCurrentTime(target.offsetMs / 1000);
@@ -616,11 +689,12 @@ function StudioPlayer({
     setPlaybackError(null);
     setResumeProgress(null);
     setStreamStartMs(target.offsetMs);
+    setSeekRevision((revision) => revision + 1);
     setStreamRevision((revision) => revision + 1);
   }
 
   function handleTimelineInput(nextTimelineMs: number) {
-    setScrubTimelineMs(Math.min(nextTimelineMs, totalDurationMs));
+    setScrubTimelineMs(clampTimelineMs(nextTimelineMs, totalDurationMs));
   }
 
   function commitTimelineInput(nextTimelineMs: number) {
@@ -636,13 +710,15 @@ function StudioPlayer({
     const nextIndex = currentIndex + 1;
     if (nextIndex >= playableSegments.length) {
       setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
+      playbackIntentRef.current = false;
       setIsPlaying(false);
       setPlaybackEndedAtEnd(true);
       pauseMediaElements();
       return;
     }
-    const wasPlaying = isPlaying;
-    const advanceToNextSegment = () => advanceToSegment(nextIndex, wasPlaying);
+    const shouldResumeAfterGap = playbackIntentRef.current || isPlaying;
+    const advanceToNextSegment = () =>
+      advanceToSegment(nextIndex, shouldResumeAfterGap);
     const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
     if (pauseGapMs === 0) {
       advanceToNextSegment();
@@ -668,9 +744,15 @@ function StudioPlayer({
   function playNowAfterPause() {
     const nextIndex = currentIndex + 1;
     if (nextIndex < playableSegments.length) {
-      advanceToSegment(nextIndex, isPlaying);
+      advanceToSegment(nextIndex, playbackIntentRef.current || isPlaying);
     }
   }
+
+  playbackCommandsRef.current = {
+    commitTimelineInput,
+    handleTimelineInput,
+    seekTimeline,
+  };
 
   return (
     <div className="flex h-full flex-col bg-black text-white">
@@ -687,6 +769,7 @@ function StudioPlayer({
           )}
           onPause={() => setIsPlaying(false)}
           onPlay={() => {
+            playbackIntentRef.current = true;
             setIsPlaying(true);
             setPendingAutoplay(false);
             setPlaybackEndedAtEnd(false);
@@ -706,6 +789,7 @@ function StudioPlayer({
           }}
           onEnded={handleEnded}
           onError={() => {
+            playbackIntentRef.current = false;
             setIsPlaying(false);
             setPendingAutoplay(false);
             setPlaybackError('Playback failed: video stream is not supported.');
@@ -1226,10 +1310,103 @@ function percentOf(value: number, total: number): number {
   return Math.max(0, Math.min(100, (value / total) * 100));
 }
 
+interface RulerTick {
+  leftPx: number;
+  major: boolean;
+  timeMs: number;
+}
+
+function minVisibleWindowMs(totalDurationMs: number): number {
+  return Math.min(Math.max(1, totalDurationMs), MIN_TRACK_WINDOW_MS);
+}
+
+function clampVisibleWindowMs(
+  visibleWindowMs: number,
+  totalDurationMs: number,
+): number {
+  const minimum = minVisibleWindowMs(totalDurationMs);
+  return Math.min(
+    Math.max(minimum, visibleWindowMs),
+    Math.max(minimum, totalDurationMs),
+  );
+}
+
+function clampScrollLeft(scrollLeft: number, viewport: HTMLDivElement): number {
+  return Math.max(
+    0,
+    Math.min(
+      scrollLeft,
+      Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+    ),
+  );
+}
+
+function buildRulerTicks({
+  scrollLeft,
+  timelineViewportWidth,
+  timelineWidthPx,
+  totalDurationMs,
+  visibleWindowMs,
+}: {
+  scrollLeft: number;
+  timelineViewportWidth: number;
+  timelineWidthPx: number;
+  totalDurationMs: number;
+  visibleWindowMs: number;
+}): RulerTick[] {
+  const majorIntervalMs = chooseRulerIntervalMs(
+    (visibleWindowMs / timelineViewportWidth) * RULER_TARGET_TICK_PX,
+  );
+  const minorIntervalMs = Math.max(1, majorIntervalMs / 4);
+  const visibleStartMs = clampTimelineMs(
+    (scrollLeft / timelineWidthPx) * totalDurationMs,
+    totalDurationMs,
+  );
+  const visibleEndMs = clampTimelineMs(
+    ((scrollLeft + timelineViewportWidth) / timelineWidthPx) * totalDurationMs,
+    totalDurationMs,
+  );
+  const firstTickMs =
+    Math.floor(
+      Math.max(0, visibleStartMs - majorIntervalMs) / minorIntervalMs,
+    ) * minorIntervalMs;
+  const lastTickMs = Math.min(totalDurationMs, visibleEndMs + majorIntervalMs);
+  const ticks: RulerTick[] = [];
+
+  for (
+    let timeMs = firstTickMs;
+    timeMs <= lastTickMs;
+    timeMs += minorIntervalMs
+  ) {
+    const major = Math.round(timeMs / minorIntervalMs) % 4 === 0;
+    ticks.push({
+      leftPx: (timeMs / totalDurationMs) * timelineWidthPx,
+      major,
+      timeMs,
+    });
+  }
+
+  return ticks;
+}
+
+function chooseRulerIntervalMs(targetIntervalMs: number): number {
+  const intervals = [
+    1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000,
+    600_000, 900_000, 1_800_000, 3_600_000,
+  ];
+
+  return (
+    intervals.find((interval) => interval >= targetIntervalMs) ??
+    intervals[intervals.length - 1]!
+  );
+}
+
 function TrackTimeline({
   detail,
   mutedTrackIds,
   onToggleTrackMuted,
+  playbackCommandsRef,
+  playbackSnapshot,
   playbackAssets,
   thumbnailStatus,
   waveforms,
@@ -1237,37 +1414,423 @@ function TrackTimeline({
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
   onToggleTrackMuted: (trackId: string) => void;
+  playbackCommandsRef: { current: TrackPlaybackCommands | null };
+  playbackSnapshot: TrackPlaybackSnapshot;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   waveforms: LibraryWaveforms | null;
 }) {
   const totalDurationMs = Math.max(1, timelineDurationMs(detail.segments));
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{ active: boolean; pointerId: number | null }>({
+    active: false,
+    pointerId: null,
+  });
+  const programmaticScrollRef = useRef<number | null>(null);
+  const [followPlayhead, setFollowPlayhead] = useState(true);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(
+    DEFAULT_TRACK_VIEWPORT_WIDTH_PX,
+  );
+  const [visibleWindowMs, setVisibleWindowMs] = useState(() =>
+    clampVisibleWindowMs(
+      Math.min(INITIAL_TRACK_WINDOW_MS, totalDurationMs),
+      totalDurationMs,
+    ),
+  );
+  const timelineViewportWidth = Math.max(
+    1,
+    viewportWidth - TRACK_LABEL_WIDTH_PX,
+  );
+  const timelineWidthPx = Math.max(
+    timelineViewportWidth,
+    (totalDurationMs / visibleWindowMs) * timelineViewportWidth,
+  );
+  const playheadLeftPx =
+    TRACK_LABEL_WIDTH_PX +
+    (clampTimelineMs(playbackSnapshot.displayedTimelineMs, totalDurationMs) /
+      totalDurationMs) *
+      timelineWidthPx;
+  const zoomPercent = Math.max(
+    100,
+    Math.round((totalDurationMs / visibleWindowMs) * 100),
+  );
+  const canZoomIn = visibleWindowMs > minVisibleWindowMs(totalDurationMs);
+  const canZoomOut = visibleWindowMs < totalDurationMs;
+  const rulerTicks = useMemo(
+    () =>
+      buildRulerTicks({
+        scrollLeft,
+        timelineViewportWidth,
+        timelineWidthPx,
+        totalDurationMs,
+        visibleWindowMs,
+      }),
+    [
+      scrollLeft,
+      timelineViewportWidth,
+      timelineWidthPx,
+      totalDurationMs,
+      visibleWindowMs,
+    ],
+  );
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    function updateViewportWidth() {
+      setViewportWidth(
+        Math.max(1, viewport?.clientWidth ?? DEFAULT_TRACK_VIEWPORT_WIDTH_PX),
+      );
+    }
+
+    updateViewportWidth();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateViewportWidth);
+      return () => window.removeEventListener('resize', updateViewportWidth);
+    }
+
+    const observer = new ResizeObserver(updateViewportWidth);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const scrollViewport = viewport;
+    function handleScroll() {
+      setScrollLeft(scrollViewport.scrollLeft);
+      if (programmaticScrollRef.current !== null) {
+        window.clearTimeout(programmaticScrollRef.current);
+        programmaticScrollRef.current = window.setTimeout(() => {
+          programmaticScrollRef.current = null;
+        }, 80);
+        return;
+      }
+      if (playbackSnapshot.isPlaying) {
+        setFollowPlayhead(false);
+      }
+    }
+
+    scrollViewport.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scrollViewport.removeEventListener('scroll', handleScroll);
+  }, [playbackSnapshot.isPlaying]);
+
+  useEffect(() => {
+    if (!followPlayhead || !playbackSnapshot.isPlaying) {
+      return;
+    }
+    keepPlayheadVisible(playheadLeftPx);
+    // keepPlayheadVisible reads viewport refs and does not affect React data flow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followPlayhead, playbackSnapshot.isPlaying, playheadLeftPx]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => setFollowPlayhead(true));
+    return () => window.cancelAnimationFrame(frameId);
+  }, [playbackSnapshot.seekRevision]);
+
+  function markProgrammaticScroll() {
+    if (programmaticScrollRef.current !== null) {
+      window.clearTimeout(programmaticScrollRef.current);
+    }
+    programmaticScrollRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = null;
+    }, 80);
+  }
+
+  function keepPlayheadVisible(nextPlayheadLeftPx: number) {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const visibleStartPx = viewport.scrollLeft + TRACK_LABEL_WIDTH_PX;
+    const visibleEndPx = viewport.scrollLeft + viewport.clientWidth;
+    let nextScrollLeft = viewport.scrollLeft;
+    if (nextPlayheadLeftPx > visibleEndPx - TRACK_FOLLOW_EDGE_PX) {
+      nextScrollLeft =
+        nextPlayheadLeftPx - viewport.clientWidth + TRACK_FOLLOW_EDGE_PX;
+    } else if (nextPlayheadLeftPx < visibleStartPx + TRACK_FOLLOW_EDGE_PX) {
+      nextScrollLeft =
+        nextPlayheadLeftPx - TRACK_LABEL_WIDTH_PX - TRACK_FOLLOW_EDGE_PX;
+    } else {
+      return;
+    }
+
+    markProgrammaticScroll();
+    viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
+    setScrollLeft(viewport.scrollLeft);
+  }
+
+  function timelineMsFromClientX(clientX: number): number | null {
+    const content = contentRef.current;
+    if (!content) {
+      return null;
+    }
+    const x = clientX - content.getBoundingClientRect().left;
+    const timelineX = x - TRACK_LABEL_WIDTH_PX;
+    if (timelineX < 0) {
+      return null;
+    }
+
+    return clampTimelineMs(
+      (timelineX / timelineWidthPx) * totalDurationMs,
+      totalDurationMs,
+    );
+  }
+
+  function commitPointerTimelineMs(clientX: number) {
+    const nextTimelineMs = timelineMsFromClientX(clientX);
+    if (nextTimelineMs === null) {
+      return;
+    }
+    playbackCommandsRef.current?.commitTimelineInput(nextTimelineMs);
+    setFollowPlayhead(true);
+  }
+
+  function handleTimelinePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (
+      event.button !== 0 ||
+      (event.target instanceof Element &&
+        event.target.closest('[data-library-action]'))
+    ) {
+      return;
+    }
+
+    const nextTimelineMs = timelineMsFromClientX(event.clientX);
+    if (nextTimelineMs === null) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragStateRef.current = { active: true, pointerId: event.pointerId };
+    playbackCommandsRef.current?.handleTimelineInput(nextTimelineMs);
+    setFollowPlayhead(true);
+  }
+
+  function handleTimelinePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (
+      !dragStateRef.current.active ||
+      dragStateRef.current.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const nextTimelineMs = timelineMsFromClientX(event.clientX);
+    if (nextTimelineMs !== null) {
+      playbackCommandsRef.current?.handleTimelineInput(nextTimelineMs);
+    }
+  }
+
+  function handleTimelinePointerEnd(event: PointerEvent<HTMLDivElement>) {
+    if (
+      !dragStateRef.current.active ||
+      dragStateRef.current.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    dragStateRef.current = { active: false, pointerId: null };
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    commitPointerTimelineMs(event.clientX);
+  }
+
+  function handleTimelineWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!event.ctrlKey) {
+      return;
+    }
+
+    event.preventDefault();
+    const zoomIn = event.deltaY < 0;
+    zoomVisibleWindow(
+      zoomIn
+        ? visibleWindowMs / TRACK_ZOOM_STEP
+        : visibleWindowMs * TRACK_ZOOM_STEP,
+      event.clientX,
+    );
+  }
+
+  function zoomVisibleWindow(nextWindowMs: number, anchorClientX?: number) {
+    const viewport = viewportRef.current;
+    const nextVisibleWindowMs = clampVisibleWindowMs(
+      nextWindowMs,
+      totalDurationMs,
+    );
+    if (nextVisibleWindowMs === visibleWindowMs) {
+      return;
+    }
+
+    const viewportRect = viewport?.getBoundingClientRect();
+    const anchorX =
+      anchorClientX && viewportRect
+        ? anchorClientX - viewportRect.left
+        : TRACK_LABEL_WIDTH_PX + timelineViewportWidth / 2;
+    const anchorTimelineMs =
+      timelineMsFromClientX(
+        anchorClientX ??
+          (viewportRect?.left ?? 0) +
+            TRACK_LABEL_WIDTH_PX +
+            timelineViewportWidth / 2,
+      ) ??
+      clampTimelineMs(playbackSnapshot.displayedTimelineMs, totalDurationMs);
+    const nextTimelineWidthPx = Math.max(
+      timelineViewportWidth,
+      (totalDurationMs / nextVisibleWindowMs) * timelineViewportWidth,
+    );
+
+    setVisibleWindowMs(nextVisibleWindowMs);
+    window.requestAnimationFrame(() => {
+      if (!viewport) {
+        return;
+      }
+      const nextScrollLeft =
+        TRACK_LABEL_WIDTH_PX +
+        (anchorTimelineMs / totalDurationMs) * nextTimelineWidthPx -
+        anchorX;
+      markProgrammaticScroll();
+      viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
+      setScrollLeft(viewport.scrollLeft);
+    });
+  }
 
   return (
     <div className="bg-background flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b px-3">
+      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b px-3">
         <div className="text-sm font-medium">Tracks</div>
-        <div className="text-muted-foreground text-xs">
-          {waveforms?.error ?? 'Video and audio timeline'}
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-muted-foreground truncate text-xs">
+            {waveforms?.error ?? 'Video and audio timeline'}
+          </div>
+          <div
+            aria-label="Track zoom"
+            className="flex shrink-0 items-center gap-1"
+          >
+            <Button
+              aria-label="Zoom out tracks"
+              disabled={!canZoomOut}
+              size="icon-xs"
+              variant="ghost"
+              onClick={() =>
+                zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)
+              }
+            >
+              <Minus className="size-3" />
+            </Button>
+            <div
+              aria-live="polite"
+              className="text-muted-foreground w-12 text-center text-xs tabular-nums"
+            >
+              {zoomPercent}%
+            </div>
+            <Button
+              aria-label="Zoom in tracks"
+              disabled={!canZoomIn}
+              size="icon-xs"
+              variant="ghost"
+              onClick={() =>
+                zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)
+              }
+            >
+              <Plus className="size-3" />
+            </Button>
+          </div>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-2 p-3">
-          {detail.tracks.map((track) => (
-            <TrackLane
-              detail={detail}
-              key={track.id}
-              mutedTrackIds={mutedTrackIds}
-              onToggleTrackMuted={onToggleTrackMuted}
-              playbackAssets={playbackAssets}
-              thumbnailStatus={thumbnailStatus}
-              totalDurationMs={totalDurationMs}
-              track={track}
-              waveforms={waveforms}
+      <ScrollArea
+        className="min-h-0 flex-1"
+        scrollbars="both"
+        viewportRef={viewportRef}
+      >
+        <div
+          ref={contentRef}
+          aria-label="Track timeline"
+          className="relative cursor-crosshair"
+          role="group"
+          style={{
+            width: TRACK_LABEL_WIDTH_PX + timelineWidthPx,
+          }}
+          onPointerCancel={handleTimelinePointerEnd}
+          onPointerDown={handleTimelinePointerDown}
+          onPointerMove={handleTimelinePointerMove}
+          onPointerUp={handleTimelinePointerEnd}
+          onWheel={handleTimelineWheel}
+        >
+          <div
+            aria-hidden="true"
+            className="bg-primary pointer-events-none absolute top-0 bottom-0 z-30 w-px"
+            style={{ left: playheadLeftPx }}
+          />
+          <div
+            className="grid"
+            style={{
+              gridTemplateColumns: `${TRACK_LABEL_WIDTH_PX}px ${timelineWidthPx}px`,
+            }}
+          >
+            <div
+              className="bg-background sticky left-0 z-40 border-r border-b px-3"
+              style={{ height: TRACK_RULER_HEIGHT_PX }}
             />
-          ))}
+            <TimeRuler ticks={rulerTicks} timelineWidthPx={timelineWidthPx} />
+            {detail.tracks.map((track) => (
+              <TrackLane
+                detail={detail}
+                key={track.id}
+                mutedTrackIds={mutedTrackIds}
+                onToggleTrackMuted={onToggleTrackMuted}
+                playbackAssets={playbackAssets}
+                thumbnailStatus={thumbnailStatus}
+                timelineWidthPx={timelineWidthPx}
+                totalDurationMs={totalDurationMs}
+                track={track}
+                waveforms={waveforms}
+              />
+            ))}
+          </div>
         </div>
       </ScrollArea>
+    </div>
+  );
+}
+
+function TimeRuler({
+  ticks,
+  timelineWidthPx,
+}: {
+  ticks: RulerTick[];
+  timelineWidthPx: number;
+}) {
+  return (
+    <div
+      aria-label="Time ruler"
+      className="bg-background relative sticky top-0 z-20 border-b"
+      style={{ height: TRACK_RULER_HEIGHT_PX, width: timelineWidthPx }}
+    >
+      {ticks.map((tick) => (
+        <div
+          className="border-muted-foreground/40 absolute bottom-0 border-l"
+          key={`${tick.timeMs}-${tick.major ? 'major' : 'minor'}`}
+          style={{
+            height: tick.major ? 22 : 10,
+            left: tick.leftPx,
+          }}
+        >
+          {tick.major ? (
+            <div className="text-muted-foreground mt-0.5 ml-1 text-[0.625rem] tabular-nums">
+              {formatDuration(tick.timeMs)}
+            </div>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1278,6 +1841,7 @@ function TrackLane({
   onToggleTrackMuted,
   playbackAssets,
   thumbnailStatus,
+  timelineWidthPx,
   totalDurationMs,
   track,
   waveforms,
@@ -1287,6 +1851,7 @@ function TrackLane({
   onToggleTrackMuted: (trackId: string) => void;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
+  timelineWidthPx: number;
   totalDurationMs: number;
   track: LibraryRecordingTrack;
   waveforms: LibraryWaveforms | null;
@@ -1298,8 +1863,11 @@ function TrackLane({
   const muted = mutedTrackIds.has(track.id);
 
   return (
-    <div className="grid grid-cols-[10rem_1fr] gap-3">
-      <div className="flex min-w-0 items-start gap-2">
+    <>
+      <div
+        className="bg-background sticky left-0 z-10 flex min-w-0 items-start gap-2 border-r border-b p-2"
+        style={{ height: TRACK_LANE_HEIGHT_PX }}
+      >
         {audioTrack ? (
           <Button
             aria-label={muted ? `Unmute ${track.label}` : `Mute ${track.label}`}
@@ -1322,7 +1890,10 @@ function TrackLane({
           </div>
         </div>
       </div>
-      <div className="bg-muted relative h-12 overflow-hidden border">
+      <div
+        className="bg-muted relative overflow-hidden border-b"
+        style={{ height: TRACK_LANE_HEIGHT_PX, width: timelineWidthPx }}
+      >
         {detail.segments.map((segment) => (
           <div
             className={cn(
@@ -1339,8 +1910,10 @@ function TrackLane({
             )}
             key={`${track.id}-${segment.id}`}
             style={{
-              left: `${(segment.playbackOffsetMs / totalDurationMs) * 100}%`,
-              width: `${((segment.durationMs ?? 0) / totalDurationMs) * 100}%`,
+              left:
+                (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
+              width:
+                ((segment.durationMs ?? 0) / totalDurationMs) * timelineWidthPx,
             }}
             title={`Segment ${segment.segmentIndex}`}
           >
@@ -1366,7 +1939,7 @@ function TrackLane({
           </div>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 

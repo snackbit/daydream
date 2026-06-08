@@ -5,8 +5,15 @@ import { cn } from '@/lib/utils';
 function ScrollArea({
   className,
   children,
+  scrollbars = 'vertical',
+  viewportRef,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  scrollbars?: 'both' | 'horizontal' | 'vertical';
+  viewportRef?: React.Ref<
+    React.ElementRef<typeof ScrollAreaPrimitive.Viewport>
+  >;
+}) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -14,12 +21,18 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
         data-slot="scroll-area-viewport"
         className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
-      <ScrollBar />
+      {scrollbars === 'vertical' || scrollbars === 'both' ? (
+        <ScrollBar />
+      ) : null}
+      {scrollbars === 'horizontal' || scrollbars === 'both' ? (
+        <ScrollBar orientation="horizontal" />
+      ) : null}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   );

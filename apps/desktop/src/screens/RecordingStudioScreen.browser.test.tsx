@@ -170,6 +170,40 @@ const playbackAssets = {
   sessionId: 'session',
 } satisfies LibraryPlaybackAssets;
 
+const longDetail = {
+  ...detail,
+  durationMs: 300_000,
+  endedAtMs: 301_000,
+  playableSegmentCount: 1,
+  segments: [
+    {
+      ...detail.segments[0]!,
+      durationMs: 300_000,
+      endedAtMs: 301_000,
+      id: 'segment-long',
+      pauseAfterMs: 0,
+    },
+  ],
+} satisfies LibraryRecordingDetail;
+
+const longPlaybackAssets = {
+  ...playbackAssets,
+  segments: [
+    {
+      ...playbackAssets.segments[0]!,
+      segmentId: 'segment-long',
+      thumbnails: [
+        {
+          offsetMs: 0,
+          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-long/thumbnail/0.jpg',
+        },
+      ],
+      videoUrl:
+        'http://127.0.0.1:5000/playback/session/token/segments/segment-long/video',
+    },
+  ],
+} satisfies LibraryPlaybackAssets;
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() =>
@@ -251,6 +285,71 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   expect(client.getRecordingWaveforms).toHaveBeenCalledWith({
     recordingId: 'recording-1',
   });
+});
+
+test('RecordingStudioScreen renders a zoomable track ruler', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  expect(await screen.findByLabelText('Time ruler')).toBeTruthy();
+  expect(screen.getByText('167%')).toBeTruthy();
+
+  const timeline = screen.getByLabelText('Track timeline');
+  const timelineRect = timeline.getBoundingClientRect();
+  fireEvent.wheel(timeline, {
+    clientX: timelineRect.left + 480,
+    ctrlKey: true,
+    deltaY: -100,
+  });
+
+  await waitFor(() => expect(screen.getByText('208%')).toBeTruthy());
+
+  fireEvent.click(screen.getByRole('button', { name: /zoom out tracks/i }));
+
+  await waitFor(() => expect(screen.getByText('167%')).toBeTruthy());
+});
+
+test('RecordingStudioScreen commits ruler seeks through the playback pipeline', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  const { container } = render(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      `${longPlaybackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+    ),
+  );
+
+  const timeline = screen.getByLabelText('Track timeline');
+  const pointerClientX = timeline.getBoundingClientRect().left + 420;
+  fireEvent.pointerDown(timeline, {
+    button: 0,
+    clientX: pointerClientX,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: pointerClientX,
+    pointerId: 1,
+  });
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      `${longPlaybackAssets.segments[0]!.videoUrl}?startMs=`,
+    ),
+  );
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      '&request=1',
+    ),
+  );
+  const startMs = new URL(
+    container.querySelector('video')?.getAttribute('src') ?? '',
+  ).searchParams.get('startMs');
+  expect(Number(startMs)).toBeGreaterThan(0);
 });
 
 test('RecordingStudioScreen ignores stale playback assets after route changes', async () => {
@@ -539,6 +638,7 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
     ),
   );
 
+  fireEvent.play(container.querySelector('video')!);
   fireEvent.ended(container.querySelector('video')!);
 
   expect(screen.getByText(/Recording paused/i)).toBeTruthy();
@@ -558,6 +658,11 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
       playbackAssets.segments[1]!.videoUrl,
     ),
+  );
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
+  fireEvent.canPlay(container.querySelector('video')!);
+  await waitFor(() =>
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
   );
   await waitFor(() => {
     expect(screen.queryByText(/Recording paused/i)).toBeNull();
@@ -580,6 +685,7 @@ test('RecordingStudioScreen play now skips the pause gap immediately', async () 
     ),
   );
 
+  fireEvent.play(container.querySelector('video')!);
   fireEvent.ended(container.querySelector('video')!);
   fireEvent.click(screen.getByRole('button', { name: /play now/i }));
 
@@ -587,6 +693,11 @@ test('RecordingStudioScreen play now skips the pause gap immediately', async () 
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
       playbackAssets.segments[1]!.videoUrl,
     ),
+  );
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
+  fireEvent.canPlay(container.querySelector('video')!);
+  await waitFor(() =>
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
   );
   expect(screen.queryByText(/Recording paused/i)).toBeNull();
 });
