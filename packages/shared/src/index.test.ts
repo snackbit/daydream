@@ -345,7 +345,7 @@ test('library contracts support missing recordings and playable details', () => 
   expect(detail.segments[0]?.pauseAfterMs).toBe(3_000);
 });
 
-test('library waveform contracts support cached audio lanes', () => {
+test('library waveform contracts support audio lanes', () => {
   const waveforms = {
     error: null,
     recordingId: 'recording-1',
@@ -369,7 +369,7 @@ test('library waveform contracts support cached audio lanes', () => {
   expect(waveforms.tracks[0]?.segments[0]?.samples).toHaveLength(3);
 });
 
-test('library playback contracts support browser-playable sidecars', () => {
+test('library playback contracts support tokenized streaming URLs', () => {
   const assets = {
     error: null,
     recordingId: 'recording-1',
@@ -378,23 +378,25 @@ test('library playback contracts support browser-playable sidecars', () => {
         audio: [
           {
             kind: 'desktop-audio',
-            path: '/tmp/daydream/recordings/recording-1/playback/segment-1/desktop-audio-1.m4a',
             streamIndex: 1,
             trackId: 'desktop-audio-1',
+            url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-1/audio/desktop-audio-1',
           },
         ],
         segmentId: 'segment-1',
         thumbnails: [
           {
             offsetMs: 0,
-            path: '/tmp/daydream/recordings/recording-1/playback/segment-1/thumbs/thumb-00000.jpg',
+            url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-1/thumbnail/0.jpg',
           },
         ],
-        videoPath:
-          '/tmp/daydream/recordings/recording-1/playback/segment-1/video.mp4',
+        videoUrl:
+          'http://127.0.0.1:5000/playback/session/token/segments/segment-1/video',
       },
     ],
+    sessionId: 'session',
   } satisfies LibraryPlaybackAssets;
 
   expect(assets.segments[0]?.audio[0]?.trackId).toBe('desktop-audio-1');
+  expect(assets.segments[0]?.videoUrl).toContain('/playback/session/token/');
 });

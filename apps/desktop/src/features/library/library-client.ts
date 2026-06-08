@@ -1,10 +1,10 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type {
+  CloseLibraryPlaybackSessionRequest,
   DeleteLibraryRecordingInput,
   DeleteLibraryRecordingsInput,
   LibraryPlaybackAssetRequest,
   LibraryPlaybackAssets,
-  LibraryPlaybackThumbnails,
   LibraryRecordingDetail,
   LibraryRecordingSummary,
   LibraryRecordingThumbnail,
@@ -45,20 +45,18 @@ export async function getRecordingWaveforms(
   return invoke<LibraryWaveforms>('getRecordingWaveforms', { input });
 }
 
-export async function prepareLibraryPlaybackAssets(
+export async function createLibraryPlaybackSession(
   input: LibraryPlaybackAssetRequest,
 ): Promise<LibraryPlaybackAssets> {
-  return invoke<LibraryPlaybackAssets>('prepareLibraryPlaybackAssets', {
+  return invoke<LibraryPlaybackAssets>('createLibraryPlaybackSession', {
     input,
   });
 }
 
-export async function prepareLibraryPlaybackThumbnails(
-  input: LibraryPlaybackAssetRequest,
-): Promise<LibraryPlaybackThumbnails> {
-  return invoke<LibraryPlaybackThumbnails>('prepareLibraryPlaybackThumbnails', {
-    input,
-  });
+export async function closeLibraryPlaybackSession(
+  input: CloseLibraryPlaybackSessionRequest,
+): Promise<void> {
+  return invoke<void>('closeLibraryPlaybackSession', { input });
 }
 
 export async function prepareLibraryRecordingThumbnail(

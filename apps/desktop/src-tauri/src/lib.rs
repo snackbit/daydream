@@ -1,5 +1,6 @@
 mod diagnostics;
 mod library;
+mod playback_server;
 pub mod recorder;
 pub mod storage;
 mod telemetry;
@@ -14,12 +15,16 @@ pub fn run() {
             telemetry::initialize(app.handle())?;
             let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
             let storage = storage::initialize(app.handle())?;
+            let playback_server = playback_server::PlaybackServer::start()?;
             app.manage(storage);
             app.manage(recorder_manager);
+            app.manage(playback_server);
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            library::close_library_playback_session,
+            library::create_library_playback_session,
             diagnostics::get_diagnostics,
             diagnostics::get_debug_log_bundle,
             library::delete_library_recording,
@@ -27,8 +32,6 @@ pub fn run() {
             library::get_library_recording,
             library::get_recording_waveforms,
             library::list_library_recordings,
-            library::prepare_library_playback_assets,
-            library::prepare_library_playback_thumbnails,
             library::prepare_library_recording_thumbnail,
             recorder::get_recorder_status,
             recorder::get_recorder_performance_stats,

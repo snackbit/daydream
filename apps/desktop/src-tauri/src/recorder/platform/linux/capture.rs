@@ -39,6 +39,7 @@ use crate::recorder::{
 };
 
 const PIPEWIRE_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const PIPEWIRE_LATEST_FRAME_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LiveCapturePreflight {
@@ -108,8 +109,39 @@ struct PipeWireStreamData {
 
 struct PipeWireCaptureState {
     error: Option<RecorderError>,
+    latest_frame_log: PipeWireLatestFrameLog,
     latest_frames: SharedPipeWireFrameSampler,
     timing: SharedCaptureTiming,
+}
+
+struct PipeWireLatestFrameLog {
+    frames_since_last_log: u64,
+    last_logged_at: Instant,
+    latest_timestamps_by_source: HashMap<String, u64>,
+}
+
+struct PipeWireLatestFrameLogSnapshot {
+    frames_since_last_log: u64,
+    latest_timestamps_by_source: HashMap<String, u64>,
+    window_ms: u128,
+}
+
+struct PipeWireScheduledFrameLog {
+    frames_since_last_log: u64,
+    last_logged_at: Instant,
+    last_timestamp_ms: u64,
+    max_compose_duration_ms: u64,
+    reused_frames_since_last_log: u64,
+    total_compose_duration_ms: u64,
+}
+
+struct PipeWireScheduledFrameLogSnapshot {
+    average_compose_duration_ms: u64,
+    frames_since_last_log: u64,
+    last_timestamp_ms: u64,
+    max_compose_duration_ms: u64,
+    reused_frames_since_last_log: u64,
+    window_ms: u128,
 }
 
 type SharedPipeWireFrameSampler = Arc<Mutex<LatestPipeWireFrameSampler>>;
@@ -122,6 +154,7 @@ struct PipeWireCaptureSchedulerState {
     latest_frames: SharedPipeWireFrameSampler,
     next_composed_at_ms: Option<u64>,
     plan: SceneCompositorPlan,
+    scheduled_frame_log: PipeWireScheduledFrameLog,
     timing: SharedCaptureTiming,
 }
 
@@ -207,6 +240,94 @@ impl LatestPipeWireFrameSampler {
     #[cfg(test)]
     fn has_latest_frame(&self, source_id: &str) -> bool {
         self.latest_frames.contains_key(source_id)
+    }
+}
+
+impl PipeWireLatestFrameLog {
+    fn new(now: Instant) -> Self {
+        Self {
+            frames_since_last_log: 0,
+            last_logged_at: now,
+            latest_timestamps_by_source: HashMap::new(),
+        }
+    }
+
+    fn record_frame(
+        &mut self,
+        source_id: &str,
+        frame_timestamp_ms: u64,
+        now: Instant,
+    ) -> Option<PipeWireLatestFrameLogSnapshot> {
+        self.frames_since_last_log += 1;
+        self.latest_timestamps_by_source
+            .insert(source_id.to_string(), frame_timestamp_ms);
+        let window = now.duration_since(self.last_logged_at);
+        if window < PIPEWIRE_LATEST_FRAME_LOG_INTERVAL {
+            return None;
+        }
+
+        let snapshot = PipeWireLatestFrameLogSnapshot {
+            frames_since_last_log: self.frames_since_last_log,
+            latest_timestamps_by_source: std::mem::take(&mut self.latest_timestamps_by_source),
+            window_ms: window.as_millis(),
+        };
+        self.frames_since_last_log = 0;
+        self.last_logged_at = now;
+
+        Some(snapshot)
+    }
+}
+
+impl PipeWireScheduledFrameLog {
+    fn new(now: Instant) -> Self {
+        Self {
+            frames_since_last_log: 0,
+            last_logged_at: now,
+            last_timestamp_ms: 0,
+            max_compose_duration_ms: 0,
+            reused_frames_since_last_log: 0,
+            total_compose_duration_ms: 0,
+        }
+    }
+
+    fn record_frame(
+        &mut self,
+        timestamp_ms: u64,
+        reused_latest_frame: bool,
+        compose_duration_ms: u64,
+        now: Instant,
+    ) -> Option<PipeWireScheduledFrameLogSnapshot> {
+        self.frames_since_last_log += 1;
+        self.last_timestamp_ms = timestamp_ms;
+        if reused_latest_frame {
+            self.reused_frames_since_last_log += 1;
+        }
+        self.total_compose_duration_ms = self
+            .total_compose_duration_ms
+            .saturating_add(compose_duration_ms);
+        self.max_compose_duration_ms = self.max_compose_duration_ms.max(compose_duration_ms);
+
+        let window = now.duration_since(self.last_logged_at);
+        if window < PIPEWIRE_LATEST_FRAME_LOG_INTERVAL {
+            return None;
+        }
+
+        let frames_since_last_log = self.frames_since_last_log.max(1);
+        let snapshot = PipeWireScheduledFrameLogSnapshot {
+            average_compose_duration_ms: self.total_compose_duration_ms / frames_since_last_log,
+            frames_since_last_log,
+            last_timestamp_ms: self.last_timestamp_ms,
+            max_compose_duration_ms: self.max_compose_duration_ms,
+            reused_frames_since_last_log: self.reused_frames_since_last_log,
+            window_ms: window.as_millis(),
+        };
+        self.frames_since_last_log = 0;
+        self.last_logged_at = now;
+        self.max_compose_duration_ms = 0;
+        self.reused_frames_since_last_log = 0;
+        self.total_compose_duration_ms = 0;
+
+        Some(snapshot)
     }
 }
 
@@ -643,6 +764,7 @@ fn run_pipewire_capture_inner(
     let core = context.connect_fd_rc(fd, None).map_err(pipewire_error)?;
     let state = Rc::new(RefCell::new(PipeWireCaptureState {
         error: None,
+        latest_frame_log: PipeWireLatestFrameLog::new(Instant::now()),
         latest_frames,
         timing,
     }));
@@ -948,18 +1070,26 @@ fn capture_stream_frame(
         PipeWireCapturedFrame::Cpu(frame) => (frame.source_id.clone(), frame.timestamp_ms),
         PipeWireCapturedFrame::DmaBuf(frame) => (frame.source_id.clone(), frame.timestamp_ms),
     };
-    let state = state.borrow_mut();
+    let mut state = state.borrow_mut();
     record_capture_frame(&state.timing, &frame_source_id, frame_timestamp_ms);
     state
         .latest_frames
         .lock()
         .map_err(|_error| capture_adapter_failed_error("PipeWire capture sampler lock poisoned."))?
         .push(frame)?;
-    debug!(
-        source_id = %frame_source_id,
-        frame_timestamp_ms,
-        "pipewire_capture_latest_frame_updated"
-    );
+    if let Some(log) =
+        state
+            .latest_frame_log
+            .record_frame(&frame_source_id, frame_timestamp_ms, Instant::now())
+    {
+        debug!(
+            frames_since_last_log = log.frames_since_last_log,
+            source_count = log.latest_timestamps_by_source.len(),
+            latest_timestamps_by_source = ?log.latest_timestamps_by_source,
+            window_ms = log.window_ms,
+            "pipewire_capture_latest_frame_updated"
+        );
+    }
 
     Ok(())
 }
@@ -1006,6 +1136,7 @@ fn run_pipewire_capture_scheduler(
         latest_frames,
         next_composed_at_ms: None,
         plan,
+        scheduled_frame_log: PipeWireScheduledFrameLog::new(Instant::now()),
         timing,
     };
     let idle_sleep = Duration::from_millis(frame_interval_ms.min(50).max(1));
@@ -1175,21 +1306,29 @@ fn compose_latest_pipewire_frames(
             None,
         );
     }
+    let compose_duration_ms = compose_started
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
     record_composed_frame(&state.timing, timestamp_ms, reused_latest_frame);
-    record_compose_duration(
-        &state.timing,
-        compose_started
-            .elapsed()
-            .as_millis()
-            .try_into()
-            .unwrap_or(u64::MAX),
-    );
-    debug!(
+    record_compose_duration(&state.timing, compose_duration_ms);
+    if let Some(log) = state.scheduled_frame_log.record_frame(
         timestamp_ms,
         reused_latest_frame,
-        compose_duration_ms = compose_started.elapsed().as_millis(),
-        "pipewire_capture_scheduled_frame_composed"
-    );
+        compose_duration_ms,
+        Instant::now(),
+    ) {
+        debug!(
+            average_compose_duration_ms = log.average_compose_duration_ms,
+            frames_since_last_log = log.frames_since_last_log,
+            last_timestamp_ms = log.last_timestamp_ms,
+            max_compose_duration_ms = log.max_compose_duration_ms,
+            reused_frames_since_last_log = log.reused_frames_since_last_log,
+            window_ms = log.window_ms,
+            "pipewire_capture_scheduled_frame_composed"
+        );
+    }
 
     Ok(ComposedFrameSendOutcome::Sent)
 }
@@ -1676,7 +1815,7 @@ mod tests {
     use std::{
         fs::File,
         sync::{mpsc, Arc, Mutex},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use pipewire as pw;
@@ -1692,7 +1831,8 @@ mod tests {
         drm_fourcc_from_frame_format, next_scheduler_timestamp, pipewire_framerate_fraction,
         preflight_live_capture, raw_video_params, stream_configs_from_plan,
         ComposedFrameSendOutcome, LatestPipeWireFrameSampler, PipeWireCaptureSchedulerState,
-        PipeWireCapturedFrame, PipeWireStartupNotifier,
+        PipeWireCapturedFrame, PipeWireLatestFrameLog, PipeWireScheduledFrameLog,
+        PipeWireStartupNotifier,
     };
     use crate::recorder::{
         capture_runtime::{
@@ -1974,6 +2114,64 @@ mod tests {
     }
 
     #[test]
+    fn latest_frame_log_aggregates_until_five_second_window_elapses() {
+        let started_at = Instant::now();
+        let mut log = PipeWireLatestFrameLog::new(started_at);
+
+        assert!(log
+            .record_frame("portal-monitor-a", 100, started_at + Duration::from_secs(1))
+            .is_none());
+        assert!(log
+            .record_frame("portal-monitor-a", 200, started_at + Duration::from_secs(2))
+            .is_none());
+        log.record_frame("portal-monitor-b", 300, started_at + Duration::from_secs(5))
+            .map(|snapshot| {
+                assert_eq!(snapshot.frames_since_last_log, 3);
+                assert_eq!(snapshot.window_ms, 5_000);
+                assert_eq!(
+                    snapshot.latest_timestamps_by_source.get("portal-monitor-a"),
+                    Some(&200),
+                );
+                assert_eq!(
+                    snapshot.latest_timestamps_by_source.get("portal-monitor-b"),
+                    Some(&300),
+                );
+            })
+            .expect("five second window should emit summary");
+
+        assert!(log
+            .record_frame("portal-monitor-a", 400, started_at + Duration::from_secs(6))
+            .is_none());
+    }
+
+    #[test]
+    fn scheduled_frame_log_aggregates_until_five_second_window_elapses() {
+        let started_at = Instant::now();
+        let mut log = PipeWireScheduledFrameLog::new(started_at);
+
+        assert!(log
+            .record_frame(100, false, 10, started_at + Duration::from_secs(1))
+            .is_none());
+        assert!(log
+            .record_frame(200, true, 20, started_at + Duration::from_secs(2))
+            .is_none());
+        log.record_frame(300, true, 40, started_at + Duration::from_secs(5))
+            .map(|snapshot| {
+                assert_eq!(snapshot.frames_since_last_log, 3);
+                assert_eq!(snapshot.reused_frames_since_last_log, 2);
+                assert_eq!(snapshot.average_compose_duration_ms, 23);
+                assert_eq!(snapshot.max_compose_duration_ms, 40);
+                assert_eq!(snapshot.last_timestamp_ms, 300);
+                assert_eq!(snapshot.window_ms, 5_000);
+            })
+            .expect("five second window should emit summary");
+
+        assert!(log
+            .record_frame(400, false, 50, started_at + Duration::from_secs(6))
+            .is_none());
+    }
+
+    #[test]
     fn capture_scheduler_can_compose_reused_frame_without_new_pipewire_callback() {
         let scene = test_scene(vec![scene_source("front", "portal-monitor-a", 0)]);
         let preflight = preflight_live_capture(&scene, &[live_stream("portal-monitor-a", 42)])
@@ -1989,6 +2187,7 @@ mod tests {
             latest_frames: Arc::clone(&latest_frames),
             next_composed_at_ms: None,
             plan: preflight.plan,
+            scheduled_frame_log: PipeWireScheduledFrameLog::new(Instant::now()),
             timing: timing.clone(),
         };
         let (_shutdown_sender, shutdown_receiver) = mpsc::channel();
@@ -2038,6 +2237,7 @@ mod tests {
             latest_frames: Arc::clone(&latest_frames),
             next_composed_at_ms: None,
             plan: preflight.plan,
+            scheduled_frame_log: PipeWireScheduledFrameLog::new(Instant::now()),
             timing: timing.clone(),
         };
         let (shutdown_sender, shutdown_receiver) = mpsc::channel();
@@ -2090,6 +2290,7 @@ mod tests {
             latest_frames,
             next_composed_at_ms: None,
             plan: preflight.plan,
+            scheduled_frame_log: PipeWireScheduledFrameLog::new(Instant::now()),
             timing: timing.clone(),
         };
         let (_shutdown_sender, shutdown_receiver) = mpsc::channel();

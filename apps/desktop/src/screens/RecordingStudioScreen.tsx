@@ -38,12 +38,11 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import {
+  closeLibraryPlaybackSession,
+  createLibraryPlaybackSession,
   deleteLibraryRecording,
   getLibraryRecording,
   getRecordingWaveforms,
-  localAssetUrl,
-  prepareLibraryPlaybackAssets,
-  prepareLibraryPlaybackThumbnails,
 } from '@/features/library/library-client';
 import {
   availabilityLabel,
@@ -74,11 +73,17 @@ export function RecordingStudioScreen() {
   >('idle');
   const [waveforms, setWaveforms] = useState<LibraryWaveforms | null>(null);
   const loadRunRef = useRef(0);
+  const playbackSessionIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     const loadRunId = loadRunRef.current + 1;
     loadRunRef.current = loadRunId;
     const isCurrentLoad = () => loadRunRef.current === loadRunId;
+    const previousSessionId = playbackSessionIdRef.current;
+    playbackSessionIdRef.current = null;
+    if (previousSessionId) {
+      void closeLibraryPlaybackSession({ sessionId: previousSessionId });
+    }
 
     setError(null);
     setStatus('loading');
@@ -93,38 +98,22 @@ export function RecordingStudioScreen() {
       setDetail(nextDetail);
       setStatus('ready');
       if (nextDetail.availability === 'available') {
-        prepareLibraryPlaybackAssets({ recordingId })
+        createLibraryPlaybackSession({ recordingId })
           .then((assets) => {
             if (!isCurrentLoad() || assets.recordingId !== recordingId) {
+              if (assets.sessionId) {
+                void closeLibraryPlaybackSession({
+                  sessionId: assets.sessionId,
+                });
+              }
               return;
             }
+            playbackSessionIdRef.current = assets.sessionId;
             setPlaybackAssets(assets);
+            setThumbnailStatus(assets.error === null ? 'ready' : 'error');
             if (assets.error !== null) {
               return;
             }
-            setThumbnailStatus('loading');
-            void prepareLibraryPlaybackThumbnails({ recordingId })
-              .then((thumbnailAssets) => {
-                if (
-                  !isCurrentLoad() ||
-                  thumbnailAssets.recordingId !== recordingId
-                ) {
-                  return;
-                }
-                setPlaybackAssets((current) =>
-                  mergePlaybackThumbnails(current, thumbnailAssets),
-                );
-                setThumbnailStatus(
-                  thumbnailAssets.error === null ? 'ready' : 'error',
-                );
-              })
-              .catch(() => {
-                if (!isCurrentLoad()) {
-                  return;
-                }
-                // Timeline thumbnails are preview-only; failed previews must not block playback.
-                setThumbnailStatus('error');
-              });
           })
           .catch((playbackError: unknown) => {
             if (!isCurrentLoad()) {
@@ -134,6 +123,7 @@ export function RecordingStudioScreen() {
               error: errorMessage(playbackError),
               recordingId,
               segments: [],
+              sessionId: '',
             });
           });
         getRecordingWaveforms({ recordingId })
@@ -176,6 +166,18 @@ export function RecordingStudioScreen() {
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
+
+  useEffect(
+    () => () => {
+      loadRunRef.current += 1;
+      const sessionId = playbackSessionIdRef.current;
+      playbackSessionIdRef.current = null;
+      if (sessionId) {
+        void closeLibraryPlaybackSession({ sessionId });
+      }
+    },
+    [],
+  );
 
   return (
     <section className="flex min-h-full flex-col">
@@ -333,34 +335,6 @@ function RecordingStudio({
   );
 }
 
-function mergePlaybackThumbnails(
-  current: LibraryPlaybackAssets | null,
-  thumbnails: {
-    error: string | null;
-    recordingId: string;
-    segments: Array<{
-      segmentId: string;
-      thumbnails: Array<{ offsetMs: number; path: string }>;
-    }>;
-  },
-): LibraryPlaybackAssets | null {
-  if (!current || current.recordingId !== thumbnails.recordingId) {
-    return current;
-  }
-
-  return {
-    ...current,
-    segments: current.segments.map((segment) => ({
-      ...segment,
-      thumbnails:
-        thumbnails.segments.find(
-          (thumbnailSegment) =>
-            thumbnailSegment.segmentId === segment.segmentId,
-        )?.thumbnails ?? segment.thumbnails,
-    })),
-  };
-}
-
 function StudioPlayer({
   detail,
   mutedTrackIds,
@@ -372,7 +346,6 @@ function StudioPlayer({
 }) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const pendingSeekRef = useRef<number | null>(null);
   const playableSegments = useMemo(
     () =>
       detail.segments.filter(
@@ -384,7 +357,14 @@ function StudioPlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [playbackEndedAtEnd, setPlaybackEndedAtEnd] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [pendingAutoplay, setPendingAutoplay] = useState(false);
   const [resumeProgress, setResumeProgress] = useState<number | null>(null);
+  const [scrubTimelineMs, setScrubTimelineMs] = useState<number | null>(null);
+  const [streamRevision, setStreamRevision] = useState(0);
+  const [streamStartMs, setStreamStartMs] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const currentSegment = playableSegments[currentIndex] ?? null;
   const currentPlaybackSegment = currentSegment
@@ -396,30 +376,89 @@ function StudioPlayer({
   const currentTimelineMs = currentSegment
     ? currentSegment.playbackOffsetMs + currentTime * 1000
     : 0;
+  const displayedTimelineMs = scrubTimelineMs ?? currentTimelineMs;
+  const streamStartSeconds = streamStartMs / 1000;
+
+  function updateMediaSettings(media: HTMLMediaElement, trackId?: string) {
+    media.volume = volume;
+    media.muted = isMuted || (trackId ? mutedTrackIds.has(trackId) : false);
+  }
+
+  function setMediaCurrentTime(media: HTMLMediaElement, seconds: number) {
+    if (media.readyState === HTMLMediaElement.HAVE_NOTHING) {
+      return;
+    }
+    try {
+      media.currentTime = seconds;
+    } catch {
+      // Generated stream replacements may not expose a seekable range yet.
+    }
+  }
+
+  function syncAudioElements(currentTimeSeconds: number, force = false) {
+    for (const [trackId, audio] of audioRefs.current) {
+      updateMediaSettings(audio, trackId);
+      if (force || Math.abs(audio.currentTime - currentTimeSeconds) > 0.25) {
+        setMediaCurrentTime(audio, currentTimeSeconds);
+      }
+    }
+  }
+
+  async function playMediaElements(): Promise<boolean> {
+    const video = videoRef.current;
+    if (!video) {
+      return false;
+    }
+    setPlaybackError(null);
+    syncAudioElements(video.currentTime, true);
+    try {
+      await video.play();
+    } catch (error) {
+      setIsPlaying(false);
+      setPendingAutoplay(false);
+      setPlaybackError(`Playback failed: ${errorMessage(error)}`);
+      return false;
+    }
+    const audioResults = await Promise.allSettled(
+      [...audioRefs.current.entries()].map(async ([trackId, audio]) => {
+        updateMediaSettings(audio, trackId);
+        await audio.play();
+      }),
+    );
+    const audioFailure = audioResults.find(
+      (result) => result.status === 'rejected',
+    );
+    if (audioFailure?.status === 'rejected') {
+      setPlaybackError(
+        `Audio playback failed: ${errorMessage(audioFailure.reason)}`,
+      );
+    }
+
+    return true;
+  }
+
+  function pauseMediaElements() {
+    videoRef.current?.pause();
+    for (const audio of audioRefs.current.values()) {
+      audio.pause();
+    }
+  }
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) {
       return;
     }
-    video.volume = volume;
-    video.muted = isMuted;
+    updateMediaSettings(video);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMuted, volume]);
 
   useEffect(() => {
     for (const [trackId, audio] of audioRefs.current) {
-      audio.volume = volume;
-      audio.muted = isMuted || mutedTrackIds.has(trackId);
+      updateMediaSettings(audio, trackId);
     }
-  }, [isMuted, mutedTrackIds, volume]);
-
-  useEffect(() => {
-    if (!isPlaying || resumeProgress !== null) {
-      return;
-    }
-    void playMediaElements();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex, isPlaying, resumeProgress]);
+  }, [isMuted, mutedTrackIds, volume]);
 
   if (detail.availability !== 'available' || !currentSegment) {
     const locked = detail.availability === 'locked';
@@ -477,60 +516,75 @@ function StudioPlayer({
 
   async function togglePlayback() {
     const video = videoRef.current;
-    if (!video || resumeProgress !== null) {
+    if (resumeProgress !== null) {
+      return;
+    }
+    if (playbackEndedAtEnd) {
+      seekTimeline(0, { resume: true });
+      return;
+    }
+    if (!video) {
       return;
     }
     if (video.paused) {
-      await playMediaElements();
-      setIsPlaying(true);
+      setPlaybackEndedAtEnd(false);
+      const played = await playMediaElements();
+      setIsPlaying(played);
     } else {
+      setPendingAutoplay(false);
       pauseMediaElements();
       setIsPlaying(false);
     }
   }
 
-  async function playMediaElements() {
-    const video = videoRef.current;
-    if (!video) {
+  function seekTimeline(
+    nextTimelineMs: number,
+    options: { resume?: boolean } = {},
+  ) {
+    if (nextTimelineMs >= totalDurationMs) {
+      const lastIndex = playableSegments.length - 1;
+      const lastSegment = playableSegments[lastIndex];
+      if (!lastSegment) {
+        return;
+      }
+      pauseMediaElements();
+      setCurrentIndex(lastIndex);
+      setCurrentTime((lastSegment.durationMs ?? 0) / 1000);
+      setPendingAutoplay(false);
+      setIsPlaying(false);
+      setPlaybackEndedAtEnd(true);
+      setPlaybackError(null);
+      setResumeProgress(null);
+      setStreamStartMs(lastSegment.durationMs ?? 0);
+      setStreamRevision((revision) => revision + 1);
       return;
     }
-    syncAudioElements(video.currentTime, true);
-    await video.play();
-    await Promise.allSettled(
-      [...audioRefs.current.values()].map((audio) => audio.play()),
-    );
-  }
 
-  function pauseMediaElements() {
-    videoRef.current?.pause();
-    for (const audio of audioRefs.current.values()) {
-      audio.pause();
-    }
-  }
-
-  function syncAudioElements(currentTimeSeconds: number, force = false) {
-    for (const [trackId, audio] of audioRefs.current) {
-      audio.volume = volume;
-      audio.muted = isMuted || mutedTrackIds.has(trackId);
-      if (force || Math.abs(audio.currentTime - currentTimeSeconds) > 0.25) {
-        audio.currentTime = currentTimeSeconds;
-      }
-    }
-  }
-
-  function seekTimeline(nextTimelineMs: number) {
     const target = segmentForTimeline(playableSegments, nextTimelineMs);
     if (!target) {
       return;
     }
+    const shouldResume = options.resume ?? isPlaying;
+    pauseMediaElements();
     setCurrentIndex(target.index);
-    pendingSeekRef.current = target.offsetMs / 1000;
-    const video = videoRef.current;
-    if (video && target.index === currentIndex) {
-      video.currentTime = target.offsetMs / 1000;
-      syncAudioElements(target.offsetMs / 1000, true);
-    }
     setCurrentTime(target.offsetMs / 1000);
+    setIsPlaying(shouldResume);
+    setPendingAutoplay(shouldResume);
+    setPlaybackEndedAtEnd(false);
+    setPlaybackError(null);
+    setResumeProgress(null);
+    setStreamStartMs(target.offsetMs);
+    setStreamRevision((revision) => revision + 1);
+  }
+
+  function handleTimelineInput(nextTimelineMs: number) {
+    setScrubTimelineMs(Math.min(nextTimelineMs, totalDurationMs));
+  }
+
+  function commitTimelineInput(nextTimelineMs: number) {
+    setIsScrubbing(false);
+    setScrubTimelineMs(null);
+    seekTimeline(nextTimelineMs);
   }
 
   function handleEnded() {
@@ -540,7 +594,9 @@ function StudioPlayer({
 
     const nextIndex = currentIndex + 1;
     if (nextIndex >= playableSegments.length) {
+      setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
       setIsPlaying(false);
+      setPlaybackEndedAtEnd(true);
       pauseMediaElements();
       return;
     }
@@ -548,8 +604,12 @@ function StudioPlayer({
     const advanceToNextSegment = () => {
       setCurrentIndex(nextIndex);
       setCurrentTime(0);
-      pendingSeekRef.current = 0;
+      setPlaybackEndedAtEnd(false);
+      setPlaybackError(null);
+      setPendingAutoplay(wasPlaying);
       setResumeProgress(null);
+      setStreamStartMs(0);
+      setStreamRevision((revision) => revision + 1);
       setIsPlaying(wasPlaying);
     };
     const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
@@ -577,28 +637,44 @@ function StudioPlayer({
     <div className="flex h-full flex-col bg-black text-white">
       <div className="relative min-h-0 flex-1">
         <video
+          key={`${currentPlaybackSegment.segmentId}-${streamStartMs}-${streamRevision}-video`}
           ref={videoRef}
           className="h-full w-full object-contain"
           preload="metadata"
-          src={localAssetUrl(currentPlaybackSegment.videoPath)}
-          onLoadedMetadata={(event) => {
-            const pendingSeek = pendingSeekRef.current;
-            if (pendingSeek !== null) {
-              event.currentTarget.currentTime = pendingSeek;
-              pendingSeekRef.current = null;
-            }
-          }}
+          src={streamUrl(
+            currentPlaybackSegment.videoUrl,
+            streamStartMs,
+            streamRevision,
+          )}
           onPause={() => setIsPlaying(false)}
-          onPlay={() => setIsPlaying(true)}
+          onPlay={() => {
+            setIsPlaying(true);
+            setPendingAutoplay(false);
+            setPlaybackEndedAtEnd(false);
+          }}
           onTimeUpdate={(event) => {
-            setCurrentTime(event.currentTarget.currentTime);
+            setCurrentTime(
+              streamStartSeconds + event.currentTarget.currentTime,
+            );
             syncAudioElements(event.currentTarget.currentTime);
           }}
+          onCanPlay={() => {
+            if (!pendingAutoplay || resumeProgress !== null) {
+              return;
+            }
+            setPendingAutoplay(false);
+            void playMediaElements();
+          }}
           onEnded={handleEnded}
+          onError={() => {
+            setIsPlaying(false);
+            setPendingAutoplay(false);
+            setPlaybackError('Playback failed: video stream is not supported.');
+          }}
         />
         {currentPlaybackSegment.audio.map((audio) => (
           <audio
-            key={`${currentPlaybackSegment.segmentId}-${audio.trackId}`}
+            key={`${currentPlaybackSegment.segmentId}-${audio.trackId}-${streamStartMs}-${streamRevision}`}
             ref={(element) => {
               if (element) {
                 audioRefs.current.set(audio.trackId, element);
@@ -607,7 +683,7 @@ function StudioPlayer({
               }
             }}
             preload="metadata"
-            src={localAssetUrl(audio.path)}
+            src={streamUrl(audio.url, streamStartMs, streamRevision)}
           />
         ))}
         {resumeProgress !== null ? (
@@ -628,6 +704,16 @@ function StudioPlayer({
             </div>
           </div>
         ) : null}
+        {playbackError ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-6 text-center">
+            <div>
+              <div className="text-sm font-medium">Playback failed</div>
+              <p className="mt-1 max-w-md text-xs text-white/70">
+                {playbackError}
+              </p>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-white/10 bg-black/90 p-3">
@@ -637,8 +723,30 @@ function StudioPlayer({
           max={Math.max(totalDurationMs, 1)}
           min={0}
           type="range"
-          value={Math.min(currentTimelineMs, totalDurationMs)}
-          onChange={(event) => seekTimeline(Number(event.currentTarget.value))}
+          value={Math.min(displayedTimelineMs, totalDurationMs)}
+          onBlur={(event) => {
+            if (isScrubbing) {
+              commitTimelineInput(Number(event.currentTarget.value));
+            }
+          }}
+          onChange={(event) => {
+            const nextTimelineMs = Number(event.currentTarget.value);
+            if (isScrubbing) {
+              handleTimelineInput(nextTimelineMs);
+              return;
+            }
+            commitTimelineInput(nextTimelineMs);
+          }}
+          onInput={(event) =>
+            handleTimelineInput(Number(event.currentTarget.value))
+          }
+          onPointerCancel={(event) =>
+            commitTimelineInput(Number(event.currentTarget.value))
+          }
+          onPointerDown={() => setIsScrubbing(true)}
+          onPointerUp={(event) =>
+            commitTimelineInput(Number(event.currentTarget.value))
+          }
         />
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1">
@@ -647,7 +755,7 @@ function StudioPlayer({
               size="icon"
               variant="ghost"
               onClick={() =>
-                seekTimeline(Math.max(0, currentTimelineMs - 10_000))
+                seekTimeline(Math.max(0, displayedTimelineMs - 10_000))
               }
             >
               <SkipBack className="size-4" />
@@ -670,14 +778,14 @@ function StudioPlayer({
               variant="ghost"
               onClick={() =>
                 seekTimeline(
-                  Math.min(totalDurationMs, currentTimelineMs + 10_000),
+                  Math.min(totalDurationMs, displayedTimelineMs + 10_000),
                 )
               }
             >
               <SkipForward className="size-4" />
             </Button>
             <span className="ml-2 text-xs tabular-nums">
-              {formatDuration(currentTimelineMs)} /{' '}
+              {formatDuration(displayedTimelineMs)} /{' '}
               {formatDuration(totalDurationMs)}
             </span>
           </div>
@@ -718,6 +826,15 @@ function StudioPlayer({
       </div>
     </div>
   );
+}
+
+function streamUrl(url: string, startMs: number, revision: number): string {
+  const separator = url.includes('?') ? '&' : '?';
+
+  return `${url}${separator}startMs=${Math.max(
+    0,
+    Math.floor(startMs),
+  )}&request=${Math.max(0, Math.floor(revision))}`;
 }
 
 function TrackTimeline({
@@ -869,7 +986,7 @@ function VideoThumbnailStrip({
   thumbnails,
 }: {
   isLoading: boolean;
-  thumbnails: Array<{ offsetMs: number; path: string }>;
+  thumbnails: Array<{ offsetMs: number; url: string }>;
 }) {
   if (thumbnails.length === 0) {
     return (
@@ -886,8 +1003,8 @@ function VideoThumbnailStrip({
           alt=""
           aria-label="Video timeline thumbnail"
           className="h-full min-w-0 flex-1 border-r object-cover last:border-r-0"
-          key={`${thumbnail.path}-${thumbnail.offsetMs}`}
-          src={localAssetUrl(thumbnail.path)}
+          key={`${thumbnail.url}-${thumbnail.offsetMs}`}
+          src={thumbnail.url}
         />
       ))}
     </div>

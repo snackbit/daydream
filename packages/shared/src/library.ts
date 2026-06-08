@@ -108,6 +108,10 @@ export interface LibraryPlaybackAssetRequest {
   recordingId: string;
 }
 
+export interface CloseLibraryPlaybackSessionRequest {
+  sessionId: string;
+}
+
 export interface LibraryRecordingThumbnailRequest {
   recordingId: string;
 }
@@ -122,34 +126,24 @@ export interface LibraryPlaybackAssets {
   error: string | null;
   recordingId: string;
   segments: LibraryPlaybackSegment[];
-}
-
-export interface LibraryPlaybackThumbnails {
-  error: string | null;
-  recordingId: string;
-  segments: LibraryPlaybackThumbnailSegment[];
+  sessionId: string;
 }
 
 export interface LibraryPlaybackSegment {
   audio: LibraryPlaybackAudioAsset[];
   segmentId: string;
   thumbnails: LibraryPlaybackThumbnail[];
-  videoPath: string;
+  videoUrl: string;
 }
 
 export interface LibraryPlaybackAudioAsset {
   kind: Extract<LibraryTrackKind, 'desktop-audio' | 'microphone'>;
-  path: string;
   streamIndex: number;
   trackId: string;
+  url: string;
 }
 
 export interface LibraryPlaybackThumbnail {
   offsetMs: number;
-  path: string;
-}
-
-export interface LibraryPlaybackThumbnailSegment {
-  segmentId: string;
-  thumbnails: LibraryPlaybackThumbnail[];
+  url: string;
 }

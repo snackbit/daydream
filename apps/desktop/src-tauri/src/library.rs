@@ -9,10 +9,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
-use crate::storage::{self, AppStorage, RecordingRow, RecordingSegmentRow};
+use crate::{
+    playback_server::PlaybackServer,
+    storage::{self, AppStorage, RecordingRow, RecordingSegmentRow},
+};
 
-const TIMELINE_THUMBNAIL_INTERVAL_MS: i64 = 3_000;
-const WAVEFORM_CACHE_VERSION: u32 = 2;
 const WAVEFORM_SAMPLE_INTERVAL_MS: usize = 50;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -120,6 +121,12 @@ pub struct LibraryPlaybackAssetRequest {
     recording_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseLibraryPlaybackSessionRequest {
+    session_id: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryRecordingThumbnail {
@@ -137,49 +144,35 @@ pub struct LibraryRecordingThumbnailRequest {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackAssets {
-    error: Option<String>,
-    recording_id: String,
-    segments: Vec<LibraryPlaybackSegment>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibraryPlaybackThumbnails {
-    error: Option<String>,
-    recording_id: String,
-    segments: Vec<LibraryPlaybackThumbnailSegment>,
+    pub error: Option<String>,
+    pub recording_id: String,
+    pub segments: Vec<LibraryPlaybackSegment>,
+    pub session_id: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackSegment {
-    audio: Vec<LibraryPlaybackAudioAsset>,
-    segment_id: String,
-    thumbnails: Vec<LibraryPlaybackThumbnail>,
-    video_path: String,
+    pub audio: Vec<LibraryPlaybackAudioAsset>,
+    pub segment_id: String,
+    pub thumbnails: Vec<LibraryPlaybackThumbnail>,
+    pub video_url: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackAudioAsset {
-    kind: LibraryTrackKind,
-    path: String,
-    stream_index: i64,
-    track_id: String,
+    pub kind: LibraryTrackKind,
+    pub stream_index: i64,
+    pub track_id: String,
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackThumbnail {
-    offset_ms: i64,
-    path: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibraryPlaybackThumbnailSegment {
-    segment_id: String,
-    thumbnails: Vec<LibraryPlaybackThumbnail>,
+    pub offset_ms: i64,
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -206,25 +199,6 @@ pub struct LibraryWaveformSegment {
     samples: Vec<f64>,
     segment_id: String,
     stream_index: i64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CachedWaveforms {
-    cache_version: u32,
-    entries: Vec<CachedWaveformEntry>,
-    recording_id: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CachedWaveformEntry {
-    file_len: u64,
-    file_modified_ms: i64,
-    kind: LibraryTrackKind,
-    segment_id: String,
-    stream_index: i64,
-    waveform: LibraryWaveformSegment,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -352,10 +326,11 @@ pub fn get_recording_waveforms(
     Ok(waveforms_for_recording(&recording, &segments))
 }
 
-#[tauri::command(rename = "prepareLibraryPlaybackAssets")]
-pub async fn prepare_library_playback_assets(
+#[tauri::command(rename = "createLibraryPlaybackSession")]
+pub fn create_library_playback_session(
     input: LibraryPlaybackAssetRequest,
     storage: State<'_, AppStorage>,
+    playback_server: State<'_, PlaybackServer>,
 ) -> Result<LibraryPlaybackAssets, String> {
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
@@ -371,27 +346,19 @@ pub async fn prepare_library_playback_assets(
             error: Some("Recording is not available for playback.".to_string()),
             recording_id: recording.id,
             segments: Vec::new(),
+            session_id: String::new(),
         });
     }
 
-    let recording_id = recording.id.clone();
-    match tauri::async_runtime::spawn_blocking(move || {
-        playback_assets_for_recording(&recording, &segments)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    {
-        Ok(segments) => Ok(LibraryPlaybackAssets {
-            error: None,
-            recording_id,
-            segments,
-        }),
-        Err(error) => Ok(LibraryPlaybackAssets {
-            error: Some(error),
-            recording_id,
-            segments: Vec::new(),
-        }),
-    }
+    playback_server.create_session(&recording, &segments)
+}
+
+#[tauri::command(rename = "closeLibraryPlaybackSession")]
+pub fn close_library_playback_session(
+    input: CloseLibraryPlaybackSessionRequest,
+    playback_server: State<'_, PlaybackServer>,
+) -> Result<(), String> {
+    playback_server.close_session(&input.session_id)
 }
 
 #[tauri::command(rename = "prepareLibraryRecordingThumbnail")]
@@ -432,48 +399,6 @@ pub async fn prepare_library_recording_thumbnail(
             error: Some(error),
             path: None,
             recording_id,
-        }),
-    }
-}
-
-#[tauri::command(rename = "prepareLibraryPlaybackThumbnails")]
-pub async fn prepare_library_playback_thumbnails(
-    input: LibraryPlaybackAssetRequest,
-    storage: State<'_, AppStorage>,
-) -> Result<LibraryPlaybackThumbnails, String> {
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
-        .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| {
-            storage::list_recording_segments(connection, &input.recording_id)
-        })
-        .map_err(|error| error.to_string())?;
-    let detail = detail_from_rows(&recording, &segments);
-    if detail.availability != LibraryRecordingAvailability::Available {
-        return Ok(LibraryPlaybackThumbnails {
-            error: Some("Recording is not available for playback.".to_string()),
-            recording_id: recording.id,
-            segments: Vec::new(),
-        });
-    }
-
-    let recording_id = recording.id.clone();
-    match tauri::async_runtime::spawn_blocking(move || {
-        playback_thumbnails_for_recording(&recording, &segments)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    {
-        Ok(segments) => Ok(LibraryPlaybackThumbnails {
-            error: None,
-            recording_id,
-            segments,
-        }),
-        Err(error) => Ok(LibraryPlaybackThumbnails {
-            error: Some(error),
-            recording_id,
-            segments: Vec::new(),
         }),
     }
 }
@@ -599,30 +524,6 @@ fn unique_recording_ids(recording_ids: Vec<String>) -> Vec<String> {
     unique
 }
 
-fn playback_assets_for_recording(
-    recording: &RecordingRow,
-    segments: &[RecordingSegmentRow],
-) -> Result<Vec<LibraryPlaybackSegment>, String> {
-    let ffmpeg_path = ffmpeg_binary_path();
-    playable_segments(segments)
-        .into_iter()
-        .filter(|segment| Path::new(&segment.file_path).is_file())
-        .map(|segment| playback_assets_for_segment(recording, segment, &ffmpeg_path))
-        .collect()
-}
-
-fn playback_thumbnails_for_recording(
-    recording: &RecordingRow,
-    segments: &[RecordingSegmentRow],
-) -> Result<Vec<LibraryPlaybackThumbnailSegment>, String> {
-    let ffmpeg_path = ffmpeg_binary_path();
-    playable_segments(segments)
-        .into_iter()
-        .filter(|segment| Path::new(&segment.file_path).is_file())
-        .map(|segment| playback_thumbnails_for_segment(recording, segment, &ffmpeg_path))
-        .collect()
-}
-
 fn recording_thumbnail_for_recording(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
@@ -660,182 +561,6 @@ fn recording_thumbnail_for_recording(
     Ok(Some(path_to_string(&thumbnail_path)))
 }
 
-fn playback_assets_for_segment(
-    recording: &RecordingRow,
-    segment: &RecordingSegmentRow,
-    ffmpeg_path: &str,
-) -> Result<LibraryPlaybackSegment, String> {
-    let segment_dir = Path::new(&recording.storage_dir)
-        .join("playback")
-        .join(&segment.id);
-    fs::create_dir_all(&segment_dir).map_err(|error| {
-        format!(
-            "Unable to create playback cache directory {}: {error}",
-            path_to_string(&segment_dir)
-        )
-    })?;
-
-    let video_path = segment_dir.join("video.mp4");
-    ensure_video_playback_asset(ffmpeg_path, segment, &video_path)?;
-
-    let mut audio = Vec::new();
-    for (kind, stream_index, track_id) in [
-        (
-            LibraryTrackKind::DesktopAudio,
-            segment.desktop_audio_stream_index,
-            "desktop-audio",
-        ),
-        (
-            LibraryTrackKind::Microphone,
-            segment.microphone_audio_stream_index,
-            "microphone",
-        ),
-    ] {
-        let Some(stream_index) = stream_index else {
-            continue;
-        };
-        let path = segment_dir.join(format!("{track_id}-{stream_index}.m4a"));
-        ensure_audio_playback_asset(ffmpeg_path, segment, stream_index, &path)?;
-        audio.push(LibraryPlaybackAudioAsset {
-            kind,
-            path: path_to_string(&path),
-            stream_index,
-            track_id: format!("{track_id}-{stream_index}"),
-        });
-    }
-
-    Ok(LibraryPlaybackSegment {
-        audio,
-        segment_id: segment.id.clone(),
-        thumbnails: Vec::new(),
-        video_path: path_to_string(&video_path),
-    })
-}
-
-fn playback_thumbnails_for_segment(
-    recording: &RecordingRow,
-    segment: &RecordingSegmentRow,
-    ffmpeg_path: &str,
-) -> Result<LibraryPlaybackThumbnailSegment, String> {
-    let segment_dir = Path::new(&recording.storage_dir)
-        .join("playback")
-        .join(&segment.id);
-    fs::create_dir_all(&segment_dir).map_err(|error| {
-        format!(
-            "Unable to create playback cache directory {}: {error}",
-            path_to_string(&segment_dir)
-        )
-    })?;
-
-    Ok(LibraryPlaybackThumbnailSegment {
-        segment_id: segment.id.clone(),
-        thumbnails: ensure_timeline_thumbnails(ffmpeg_path, segment, &segment_dir)?,
-    })
-}
-
-fn ensure_video_playback_asset(
-    ffmpeg_path: &str,
-    segment: &RecordingSegmentRow,
-    output_path: &Path,
-) -> Result<(), String> {
-    if playback_asset_is_fresh(&segment.file_path, output_path) {
-        return Ok(());
-    }
-
-    let Some(video_stream_index) = segment.video_stream_index else {
-        return Err(format!(
-            "Segment {} has no video stream.",
-            segment.segment_index
-        ));
-    };
-    run_ffmpeg(
-        ffmpeg_path,
-        &[
-            "-hide_banner",
-            "-y",
-            "-i",
-            &segment.file_path,
-            "-map",
-            &format!("0:{video_stream_index}"),
-            "-an",
-            "-c:v",
-            "copy",
-            "-movflags",
-            "+faststart",
-            "-avoid_negative_ts",
-            "make_zero",
-        ],
-        output_path,
-        "mp4",
-    )
-}
-
-fn ensure_audio_playback_asset(
-    ffmpeg_path: &str,
-    segment: &RecordingSegmentRow,
-    stream_index: i64,
-    output_path: &Path,
-) -> Result<(), String> {
-    if playback_asset_is_fresh(&segment.file_path, output_path) {
-        return Ok(());
-    }
-
-    run_ffmpeg(
-        ffmpeg_path,
-        &[
-            "-hide_banner",
-            "-y",
-            "-i",
-            &segment.file_path,
-            "-map",
-            &format!("0:{stream_index}"),
-            "-vn",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            "-avoid_negative_ts",
-            "make_zero",
-        ],
-        output_path,
-        "ipod",
-    )
-}
-
-fn ensure_timeline_thumbnails(
-    ffmpeg_path: &str,
-    segment: &RecordingSegmentRow,
-    segment_dir: &Path,
-) -> Result<Vec<LibraryPlaybackThumbnail>, String> {
-    let Some(video_stream_index) = segment.video_stream_index else {
-        return Ok(Vec::new());
-    };
-    let thumbs_dir = segment_dir.join("thumbs");
-    fs::create_dir_all(&thumbs_dir).map_err(|error| {
-        format!(
-            "Unable to create timeline thumbnail directory {}: {error}",
-            path_to_string(&thumbs_dir)
-        )
-    })?;
-
-    let mut thumbnails = Vec::new();
-    for (index, offset_ms) in thumbnail_offsets_ms(segment).into_iter().enumerate() {
-        let path = thumbs_dir.join(format!("thumb-{index:05}.jpg"));
-        if ensure_timeline_thumbnail(ffmpeg_path, segment, video_stream_index, offset_ms, &path)
-            .is_ok()
-        {
-            thumbnails.push(LibraryPlaybackThumbnail {
-                offset_ms,
-                path: path_to_string(&path),
-            });
-        }
-    }
-
-    Ok(thumbnails)
-}
-
 fn ensure_timeline_thumbnail(
     ffmpeg_path: &str,
     segment: &RecordingSegmentRow,
@@ -871,18 +596,6 @@ fn ensure_timeline_thumbnail(
         output_path,
         "image2",
     )
-}
-
-fn thumbnail_offsets_ms(segment: &RecordingSegmentRow) -> Vec<i64> {
-    let duration_ms = segment.duration_ms.unwrap_or(0).max(1);
-    let mut offsets = Vec::new();
-    let mut offset_ms = 0;
-    while offset_ms < duration_ms {
-        offsets.push(offset_ms);
-        offset_ms += TIMELINE_THUMBNAIL_INTERVAL_MS;
-    }
-
-    offsets
 }
 
 fn playback_asset_is_fresh(source_path: &str, output_path: &Path) -> bool {
@@ -1131,11 +844,6 @@ fn waveforms_for_recording(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
 ) -> LibraryWaveforms {
-    let cache_path = Path::new(&recording.storage_dir)
-        .join("waveforms")
-        .join("library-waveforms.json");
-    let cached = read_cached_waveforms(&cache_path);
-    let mut entries = Vec::new();
     let mut error = None;
     let ffmpeg_path = ffmpeg_binary_path();
     let mut tracks = BTreeMap::<(LibraryTrackKind, String), LibraryWaveformTrack>::new();
@@ -1157,41 +865,16 @@ fn waveforms_for_recording(
             let Some(stream_index) = stream_index else {
                 continue;
             };
-            let Some((file_len, file_modified_ms)) = file_fingerprint(&segment.file_path) else {
-                continue;
+            let waveform = match waveform_from_ffmpeg(&ffmpeg_path, segment, stream_index) {
+                Ok(waveform) => Some(waveform),
+                Err(waveform_error) => {
+                    error = Some(waveform_error);
+                    None
+                }
             };
-            let waveform = cached
-                .as_ref()
-                .and_then(|cache| {
-                    cache.entries.iter().find(|entry| {
-                        entry.segment_id == segment.id
-                            && entry.stream_index == stream_index
-                            && entry.kind == kind
-                            && entry.file_len == file_len
-                            && entry.file_modified_ms == file_modified_ms
-                    })
-                })
-                .map(|entry| entry.waveform.clone())
-                .or_else(
-                    || match waveform_from_ffmpeg(&ffmpeg_path, segment, stream_index) {
-                        Ok(waveform) => Some(waveform),
-                        Err(waveform_error) => {
-                            error = Some(waveform_error);
-                            None
-                        }
-                    },
-                );
             let Some(waveform) = waveform else {
                 continue;
             };
-            entries.push(CachedWaveformEntry {
-                file_len,
-                file_modified_ms,
-                kind: kind.clone(),
-                segment_id: segment.id.clone(),
-                stream_index,
-                waveform: waveform.clone(),
-            });
             let track_id = match kind {
                 LibraryTrackKind::DesktopAudio => "desktop-audio",
                 LibraryTrackKind::Microphone => "microphone",
@@ -1208,17 +891,6 @@ fn waveforms_for_recording(
                 .segments
                 .push(waveform);
         }
-    }
-
-    if !entries.is_empty() {
-        let _ = write_cached_waveforms(
-            &cache_path,
-            &CachedWaveforms {
-                cache_version: WAVEFORM_CACHE_VERSION,
-                entries,
-                recording_id: recording.id.clone(),
-            },
-        );
     }
 
     LibraryWaveforms {
@@ -1312,22 +984,6 @@ fn waveform_bins(source_samples: &[f64], sample_count: usize) -> Vec<f64> {
                 .fold(0.0, f64::max)
         })
         .collect()
-}
-
-fn read_cached_waveforms(path: &Path) -> Option<CachedWaveforms> {
-    let cached = fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<CachedWaveforms>(&content).ok())?;
-
-    (cached.cache_version == WAVEFORM_CACHE_VERSION).then_some(cached)
-}
-
-fn write_cached_waveforms(path: &Path, waveforms: &CachedWaveforms) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(waveforms).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
 }
 
 fn file_fingerprint(path: &str) -> Option<(u64, i64)> {
@@ -1492,44 +1148,18 @@ mod tests {
     }
 
     #[test]
-    fn waveform_cache_reuses_matching_file_fingerprint() {
-        let temp_dir = test_dir("waveform-cache");
+    fn waveforms_do_not_write_cache_files() {
+        let temp_dir = test_dir("waveform-no-cache");
         fs::create_dir_all(temp_dir.join("segments")).expect("create segments dir");
         let segment_path = temp_dir.join("segments/0001.mkv");
         fs::write(&segment_path, "media").expect("write segment");
         let recording = recording_row(&temp_dir);
         let segment = segment_row(segment_path, "finalized");
-        let (file_len, file_modified_ms) =
-            file_fingerprint(&segment.file_path).expect("read segment fingerprint");
-        let cached_waveform = LibraryWaveformSegment {
-            generated_at_ms: 2_000,
-            max_amplitude: 1.0,
-            samples: vec![0.1, 0.8, 0.3],
-            segment_id: segment.id.clone(),
-            stream_index: 1,
-        };
-        write_cached_waveforms(
-            &temp_dir.join("waveforms/library-waveforms.json"),
-            &CachedWaveforms {
-                cache_version: WAVEFORM_CACHE_VERSION,
-                entries: vec![CachedWaveformEntry {
-                    file_len,
-                    file_modified_ms,
-                    kind: LibraryTrackKind::DesktopAudio,
-                    segment_id: segment.id.clone(),
-                    stream_index: 1,
-                    waveform: cached_waveform.clone(),
-                }],
-                recording_id: recording.id.clone(),
-            },
-        )
-        .expect("write cached waveform");
 
-        let waveforms = waveforms_for_recording(&recording, &[segment]);
+        let _waveforms = waveforms_for_recording(&recording, &[segment]);
 
+        assert!(!temp_dir.join("waveforms/library-waveforms.json").exists());
         let _ = fs::remove_dir_all(temp_dir);
-        assert_eq!(waveforms.tracks.len(), 1);
-        assert_eq!(waveforms.tracks[0].segments[0].samples, vec![0.1, 0.8, 0.3]);
     }
 
     #[test]
@@ -1609,14 +1239,6 @@ mod tests {
 
         let _ = fs::remove_dir_all(temp_dir);
         assert!(error.contains("completed without creating playback asset"));
-    }
-
-    #[test]
-    fn thumbnail_offsets_cover_segment_from_start_at_fixed_interval() {
-        let mut segment = segment_row(PathBuf::from("/tmp/daydream/0001.mkv"), "finalized");
-        segment.duration_ms = Some(9_500);
-
-        assert_eq!(thumbnail_offsets_ms(&segment), vec![0, 3_000, 6_000, 9_000]);
     }
 
     fn recording_row(storage_dir: &Path) -> RecordingRow {
