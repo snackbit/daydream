@@ -358,14 +358,14 @@ async fn select_sources_for_session(
     }
 
     proxy
-        .select_sources(&session, options)
+        .select_sources(session, options)
         .await
         .map_err(portal_error)?
         .response()
         .map_err(portal_error)?;
 
     proxy
-        .start(&session, None, StartCastOptions::default())
+        .start(session, None, StartCastOptions::default())
         .await
         .map_err(portal_error)?
         .response()

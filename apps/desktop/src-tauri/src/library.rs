@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
 use crate::{
+    ffmpeg,
     playback_server::PlaybackServer,
     storage::{self, AppStorage, RecordingRow, RecordingSegmentRow},
 };
@@ -538,7 +539,7 @@ fn recording_thumbnail_for_recording(
         return Ok(None);
     };
 
-    let ffmpeg_path = ffmpeg_binary_path();
+    let ffmpeg_path = ffmpeg::binary_path();
     let segment_dir = Path::new(&recording.storage_dir)
         .join("playback")
         .join(&segment.id);
@@ -662,10 +663,6 @@ fn temp_output_path(output_path: &Path) -> PathBuf {
     };
 
     output_path.with_extension(format!("tmp.{extension}"))
-}
-
-fn ffmpeg_binary_path() -> String {
-    std::env::var("DAYDREAM_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".to_string())
 }
 
 fn recording_size_bytes(recording: &RecordingRow, segments: &[RecordingSegmentRow]) -> u64 {
@@ -845,7 +842,7 @@ fn waveforms_for_recording(
     segments: &[RecordingSegmentRow],
 ) -> LibraryWaveforms {
     let mut error = None;
-    let ffmpeg_path = ffmpeg_binary_path();
+    let ffmpeg_path = ffmpeg::binary_path();
     let mut tracks = BTreeMap::<(LibraryTrackKind, String), LibraryWaveformTrack>::new();
 
     for segment in playable_segments(segments) {

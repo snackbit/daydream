@@ -309,7 +309,10 @@ impl CapturedFrame {
                     ))
                 }),
             CapturedFrameFormat::Yuv420p => {
-                if self.width % 2 != 0 || self.height % 2 != 0 || self.stride % 2 != 0 {
+                if !self.width.is_multiple_of(2)
+                    || !self.height.is_multiple_of(2)
+                    || !self.stride.is_multiple_of(2)
+                {
                     return Err(capture_format_unsupported_error(format!(
                         "Capture frame from source {} has odd yuv420p dimensions {}x{} or stride {}.",
                         self.source_id, self.width, self.height, self.stride
@@ -713,7 +716,7 @@ fn convert_frame_to_yuv420p(
     frame: &CapturedFrame,
     format: CapturedFrameFormat,
 ) -> Result<Vec<u8>, RecorderError> {
-    if frame.width % 2 != 0 || frame.height % 2 != 0 {
+    if !frame.width.is_multiple_of(2) || !frame.height.is_multiple_of(2) {
         return Err(capture_format_unsupported_error(format!(
             "Capture frame from source {} has odd dimensions {}x{}; yuv420p requires even dimensions.",
             frame.source_id, frame.width, frame.height

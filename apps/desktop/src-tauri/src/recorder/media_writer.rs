@@ -247,6 +247,7 @@ pub(crate) fn validate_segment_capabilities(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn start_synthetic_segment(
     input: &MediaSegmentInput,
 ) -> Result<MediaWriterSegment, RecorderError> {
@@ -763,6 +764,7 @@ fn send_element_eos_with_timeout(
     }
 }
 
+#[cfg(test)]
 fn pump_synthetic_frames(
     appsrc: gst_app::AppSrc,
     canvas_width: u32,
@@ -814,12 +816,14 @@ fn pump_composed_frames(
                 return drain_ready_composed_frames(
                     &appsrc,
                     &frames,
-                    started_at_ms,
-                    &mut last_pts,
-                    frame_interval,
-                    stop_request.stop_at_ms,
-                    timing.as_ref(),
-                    benchmark.as_ref(),
+                    DrainReadyFrames {
+                        started_at_ms,
+                        last_pts: &mut last_pts,
+                        frame_interval,
+                        stop_at_ms: stop_request.stop_at_ms,
+                        timing: timing.as_ref(),
+                        benchmark: benchmark.as_ref(),
+                    },
                 );
             }
             Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -852,42 +856,46 @@ fn pump_composed_frames(
 fn drain_ready_composed_frames(
     appsrc: &gst_app::AppSrc,
     frames: &FrameReceiver,
-    started_at_ms: u64,
-    last_pts: &mut Option<Duration>,
-    frame_interval: Duration,
-    stop_at_ms: u64,
-    timing: Option<&SharedCaptureTiming>,
-    benchmark: Option<&RecorderBenchmarkSession>,
+    context: DrainReadyFrames<'_>,
 ) -> Result<(), String> {
     let mut drained_frames = 0_u64;
     let mut dropped_after_stop = 0_u64;
     loop {
         match frames.recv_timeout(Duration::ZERO) {
             Ok(frame) => {
-                if frame_is_after_stop(frame.timestamp_ms, stop_at_ms) {
+                if frame_is_after_stop(frame.timestamp_ms, context.stop_at_ms) {
                     dropped_after_stop = dropped_after_stop.saturating_add(1);
                     continue;
                 }
                 push_composed_frame(
                     appsrc,
                     frame,
-                    started_at_ms,
-                    last_pts,
-                    frame_interval,
-                    timing,
-                    benchmark,
+                    context.started_at_ms,
+                    context.last_pts,
+                    context.frame_interval,
+                    context.timing,
+                    context.benchmark,
                 )?;
                 drained_frames = drained_frames.saturating_add(1);
             }
             Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
                 info!(
-                    stop_at_ms,
+                    stop_at_ms = context.stop_at_ms,
                     drained_frames, dropped_after_stop, "media_writer_stop_cutoff_applied"
                 );
                 return Ok(());
             }
         }
     }
+}
+
+struct DrainReadyFrames<'a> {
+    benchmark: Option<&'a RecorderBenchmarkSession>,
+    frame_interval: Duration,
+    last_pts: &'a mut Option<Duration>,
+    started_at_ms: u64,
+    stop_at_ms: u64,
+    timing: Option<&'a SharedCaptureTiming>,
 }
 
 fn frame_is_after_stop(frame_timestamp_ms: u64, stop_at_ms: u64) -> bool {
@@ -938,6 +946,7 @@ fn push_composed_frame(
     Ok(())
 }
 
+#[cfg(test)]
 fn push_yuv420p_frame(
     appsrc: &gst_app::AppSrc,
     frame: Vec<u8>,
@@ -1374,8 +1383,9 @@ fn capability_for_element(capabilities: &RecorderMediaWriterCapabilities, elemen
     }
 }
 
+#[cfg(test)]
 fn black_yuv420p_frame(canvas_width: u32, canvas_height: u32) -> Result<Vec<u8>, String> {
-    if canvas_width % 2 != 0 || canvas_height % 2 != 0 {
+    if !canvas_width.is_multiple_of(2) || !canvas_height.is_multiple_of(2) {
         return Err("I420 frame dimensions must be even.".to_string());
     }
     let plane_len = (canvas_width as usize)
@@ -1401,6 +1411,7 @@ fn frame_interval(fps: f64) -> Duration {
     }
 }
 
+#[cfg(test)]
 fn duration_mul(duration: Duration, multiplier: u64) -> Duration {
     let nanos = duration.as_nanos().saturating_mul(multiplier as u128);
     Duration::from_nanos(nanos.try_into().unwrap_or(u64::MAX))

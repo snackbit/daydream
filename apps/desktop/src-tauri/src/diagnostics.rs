@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, path::Path};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -313,7 +313,7 @@ fn latest_segment_diagnostics(segment: &RecordingSegmentRow) -> LatestSegmentDia
     }
 }
 
-fn path_to_string(path: &PathBuf) -> String {
+fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 

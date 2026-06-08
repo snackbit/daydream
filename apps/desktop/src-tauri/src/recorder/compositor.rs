@@ -359,7 +359,7 @@ fn yuv420p_pixel(frame: &CapturedFrame, x: u32, y: u32) -> Result<[u8; 4], Recor
 }
 
 fn rgba_to_yuv420p(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, RecorderError> {
-    if width % 2 != 0 || height % 2 != 0 {
+    if !width.is_multiple_of(2) || !height.is_multiple_of(2) {
         return Err(capture_format_unsupported_error(format!(
             "Composed frame has odd dimensions {width}x{height}; yuv420p requires even dimensions."
         )));

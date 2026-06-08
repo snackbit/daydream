@@ -466,6 +466,41 @@ test('RecordingStudioScreen advances immediately across back-to-back segments', 
   expect(screen.queryByText(/Recording paused/i)).toBeNull();
 });
 
+test('RecordingStudioScreen preserves playback intent when pause fires before segment end', async () => {
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    segments: detail.segments.map((segment, index) =>
+      index === 0 ? { ...segment, pauseAfterMs: 0 } : segment,
+    ),
+  });
+
+  const { container } = render(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      playbackAssets.segments[0]!.videoUrl,
+    ),
+  );
+
+  const video = container.querySelector('video')!;
+  fireEvent.play(video);
+  fireEvent.pause(video);
+  fireEvent.ended(video);
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      playbackAssets.segments[1]!.videoUrl,
+    ),
+  );
+
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
+  fireEvent.canPlay(container.querySelector('video')!);
+
+  await waitFor(() =>
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
+  );
+});
+
 test('RecordingStudioScreen commits a scrubbed seek and waits for canplay before resuming', async () => {
   const { container } = render(<RecordingStudioScreen />);
 

@@ -1139,7 +1139,7 @@ fn run_pipewire_capture_scheduler(
         scheduled_frame_log: PipeWireScheduledFrameLog::new(Instant::now()),
         timing,
     };
-    let idle_sleep = Duration::from_millis(frame_interval_ms.min(50).max(1));
+    let idle_sleep = Duration::from_millis(frame_interval_ms.clamp(1, 50));
 
     loop {
         if scheduler_shutdown_requested(&shutdown_receiver) {

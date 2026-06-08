@@ -24,8 +24,8 @@ use super::storage_mapping::save_recorder_scene_for_storage;
 use super::types::{
     CanvasRect, CaptureSource, CaptureSourceKind, CropRect, PauseRecordingInput,
     RecorderErrorCategory, RecorderQualityPreset, RecorderScene, RecorderSceneLayoutMode,
-    RecorderSceneSource, RecorderState, ResumeRecordingInput, SaveRecorderSceneInput,
-    StartRecordingInput, StopRecordingInput,
+    RecorderSceneSource, RecorderState, RecorderStatus, ResumeRecordingInput,
+    SaveRecorderSceneInput, StartRecordingInput, StopRecordingInput,
 };
 use crate::storage;
 
@@ -324,8 +324,7 @@ fn public_configuration_commands_reject_while_recording_is_active() {
     let manager = RecorderManager::new(app_data_dir.clone());
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
-    manager
-        .start_internal(&storage, start_input(&scene_id), 100)
+    start_test_recording(&manager, &storage, start_input(&scene_id), 100)
         .expect("start active recording");
     app.manage(storage);
     app.manage(manager);
@@ -359,8 +358,7 @@ fn manager_start_creates_recording_directory_metadata_and_segment() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    let status = manager
-        .start_internal(&storage, start_input(&scene_id), 100)
+    let status = start_test_recording(&manager, &storage, start_input(&scene_id), 100)
         .expect("start recording");
     let recording_id = status
         .active_recording_id
@@ -390,23 +388,22 @@ fn manager_pause_resume_and_stop_persist_segments_in_order() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    let started = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 10)
         .expect("start recording");
     let recording_id = started
         .active_recording_id
         .clone()
         .expect("active recording id");
 
-    let paused = manager.pause_internal(&storage, 25).expect("pause");
+    let paused = pause_test_recording(&manager, &storage, &recording_id, 25).expect("pause");
     assert_eq!(paused.state, RecorderState::Paused);
     assert_eq!(paused.active_segment_id, None);
 
-    let resumed = manager.resume_internal(&storage, 30).expect("resume");
+    let resumed = resume_test_recording(&manager, &storage, &recording_id, 30).expect("resume");
     assert_eq!(resumed.state, RecorderState::Recording);
     assert!(resumed.active_segment_id.is_some());
 
-    let stopped = manager.stop_internal(&storage, 42).expect("stop");
+    let stopped = stop_test_recording(&manager, &storage, &recording_id, 42).expect("stop");
     assert_eq!(stopped.state, RecorderState::Idle);
     assert_eq!(stopped.active_recording_id, None);
 
@@ -438,15 +435,14 @@ fn manager_stop_from_paused_does_not_create_new_segment() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    let started = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 10)
         .expect("start recording");
     let recording_id = started
         .active_recording_id
         .clone()
         .expect("active recording id");
-    manager.pause_internal(&storage, 20).expect("pause");
-    manager.stop_internal(&storage, 30).expect("stop");
+    pause_test_recording(&manager, &storage, &recording_id, 20).expect("pause");
+    stop_test_recording(&manager, &storage, &recording_id, 30).expect("stop");
 
     let segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
@@ -465,8 +461,7 @@ fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    let started = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 10)
         .expect("start recording");
     let recording_id = started
         .active_recording_id
@@ -529,8 +524,7 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
 
-    let started = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 10)
         .expect("start recording");
     let recording_id = started
         .active_recording_id
@@ -579,14 +573,13 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
 #[test]
 fn manager_stop_while_idle_preserves_backend_health() {
     let manager = RecorderManager::new(test_app_data_dir());
-    let storage = test_storage();
     let backend_health = available_test_backend_health();
     manager
         .status_with_backend_health(backend_health.clone(), 10)
         .expect("set backend health");
 
     let stopped = manager
-        .stop_recording(&storage, &Uuid::now_v7().to_string(), 20)
+        .begin_stop_recording(&Uuid::now_v7().to_string(), 20)
         .expect("idempotent stop while idle");
 
     assert_eq!(stopped.state, RecorderState::Idle);
@@ -603,13 +596,15 @@ fn manager_stop_after_recording_preserves_backend_health() {
     manager
         .status_with_backend_health(backend_health.clone(), 10)
         .expect("set backend health");
-    manager
-        .start_internal(&storage, start_input(&scene_id), 20)
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 20)
         .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
 
-    let stopped = manager
-        .stop_internal(&storage, 30)
-        .expect("stop active recording");
+    let stopped =
+        stop_test_recording(&manager, &storage, &recording_id, 30).expect("stop active recording");
 
     assert_eq!(stopped.state, RecorderState::Idle);
     assert_eq!(stopped.backend_health, backend_health);
@@ -625,17 +620,13 @@ fn manager_rejects_invalid_transitions() {
     let scene_id = saved_test_scene(&storage);
 
     let pause_error = manager
-        .pause_internal(&storage, 1)
+        .begin_pause_recording(&Uuid::now_v7().to_string(), 1)
         .expect_err("pause while idle should fail");
-    let resume_error = manager
-        .resume_internal(&storage, 1)
+    let resume_error = resume_test_recording(&manager, &storage, &Uuid::now_v7().to_string(), 1)
         .expect_err("resume while idle should fail");
 
-    manager
-        .start_internal(&storage, start_input(&scene_id), 10)
-        .expect("start recording");
-    let start_error = manager
-        .start_internal(&storage, start_input(&scene_id), 11)
+    start_test_recording(&manager, &storage, start_input(&scene_id), 10).expect("start recording");
+    let start_error = start_test_recording(&manager, &storage, start_input(&scene_id), 11)
         .expect_err("start while active should fail");
 
     assert_eq!(pause_error.code, "recorder_not_recording");
@@ -663,7 +654,7 @@ fn manager_serializes_concurrent_starts() {
 
             thread::spawn(move || {
                 barrier.wait();
-                manager.start_internal(&storage, start_input(&scene_id), 100)
+                start_test_recording(&manager, &storage, start_input(&scene_id), 100)
             })
         })
         .collect::<Vec<_>>();
@@ -724,8 +715,7 @@ fn manager_rejects_missing_scene_before_creating_recording() {
     let storage = test_storage();
     let scene_id = Uuid::now_v7().to_string();
 
-    let error = manager
-        .start_internal(&storage, start_input(&scene_id), 10)
+    let error = start_test_recording(&manager, &storage, start_input(&scene_id), 10)
         .expect_err("missing scene should fail");
     let recording_count: i64 = storage
         .with_connection(|connection| {
@@ -1048,6 +1038,79 @@ fn start_input(scene_id: &str) -> StartRecordingInput {
         quality_preset: RecorderQualityPreset::BalancedOcr,
         scene_id: scene_id.to_string(),
     }
+}
+
+fn start_test_recording(
+    manager: &RecorderManager,
+    storage: &storage::AppStorage,
+    input: StartRecordingInput,
+    timestamp_ms: u64,
+) -> Result<RecorderStatus, super::types::RecorderError> {
+    manager.begin_selecting(&input.scene_id, timestamp_ms)?;
+    let pending = match manager.prepare_recording_start(storage, input, timestamp_ms) {
+        Ok(pending) => pending,
+        Err(error) => {
+            let _ = manager.clear_selecting_to_idle(timestamp_ms);
+            return Err(error);
+        }
+    };
+    if let Err(error) = manager.create_pending_recording_rows(storage, &pending) {
+        let _ = manager.clear_selecting_to_idle(timestamp_ms);
+        return Err(error);
+    }
+
+    manager.activate_pending_recording_without_runtime_for_test(pending, timestamp_ms)
+}
+
+fn pause_test_recording(
+    manager: &RecorderManager,
+    storage: &storage::AppStorage,
+    recording_id: &str,
+    timestamp_ms: u64,
+) -> Result<RecorderStatus, super::types::RecorderError> {
+    let status = manager.begin_pause_recording(recording_id, timestamp_ms)?;
+    if status.finalization.is_none() {
+        return Ok(status);
+    }
+
+    manager.complete_pause_recording(storage, recording_id, timestamp_ms)
+}
+
+fn resume_test_recording(
+    manager: &RecorderManager,
+    storage: &storage::AppStorage,
+    recording_id: &str,
+    timestamp_ms: u64,
+) -> Result<RecorderStatus, super::types::RecorderError> {
+    let active = manager.begin_resume_selecting(recording_id, timestamp_ms)?;
+    let pending = match manager.prepare_resume_segment_start(storage, active.clone(), timestamp_ms)
+    {
+        Ok(pending) => pending,
+        Err(error) => {
+            let _ = manager.restore_paused_after_selecting(active, timestamp_ms);
+            return Err(error);
+        }
+    };
+    if let Err(error) = manager.create_pending_segment_rows(storage, &pending) {
+        let _ = manager.restore_paused_after_selecting(pending.active.clone(), timestamp_ms);
+        return Err(error);
+    }
+
+    manager.activate_pending_segment_without_runtime_for_test(pending, timestamp_ms)
+}
+
+fn stop_test_recording(
+    manager: &RecorderManager,
+    storage: &storage::AppStorage,
+    recording_id: &str,
+    timestamp_ms: u64,
+) -> Result<RecorderStatus, super::types::RecorderError> {
+    let status = manager.begin_stop_recording(recording_id, timestamp_ms)?;
+    if status.finalization.is_none() {
+        return Ok(status);
+    }
+
+    manager.complete_stop_recording(storage, recording_id, timestamp_ms)
 }
 
 fn test_scene(scene_id: &str) -> RecorderScene {

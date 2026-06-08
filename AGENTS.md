@@ -168,6 +168,23 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   construction.
 - You MUST NOT couple UI components directly to FFmpeg, model runners, or raw
   database access.
+- Route and screen files SHOULD stay thin. They SHOULD own route params,
+  top-level loading/error/delete flows, and feature composition; they SHOULD NOT
+  accumulate detailed player, editor, timeline, or panel implementation.
+- Feature-specific UI SHOULD live under `apps/desktop/src/features/<feature>/`
+  once it has more than one focused responsibility. Avoid parking complex
+  feature components in `apps/desktop/src/screens`.
+- Large UI state shared by sibling components SHOULD be owned by a named hook or
+  controller object, not by mutable command refs between siblings. Mutable refs
+  are acceptable for native imperative boundaries such as media elements,
+  canvas, observers, timers, and scroll containers.
+- Component props SHOULD be grouped by responsibility when the surface grows:
+  prefer focused `model`/`actions`/`status` objects or slot composition over long
+  mixed lists of unrelated values and callbacks.
+- Component names SHOULD describe responsibility precisely: use `*Screen` only
+  for routes, `*Layout` for layout-only composition, `*Panel` for side panels,
+  `*Controls` for action clusters, and `use*Controller` for stateful
+  orchestration.
 
 ## UI Component Quality
 
@@ -183,6 +200,9 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - Large route/page components SHOULD be split into focused components by
   responsibility: data binding, layout shell, toolbar/actions, panels, forms,
   canvas/editor surfaces, and error display.
+- Components approaching the repository `max-lines` lint warning SHOULD be split
+  before adding more behavior. Do not silence the warning unless a generated or
+  framework-constrained file leaves no practical alternative.
 - UI feature work is not complete until component consistency, accessibility
   labels, responsive layout, and critical UI tests are covered.
 

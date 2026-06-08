@@ -12,6 +12,7 @@ use std::{
 use uuid::Uuid;
 
 use crate::{
+    ffmpeg,
     library::{
         LibraryPlaybackAssets, LibraryPlaybackAudioAsset, LibraryPlaybackSegment,
         LibraryPlaybackThumbnail, LibraryTrackKind,
@@ -558,7 +559,7 @@ fn stream_video(
         write_response(stream, 404, "text/plain", b"Segment has no video stream");
         return;
     };
-    let mut command = Command::new(ffmpeg_binary_path());
+    let mut command = Command::new(ffmpeg::binary_path());
     command.args(["-hide_banner", "-v", "error"]);
     if *encoder == VideoEncoder::Vaapi {
         if let Some(device_path) = vaapi_device_path() {
@@ -602,7 +603,7 @@ fn stream_audio(stream: &mut TcpStream, segment: &PlaybackSegment, track_id: &st
         return;
     };
 
-    let mut command = Command::new(ffmpeg_binary_path());
+    let mut command = Command::new(ffmpeg::binary_path());
     command
         .args(["-hide_banner", "-v", "error"])
         .args(input_seek_ffmpeg_args(start_ms, &segment.file_path))
@@ -667,7 +668,7 @@ fn generate_thumbnail(
     video_stream_index: i64,
     offset_ms: i64,
 ) -> Result<Vec<u8>, String> {
-    let output = Command::new(ffmpeg_binary_path())
+    let output = Command::new(ffmpeg::binary_path())
         .args(thumbnail_ffmpeg_args(
             segment,
             video_stream_index,
@@ -830,7 +831,7 @@ fn encoder_probe_succeeds(encoder: &VideoEncoder) -> bool {
     if *encoder == VideoEncoder::Vaapi && vaapi_device_path().is_none() {
         return false;
     }
-    let mut command = Command::new(ffmpeg_binary_path());
+    let mut command = Command::new(ffmpeg::binary_path());
     command
         .args([
             "-hide_banner",
@@ -875,10 +876,6 @@ fn thumbnail_offsets(duration_ms: i64) -> Vec<i64> {
 
 fn format_seconds(ms: i64) -> String {
     format!("{:.3}", ms.max(0) as f64 / 1000.0)
-}
-
-fn ffmpeg_binary_path() -> String {
-    std::env::var("DAYDREAM_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".to_string())
 }
 
 #[cfg(test)]

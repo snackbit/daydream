@@ -18,8 +18,11 @@ import { cn } from '@/lib/utils';
 import { recorderConfigurationLocked } from '../recorder-lifecycle-state';
 import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 import { CaptureResizableLayout } from './capture-resizable-layout';
+import { CaptureSourcesPanel } from './capture-sources-panel';
 import { CaptureToolbar } from './capture-toolbar';
+import { GeometryPanel } from './geometry-panel';
 import { RecorderErrorAlert } from './recorder-error-alert';
+import { SceneCanvasPanel } from './scene-canvas-panel';
 
 export interface CaptureWorkspaceProps {
   audioSources: AudioSource[];
@@ -154,24 +157,43 @@ export function CaptureWorkspace({
         }
       >
         <CaptureResizableLayout
-          audioSources={audioSources}
-          captureSources={captureSources}
-          configurationLocked={configurationLocked}
-          desktopAudioSourceId={desktopAudioSourceId}
-          lifecycleLocked={workspaceLocked}
-          loadStatus={loadStatus}
-          microphoneAudioSourceId={microphoneAudioSourceId}
-          pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
-          previewFramesBySceneSourceId={previewFramesBySceneSourceId}
-          scene={scene}
-          selectedSceneSource={selectedSceneSource}
-          selectedSceneSourceId={selectedSceneSourceId}
-          onChangeScene={onChangeScene}
-          onDeleteSceneSource={onDeleteSceneSource}
-          onSelectAudioSource={onSelectAudioSource}
-          onSelectCaptureSources={onSelectCaptureSources}
-          onSelectSceneSource={onSelectSceneSource}
-          onResolveDuplicateCaptureSource={onResolveDuplicateCaptureSource}
+          canvasPanel={
+            <SceneCanvasPanel
+              configurationLocked={configurationLocked}
+              previewFramesBySceneSourceId={previewFramesBySceneSourceId}
+              scene={scene}
+              selectedSourceId={selectedSceneSourceId}
+              onChange={onChangeScene}
+              onSelect={onSelectSceneSource}
+            />
+          }
+          geometryPanel={
+            <GeometryPanel
+              captureSources={captureSources}
+              disabled={configurationLocked}
+              scene={scene}
+              source={selectedSceneSource}
+              onChange={onChangeScene}
+            />
+          }
+          sourcesPanel={
+            <CaptureSourcesPanel
+              audioSources={audioSources}
+              configurationLocked={configurationLocked}
+              desktopAudioSourceId={desktopAudioSourceId}
+              lifecycleLocked={workspaceLocked}
+              loadStatus={loadStatus}
+              microphoneAudioSourceId={microphoneAudioSourceId}
+              pendingDuplicateCaptureSources={pendingDuplicateCaptureSources}
+              scene={scene}
+              selectedSceneSourceId={selectedSceneSourceId}
+              onDeleteSceneSource={onDeleteSceneSource}
+              onResolveDuplicateCaptureSource={onResolveDuplicateCaptureSource}
+              onSelectAudioSource={onSelectAudioSource}
+              onSelectCaptureSources={onSelectCaptureSources}
+              onSelectSceneSource={onSelectSceneSource}
+            />
+          }
         />
       </div>
     </section>

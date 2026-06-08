@@ -1,4 +1,5 @@
 mod diagnostics;
+mod ffmpeg;
 mod library;
 mod playback_server;
 pub mod recorder;
