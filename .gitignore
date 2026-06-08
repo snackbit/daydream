@@ -20,3 +20,5 @@ apps/desktop/src-tauri/target/
 *.local
 *.log
 *.tsbuildinfo
+**/.vitest-attachments
+**/__screenshots__

@@ -202,6 +202,21 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function mockScrubberRect(slider: HTMLElement) {
+  slider.getBoundingClientRect = () =>
+    ({
+      bottom: 27,
+      height: 27,
+      left: 0,
+      right: 700,
+      toJSON: () => ({}),
+      top: 0,
+      width: 700,
+      x: 0,
+      y: 0,
+    }) as DOMRect;
+}
+
 test('RecordingStudioScreen renders player controls, metadata sidebar, and tracks', async () => {
   render(<RecordingStudioScreen />);
 
@@ -210,6 +225,15 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   expect(
     screen.getByRole('slider', { name: /playback position/i }),
   ).toBeTruthy();
+  expect(
+    document.querySelectorAll('[data-playback-region="segment"]'),
+  ).toHaveLength(2);
+  expect(
+    document.querySelectorAll('[data-playback-region="pause"]'),
+  ).toHaveLength(1);
+  expect(
+    document.querySelectorAll('[data-segment-boundary="start"]'),
+  ).toHaveLength(2);
   expect(screen.getByText('Desktop audio')).toBeTruthy();
   expect(screen.getByText('Annotation and metadata workspace')).toBeTruthy();
   expect(await screen.findByLabelText(/mute desktop audio/i)).toBeTruthy();
@@ -354,16 +378,15 @@ test('RecordingStudioScreen commits a scrubbed seek and waits for canplay before
 
   fireEvent.play(container.querySelector('video')!);
   const slider = screen.getByRole('slider', { name: /playback position/i });
-  fireEvent.pointerDown(slider);
-  fireEvent.input(slider, {
-    target: { value: '1000' },
-  });
+  mockScrubberRect(slider);
+  fireEvent.pointerDown(slider, { clientX: 0, pointerId: 1 });
+  fireEvent.pointerMove(slider, { clientX: 100, pointerId: 1 });
 
   expect(container.querySelector('video')?.getAttribute('src')).toContain(
     `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
   );
 
-  fireEvent.pointerUp(slider);
+  fireEvent.pointerUp(slider, { clientX: 100, pointerId: 1 });
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
@@ -391,9 +414,10 @@ test('RecordingStudioScreen seeks while paused without autoplaying', async () =>
     ),
   );
 
-  fireEvent.change(screen.getByRole('slider', { name: /playback position/i }), {
-    target: { value: '1000' },
-  });
+  const slider = screen.getByRole('slider', { name: /playback position/i });
+  mockScrubberRect(slider);
+  fireEvent.pointerDown(slider, { clientX: 100, pointerId: 1 });
+  fireEvent.pointerUp(slider, { clientX: 100, pointerId: 1 });
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
@@ -404,6 +428,46 @@ test('RecordingStudioScreen seeks while paused without autoplaying', async () =>
   fireEvent.canPlay(container.querySelector('video')!);
 
   expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+test('RecordingStudioScreen shows scrubber thumbnail previews and paused gaps', async () => {
+  render(<RecordingStudioScreen />);
+
+  await screen.findByText('Tracks');
+  const slider = screen.getByRole('slider', { name: /playback position/i });
+  mockScrubberRect(slider);
+
+  fireEvent.pointerEnter(slider, { clientX: 100, pointerId: 1 });
+  fireEvent.pointerMove(slider, { clientX: 100, pointerId: 1 });
+
+  expect(await screen.findByText('Segment 1 - 0:01')).toBeTruthy();
+  expect(document.querySelector('img[src*="thumbnail/1000.jpg"]')).toBeTruthy();
+
+  fireEvent.pointerMove(slider, { clientX: 300, pointerId: 1 });
+
+  expect(await screen.findAllByText('Paused')).toHaveLength(2);
+  expect(screen.getByText(/0:03 gap/i)).toBeTruthy();
+});
+
+test('RecordingStudioScreen jumps paused-gap seeks to the next segment', async () => {
+  const { container } = render(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+    ),
+  );
+
+  const slider = screen.getByRole('slider', { name: /playback position/i });
+  mockScrubberRect(slider);
+  fireEvent.pointerDown(slider, { clientX: 300, pointerId: 1 });
+  fireEvent.pointerUp(slider, { clientX: 300, pointerId: 1 });
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      `${playbackAssets.segments[1]!.videoUrl}?startMs=0&request=1`,
+    ),
+  );
 });
 
 test('RecordingStudioScreen surfaces media play rejections', async () => {
@@ -478,6 +542,7 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
   fireEvent.ended(container.querySelector('video')!);
 
   expect(screen.getByText(/Recording paused/i)).toBeTruthy();
+  expect(screen.getByRole('button', { name: /play now/i })).toBeTruthy();
   expect(container.querySelector('video')?.getAttribute('src')).toContain(
     playbackAssets.segments[0]!.videoUrl,
   );
@@ -497,6 +562,33 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
   await waitFor(() => {
     expect(screen.queryByText(/Recording paused/i)).toBeNull();
   });
+});
+
+test('RecordingStudioScreen play now skips the pause gap immediately', async () => {
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    segments: detail.segments.map((segment, index) =>
+      index === 0 ? { ...segment, pauseAfterMs: 30_000 } : segment,
+    ),
+  });
+
+  const { container } = render(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      playbackAssets.segments[0]!.videoUrl,
+    ),
+  );
+
+  fireEvent.ended(container.querySelector('video')!);
+  fireEvent.click(screen.getByRole('button', { name: /play now/i }));
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      playbackAssets.segments[1]!.videoUrl,
+    ),
+  );
+  expect(screen.queryByText(/Recording paused/i)).toBeNull();
 });
 
 test('RecordingStudioScreen shows disabled placeholders for missing files', async () => {
