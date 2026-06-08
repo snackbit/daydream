@@ -1,5 +1,9 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
+const ACTIVE_RECORDING_STATUSES: &[&str] = &["planned", "recording", "paused"];
+const DELETABLE_RECORDING_STATUSES: &[&str] = &["completed", "failed"];
+const INTERRUPTED_RECORDING_ERROR_CODE: &str = "recording_interrupted_by_shutdown";
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateRecordingInput {
     pub id: String,
@@ -14,6 +18,8 @@ pub struct CreateRecordingInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecordingRow {
+    pub created_at_ms: i64,
+    pub default_fps: f64,
     pub id: String,
     pub active_scene_id: Option<String>,
     pub ended_at_ms: Option<i64>,
@@ -63,6 +69,8 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
         SELECT
             id,
             active_scene_id,
+            created_at_ms,
+            default_fps,
             ended_at_ms,
             output_root,
             quality_label,
@@ -73,19 +81,105 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
         WHERE id = ?1
         "#,
         [id],
-        |row| {
-            Ok(RecordingRow {
-                id: row.get(0)?,
-                active_scene_id: row.get(1)?,
-                ended_at_ms: row.get(2)?,
-                output_root: row.get(3)?,
-                quality_label: row.get(4)?,
-                started_at_ms: row.get(5)?,
-                status: row.get(6)?,
-                storage_dir: row.get(7)?,
-            })
-        },
+        recording_from_row,
     )
+}
+
+pub fn list_recordings(connection: &Connection) -> rusqlite::Result<Vec<RecordingRow>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT
+            id,
+            active_scene_id,
+            created_at_ms,
+            default_fps,
+            ended_at_ms,
+            output_root,
+            quality_label,
+            started_at_ms,
+            status,
+            storage_dir
+        FROM recordings
+        WHERE status != 'deleted'
+        ORDER BY COALESCE(started_at_ms, created_at_ms) DESC, id ASC
+        "#,
+    )?;
+
+    let rows = statement.query_map([], recording_from_row)?;
+
+    rows.collect()
+}
+
+pub fn delete_recording(connection: &Connection, id: &str) -> rusqlite::Result<()> {
+    let status = connection
+        .query_row("SELECT status FROM recordings WHERE id = ?1", [id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?;
+
+    if let Some(status) = status {
+        if !is_deletable_recording_status(&status) {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "recording status {status} is not deletable"
+            )));
+        }
+    }
+
+    connection.execute("DELETE FROM recordings WHERE id = ?1", [id])?;
+
+    Ok(())
+}
+
+pub fn recover_interrupted_recordings(
+    connection: &Connection,
+    _ended_at_ms: i64,
+) -> rusqlite::Result<usize> {
+    connection.execute(
+        r#"
+        UPDATE recording_segments
+        SET
+            ended_at_ms = started_at_ms,
+            duration_ms = 0,
+            state = 'failed',
+            ffmpeg_exit_code = NULL,
+            error_code = ?1,
+            updated_at_ms = created_at_ms
+        WHERE state = 'recording'
+            AND recording_id IN (
+                SELECT id
+                FROM recordings
+                WHERE status IN ('planned', 'recording', 'paused')
+            )
+        "#,
+        params![INTERRUPTED_RECORDING_ERROR_CODE],
+    )?;
+
+    connection.execute(
+        r#"
+        UPDATE recordings
+        SET
+            status = 'failed',
+            ended_at_ms = COALESCE(
+                (
+                    SELECT MAX(ended_at_ms)
+                    FROM recording_segments
+                    WHERE recording_segments.recording_id = recordings.id
+                ),
+                started_at_ms,
+                created_at_ms
+            )
+        WHERE status IN ('planned', 'recording', 'paused')
+        "#,
+        [],
+    )
+}
+
+pub fn is_active_recording_status(status: &str) -> bool {
+    ACTIVE_RECORDING_STATUSES.contains(&status)
+}
+
+pub fn is_deletable_recording_status(status: &str) -> bool {
+    DELETABLE_RECORDING_STATUSES.contains(&status)
 }
 
 pub fn get_latest_recording_id(connection: &Connection) -> rusqlite::Result<Option<String>> {
@@ -153,4 +247,19 @@ pub fn mark_recording_completed(
     )?;
 
     get_recording(connection, id)
+}
+
+fn recording_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecordingRow> {
+    Ok(RecordingRow {
+        id: row.get(0)?,
+        active_scene_id: row.get(1)?,
+        created_at_ms: row.get(2)?,
+        default_fps: row.get(3)?,
+        ended_at_ms: row.get(4)?,
+        output_root: row.get(5)?,
+        quality_label: row.get(6)?,
+        started_at_ms: row.get(7)?,
+        status: row.get(8)?,
+        storage_dir: row.get(9)?,
+    })
 }

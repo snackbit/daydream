@@ -20,6 +20,10 @@
       }
     ],
     "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/recordings/**/*"]
+      },
       "csp": null
     }
   },

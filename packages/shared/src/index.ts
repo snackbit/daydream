@@ -81,6 +81,7 @@ export interface DaydreamDiagnostics {
 }
 
 export * from './recorder.js';
+export * from './library.js';
 
 export interface DebugLoggingDiagnostics {
   enabled: boolean;

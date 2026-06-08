@@ -7,7 +7,9 @@ import { AppShell } from '@/app/AppShell';
 import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
+import { LibraryScreen } from '@/screens/LibraryScreen';
 import { PlaceholderScreen } from '@/screens/PlaceholderScreen';
+import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
 import { unknownErrorMessage } from './lib/async-store-action';
 
 const rootRoute = createRootRoute({
@@ -28,14 +30,15 @@ const captureRoute = createRoute({
 });
 
 const libraryRoute = createRoute({
-  component: () => (
-    <PlaceholderScreen
-      title="Library"
-      summary="Recordings, redactions, searchable annotations, and timeline playback will land here."
-    />
-  ),
+  component: LibraryScreen,
   getParentRoute: () => rootRoute,
   path: '/library',
+});
+
+const recordingStudioRoute = createRoute({
+  component: RecordingStudioScreen,
+  getParentRoute: () => rootRoute,
+  path: '/library/$recordingId',
 });
 
 const diagnosticsRoute = createRoute({
@@ -59,6 +62,7 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   captureRoute,
   libraryRoute,
+  recordingStudioRoute,
   diagnosticsRoute,
   settingsRoute,
 ]);

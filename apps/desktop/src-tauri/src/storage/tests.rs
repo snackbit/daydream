@@ -5,12 +5,14 @@ use uuid::Uuid;
 
 use super::{
     apply_migrations, collect_database_diagnostics_from_connection, create_recording,
-    create_recording_segment, delete_portal_restore_token, enable_connection_pragmas,
-    fail_recording_segment, finalize_recording_segment, get_latest_recorder_scene,
-    get_recorder_scene, get_recording, list_recording_segments, mark_portal_restore_token_used,
-    migrations, save_recorder_scene, upsert_portal_restore_token, AppStorage, CreateRecordingInput,
-    CreateRecordingSegmentInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
-    SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
+    create_recording_segment, delete_portal_restore_token, delete_recording,
+    enable_connection_pragmas, fail_recording_segment, finalize_recording_segment,
+    get_latest_recorder_scene, get_recorder_scene, get_recording, list_recording_segments,
+    mark_portal_restore_token_used, mark_recording_completed, mark_recording_started, migrations,
+    recover_interrupted_recordings, save_recorder_scene, update_recording_status,
+    upsert_portal_restore_token, AppStorage, CreateRecordingInput, CreateRecordingSegmentInput,
+    FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveRecorderSceneInput,
+    SaveRecorderSceneSourceInput,
 };
 
 fn migrated_memory_connection() -> Connection {
@@ -648,6 +650,115 @@ fn segment_helpers_create_finalize_fail_and_list_in_order() {
     assert_eq!(segments.len(), 2);
     assert_eq!(segments[0].segment_index, 1);
     assert_eq!(segments[1].segment_index, 2);
+}
+
+#[test]
+fn recover_interrupted_recordings_marks_stale_active_rows_failed() {
+    let connection = migrated_memory_connection();
+    let planned_id = create_test_recording(&connection);
+    let recording_id = create_test_recording(&connection);
+    let paused_id = create_test_recording(&connection);
+    let completed_id = create_test_recording(&connection);
+    let active_segment_id = Uuid::now_v7().to_string();
+    let paused_segment_id = Uuid::now_v7().to_string();
+
+    mark_recording_started(&connection, &recording_id, 10).expect("start recording");
+    create_recording_segment(
+        &connection,
+        &CreateRecordingSegmentInput {
+            file_path: "/tmp/daydream/0001.mkv".to_string(),
+            id: active_segment_id,
+            recording_id: recording_id.clone(),
+            segment_index: 1,
+            started_at_ms: 10,
+        },
+    )
+    .expect("create active segment");
+    mark_recording_started(&connection, &paused_id, 20).expect("start paused recording");
+    create_recording_segment(
+        &connection,
+        &CreateRecordingSegmentInput {
+            file_path: "/tmp/daydream/paused-0001.mkv".to_string(),
+            id: paused_segment_id.clone(),
+            recording_id: paused_id.clone(),
+            segment_index: 1,
+            started_at_ms: 20,
+        },
+    )
+    .expect("create paused segment");
+    finalize_recording_segment(
+        &connection,
+        &FinalizeRecordingSegmentInput {
+            desktop_audio_stream_index: None,
+            duration_ms: 15,
+            ended_at_ms: 35,
+            id: paused_segment_id,
+            microphone_audio_stream_index: None,
+            probe_json: None,
+            updated_at_ms: 36,
+            video_stream_index: Some(0),
+        },
+    )
+    .expect("finalize paused segment");
+    update_recording_status(&connection, &paused_id, "paused").expect("pause recording");
+    mark_recording_started(&connection, &completed_id, 30).expect("start completed recording");
+    mark_recording_completed(&connection, &completed_id, 40).expect("complete recording");
+
+    let recovered_count =
+        recover_interrupted_recordings(&connection, 100).expect("recover interrupted recordings");
+
+    assert_eq!(recovered_count, 3);
+    assert_eq!(
+        get_recording(&connection, &planned_id)
+            .expect("read planned")
+            .status,
+        "failed"
+    );
+    assert_eq!(
+        get_recording(&connection, &recording_id)
+            .expect("read recording")
+            .ended_at_ms,
+        Some(10)
+    );
+    let paused = get_recording(&connection, &paused_id).expect("read paused");
+    assert_eq!(paused.status, "failed");
+    assert_eq!(
+        paused.ended_at_ms,
+        Some(35),
+        "paused recovery must use the last finalized segment end, not app startup time"
+    );
+    assert_eq!(
+        get_recording(&connection, &completed_id)
+            .expect("read completed")
+            .status,
+        "completed"
+    );
+
+    let segments =
+        list_recording_segments(&connection, &recording_id).expect("list recovered segments");
+    assert_eq!(segments[0].state, "failed");
+    assert_eq!(segments[0].ended_at_ms, Some(10));
+    assert_eq!(segments[0].duration_ms, Some(0));
+    assert_eq!(
+        segments[0].error_code.as_deref(),
+        Some("recording_interrupted_by_shutdown")
+    );
+}
+
+#[test]
+fn delete_recording_rejects_active_statuses() {
+    let connection = migrated_memory_connection();
+    let planned_id = create_test_recording(&connection);
+
+    let error = delete_recording(&connection, &planned_id).expect_err("active delete should fail");
+
+    assert!(error.to_string().contains("not deletable"));
+    assert_eq!(
+        get_recording(&connection, &planned_id)
+            .expect("active row remains")
+            .status,
+        "planned"
+    );
 }
 
 #[test]

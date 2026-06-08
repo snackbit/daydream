@@ -2,6 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::Connection;
@@ -20,8 +21,10 @@ pub use portal_tokens::{
     upsert_portal_restore_token, PortalRestoreTokenRow, LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
 };
 pub use recordings::{
-    create_recording, get_latest_recording_id, get_recording, mark_recording_completed,
-    mark_recording_started, update_recording_status, CreateRecordingInput, RecordingRow,
+    create_recording, delete_recording, get_latest_recording_id, get_recording,
+    is_active_recording_status, is_deletable_recording_status, list_recordings,
+    mark_recording_completed, mark_recording_started, recover_interrupted_recordings,
+    update_recording_status, CreateRecordingInput, RecordingRow,
 };
 pub use scenes::{
     get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, RecorderSceneRow,
@@ -52,6 +55,7 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
     let db_path = app_data_dir.join(DATABASE_FILE_NAME);
     let mut connection = schema::open_connection(&db_path)?;
     schema::apply_migrations(&mut connection)?;
+    recordings::recover_interrupted_recordings(&connection, now_ms())?;
 
     Ok(AppStorage {
         connection: Mutex::new(connection),
@@ -99,6 +103,13 @@ pub fn test_storage(path: PathBuf) -> AppStorage {
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -364,6 +364,7 @@ __metadata:
     class-variance-authority: "npm:0.7.1"
     clsx: "npm:2.1.1"
     eslint: "npm:9.39.4"
+    ffmpeg-static: "npm:5.3.0"
     lucide-react: "npm:1.17.0"
     playwright: "npm:1.60.0"
     radix-ui: "npm:1.4.3"

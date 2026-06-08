@@ -10,8 +10,9 @@ export function AppShell() {
   });
 
   const activeItem =
-    navigationItems.find((item) => item.href === pathname) ??
-    navigationItems[0]!;
+    navigationItems.find(
+      (item) => item.href === pathname || pathname.startsWith(`${item.href}/`),
+    ) ?? navigationItems[0]!;
 
   return (
     <div className="bg-background text-foreground grid h-screen min-h-0 grid-cols-[14rem_1fr]">

@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,14 @@ const tauriConfigPath = path.resolve(
 );
 
 interface TauriConfig {
+  app?: {
+    security?: {
+      assetProtocol?: {
+        enable?: boolean;
+        scope?: string[];
+      };
+    };
+  };
   bundle?: {
     linux?: {
       appimage?: {
@@ -50,4 +59,15 @@ test('Linux bundles provision required GStreamer runtime plugins', () => {
       'gstreamer1-plugins-ugly',
     ]),
   );
+});
+
+test('asset protocol only exposes local recording files to the webview', () => {
+  const config = JSON.parse(
+    readFileSync(tauriConfigPath, 'utf8'),
+  ) as TauriConfig;
+
+  expect(config.app?.security?.assetProtocol).toEqual({
+    enable: true,
+    scope: ['$APPDATA/recordings/**/*'],
+  });
 });

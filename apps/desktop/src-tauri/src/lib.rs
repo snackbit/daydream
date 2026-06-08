@@ -1,4 +1,5 @@
 mod diagnostics;
+mod library;
 pub mod recorder;
 pub mod storage;
 mod telemetry;
@@ -21,6 +22,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             diagnostics::get_diagnostics,
             diagnostics::get_debug_log_bundle,
+            library::delete_library_recording,
+            library::delete_library_recordings,
+            library::get_library_recording,
+            library::get_recording_waveforms,
+            library::list_library_recordings,
+            library::prepare_library_playback_assets,
+            library::prepare_library_playback_thumbnails,
+            library::prepare_library_recording_thumbnail,
             recorder::get_recorder_status,
             recorder::get_recorder_performance_stats,
             recorder::get_capture_sources,

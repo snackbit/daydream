@@ -1,6 +1,10 @@
 import { expect, test } from 'vitest';
 import type {
   DaydreamDiagnostics,
+  LibraryPlaybackAssets,
+  LibraryRecordingDetail,
+  LibraryRecordingSummary,
+  LibraryWaveforms,
   RecorderMediaWriterCapabilities,
   RecorderError,
   RecorderPreviewFrame,
@@ -277,4 +281,120 @@ test('recorder contracts support transient live preview metadata', () => {
 
   expect(status.state).toBe('live');
   expect(frame.dataUrl).toMatch(/^data:image\/png;base64,/);
+});
+
+test('library contracts support missing recordings and playable details', () => {
+  const missing = {
+    availability: 'missing-files',
+    durationMs: 12_000,
+    endedAtMs: 13_000,
+    id: 'recording-1',
+    missingReasons: ['Segment 1 video file is missing.'],
+    playableSegmentCount: 1,
+    segmentCount: 1,
+    sizeBytes: 1_024,
+    startedAtMs: 1_000,
+    status: 'completed',
+    storageDir: '/tmp/daydream/recordings/recording-1',
+    thumbnailPath: null,
+  } satisfies LibraryRecordingSummary;
+
+  const detail = {
+    ...missing,
+    availability: 'available',
+    missingReasons: [],
+    segments: [
+      {
+        desktopAudioStreamIndex: 1,
+        durationMs: 4_000,
+        endedAtMs: 5_000,
+        fileExists: true,
+        filePath: '/tmp/daydream/recordings/recording-1/segments/0001.mkv',
+        id: 'segment-1',
+        microphoneAudioStreamIndex: 2,
+        pauseAfterMs: 3_000,
+        playbackOffsetMs: 0,
+        segmentIndex: 1,
+        startedAtMs: 1_000,
+        state: 'finalized',
+        videoStreamIndex: 0,
+      },
+    ],
+    thumbnailPath: '/tmp/daydream/recordings/recording-1/segments/0001.mkv',
+    tracks: [
+      {
+        codec: 'h264',
+        description: 'Composited screen recording',
+        id: 'video-0',
+        kind: 'video',
+        label: 'Video',
+        streamIndex: 0,
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+
+  const locked = {
+    ...missing,
+    availability: 'locked',
+    missingReasons: ['Recording is still in progress.'],
+    status: 'recording',
+  } satisfies LibraryRecordingSummary;
+
+  expect(missing.availability).toBe('missing-files');
+  expect(locked.availability).toBe('locked');
+  expect(detail.segments[0]?.pauseAfterMs).toBe(3_000);
+});
+
+test('library waveform contracts support cached audio lanes', () => {
+  const waveforms = {
+    error: null,
+    recordingId: 'recording-1',
+    tracks: [
+      {
+        kind: 'desktop-audio',
+        segments: [
+          {
+            generatedAtMs: 2_000,
+            maxAmplitude: 1,
+            samples: [0.2, 0.6, 0.4],
+            segmentId: 'segment-1',
+            streamIndex: 1,
+          },
+        ],
+        trackId: 'desktop-audio',
+      },
+    ],
+  } satisfies LibraryWaveforms;
+
+  expect(waveforms.tracks[0]?.segments[0]?.samples).toHaveLength(3);
+});
+
+test('library playback contracts support browser-playable sidecars', () => {
+  const assets = {
+    error: null,
+    recordingId: 'recording-1',
+    segments: [
+      {
+        audio: [
+          {
+            kind: 'desktop-audio',
+            path: '/tmp/daydream/recordings/recording-1/playback/segment-1/desktop-audio-1.m4a',
+            streamIndex: 1,
+            trackId: 'desktop-audio-1',
+          },
+        ],
+        segmentId: 'segment-1',
+        thumbnails: [
+          {
+            offsetMs: 0,
+            path: '/tmp/daydream/recordings/recording-1/playback/segment-1/thumbs/thumb-00000.jpg',
+          },
+        ],
+        videoPath:
+          '/tmp/daydream/recordings/recording-1/playback/segment-1/video.mp4',
+      },
+    ],
+  } satisfies LibraryPlaybackAssets;
+
+  expect(assets.segments[0]?.audio[0]?.trackId).toBe('desktop-audio-1');
 });
