@@ -3,13 +3,16 @@
 ## Current Status
 
 - Gate G complete.
-- Gate H.1 PipeWire SHM capture is partially staged: portal live-session
-  preflight, stable-ID source matching, `pipewire-rs` 0.9.2 dependency
-  resolution, CPU-readable buffer extraction, DMA-BUF-required classification,
+- Gate H.1 PipeWire SHM capture is staged with portal live-session preflight,
+  stable-ID source matching, `pipewire-rs` 0.9.2 dependency resolution,
+  CPU-readable buffer extraction, DMA-BUF-required classification,
   latest-frame sampling, CPU compositor tests, and strict-live public
-  `startRecording`/`resumeRecording` wiring exist. Manual KDE Wayland smoke
+  `startRecording`/`resumeRecording` wiring. Manual KDE Wayland smoke
   validation is still required to prove whether the local compositor offers SHM
   frames or requires Gate H.2 DMA-BUF import.
+- Gate I gained a local Library playback validation surface for recorded MKV
+  segments. Playback is local loopback streaming, thumbnails are bounded by a
+  FIFO worker pool, and playback sessions are explicitly closed.
 
 ## Locked Decisions
 
@@ -31,6 +34,9 @@
 - Monitor capture is the only M1 visual source type.
 - React does not access SQLite, FFmpeg, portal, PipeWire, or Pulse directly.
 - No raw private capture content is logged by default.
+- Library playback remains local-only and session-scoped. It must not upload
+  media, persist playback MP4 transcodes, or launch unbounded thumbnail FFmpeg
+  processes.
 
 ## Findings
 
@@ -185,6 +191,17 @@
 - `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop
   lint`: passed after saved-audio restore hardening; ESLint still reports the
   existing `scene-layout.ts` max-lines warning.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`: passed after
+  PipeWire debug log compaction and playback-server changes with 156 Rust
+  tests.
+- `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`: passed after local
+  Library playback streaming and session cleanup work.
+- `COREPACK_HOME=/tmp/corepack corepack yarn lint`: passed after local Library
+  playback streaming and session cleanup work; ESLint still reports existing
+  max-lines warnings.
+- `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed with elevated
+  browser-mode server binding after local Library playback streaming and
+  session cleanup work; 157 JS tests passed.
 
 ## Gate Notes
 
@@ -326,6 +343,19 @@
   `khronos-egl` dynamic loading. Diagnostics now reports GPU capture health,
   DMA-BUF import support, modifier import support, and non-content driver
   strings. This does not import DMA-BUF frames or alter the FFmpeg writer path.
+- PipeWire debug log compaction: `pipewire_capture_latest_frame_updated` and
+  `pipewire_capture_scheduled_frame_composed` now emit aggregate debug events
+  at most once per five-second window instead of logging per frame.
+- Library playback validation surface: added a tokenized loopback playback
+  server that streams FFmpeg-generated fragmented MP4 video/audio from MKV
+  segments without full-file preconversion. Seeked playback uses post-input
+  accurate FFmpeg seek. Timeline thumbnails are generated on demand through a
+  bounded FIFO thumbnail service with two workers, duplicate request coalescing,
+  and memory-only session cache.
+- Library playback lifecycle hardening: React invalidates active load runs on
+  unmount and closes playback sessions that resolve after route changes or
+  screen unmount, preventing stale loopback sessions from surviving until app
+  exit.
 
 ## Risk Watchlist
 
@@ -353,6 +383,9 @@
 - Audio defaults can change during runtime; the recorder should avoid silently
   recording the wrong source after a default-device change.
 - Full-day performance and storage behavior are intentionally not proven by M1.
+- Full-day Library playback now has bounded thumbnail FFmpeg concurrency, but
+  UI-level virtualization and long-duration playback UX remain follow-up
+  candidates.
 
 ## Follow-Up Candidates
 
@@ -367,3 +400,6 @@
   transcription, VLM inference, vector indexing, and digest generation.
 - Add long-duration storage and performance validation after short recorder
   smoke tests pass.
+- Virtualize or window the Library thumbnail strip after the backend queue is
+  proven, so full-day recordings do not render thousands of image elements at
+  once.

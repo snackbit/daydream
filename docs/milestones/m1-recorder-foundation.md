@@ -17,8 +17,11 @@ metadata in SQLite, and surfaces backend health in the app.
 - The first target platform is Linux/KDE Wayland on the current development
   machine, with platform-specific code isolated behind recorder interfaces.
 - Processing work remains out of scope: OCR, transcription, VLM inference,
-  indexing, daily digest generation, and timeline playback are not implemented
-  in M1.
+  indexing, source-linked recall timeline, searchable annotations, and daily
+  digest generation are not implemented in M1.
+- M1 now includes a local Library playback validation surface for recorded MKV
+  segments so recorder output can be inspected without full-file MP4
+  preconversion.
 - This is the right boundary because downstream recall features need durable,
   privacy-conscious recordings with timestamps, source layout metadata, and
   separate audio tracks before they can process anything accurately.
@@ -134,6 +137,15 @@ metadata in SQLite, and surfaces backend health in the app.
   input support and is not enough for Linux audio recording.
 - M1 does not ship a final installer-level FFmpeg packaging solution. It must
   leave a concrete follow-up if the development bridge is still required.
+- Library playback for M1 is a local validation and inspection tool, not the
+  final recall timeline. It streams browser-playable media from local MKV
+  segments through a tokenized loopback playback session.
+- Playback thumbnails are generated on demand through a bounded FIFO worker
+  pool and cached only in memory for the active playback session. Thumbnail
+  generation must not fan out unbounded FFmpeg processes for full-day
+  recordings.
+- Closing a playback session must remove session-scoped thumbnail cache entries
+  and reject stale queued thumbnail jobs.
 - The app must not log raw frames, raw audio, OCR-like text, transcripts,
   focused window titles, or private recording content.
 - Recording must be visible and user-controlled. No hidden background capture is
@@ -147,6 +159,8 @@ The milestone is successful when:
 - The user can arrange selected monitors in an interactive canvas editor.
 - The user can start, pause, resume, and stop one active recording.
 - The app writes MKV segment files under the recording directory.
+- The Library can inspect available recordings through local streaming playback
+  without permanently transcoding playback MP4 files.
 - Each recorded segment contains a composed video stream plus separate desktop
   and microphone audio streams when those inputs are available.
 - Recording, segment, track, scene, and source metadata are persisted in SQLite.
@@ -170,6 +184,7 @@ The milestone is successful when:
 - FFmpeg argument building and process lifecycle for MKV segment output.
 - Pulse/PipeWire audio source discovery and FFmpeg audio input mapping.
 - Capture screen UI with status, controls, source selectors, and scene editor.
+- Local Library playback session support for inspecting recorder output.
 - Recorder diagnostics in the existing Diagnostics screen.
 - Focused Rust and TypeScript tests for contracts, lifecycle, storage, FFmpeg
   args, layout math, and error states.
@@ -179,7 +194,8 @@ The milestone is successful when:
 
 - OCR, UI text extraction, Whisper transcription, VLM inference, embeddings,
   LLM digest generation, and task/todo extraction.
-- Timeline playback, searchable annotations, and daily digest UI.
+- Source-linked recall timeline, searchable annotations, and daily digest UI.
+- Permanent playback MP4 generation or remote playback services.
 - Scissors/redaction implementation.
 - Keyboard/mouse activity instrumentation.
 - Focused-window or open-window metadata capture.
@@ -630,12 +646,17 @@ Exit Criteria:
 - [x] Extend Diagnostics with recorder backend health rows.
 - [ ] Add status refresh behavior that stays accurate during start, pause,
   resume, stop, and failure.
+- [x] Add local Library playback sessions for recorder-output inspection with
+  tokenized loopback URLs, realtime FFmpeg streaming, bounded thumbnail
+  generation, and session cleanup.
 - [ ] Add UI tests for recorder status rendering, disabled controls, lifecycle
   actions, and diagnostics rendering.
 
 Exit Criteria:
 
 - The user can operate the recorder from the app without terminal commands.
+- A recorded Library item can be inspected locally without unbounded thumbnail
+  generation or durable playback transcode files.
 - Diagnostics distinguishes unavailable, degraded, and available backend states.
 - The UI does not display portal restore tokens or private captured content.
 
@@ -715,6 +736,8 @@ Suggested native diagnostics:
   produce misleading complete recordings.
 - Full-day storage behavior is not validated in M1; short smoke recordings are
   the M1 completion bar.
+- Full-day Library playback thumbnail generation is bounded by the playback
+  server worker pool, but long-duration UX performance remains a follow-up risk.
 
 ## Assumptions
 
@@ -743,6 +766,8 @@ Suggested native diagnostics:
 - OBS-inspired internal capture runtime boundary for platform capture adapters,
   frame format metadata, scene compositor inputs, and FFmpeg output handoff.
 - PipeWire compositor path for selected monitor streams.
+- Local Library playback server for inspecting recorder segments with bounded
+  thumbnail generation.
 - Recorder backend health in Diagnostics.
 - Automated tests for the critical contracts and lifecycle behavior.
 - Scratchpad validation log for final command results and manual smoke tests.
