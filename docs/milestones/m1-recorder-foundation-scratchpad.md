@@ -8,8 +8,12 @@
   CPU-readable buffer extraction, DMA-BUF-required classification,
   latest-frame sampling, CPU compositor tests, and strict-live public
   `startRecording`/`resumeRecording` wiring. Manual KDE Wayland smoke
-  validation is still required to prove whether the local compositor offers SHM
-  frames or requires Gate H.2 DMA-BUF import.
+  validation is still required to prove the real local capture mode.
+- Gate H.2 is partially staged beyond the original probe slice: recording can
+  import supported packed single-plane DMA-BUF source frames through EGL/OpenGL,
+  read them back to CPU RGBA, and feed the existing CPU compositor. GPU
+  crop/scale/z-order composition and real DMA-BUF-only KDE validation remain
+  open.
 - Gate I gained a local Library playback validation surface for recorded MKV
   segments. Playback is local loopback streaming, thumbnails are bounded by a
   FIFO worker pool, and playback sessions are explicitly closed.
@@ -202,6 +206,9 @@
 - `COREPACK_HOME=/tmp/corepack corepack yarn test`: passed with elevated
   browser-mode server binding after local Library playback streaming and
   session cleanup work; 157 JS tests passed.
+- `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+  recorder::platform::linux --lib`: passed during H.1/H.2 reconciliation with
+  41 Linux recorder tests.
 
 ## Gate Notes
 
@@ -329,9 +336,9 @@
   DMA-BUF GPU import/composition.
 - Gate H split: H.1 opens a fresh portal session from `startRecording`, matches
   fresh streams to saved scene sources by stable portal ID or mapping ID, and
-  feeds the existing FFmpeg `yuv444p` stdin writer. H.1 may close on a typed
-  `recorder_capture_dmabuf_required` blocker if the local compositor only
-  offers DMA-BUF.
+  feeds the existing FFmpeg `yuv444p` stdin writer. Recording no longer treats
+  supported packed DMA-BUF buffers as an automatic H.1 blocker; it routes them
+  through the H.2 source-frame import/readback path before CPU composition.
 - Gate H.2 starts with a checked-in EGL/OpenGL DMA-BUF capability probe before
   production integration. Hardware encoding remains a deferred optimization
   because it changes the FFmpeg writer boundary and validation matrix.
@@ -343,6 +350,11 @@
   `khronos-egl` dynamic loading. Diagnostics now reports GPU capture health,
   DMA-BUF import support, modifier import support, and non-content driver
   strings. This does not import DMA-BUF frames or alter the FFmpeg writer path.
+- Gate H.2 import/readback slice: added `LinuxGpuFrameCompositor`, which creates
+  an EGL/OpenGL context, imports supported packed single-plane DMA-BUF frames as
+  EGL images/textures, reads each source back to top-down CPU RGBA, and lets the
+  existing CPU compositor produce the `yuv444p` FFmpeg handoff. This is not GPU
+  scene composition; crop, scale, placement, and z-order still happen on CPU.
 - PipeWire debug log compaction: `pipewire_capture_latest_frame_updated` and
   `pipewire_capture_scheduled_frame_composed` now emit aggregate debug events
   at most once per five-second window instead of logging per frame.
@@ -361,8 +373,11 @@
 
 - PipeWire stream buffers may arrive in formats that need additional conversion
   support before feeding FFmpeg.
-- KDE/Wayland may negotiate DMA-BUF-only screen frames. Gate H.1 must return a
-  typed blocker rather than silently falling back to synthetic video.
+- KDE/Wayland may negotiate DMA-BUF-only screen frames. Recording now has a
+  packed DMA-BUF import/readback path, but manual validation still needs to
+  prove whether the real portal stream formats and modifiers work end to end.
+- Planar YUV DMA-BUF import remains unsupported and must return a typed format
+  error rather than producing misleading recordings.
 - Hardware encoding could reduce copies after DMA-BUF import is proven, but it
   is out of M1 because M1 keeps the existing raw `yuv444p` FFmpeg handoff and
   H.264 `yuv420p` encoded output.

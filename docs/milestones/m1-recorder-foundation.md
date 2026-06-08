@@ -595,8 +595,9 @@ Exit Criteria:
   ID or mapping ID. Missing matches fail before recording rows are created.
 - [x] Negotiate and ingest CPU-readable PipeWire buffers for `yuv444p`,
   RGBx/RGBA/BGRx/BGRA, and XRGB/ARGB-equivalent raw formats.
-- [x] Return `recorder_capture_dmabuf_required` when the compositor only
-  provides DMA-BUF buffers before Gate H.2 is available.
+- [x] Classify DMA-BUF buffers separately from CPU-readable buffers so
+  preview/CPU-only paths return typed errors while recording can route
+  supported packed DMA-BUF frames through Gate H.2.
 - [x] Copy only sampled CPU-readable frames into owned recorder runtime frames
   and return PipeWire buffers promptly.
 - [x] Composite selected monitor streams into the configured scene canvas using
@@ -609,9 +610,11 @@ Exit Criteria:
 
 Exit Criteria:
 
-- Public `startRecording` uses the real PipeWire SHM path, not synthetic video.
-- If the local compositor requires DMA-BUF, H.1 may close only with a typed
-  `recorder_capture_dmabuf_required` blocker and scratchpad evidence for H.2.
+- Public `startRecording` uses the real PipeWire capture path, not synthetic
+  video, for non-fake scenes.
+- CPU-readable streams use the SHM/CPU compositor path; supported packed
+  DMA-BUF streams route through H.2 source-frame import/readback before the CPU
+  compositor. Preview and unsupported DMA-BUF formats return typed errors.
 - Frame content is not logged or exposed through React state.
 
 ## Gate H.2: DMA-BUF GPU Import and Composition
@@ -620,17 +623,23 @@ Exit Criteria:
   and modifier support.
 - [x] Use the probe to lock thin native dependencies for EGL/OpenGL DMA-BUF
   work before production integration.
-- [ ] Import supported DMA-BUF frames into EGL/OpenGL textures.
+- [x] Import supported packed single-plane DMA-BUF frames into EGL/OpenGL
+  textures.
 - [ ] Perform crop, scale, placement, z-order composition on GPU.
-- [ ] Read the final composed frame back to CPU, convert to the existing
-  `yuv444p` FFmpeg rawvideo handoff, and keep encoded output at `yuv420p`.
+- [x] Read imported DMA-BUF source frames back to CPU RGBA, then feed the
+  existing CPU compositor and `yuv444p` FFmpeg rawvideo handoff while keeping
+  encoded output at `yuv420p`.
+- [ ] Validate that DMA-BUF-only portal streams on KDE/Wayland produce the same
+  MKV stream shape as the SHM path.
 - [ ] Keep hardware encoding out of M1 and document it as a later optimization
   because it changes the writer boundary and validation matrix.
 
 Exit Criteria:
 
-- DMA-BUF-only portal streams can produce the same MKV stream shape as the SHM
-  path.
+- Supported packed DMA-BUF source frames can be imported, read back to CPU, and
+  composed into the same MKV stream shape as the SHM path.
+- Real DMA-BUF-only portal behavior is validated on KDE/Wayland, or a concrete
+  native blocker is recorded in the scratchpad.
 - Unsupported DMA-BUF formats or modifiers return typed recorder errors before
   misleading complete segments are written.
 - GPU diagnostics and errors remain privacy-safe.
