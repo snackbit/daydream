@@ -1,12 +1,11 @@
 import type {
   AiModelAsset,
   AiProviderStatus,
+  AiTranscriptionBackend,
   AppSettings,
   AppSettingsLimits,
 } from '@daydream/shared';
-import { Download, Play, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -28,22 +27,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { AiModelActionButton, AiModelCacheCard } from './ai-model-cache-card';
 import {
   CheckboxField,
-  modelStatusLabel,
-  NumberField,
   RemoteProviderFields,
+  SliderField,
 } from './ai-settings-fields';
 
 interface AiSettingsTabProps {
   draft: AppSettings;
   limits: AppSettingsLimits;
   models: AiModelAsset[];
+  onCancelModelDownload: (modelId: string) => void;
   onChangeTranscriptionKey: (value: string) => void;
   onChangeVisionKey: (value: string) => void;
   onDeleteModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
-  onSelfTestModel: (modelId: string) => void;
   onUpdateDraft: (updater: (draft: AppSettings) => AppSettings) => void;
   providerStatus: AiProviderStatus | null;
   transcriptionKeyDraft: string;
@@ -58,7 +57,7 @@ export function AiSettingsTab({
   onChangeVisionKey,
   onDeleteModel,
   onDownloadModel,
-  onSelfTestModel,
+  onCancelModelDownload,
   onUpdateDraft,
   providerStatus,
   transcriptionKeyDraft,
@@ -130,39 +129,89 @@ export function AiSettingsTab({
 
             <Field>
               <FieldLabel htmlFor="ai-local-model">Local model</FieldLabel>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Select
+                  onValueChange={(value) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          localModelId: value,
+                        },
+                      },
+                    }));
+                  }}
+                  value={draft.ai.transcription.localModelId}
+                >
+                  <SelectTrigger className="sm:flex-1" id="ai-local-model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <AiModelActionButton
+                  model={models.find(
+                    (model) => model.id === draft.ai.transcription.localModelId,
+                  )}
+                  onCancelModelDownload={onCancelModelDownload}
+                  onDeleteModel={onDeleteModel}
+                  onDownloadModel={onDownloadModel}
+                />
+              </div>
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="ai-local-backend">Local backend</FieldLabel>
               <Select
                 onValueChange={(value) => {
+                  const localBackend = value as AiTranscriptionBackend;
                   onUpdateDraft((current) => ({
                     ...current,
                     ai: {
                       ...current.ai,
                       transcription: {
                         ...current.ai.transcription,
-                        localModelId: value,
+                        localBackend,
                       },
                     },
                   }));
                 }}
-                value={draft.ai.transcription.localModelId}
+                value={draft.ai.transcription.localBackend}
               >
-                <SelectTrigger id="ai-local-model">
+                <SelectTrigger id="ai-local-backend">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      {model.label}
-                    </SelectItem>
-                  ))}
+                  {(['cpu', 'vulkan', 'cuda'] as const).map((backend) => {
+                    const status =
+                      providerStatus?.localTranscription.availableBackends.find(
+                        (candidate) => candidate.id === backend,
+                      );
+                    const disabled = status?.available === false;
+
+                    return (
+                      <SelectItem
+                        disabled={disabled}
+                        key={backend}
+                        value={backend}
+                      >
+                        {backendLabel(backend)}
+                        {disabled ? ' unavailable' : ''}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               <FieldDescription>
-                Status:{' '}
-                {modelStatusLabel(
-                  models.find(
-                    (model) => model.id === draft.ai.transcription.localModelId,
-                  ),
-                )}
+                Vulkan and CUDA backends may require additional setup and have
+                specific hardware and OS requirements.
               </FieldDescription>
             </Field>
 
@@ -209,60 +258,12 @@ export function AiSettingsTab({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Model Cache</CardTitle>
-          <CardDescription>
-            Downloads and smoke tests are wired to notifications until the local
-            backend lands.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-2">
-            {models.map((model) => (
-              <div
-                className="flex flex-col gap-2 border p-3 md:flex-row md:items-center md:justify-between"
-                key={model.id}
-              >
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{model.label}</div>
-                  <div className="text-muted-foreground text-xs">
-                    Download {model.downloadStatus}; smoke test{' '}
-                    {model.selfTestStatus}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    onClick={() => onDownloadModel(model.id)}
-                    type="button"
-                    variant="outline"
-                  >
-                    <Download className="size-3.5" />
-                    Download
-                  </Button>
-                  <Button
-                    onClick={() => onSelfTestModel(model.id)}
-                    type="button"
-                    variant="outline"
-                  >
-                    <Play className="size-3.5" />
-                    Smoke test
-                  </Button>
-                  <Button
-                    disabled={model.downloadStatus === 'missing'}
-                    onClick={() => onDeleteModel(model.id)}
-                    type="button"
-                    variant="outline"
-                  >
-                    <Trash2 className="size-3.5" />
-                    Delete
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <AiModelCacheCard
+        models={models}
+        onCancelModelDownload={onCancelModelDownload}
+        onDeleteModel={onDeleteModel}
+        onDownloadModel={onDownloadModel}
+      />
 
       <Card>
         <CardHeader>
@@ -419,7 +420,7 @@ export function AiSettingsTab({
               }}
             />
             <div className="grid gap-4 md:grid-cols-3">
-              <NumberField
+              <SliderField
                 label="Parallel jobs"
                 max={limits.ai.processing.maxParallelJobsMax}
                 min={limits.ai.processing.maxParallelJobsMin}
@@ -437,7 +438,7 @@ export function AiSettingsTab({
                 }}
                 value={draft.ai.processing.maxParallelJobs}
               />
-              <NumberField
+              <SliderField
                 label="Chunks per job"
                 max={limits.ai.processing.maxParallelChunksPerJobMax}
                 min={limits.ai.processing.maxParallelChunksPerJobMin}
@@ -455,7 +456,7 @@ export function AiSettingsTab({
                 }}
                 value={draft.ai.processing.maxParallelChunksPerJob}
               />
-              <NumberField
+              <SliderField
                 label="Full-frame interval"
                 max={limits.ai.processing.periodicFullFrameIntervalMsMax}
                 min={limits.ai.processing.periodicFullFrameIntervalMsMin}
@@ -471,7 +472,7 @@ export function AiSettingsTab({
                     },
                   }));
                 }}
-                step={30_000}
+                step={500}
                 suffix="ms"
                 value={draft.ai.processing.periodicFullFrameIntervalMs}
               />
@@ -496,7 +497,7 @@ export function AiSettingsTab({
                 }));
               }}
             />
-            <NumberField
+            <SliderField
               label="Keyboard activity window"
               max={limits.ai.activity.keyboardWindowMsMax}
               min={limits.ai.activity.keyboardWindowMsMin}
@@ -539,7 +540,7 @@ export function AiSettingsTab({
                 }));
               }}
             />
-            <NumberField
+            <SliderField
               label="Mouse activity window"
               max={limits.ai.activity.mouseWindowMsMax}
               min={limits.ai.activity.mouseWindowMsMin}
@@ -568,7 +569,11 @@ export function AiSettingsTab({
 
       {providerStatus ? (
         <div className="text-muted-foreground grid gap-2 border p-3 text-xs md:grid-cols-3">
-          <span>Local transcription: {providerStatus.localTranscription}</span>
+          <span>
+            Local transcription:{' '}
+            {providerStatus.localTranscription.modelDownloadStatus}; backend{' '}
+            {providerStatus.localTranscription.selectedBackend}
+          </span>
           <span>
             Remote transcription: {providerStatus.remoteTranscription}
           </span>
@@ -577,4 +582,15 @@ export function AiSettingsTab({
       ) : null}
     </div>
   );
+}
+
+function backendLabel(backend: AiTranscriptionBackend): string {
+  if (backend === 'cpu') {
+    return 'CPU';
+  }
+  if (backend === 'vulkan') {
+    return 'Vulkan';
+  }
+
+  return 'CUDA';
 }

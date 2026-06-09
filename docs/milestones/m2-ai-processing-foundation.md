@@ -108,6 +108,11 @@ in Library playback.
   transcription result. Accuracy fixtures are deferred.
 - GPU acceleration is detected and configurable, but CPU transcription is the
   required validation path for milestone exit.
+- Cargo package defaults remain CPU-safe so normal CI and fresh contributor
+  builds do not require GPU SDKs. Developer checkouts may opt into local
+  `whisper.cpp` GPU builds through an ignored `apps/desktop/tauri-dev.local`
+  file or `DAYDREAM_TAURI_FEATURES`; this checkout enables `whisper-vulkan`
+  locally and keeps `whisper-cuda` opt-in until the CUDA toolkit is installed.
 - Transcription runs separately on every audio track.
 - Desktop audio and microphone transcripts remain distinguishable in storage
   and UI.
@@ -618,24 +623,73 @@ Exit Criteria:
 
 ## Gate C: Model Cache and `whisper.cpp` Local Backend
 
-- [ ] Add managed model cache directories under app data.
-- [ ] Add known local transcription model metadata for multilingual `tiny`,
+- [x] Add managed model cache directories under app data.
+- [x] Add known local transcription model metadata for multilingual `tiny`,
   `base`, `small`, `medium`, `large-v3-turbo`, and `large-v3`.
-- [ ] Implement model download jobs with progress, cancellation, retry, and
-  final file verification where metadata supports it.
-- [ ] Implement smoke-only model self-test.
-- [ ] Integrate `whisper.cpp` through the C API as the primary path.
-- [ ] Add capability detection for CPU and available GPU/offload options.
-- [ ] Add Diagnostics or AI provider status for selected model, backend,
-  dependency availability, GPU/offload capability, and self-test state.
+- [x] Download only from the pinned official Hugging Face
+  `ggerganov/whisper.cpp` GGML files; do not add manual import, arbitrary
+  model URLs, or user-facing mirror settings in Gate C.
+- [x] Store model files at `app_data/models/whisper.cpp/ggml-<id>.bin`, with
+  resumable `.part` files for active or interrupted downloads.
+- [x] Persist model download progress, source URL, ETag, total bytes,
+  downloaded bytes, error code, checksum algorithm, checksum value, and
+  verification status.
+- [x] Replace the misleading `sha256` model metadata with explicit checksum
+  algorithm plus checksum value because the official model card publishes
+  SHA-1 values.
+- [x] Implement in-app background model downloads with one active download at a
+  time, queued additional downloads, cancellation, retry, resumable partial
+  files, and final SHA-1 verification.
+- [x] Surface model download progress in both the AI/LLM Settings model rows
+  and persistent notifications.
+- [x] Add a `model-download-cancel` notification action and keep retry actions
+  resumable when the `.part` file still matches source metadata.
+- [x] Emit a Tauri `ai-models-changed` event with the full model list after
+  every model status or progress change; Settings also refetches on open/focus
+  to recover missed events.
+- [x] Exclude model files from recording storage retention and size cleanup.
+- [x] Make Delete remove the local model file and reset the model row to
+  missing while preserving catalog metadata.
+- [x] Integrate `whisper.cpp` through the C API as the primary path by
+  vendoring release `v1.8.4`, building it through Cargo-driven CMake, and
+  generating bindings with build-time bindgen.
+- [x] Document CMake and libclang as hard developer/CI build prerequisites.
+- [x] Implement load-only model self-test: load the selected model through the
+  C API immediately after a successful verified download, immediately unload
+  it, and mark the model passed or failed without transcribing audio. Settings
+  does not expose a dedicated user-facing smoke-test button in Gate C.
+- [x] Add configurable local transcription backend settings for CPU, Vulkan,
+  and CUDA. The tracked Cargo default is CPU-only; unavailable GPU backends are
+  visible but disabled and cannot be saved. Local developer checkouts may enable
+  GPU features without changing package defaults by adding
+  `apps/desktop/tauri-dev.local` with `whisper-vulkan` and, when the CUDA
+  toolkit is installed, `whisper-cuda`.
+- [x] Add capability detection for CPU, Vulkan, and CUDA. Runtime unavailable
+  states cover missing model files, failed model loads, and unavailable GPU
+  backends; missing CMake/libclang is a build failure, not a runtime state.
+- [x] Keep `whisper.cpp` GPU linkage explicit: Vulkan builds link
+  `libggml-vulkan.a` and `libvulkan` only when `whisper-vulkan` is enabled;
+  CUDA remains a separate opt-in feature because it requires the NVIDIA CUDA
+  toolkit at build time.
+- [x] Expand AI provider status into structured model/backend status for
+  selected backend, available backends, unavailable reasons, selected model
+  status, checksum status, and self-test state.
 - [ ] Add tests for model cache state transitions, failed downloads, smoke-test
-  failure, provider status, and privacy-safe errors.
+  failure, provider status, Tauri model events, and privacy-safe errors.
 
 Exit Criteria:
 
-- Local multilingual `small` can be downloaded, loaded, and smoke-tested on CPU.
+- Local multilingual `tiny` can be downloaded, loaded, and smoke-tested on CPU
+  as the practical Gate C live validation path. Multilingual `small` remains
+  the default selected model and must remain fully cataloged for download and
+  load-only self-test.
 - GPU controls may be visible only as detected/configurable capability; CPU is
   the required validation path.
+- Local Vulkan validation is allowed for developer convenience when the host has
+  Vulkan headers, loader, shader tools, and a working GPU driver. CUDA
+  validation requires the CUDA toolkit in addition to the NVIDIA runtime.
+- Automated tests must not hit Hugging Face or load real Whisper models by
+  default. Network and C API behavior are mocked in automated tests.
 - If C API integration blocks implementation, the blocker is recorded in the
   scratchpad before any switch to a binary wrapper.
 - If a model source lacks checksum or etag metadata, the implementation must
@@ -840,9 +894,13 @@ Exit Criteria:
 
 - `whisper.cpp` C API integration may be harder to build and package than a
   binary wrapper.
-- GPU acceleration is especially risky on the current machine because previous
-  local evidence showed an RTX 4090 is present but `nvidia-smi` could not talk
-  to the driver.
+- GPU acceleration remains build-environment-sensitive. Unsandboxed local
+  validation on 2026-06-09 showed an RTX 4090, working `nvidia-smi`, visible
+  `/dev/nvidia*` nodes, and Vulkan detecting the device; earlier failures were
+  caused by sandbox device isolation. Vulkan developer prerequisites on
+  Arch/CachyOS are `vulkan-headers`, `vulkan-icd-loader`, `vulkan-tools`,
+  `shaderc`, `glslang`, and `spirv-tools`. CUDA builds additionally require
+  `cuda` plus the NVIDIA runtime packages.
 - Tesseract packaging may require native runtime dependencies that differ by
   Linux distribution and by future Windows/macOS support.
 - Remote provider support creates real privacy risk. UI copy and defaults must

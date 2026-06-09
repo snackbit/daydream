@@ -67,6 +67,23 @@ pub fn save_notification(
     get_notification(connection, &input.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
 }
 
+pub fn save_unseen_notification(
+    connection: &Connection,
+    input: &SaveNotificationInput,
+) -> rusqlite::Result<NotificationRow> {
+    save_notification(connection, input)?;
+    connection.execute(
+        r#"
+        UPDATE notifications
+        SET dismissed_at_ms = NULL
+        WHERE id = ?1
+        "#,
+        [&input.id],
+    )?;
+
+    get_notification(connection, &input.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
 pub fn get_notification(
     connection: &Connection,
     id: &str,

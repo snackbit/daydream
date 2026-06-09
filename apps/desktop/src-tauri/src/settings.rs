@@ -23,6 +23,7 @@ pub const MAX_STORAGE_RETENTION_DAYS: u32 = 365;
 pub const DEFAULT_STORAGE_SIZE_LIMIT_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 pub const MIN_STORAGE_SIZE_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
 pub const DEFAULT_AI_TRANSCRIPTION_MODEL_ID: &str = "small";
+pub const DEFAULT_AI_TRANSCRIPTION_BACKEND: &str = "cpu";
 pub const DEFAULT_AI_KEYBOARD_WINDOW_MS: u32 = 30_000;
 pub const DEFAULT_AI_MOUSE_WINDOW_MS: u32 = 5_000;
 pub const MIN_AI_ACTIVITY_WINDOW_MS: u32 = 1_000;
@@ -68,6 +69,7 @@ pub struct AiSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiTranscriptionProviderSettings {
+    pub local_backend: String,
     pub local_model_id: String,
     pub provider: String,
     pub remote_api_key_ref: Option<String>,
@@ -311,6 +313,7 @@ pub fn default_ai_settings() -> AiSettings {
             periodic_full_frame_interval_ms: DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
         },
         transcription: AiTranscriptionProviderSettings {
+            local_backend: DEFAULT_AI_TRANSCRIPTION_BACKEND.to_string(),
             local_model_id: DEFAULT_AI_TRANSCRIPTION_MODEL_ID.to_string(),
             provider: "local-whisper-cpp".to_string(),
             remote_api_key_ref: None,
@@ -414,6 +417,10 @@ fn apply_setting_row(
         "ai.transcription.localModelId" => {
             settings.ai.transcription.local_model_id = setting_value(row)?;
         }
+        "ai.transcription.localBackend" => {
+            settings.ai.transcription.local_backend =
+                coerce_stored_transcription_backend(setting_value(row)?);
+        }
         "ai.transcription.remoteBaseUrl" => {
             settings.ai.transcription.remote_base_url = setting_value(row)?;
         }
@@ -504,6 +511,12 @@ fn settings_to_storage_inputs(
         setting_input(
             "ai.transcription.localModelId",
             &settings.ai.transcription.local_model_id,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.localBackend",
+            &settings.ai.transcription.local_backend,
             false,
             timestamp_ms,
         )?,
@@ -695,6 +708,7 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         ],
         "Local transcription model must be one of the supported multilingual models.",
     )?;
+    validate_transcription_backend(&settings.transcription.local_backend)?;
     validate_optional_url(
         "ai.transcription.remoteBaseUrl",
         settings.transcription.remote_base_url.as_deref(),
@@ -749,6 +763,40 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
     )?;
 
     Ok(())
+}
+
+fn coerce_stored_transcription_backend(value: String) -> String {
+    if transcription_backend_available(&value) {
+        value
+    } else {
+        DEFAULT_AI_TRANSCRIPTION_BACKEND.to_string()
+    }
+}
+
+fn validate_transcription_backend(value: &str) -> Result<(), AppSettingsError> {
+    validate_one_of(
+        "ai.transcription.localBackend",
+        value,
+        &["cpu", "vulkan", "cuda"],
+        "Local transcription backend must be CPU, Vulkan, or CUDA.",
+    )?;
+    if transcription_backend_available(value) {
+        return Ok(());
+    }
+
+    Err(validation_error(
+        "ai.transcription.localBackend",
+        "Selected local transcription backend is not available in this build.",
+    ))
+}
+
+fn transcription_backend_available(value: &str) -> bool {
+    match value {
+        "cpu" => true,
+        "vulkan" => cfg!(feature = "whisper-vulkan"),
+        "cuda" => cfg!(feature = "whisper-cuda"),
+        _ => false,
+    }
 }
 
 fn validate_one_of(

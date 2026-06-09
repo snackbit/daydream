@@ -41,6 +41,7 @@ const defaultAiSettings = {
     periodicFullFrameIntervalMs: 300_000,
   },
   transcription: {
+    localBackend: 'cpu',
     localModelId: 'small',
     provider: 'local-whisper-cpp',
     remoteApiKeyRef: null,

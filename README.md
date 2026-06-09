@@ -134,6 +134,9 @@ Prerequisites:
   `libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pulseaudio`.
   Fedora/RPM-family development hosts need:
   `gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly`.
+- CMake and libclang for the vendored `whisper.cpp` C API build and bindgen.
+  Debian/Ubuntu development hosts need `cmake clang libclang-dev`.
+  Fedora/RPM-family development hosts need `cmake clang-devel`.
 
 Install dependencies:
 

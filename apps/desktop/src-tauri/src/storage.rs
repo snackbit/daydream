@@ -32,7 +32,7 @@ pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use notifications::{
     acknowledge_notifications, delete_all_notifications, delete_notifications,
     delete_notifications_older_than, dismiss_notification, get_notification, list_notifications,
-    save_notification, NotificationRow, SaveNotificationInput,
+    save_notification, save_unseen_notification, NotificationRow, SaveNotificationInput,
 };
 pub use portal_tokens::{
     delete_portal_restore_token, get_portal_restore_token, mark_portal_restore_token_used,

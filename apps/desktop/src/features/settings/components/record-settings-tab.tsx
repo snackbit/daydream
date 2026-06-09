@@ -1,5 +1,4 @@
 import type { AppSettings, AppSettingsLimits } from '@daydream/shared';
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -9,11 +8,14 @@ import {
 } from '@/components/ui/card';
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldTitle,
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { formatFps } from '@/features/settings/settings-format';
 
 export type CadenceMode = 'fps' | 'seconds';
@@ -51,29 +53,43 @@ export function RecordSettingsTab({
       <CardContent>
         <FieldGroup>
           <Field>
-            <FieldLabel>Frame cadence</FieldLabel>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                aria-pressed={cadenceMode === 'seconds'}
-                data-variant={
-                  cadenceMode === 'seconds' ? 'secondary' : 'outline'
-                }
-                onClick={() => onChangeCadenceMode('seconds')}
-                type="button"
-                variant={cadenceMode === 'seconds' ? 'secondary' : 'outline'}
-              >
-                One frame every
-              </Button>
-              <Button
-                aria-pressed={cadenceMode === 'fps'}
-                data-variant={cadenceMode === 'fps' ? 'secondary' : 'outline'}
-                onClick={() => onChangeCadenceMode('fps')}
-                type="button"
-                variant={cadenceMode === 'fps' ? 'secondary' : 'outline'}
-              >
-                Frames per second
-              </Button>
-            </div>
+            <FieldLabel id="settings-frame-cadence-label">
+              Frame cadence
+            </FieldLabel>
+            <RadioGroup
+              aria-labelledby="settings-frame-cadence-label"
+              className="max-w-sm gap-2"
+              onValueChange={(value) =>
+                onChangeCadenceMode(value as CadenceMode)
+              }
+              value={cadenceMode}
+            >
+              <FieldLabel htmlFor="settings-frame-cadence-seconds">
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <FieldTitle>One frame every</FieldTitle>
+                    <FieldDescription>
+                      Enter the number of seconds between captured frames.
+                    </FieldDescription>
+                  </FieldContent>
+                  <RadioGroupItem
+                    id="settings-frame-cadence-seconds"
+                    value="seconds"
+                  />
+                </Field>
+              </FieldLabel>
+              <FieldLabel htmlFor="settings-frame-cadence-fps">
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <FieldTitle>Frames per second</FieldTitle>
+                    <FieldDescription>
+                      Enter the number of frames captured each second.
+                    </FieldDescription>
+                  </FieldContent>
+                  <RadioGroupItem id="settings-frame-cadence-fps" value="fps" />
+                </Field>
+              </FieldLabel>
+            </RadioGroup>
             <div className="flex max-w-sm items-center gap-2">
               <Input
                 aria-label={

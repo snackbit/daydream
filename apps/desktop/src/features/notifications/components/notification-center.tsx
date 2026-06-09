@@ -10,10 +10,19 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  isNotificationOngoing,
+  visibleNotificationActions,
+} from '../notification-lifecycle';
 import { useNotificationsStore } from '../notifications-store';
+import {
+  ModelDownloadNotificationProgress,
+  useAiModelProgressSubscription,
+} from './model-download-notification-progress';
 
 export function NotificationCenter() {
   const acknowledge = useNotificationsStore((state) => state.acknowledge);
+  const aiModels = useNotificationsStore((state) => state.aiModels);
   const error = useNotificationsStore((state) => state.error);
   const executeAction = useNotificationsStore((state) => state.executeAction);
   const load = useNotificationsStore((state) => state.load);
@@ -23,6 +32,8 @@ export function NotificationCenter() {
   const [popoverNotifications, setPopoverNotifications] = useState<
     Notification[]
   >([]);
+
+  useAiModelProgressSubscription();
 
   useEffect(() => {
     if (status === 'idle') {
@@ -131,39 +142,48 @@ export function NotificationCenter() {
                       <p className="text-muted-foreground mt-1 text-xs leading-5">
                         {notification.message}
                       </p>
+                      <ModelDownloadNotificationProgress
+                        models={aiModels}
+                        notification={notification}
+                      />
                     </div>
-                    <Button
-                      aria-label={`Dismiss ${notification.title}`}
-                      onClick={() => acknowledgeAndHide(notification.id)}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <X className="size-3.5" />
-                    </Button>
+                    {isNotificationOngoing(notification, aiModels) ? null : (
+                      <Button
+                        aria-label={`Dismiss ${notification.title}`}
+                        onClick={() => acknowledgeAndHide(notification.id)}
+                        size="icon"
+                        variant="ghost"
+                      >
+                        <X className="size-3.5" />
+                      </Button>
+                    )}
                   </div>
 
-                  {notification.actions.length > 0 ? (
+                  {visibleNotificationActions(notification, aiModels).length >
+                  0 ? (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {notification.actions.map((action) => (
-                        <Button
-                          key={action.id}
-                          onClick={() =>
-                            void executeAction(notification.id, action.id, {
-                              acknowledgeResult: true,
-                            })
-                          }
-                          size="sm"
-                          variant={
-                            action.style === 'destructive'
-                              ? 'destructive'
-                              : action.style === 'secondary'
-                                ? 'secondary'
-                                : 'outline'
-                          }
-                        >
-                          {action.label}
-                        </Button>
-                      ))}
+                      {visibleNotificationActions(notification, aiModels).map(
+                        (action) => (
+                          <Button
+                            key={action.id}
+                            onClick={() =>
+                              void executeAction(notification.id, action.id, {
+                                acknowledgeResult: true,
+                              })
+                            }
+                            size="sm"
+                            variant={
+                              action.style === 'destructive'
+                                ? 'destructive'
+                                : action.style === 'secondary'
+                                  ? 'secondary'
+                                  : 'outline'
+                            }
+                          >
+                            {action.label}
+                          </Button>
+                        ),
+                      )}
                     </div>
                   ) : null}
                 </article>

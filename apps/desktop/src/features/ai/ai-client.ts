@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   AiModelAssetList,
   AiProviderStatus,
+  CancelAiModelDownloadInput,
   DeleteAiModelInput,
   DeleteAiProviderSecretInput,
   DownloadAiModelInput,
@@ -15,6 +17,8 @@ import type {
   SelfTestAiModelInput,
 } from '@daydream/shared';
 
+export const aiModelsChangedEvent = 'ai-models-changed';
+
 export async function listAiModels(): Promise<AiModelAssetList> {
   return invoke<AiModelAssetList>('listAiModels');
 }
@@ -23,6 +27,12 @@ export async function downloadAiModel(
   input: DownloadAiModelInput,
 ): Promise<Notification> {
   return invoke<Notification>('downloadAiModel', { input });
+}
+
+export async function cancelAiModelDownload(
+  input: CancelAiModelDownloadInput,
+): Promise<Notification> {
+  return invoke<Notification>('cancelAiModelDownload', { input });
 }
 
 export async function deleteAiModel(
@@ -81,4 +91,12 @@ export async function retryProcessingJob(
   input: ProcessingJobActionInput,
 ): Promise<ProcessingJob> {
   return invoke<ProcessingJob>('retryProcessingJob', { input });
+}
+
+export async function listenToAiModelsChanged(
+  handler: (models: AiModelAssetList) => void,
+): Promise<() => void> {
+  return listen<AiModelAssetList>(aiModelsChangedEvent, (event) => {
+    handler(event.payload);
+  });
 }

@@ -19,6 +19,14 @@ const client = vi.hoisted(() => ({
   getNotifications: vi.fn(),
 }));
 
+const aiClient = vi.hoisted(() => ({
+  cancelAiModelDownload: vi.fn(),
+  downloadAiModel: vi.fn(),
+  listAiModels: vi.fn(),
+  listenToAiModelsChanged: vi.fn(),
+}));
+
+vi.mock('@/features/ai/ai-client', () => aiClient);
 vi.mock('../notifications-client', () => client);
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
@@ -75,6 +83,43 @@ const seenNotification = {
   id: 'notification-seen',
 } as const;
 
+const activeModel = {
+  checksum: null,
+  checksumAlgorithm: null,
+  createdAtMs: 1,
+  downloadedBytes: 10,
+  downloadStatus: 'downloading',
+  etag: null,
+  errorCode: null,
+  id: 'small',
+  label: 'Whisper small',
+  localPath: null,
+  provider: 'local-whisper-cpp',
+  selfTestStatus: 'not-run',
+  sizeBytes: 100,
+  sourceUrl: null,
+  totalBytes: 100,
+  updatedAtMs: 1,
+  verificationStatus: 'pending',
+} as const;
+
+const activeNotification = {
+  ...notification,
+  actions: [
+    {
+      handler: 'model-download-cancel',
+      id: 'cancel',
+      label: 'Cancel',
+      payload: {
+        modelId: 'small',
+      },
+      style: 'destructive',
+    },
+  ],
+  status: 'running',
+  title: 'Model download started',
+} as const;
+
 beforeEach(() => {
   vi.resetAllMocks();
   client.getNotifications.mockResolvedValue({
@@ -99,7 +144,12 @@ beforeEach(() => {
   client.dismissNotification.mockResolvedValue({
     notifications: [],
   });
+  aiClient.downloadAiModel.mockResolvedValue(notification);
+  aiClient.cancelAiModelDownload.mockResolvedValue(notification);
+  aiClient.listAiModels.mockResolvedValue({ models: [] });
+  aiClient.listenToAiModelsChanged.mockResolvedValue(() => undefined);
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [],
     status: 'idle',
@@ -138,8 +188,8 @@ test('NotificationCenter opens, runs an action, and dismisses notification', asy
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
   await waitFor(() =>
-    expect(client.executeNotificationAction).toHaveBeenCalledWith({
-      actionId: 'retry',
+    expect(aiClient.downloadAiModel).toHaveBeenCalledWith({
+      modelId: 'small',
       notificationId: 'notification-1',
     }),
   );
@@ -191,4 +241,62 @@ test('NotificationCenter shows older seen notification count when there is no ne
       'No new notifications. 1 older seen notification is in history.',
     ),
   ).toBeTruthy();
+});
+
+test('NotificationCenter keeps ongoing downloads unread and not dismissable', async () => {
+  client.getNotifications.mockResolvedValueOnce({
+    notifications: [activeNotification],
+  });
+  aiClient.listAiModels.mockResolvedValueOnce({ models: [activeModel] });
+  useNotificationsStore.setState({
+    aiModels: [activeModel],
+    error: null,
+    notifications: [],
+    status: 'idle',
+  });
+
+  render(<NotificationCenter />);
+
+  const trigger = await screen.findByRole('button', {
+    name: /notifications, 1 unread/i,
+  });
+  fireEvent.click(trigger);
+
+  expect(await screen.findByText('Model download started')).toBeTruthy();
+  expect(client.acknowledgeNotifications).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole('button', {
+      name: /dismiss model download started/i,
+    }),
+  ).toBeNull();
+});
+
+test('NotificationCenter keeps queued downloads cancellable before models load', async () => {
+  client.getNotifications.mockResolvedValueOnce({
+    notifications: [
+      {
+        ...activeNotification,
+        status: 'info',
+        title: 'Model download queued',
+      },
+    ],
+  });
+  aiClient.listAiModels.mockResolvedValueOnce({ models: [] });
+
+  render(<NotificationCenter />);
+
+  const trigger = await screen.findByRole('button', {
+    name: /notifications, 1 unread/i,
+  });
+  fireEvent.click(trigger);
+
+  expect(await screen.findByText('Model download queued')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  expect(client.acknowledgeNotifications).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole('button', {
+      name: /dismiss model download queued/i,
+    }),
+  ).toBeNull();
 });

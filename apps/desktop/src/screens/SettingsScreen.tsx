@@ -21,13 +21,14 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  cancelAiModelDownload,
   deleteAiModel,
   deleteAiProviderSecret,
   downloadAiModel,
   getAiProviderStatus,
+  listenToAiModelsChanged,
   listAiModels,
   saveAiProviderSecret,
-  selfTestAiModel,
 } from '@/features/ai/ai-client';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
@@ -155,6 +156,39 @@ export function SettingsScreen() {
 
     return () => window.clearTimeout(timeoutId);
   }, [refreshAiScaffolds, selectedAiModelId]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+
+    void listenToAiModelsChanged((modelList) => {
+      setAiModels(modelList.models);
+      void getAiProviderStatus()
+        .then(setAiProviderStatus)
+        .catch((error) => setAiActionError(screenErrorMessage(error)));
+    }).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+      } else {
+        unlisten = nextUnlisten;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleFocus() {
+      void refreshAiScaffolds();
+    }
+
+    window.addEventListener('focus', handleFocus);
+
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [refreshAiScaffolds]);
 
   function updateDraft(updater: (draft: AppSettings) => AppSettings) {
     if (!draft) {
@@ -569,6 +603,9 @@ export function SettingsScreen() {
               draft={draft}
               limits={settingsState.limits}
               models={aiModels}
+              onCancelModelDownload={(modelId) =>
+                void runAiModelAction(() => cancelAiModelDownload({ modelId }))
+              }
               onChangeTranscriptionKey={setTranscriptionKeyDraft}
               onChangeVisionKey={setVisionKeyDraft}
               onDeleteModel={(modelId) =>
@@ -576,9 +613,6 @@ export function SettingsScreen() {
               }
               onDownloadModel={(modelId) =>
                 void runAiModelAction(() => downloadAiModel({ modelId }))
-              }
-              onSelfTestModel={(modelId) =>
-                void runAiModelAction(() => selfTestAiModel({ modelId }))
               }
               onUpdateDraft={updateDraft}
               providerStatus={aiProviderStatus}

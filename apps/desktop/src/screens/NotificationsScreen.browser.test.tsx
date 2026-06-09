@@ -1,4 +1,4 @@
-import type { Notification } from '@daydream/shared';
+import type { AiModelAsset, Notification } from '@daydream/shared';
 import {
   cleanup,
   fireEvent,
@@ -19,6 +19,14 @@ const client = vi.hoisted(() => ({
   getNotifications: vi.fn(),
 }));
 
+const aiClient = vi.hoisted(() => ({
+  cancelAiModelDownload: vi.fn(),
+  downloadAiModel: vi.fn(),
+  listAiModels: vi.fn(),
+  listenToAiModelsChanged: vi.fn(),
+}));
+
+vi.mock('@/features/ai/ai-client', () => aiClient);
 vi.mock('@/features/notifications/notifications-client', () => client);
 
 const todayMs = new Date('2026-06-09T10:00:00').getTime();
@@ -60,6 +68,48 @@ const seenNotification: Notification = {
   updatedAtMs: yesterdayMs,
 };
 
+const activeModel: AiModelAsset = {
+  checksum: null,
+  checksumAlgorithm: null,
+  createdAtMs: todayMs,
+  downloadedBytes: 10,
+  downloadStatus: 'downloading',
+  etag: null,
+  errorCode: null,
+  id: 'tiny',
+  label: 'Whisper tiny',
+  localPath: null,
+  provider: 'local-whisper-cpp',
+  selfTestStatus: 'not-run',
+  sizeBytes: 100,
+  sourceUrl: null,
+  totalBytes: 100,
+  updatedAtMs: todayMs,
+  verificationStatus: 'pending',
+};
+
+const activeNotification: Notification = {
+  ...seenNotification,
+  actions: [
+    {
+      handler: 'model-download-cancel',
+      id: 'cancel',
+      label: 'Cancel',
+      payload: {
+        modelId: 'tiny',
+      },
+      style: 'destructive',
+    },
+  ],
+  createdAtMs: todayMs,
+  dismissedAtMs: null,
+  id: 'notification-active',
+  message: 'Whisper tiny is downloading.',
+  status: 'running',
+  title: 'Model download started',
+  updatedAtMs: todayMs,
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-06-09T12:00:00'));
@@ -68,7 +118,12 @@ beforeEach(() => {
   client.deleteNotifications.mockResolvedValue({
     notifications: [unseenNotification],
   });
+  aiClient.downloadAiModel.mockResolvedValue(seenNotification);
+  aiClient.cancelAiModelDownload.mockResolvedValue(seenNotification);
+  aiClient.listAiModels.mockResolvedValue({ models: [] });
+  aiClient.listenToAiModelsChanged.mockResolvedValue(() => undefined);
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [],
     status: 'idle',
@@ -82,6 +137,7 @@ afterEach(() => {
 
 test('NotificationsScreen groups all notifications by local date', () => {
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [seenNotification, unseenNotification],
     status: 'ready',
@@ -100,6 +156,7 @@ test('NotificationsScreen groups all notifications by local date', () => {
 test('NotificationsScreen permanently dismisses one or all notifications', async () => {
   vi.useRealTimers();
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [seenNotification, unseenNotification],
     status: 'ready',
@@ -123,38 +180,37 @@ test('NotificationsScreen permanently dismisses one or all notifications', async
     screen.getByRole('button', { name: 'Dismiss all notifications' }),
   );
 
-  await waitFor(() => expect(client.deleteAllNotifications).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(client.deleteNotifications).toHaveBeenLastCalledWith({
+      notificationIds: ['notification-unseen'],
+    }),
+  );
 });
 
 test('NotificationsScreen acknowledges retry results while the history is open', async () => {
   vi.useRealTimers();
-  client.executeNotificationAction.mockResolvedValue({
-    notifications: [
-      seenNotification,
-      {
-        ...seenNotification,
-        createdAtMs: todayMs,
-        dismissedAtMs: null,
-        id: 'notification-retry-result',
-        title: 'Retry result',
-        updatedAtMs: todayMs,
-      },
-    ],
+  const retryResult = {
+    ...seenNotification,
+    createdAtMs: todayMs,
+    dismissedAtMs: null,
+    id: 'notification-retry-result',
+    title: 'Retry result',
+    updatedAtMs: todayMs,
+  };
+  client.getNotifications.mockResolvedValue({
+    notifications: [seenNotification, retryResult],
   });
   client.acknowledgeNotifications.mockResolvedValue({
     notifications: [
       seenNotification,
       {
-        ...seenNotification,
-        createdAtMs: todayMs,
+        ...retryResult,
         dismissedAtMs: todayMs + 1_000,
-        id: 'notification-retry-result',
-        title: 'Retry result',
-        updatedAtMs: todayMs,
       },
     ],
   });
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [seenNotification],
     status: 'ready',
@@ -164,6 +220,12 @@ test('NotificationsScreen acknowledges retry results while the history is open',
 
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
+  await waitFor(() =>
+    expect(aiClient.downloadAiModel).toHaveBeenCalledWith({
+      modelId: 'tiny',
+      notificationId: 'notification-seen',
+    }),
+  );
   await waitFor(() =>
     expect(client.acknowledgeNotifications).toHaveBeenCalledWith({
       notificationIds: ['notification-retry-result'],
@@ -175,6 +237,7 @@ test('NotificationsScreen acknowledges retry results while the history is open',
 
 test('NotificationsScreen shows an empty history state', () => {
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [],
     status: 'ready',
@@ -183,4 +246,28 @@ test('NotificationsScreen shows an empty history state', () => {
   render(<NotificationsScreen />);
 
   expect(screen.getByText('No notifications yet.')).toBeTruthy();
+});
+
+test('NotificationsScreen keeps ongoing downloads unread and undeletable', async () => {
+  vi.useRealTimers();
+  useNotificationsStore.setState({
+    aiModels: [activeModel],
+    error: null,
+    notifications: [activeNotification],
+    status: 'ready',
+  });
+
+  render(<NotificationsScreen />);
+
+  expect(screen.getByText('Model download started')).toBeTruthy();
+  expect(screen.getByText('New')).toBeTruthy();
+  expect(
+    screen.queryByRole('button', {
+      name: /permanently dismiss model download started/i,
+    }),
+  ).toBeNull();
+  const dismissAllButton = screen.getByRole('button', {
+    name: 'Dismiss all notifications',
+  }) as HTMLButtonElement;
+  expect(dismissAllButton.disabled).toBe(true);
 });

@@ -6,11 +6,21 @@ export type AiOcrEngine = 'tesseract';
 
 export type AiModelDownloadStatus =
   | 'available'
+  | 'cancelled'
   | 'downloading'
   | 'failed'
-  | 'missing';
+  | 'missing'
+  | 'queued';
 
 export type AiModelSelfTestStatus = 'failed' | 'not-run' | 'passed' | 'running';
+
+export type AiModelVerificationStatus =
+  | 'failed'
+  | 'passed'
+  | 'pending'
+  | 'unknown';
+
+export type AiTranscriptionBackend = 'cpu' | 'cuda' | 'vulkan';
 
 export type ProcessingJobKind =
   | 'activity'
@@ -64,6 +74,7 @@ export type NotificationStatus =
 export type NotificationActionStyle = 'default' | 'destructive' | 'secondary';
 
 export type NotificationActionHandler =
+  | 'model-download-cancel'
   | 'model-download-retry'
   | 'processing-job-cancel'
   | 'processing-job-pause'
@@ -89,6 +100,7 @@ export interface AiSettings {
 }
 
 export interface AiTranscriptionProviderSettings {
+  localBackend: AiTranscriptionBackend;
   localModelId: string;
   provider: AiProviderKind;
   remoteApiKeyRef: string | null;
@@ -153,21 +165,49 @@ export interface AiActivityLimits {
 }
 
 export interface AiModelAsset {
+  checksum: string | null;
+  checksumAlgorithm: string | null;
   createdAtMs: number;
+  downloadedBytes: number;
   downloadStatus: AiModelDownloadStatus;
   etag: string | null;
+  errorCode: string | null;
   id: string;
   label: string;
   localPath: string | null;
   provider: AiProviderKind;
   selfTestStatus: AiModelSelfTestStatus;
-  sha256: string | null;
   sizeBytes: number | null;
+  sourceUrl: string | null;
+  totalBytes: number | null;
   updatedAtMs: number;
+  verificationStatus: AiModelVerificationStatus;
 }
 
 export interface AiModelAssetList {
   models: AiModelAsset[];
+}
+
+export interface AiBackendStatus {
+  available: boolean;
+  id: AiTranscriptionBackend;
+  reason: string | null;
+}
+
+export interface AiLocalTranscriptionStatus {
+  availableBackends: AiBackendStatus[];
+  checksumStatus: AiModelVerificationStatus;
+  localModelId: string;
+  modelDownloadStatus: AiModelDownloadStatus;
+  modelPath: string | null;
+  selectedBackend: AiTranscriptionBackend;
+  selfTestStatus: AiModelSelfTestStatus;
+}
+
+export interface AiProviderStatus {
+  localTranscription: AiLocalTranscriptionStatus;
+  remoteTranscription: string;
+  vision: string;
 }
 
 export interface ProcessingJob {
@@ -253,6 +293,12 @@ export interface ExecuteNotificationActionInput {
 
 export interface DownloadAiModelInput {
   modelId: string;
+  notificationId?: string;
+}
+
+export interface CancelAiModelDownloadInput {
+  modelId: string;
+  notificationId?: string;
 }
 
 export interface DeleteAiModelInput {
@@ -274,12 +320,6 @@ export interface DeleteAiProviderSecretInput {
 
 export interface SaveAiProviderSecretResult {
   secretRef: string;
-}
-
-export interface AiProviderStatus {
-  localTranscription: 'available' | 'missing';
-  remoteTranscription: 'configured' | 'missing-key' | 'not-configured';
-  vision: 'configured' | 'disabled' | 'missing-key';
 }
 
 export interface RecordingAiResultInput {

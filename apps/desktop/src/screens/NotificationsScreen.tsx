@@ -3,6 +3,15 @@ import type { Notification } from '@daydream/shared';
 import { Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  ModelDownloadNotificationProgress,
+  useAiModelProgressSubscription,
+} from '@/features/notifications/components/model-download-notification-progress';
+import {
+  dismissableNotifications,
+  isNotificationOngoing,
+  visibleNotificationActions,
+} from '@/features/notifications/notification-lifecycle';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 
 interface NotificationGroup {
@@ -23,6 +32,7 @@ const timeFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 export function NotificationsScreen() {
+  const aiModels = useNotificationsStore((state) => state.aiModels);
   const deleteAll = useNotificationsStore((state) => state.deleteAll);
   const deleteNotifications = useNotificationsStore(
     (state) => state.deleteNotifications,
@@ -34,6 +44,8 @@ export function NotificationsScreen() {
   const status = useNotificationsStore((state) => state.status);
   const [nowMs] = useState(() => Date.now());
 
+  useAiModelProgressSubscription();
+
   useEffect(() => {
     if (status === 'idle') {
       void load();
@@ -44,6 +56,10 @@ export function NotificationsScreen() {
     () => groupNotificationsByDate(notifications, nowMs),
     [notifications, nowMs],
   );
+  const deletableCount = dismissableNotifications(
+    notifications,
+    aiModels,
+  ).length;
 
   return (
     <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
@@ -60,7 +76,7 @@ export function NotificationsScreen() {
 
         <Button
           className="gap-2"
-          disabled={notifications.length === 0 || status === 'loading'}
+          disabled={deletableCount === 0 || status === 'loading'}
           onClick={() => void deleteAll()}
           variant="destructive"
         >
@@ -117,6 +133,10 @@ export function NotificationsScreen() {
                       <p className="text-muted-foreground mt-2 text-sm leading-6">
                         {notification.message}
                       </p>
+                      <ModelDownloadNotificationProgress
+                        models={aiModels}
+                        notification={notification}
+                      />
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
@@ -128,16 +148,18 @@ export function NotificationsScreen() {
                       >
                         {timeFormatter.format(notification.createdAtMs)}
                       </time>
-                      <Button
-                        aria-label={`Permanently dismiss ${notification.title}`}
-                        onClick={() =>
-                          void deleteNotifications([notification.id])
-                        }
-                        size="icon-sm"
-                        variant="ghost"
-                      >
-                        <Trash2 className="size-3" />
-                      </Button>
+                      {isNotificationOngoing(notification, aiModels) ? null : (
+                        <Button
+                          aria-label={`Permanently dismiss ${notification.title}`}
+                          onClick={() =>
+                            void deleteNotifications([notification.id])
+                          }
+                          size="icon-sm"
+                          variant="ghost"
+                        >
+                          <Trash2 className="size-3" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 
@@ -147,28 +169,31 @@ export function NotificationsScreen() {
                     <span>{notification.topic}</span>
                   </div>
 
-                  {notification.actions.length > 0 ? (
+                  {visibleNotificationActions(notification, aiModels).length >
+                  0 ? (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {notification.actions.map((action) => (
-                        <Button
-                          key={action.id}
-                          onClick={() =>
-                            void executeAction(notification.id, action.id, {
-                              acknowledgeResult: true,
-                            })
-                          }
-                          size="sm"
-                          variant={
-                            action.style === 'destructive'
-                              ? 'destructive'
-                              : action.style === 'secondary'
-                                ? 'secondary'
-                                : 'outline'
-                          }
-                        >
-                          {action.label}
-                        </Button>
-                      ))}
+                      {visibleNotificationActions(notification, aiModels).map(
+                        (action) => (
+                          <Button
+                            key={action.id}
+                            onClick={() =>
+                              void executeAction(notification.id, action.id, {
+                                acknowledgeResult: true,
+                              })
+                            }
+                            size="sm"
+                            variant={
+                              action.style === 'destructive'
+                                ? 'destructive'
+                                : action.style === 'secondary'
+                                  ? 'secondary'
+                                  : 'outline'
+                            }
+                          >
+                            {action.label}
+                          </Button>
+                        ),
+                      )}
                     </div>
                   ) : null}
                 </article>

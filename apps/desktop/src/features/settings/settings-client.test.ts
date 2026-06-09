@@ -48,6 +48,7 @@ test('settings client uses typed camelCase command names', async () => {
           periodicFullFrameIntervalMs: 300_000,
         },
         transcription: {
+          localBackend: 'cpu',
           localModelId: 'small',
           provider: 'local-whisper-cpp',
           remoteApiKeyRef: null,

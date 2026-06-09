@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const localConfigPath = new URL('../tauri-dev.local', import.meta.url);
 
 function createLinuxWaylandEnv() {
   if (
@@ -32,7 +34,32 @@ function resolveFfmpegEnv() {
   };
 }
 
-const child = spawn('yarn', ['tauri', 'dev'], {
+function normalizeFeatureList(value) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*/, ''))
+    .join(',')
+    .split(/[,\s]+/)
+    .map((feature) => feature.trim())
+    .filter(Boolean);
+}
+
+function resolveTauriArgs() {
+  const args = ['tauri', 'dev'];
+  const featureSource =
+    process.env.DAYDREAM_TAURI_FEATURES ??
+    (existsSync(localConfigPath) ? readFileSync(localConfigPath, 'utf8') : '');
+  const features = normalizeFeatureList(featureSource);
+
+  if (features.length > 0) {
+    args.push('--features', ...features);
+    console.warn(`Tauri dev cargo features: ${features.join(', ')}`);
+  }
+
+  return args;
+}
+
+const child = spawn('yarn', resolveTauriArgs(), {
   env: {
     ...process.env,
     ...resolveFfmpegEnv(),

@@ -156,6 +156,76 @@
   - intercept dirty Settings navigation with Save, Discard changes, and Stay;
     if Save needs storage cleanup confirmation, navigation remains blocked
     until cleanup is confirmed and save succeeds
+- During Gate C planning, user chose:
+  - download local Whisper GGML models from pinned official Hugging Face
+    `ggerganov/whisper.cpp` files only
+  - expose only full multilingual `tiny`, `base`, `small`, `medium`,
+    `large-v3-turbo`, and `large-v3` model choices; do not expose quantized or
+    English-only variants in Gate C
+  - keep multilingual `small` as the default selected local transcription model
+  - implement real in-app background downloads instead of blocking commands or
+    doc-only scaffolds
+  - allow one active model download at a time and queue additional requested
+    downloads
+  - keep resumable `.part` files and use HTTP range plus ETag/length checks
+    when retrying interrupted downloads
+  - add explicit model-download cancellation from notifications and Settings
+  - show model download progress in both AI/LLM Settings rows and persistent
+    notifications
+  - emit a Tauri `ai-models-changed` event carrying the full model list after
+    every model state or progress change, and also refetch on Settings
+    open/focus to recover missed events
+  - exclude downloaded model files from Daydream recording retention and storage
+    size cleanup
+  - delete model files immediately when the user deletes a model, then reset
+    the model row to missing while preserving catalog metadata
+  - use explicit checksum algorithm plus checksum value fields instead of the
+    existing misleading `sha256` field, because the official Hugging Face model
+    card publishes SHA-1 values
+  - implement download verification with pinned SHA-1 values from the official
+    model card
+  - show safe-specific failure text: URL host, HTTP status where available, and
+    validation/error codes, but not raw temporary paths
+  - do not add manual model import, arbitrary model URLs, developer URL
+    overrides, or user-facing mirror settings in Gate C
+  - vendor `whisper.cpp` release `v1.8.4`
+  - build the vendored C/C++ code through Cargo-driven CMake
+  - use build-time bindgen for C API bindings
+  - treat missing CMake or libclang as hard developer/CI build failures and
+    document those prerequisites in both the milestone artifacts and README
+  - use load-only model self-test in Gate C: load through the C API, immediately
+    unload, and do not transcribe audio until Gate D
+  - run the load-only self-test automatically after a successful verified model
+    download instead of exposing a dedicated Settings smoke-test button
+  - update the milestone body so Gate C self-test no longer promises a
+    transcription result
+  - use multilingual `tiny` for the practical Gate C live validation download
+    and load-only self-test; `small` remains the default selected model
+  - unload models immediately after self-test instead of keeping them warm
+  - add user-facing local transcription backend choices for CPU, Vulkan, and
+    CUDA; unavailable GPU options are visible but disabled and cannot be saved
+  - keep the tracked Cargo/package defaults CPU-only so CI and fresh developer
+    builds do not require GPU SDKs
+  - allow developer checkouts to opt into GPU builds locally through ignored
+    `apps/desktop/tauri-dev.local` or `DAYDREAM_TAURI_FEATURES`; this checkout
+    enables `whisper-vulkan` locally and leaves `whisper-cuda` commented until
+    the CUDA toolkit is installed
+  - default the saved local transcription backend setting to CPU
+  - for Linux Gate C, consider CPU, Vulkan, and CUDA the supported backend
+    choices for `whisper.cpp`; other upstream platform-specific backends remain
+    out of scope for this gate
+  - link `libggml-vulkan.a` and `libvulkan` only when the `whisper-vulkan`
+    feature is enabled; CPU builds must not pull Vulkan link requirements
+  - reject saving unavailable GPU backends and coerce any existing invalid saved
+    backend values back to CPU on load
+  - expand AI provider status into structured selected backend, available
+    backend, unavailable reason, selected model, checksum, and self-test state
+    data
+  - use `reqwest` async streaming for model downloads
+  - persist download progress and error detail by extending `ai_model_assets`
+    rather than adding a separate download-attempt table
+  - do not run automated tests against Hugging Face or real Whisper model files;
+    tests should mock HTTP and C API behavior
 
 ## Repository Evidence
 
@@ -191,12 +261,37 @@
   near the disabled search button.
 - Existing Rust dependencies do not yet include AI, OCR, model, HTTP server,
   or activity-monitoring crates.
+- Existing AI model command scaffolds already provide `listAiModels`,
+  `downloadAiModel`, `deleteAiModel`, `selfTestAiModel`, and
+  `getAiProviderStatus`, but Gate C must replace the unavailable/failed
+  placeholders with real model cache behavior.
+- Existing frontend notification event precedent uses kebab-case event names
+  such as `recorder-status-changed`; Gate C should follow that pattern with
+  `ai-models-changed`.
 
 ## External Evidence
 
 - `whisper.cpp` provides local Whisper inference, model download tooling,
   quantization, CPU and GPU-oriented backends, C API surface, and server
   examples.
+- The official Hugging Face `ggerganov/whisper.cpp` model card lists the full
+  multilingual models needed by Gate C and publishes SHA-1 values:
+  - `tiny`: 75 MiB,
+    `bd577a113a864445d4c299885e0cb97d4ba92b5f`
+  - `base`: 142 MiB,
+    `465707469ff3a37a2b9b8d8f89f2f99de7299dac`
+  - `small`: 466 MiB,
+    `55356645c2b361a969dfd0ef2c5a50d530afd8d5`
+  - `medium`: 1.5 GiB,
+    `fd9727b6e1217c2f614f9b698455c4ffd82463b4`
+  - `large-v3-turbo`: 1.5 GiB,
+    `4af2b29d7ec73d781377bfd1758ca957a807e941`
+  - `large-v3`: 2.9 GiB,
+    `ad82bf6a9043ceed055076d0fd39f5f186ff8062`
+- GitHub release metadata identified `whisper.cpp` `v1.8.4` as the pinned Gate C
+  release target on June 9, 2026.
+- `whisper.cpp` supports more backends than Gate C exposes. The Gate C Linux
+  settings surface is intentionally limited to CPU, Vulkan, and CUDA.
 - `whisper.cpp` server documentation describes a simple HTTP server and notes
   risks around file upload handling and FFmpeg use, supporting the M2 decision
   for loopback-only binding and token enforcement.
@@ -227,8 +322,24 @@
 
 - `whisper.cpp` C API integration may be harder to compile and package than a
   process wrapper.
-- GPU/offload support may be unreliable on the current machine until NVIDIA
-  driver/runtime issues are resolved.
+- Build-time bindgen makes libclang a hard development and CI prerequisite for
+  Gate C.
+- Cargo-driven CMake makes CMake a hard development and CI prerequisite for
+  Gate C.
+- GPU/offload support remains build-environment-sensitive. Unsandboxed
+  validation on 2026-06-09 showed the host has a working RTX 4090 GPU stack:
+  `nvidia-smi` succeeded, `/dev/nvidia*` nodes were visible, loaded NVIDIA
+  modules were present, and `vulkaninfo --summary` detected `NVIDIA GeForce RTX
+  4090`. Earlier failures were caused by sandbox device isolation.
+- Vulkan may be available on systems where CUDA is unavailable; Settings must
+  disable unavailable GPU backends rather than saving them.
+- Vulkan developer packages on Arch/CachyOS: `vulkan-headers`,
+  `vulkan-icd-loader`, `vulkan-tools`, `shaderc`, `glslang`, and
+  `spirv-tools`. CUDA builds additionally require `cuda` plus the NVIDIA runtime
+  packages.
+- Large model downloads can consume significant bandwidth and disk space. Gate C
+  does not ask for confirmation before download, so Settings rows must show
+  size and source clearly before the Download action.
 - Tesseract packaging and runtime discovery may be platform-specific.
 - Remote provider API compatibility may vary across OpenAI-compatible vendors.
 - Chunk-level retry semantics need careful idempotency to avoid duplicate
@@ -252,6 +363,13 @@
 - If model download sources lack checksum or etag metadata, record the weaker
   verification behavior in provider status and the scratchpad before treating
   the download path as complete.
+- If the official model source changes a pinned checksum, fail verification and
+  show a safe-specific error instead of accepting the file.
+- If a requested GPU backend is unavailable at save time, reject the save or
+  coerce stale stored values to CPU rather than preserving an unusable backend.
+- If build-time bindgen or CMake integration blocks normal Rust builds, stop and
+  record the blocker before switching to checked-in bindings, feature gating, or
+  a binary wrapper.
 - If keyboard/mouse activity capture requires privileged or hidden monitoring,
   stop and record the native permission requirement before enabling it.
 - If schema work changes redaction invalidation semantics, update the milestone

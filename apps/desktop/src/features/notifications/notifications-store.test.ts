@@ -1,4 +1,4 @@
-import type { Notification } from '@daydream/shared';
+import type { AiModelAsset, Notification } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { useNotificationsStore } from './notifications-store';
 
@@ -11,6 +11,13 @@ const client = vi.hoisted(() => ({
   getNotifications: vi.fn(),
 }));
 
+const aiClient = vi.hoisted(() => ({
+  cancelAiModelDownload: vi.fn(),
+  downloadAiModel: vi.fn(),
+  listAiModels: vi.fn(),
+}));
+
+vi.mock('@/features/ai/ai-client', () => aiClient);
 vi.mock('./notifications-client', () => client);
 
 const notification: Notification = {
@@ -36,6 +43,43 @@ const notification: Notification = {
   updatedAtMs: 1,
 };
 
+const activeModel: AiModelAsset = {
+  checksum: null,
+  checksumAlgorithm: null,
+  createdAtMs: 1,
+  downloadedBytes: 10,
+  downloadStatus: 'downloading',
+  etag: null,
+  errorCode: null,
+  id: 'small',
+  label: 'Whisper small',
+  localPath: null,
+  provider: 'local-whisper-cpp',
+  selfTestStatus: 'not-run',
+  sizeBytes: 100,
+  sourceUrl: null,
+  totalBytes: 100,
+  updatedAtMs: 1,
+  verificationStatus: 'pending',
+};
+
+const ongoingNotification: Notification = {
+  ...notification,
+  actions: [
+    {
+      handler: 'model-download-cancel',
+      id: 'cancel',
+      label: 'Cancel',
+      payload: {
+        modelId: 'small',
+      },
+      style: 'destructive',
+    },
+  ],
+  status: 'running',
+  title: 'Model download started',
+};
+
 beforeEach(() => {
   vi.resetAllMocks();
   client.getNotifications.mockResolvedValue({ notifications: [notification] });
@@ -58,7 +102,11 @@ beforeEach(() => {
       },
     ],
   });
+  aiClient.downloadAiModel.mockResolvedValue(notification);
+  aiClient.cancelAiModelDownload.mockResolvedValue(notification);
+  aiClient.listAiModels.mockResolvedValue({ models: [] });
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [],
     status: 'idle',
@@ -76,18 +124,19 @@ test('notifications store loads and refreshes after actions', async () => {
     .getState()
     .executeAction('notification-1', 'retry');
 
-  expect(client.executeNotificationAction).toHaveBeenCalledWith({
-    actionId: 'retry',
+  expect(aiClient.downloadAiModel).toHaveBeenCalledWith({
+    modelId: 'small',
     notificationId: 'notification-1',
   });
+  expect(client.getNotifications).toHaveBeenCalledTimes(2);
   expect(useNotificationsStore.getState().notifications[0]?.id).toBe(
-    'notification-2',
+    'notification-1',
   );
 
-  await useNotificationsStore.getState().acknowledge(['notification-2']);
+  await useNotificationsStore.getState().acknowledge(['notification-1']);
 
   expect(client.acknowledgeNotifications).toHaveBeenCalledWith({
-    notificationIds: ['notification-2'],
+    notificationIds: ['notification-1'],
   });
   expect(useNotificationsStore.getState().notifications[0]?.dismissedAtMs).toBe(
     2,
@@ -114,6 +163,7 @@ test('notifications store permanently deletes notifications', async () => {
   expect(useNotificationsStore.getState().notifications).toEqual([]);
 
   useNotificationsStore.setState({
+    aiModels: [],
     error: null,
     notifications: [notification],
     status: 'ready',
@@ -121,11 +171,73 @@ test('notifications store permanently deletes notifications', async () => {
 
   await useNotificationsStore.getState().deleteAll();
 
-  expect(client.deleteAllNotifications).toHaveBeenCalled();
+  expect(client.deleteNotifications).toHaveBeenLastCalledWith({
+    notificationIds: ['notification-1'],
+  });
   expect(useNotificationsStore.getState().notifications).toEqual([]);
 });
 
+test('notifications store keeps ongoing work unread and undeletable', async () => {
+  useNotificationsStore.setState({
+    aiModels: [activeModel],
+    error: null,
+    notifications: [ongoingNotification],
+    status: 'ready',
+  });
+
+  await useNotificationsStore.getState().acknowledge(['notification-1']);
+  await useNotificationsStore.getState().dismiss('notification-1');
+  await useNotificationsStore
+    .getState()
+    .deleteNotifications(['notification-1']);
+  await useNotificationsStore.getState().deleteAll();
+
+  expect(client.acknowledgeNotifications).not.toHaveBeenCalled();
+  expect(client.dismissNotification).not.toHaveBeenCalled();
+  expect(client.deleteNotifications).not.toHaveBeenCalled();
+});
+
+test('notifications store protects queued downloads before models load', async () => {
+  useNotificationsStore.setState({
+    aiModels: [],
+    error: null,
+    notifications: [
+      {
+        ...ongoingNotification,
+        status: 'info',
+        title: 'Model download queued',
+      },
+    ],
+    status: 'ready',
+  });
+
+  await useNotificationsStore.getState().acknowledge(['notification-1']);
+  await useNotificationsStore.getState().dismiss('notification-1');
+  await useNotificationsStore
+    .getState()
+    .deleteNotifications(['notification-1']);
+  await useNotificationsStore.getState().deleteAll();
+
+  expect(client.acknowledgeNotifications).not.toHaveBeenCalled();
+  expect(client.dismissNotification).not.toHaveBeenCalled();
+  expect(client.deleteNotifications).not.toHaveBeenCalled();
+});
+
 test('notifications store can acknowledge action results shown inside notification UI', async () => {
+  const jobNotification: Notification = {
+    ...notification,
+    actions: [
+      {
+        handler: 'processing-job-retry',
+        id: 'retry',
+        label: 'Retry',
+        payload: {
+          jobId: 'job-1',
+        },
+        style: 'secondary',
+      },
+    ],
+  };
   client.executeNotificationAction.mockResolvedValueOnce({
     notifications: [
       {
@@ -153,6 +265,11 @@ test('notifications store can acknowledge action results shown inside notificati
         id: 'notification-retry-result',
       },
     ],
+  });
+  useNotificationsStore.setState({
+    error: null,
+    notifications: [jobNotification],
+    status: 'ready',
   });
 
   await useNotificationsStore

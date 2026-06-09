@@ -13,10 +13,12 @@ import { useSettingsStore } from '@/features/settings/settings-store';
 import { SettingsScreen } from './SettingsScreen';
 
 const aiClient = vi.hoisted(() => ({
+  cancelAiModelDownload: vi.fn(),
   deleteAiModel: vi.fn(),
   deleteAiProviderSecret: vi.fn(),
   downloadAiModel: vi.fn(),
   getAiProviderStatus: vi.fn(),
+  listenToAiModelsChanged: vi.fn(),
   listAiModels: vi.fn(),
   saveAiProviderSecret: vi.fn(),
   selfTestAiModel: vi.fn(),
@@ -86,6 +88,7 @@ const defaultAiSettings = {
     periodicFullFrameIntervalMs: 300_000,
   },
   transcription: {
+    localBackend: 'cpu',
     localModelId: 'small',
     provider: 'local-whisper-cpp',
     remoteApiKeyRef: null,
@@ -168,17 +171,24 @@ const scene = {
 
 const aiModels = [
   {
+    checksum: '55356645c2b361a969dfd0ef2c5a50d530afd8d5',
+    checksumAlgorithm: 'sha1',
     createdAtMs: 0,
+    downloadedBytes: 0,
     downloadStatus: 'missing',
     etag: null,
+    errorCode: null,
     id: 'small',
     label: 'Whisper small',
     localPath: null,
     provider: 'local-whisper-cpp',
     selfTestStatus: 'not-run',
-    sha256: null,
     sizeBytes: null,
+    sourceUrl:
+      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
+    totalBytes: null,
     updatedAtMs: 0,
+    verificationStatus: 'unknown',
   },
 ] as const;
 
@@ -221,8 +231,29 @@ beforeEach(() => {
   settingsClient.resetAppSettings.mockResolvedValue(defaultSettingsState);
   recorderClient.getRecorderScene.mockResolvedValue(scene);
   aiClient.listAiModels.mockResolvedValue({ models: aiModels });
+  aiClient.listenToAiModelsChanged.mockResolvedValue(vi.fn());
   aiClient.getAiProviderStatus.mockResolvedValue({
-    localTranscription: 'missing',
+    localTranscription: {
+      availableBackends: [
+        { available: true, id: 'cpu', reason: null },
+        {
+          available: false,
+          id: 'vulkan',
+          reason: 'Vulkan backend is not compiled in this build.',
+        },
+        {
+          available: false,
+          id: 'cuda',
+          reason: 'CUDA backend is not compiled in this build.',
+        },
+      ],
+      checksumStatus: 'unknown',
+      localModelId: 'small',
+      modelDownloadStatus: 'missing',
+      modelPath: null,
+      selectedBackend: 'cpu',
+      selfTestStatus: 'not-run',
+    },
     remoteTranscription: 'not-configured',
     vision: 'disabled',
   });
@@ -261,10 +292,26 @@ test('SettingsScreen edits record and storage settings then resets them', async 
   expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
   expect(screen.getByText('2560 x 1440')).toBeTruthy();
   expect(screen.getByText('712.39 MiB')).toBeTruthy();
+  expect(
+    screen
+      .getByRole('radio', { name: /one frame every/i })
+      .getAttribute('aria-checked'),
+  ).toBe('true');
 
-  fireEvent.change(screen.getByLabelText('Seconds per frame'), {
-    target: { value: '10' },
-  });
+  fireEvent.click(screen.getByText('Frames per second'));
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('radio', { name: /frames per second/i })
+        .getAttribute('aria-checked'),
+    ).toBe('true'),
+  );
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Frames per second' }),
+    {
+      target: { value: '2' },
+    },
+  );
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });
@@ -288,7 +335,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
       settings: {
         ai: defaultAiSettings,
         record: {
-          fps: 0.1,
+          fps: 2,
           videoBitrateKbps: 2_000,
         },
         storage: {
@@ -303,7 +350,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
       settings: {
         ai: defaultAiSettings,
         record: {
-          fps: 0.1,
+          fps: 2,
           videoBitrateKbps: 2_000,
         },
         storage: {
@@ -421,6 +468,104 @@ test('SettingsScreen saves remote transcription settings through encrypted key r
     }),
   );
   expect(screen.queryByDisplayValue('sk-private')).toBeNull();
+});
+
+test('SettingsScreen toggles checkbox fields from their description text', async () => {
+  render(<SettingsScreen />);
+
+  await openAiSettingsTab();
+  fireEvent.click(
+    screen.getByText(
+      'Providers may omit word timestamps; Daydream keeps segment timestamps either way.',
+    ),
+  );
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: {
+        ai: {
+          ...defaultAiSettings,
+          transcription: {
+            ...defaultAiSettings.transcription,
+            wordTimestampsEnabled: false,
+          },
+        },
+        record: defaultSettingsState.settings.record,
+        storage: defaultSettingsState.settings.storage,
+      },
+    }),
+  );
+});
+
+test('SettingsScreen saves AI slider values', async () => {
+  render(<SettingsScreen />);
+
+  await openAiSettingsTab();
+  const parallelJobs = screen.getByRole('slider', { name: 'Parallel jobs' });
+  const chunksPerJob = screen.getByRole('slider', { name: 'Chunks per job' });
+  const fullFrameInterval = screen.getByRole('slider', {
+    name: 'Full-frame interval',
+  });
+  const keyboardActivityWindow = screen.getByRole('slider', {
+    name: 'Keyboard activity window',
+  });
+  const mouseActivityWindow = screen.getByRole('slider', {
+    name: 'Mouse activity window',
+  });
+
+  expect(parallelJobs.getAttribute('aria-valuenow')).toBe('1');
+  expect(chunksPerJob.getAttribute('aria-valuenow')).toBe('1');
+  expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('300000');
+  expect(keyboardActivityWindow.getAttribute('aria-valuenow')).toBe('30000');
+  expect(mouseActivityWindow.getAttribute('aria-valuenow')).toBe('5000');
+
+  parallelJobs.focus();
+  fireEvent.keyDown(parallelJobs, { key: 'ArrowRight' });
+  chunksPerJob.focus();
+  fireEvent.keyDown(chunksPerJob, { key: 'ArrowRight' });
+  fullFrameInterval.focus();
+  fireEvent.keyDown(fullFrameInterval, { key: 'ArrowRight' });
+  keyboardActivityWindow.focus();
+  fireEvent.keyDown(keyboardActivityWindow, { key: 'ArrowRight' });
+  mouseActivityWindow.focus();
+  fireEvent.keyDown(mouseActivityWindow, { key: 'ArrowRight' });
+
+  await waitFor(() =>
+    expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('300500'),
+  );
+  expect(keyboardActivityWindow.getAttribute('aria-valuenow')).toBe('31000');
+  expect(mouseActivityWindow.getAttribute('aria-valuenow')).toBe('6000');
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: {
+        ai: {
+          ...defaultAiSettings,
+          activity: {
+            ...defaultAiSettings.activity,
+            keyboard: {
+              ...defaultAiSettings.activity.keyboard,
+              windowMs: 31_000,
+            },
+            mouse: {
+              ...defaultAiSettings.activity.mouse,
+              windowMs: 6_000,
+            },
+          },
+          processing: {
+            ...defaultAiSettings.processing,
+            maxParallelChunksPerJob: 2,
+            maxParallelJobs: 2,
+            periodicFullFrameIntervalMs: 300_500,
+          },
+        },
+        record: defaultSettingsState.settings.record,
+        storage: defaultSettingsState.settings.storage,
+      },
+    }),
+  );
 });
 
 test('SettingsScreen deletes newly-created AI secrets when the final save fails', async () => {

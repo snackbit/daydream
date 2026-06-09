@@ -15,7 +15,14 @@ name = "daydream_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+bindgen = "0.72.1"
+cmake = "0.1.54"
 tauri-build = { version = "2", features = [] }
+
+[features]
+default = []
+whisper-cuda = []
+whisper-vulkan = []
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -28,6 +35,10 @@ uuid = { version = "1.23.2", features = ["rng", "v7"] }
 base64 = "0.22.1"
 aes-gcm = "0.10.3"
 png = "0.18.1"
+futures-util = "0.3.31"
+hex = "0.4.3"
+reqwest = { version = "0.12.24", default-features = false, features = ["rustls-tls", "stream"] }
+sha1 = "0.10.6"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-log = "0.2"

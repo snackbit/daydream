@@ -1,10 +1,13 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
+  aiModelsChangedEvent,
+  cancelAiModelDownload,
   cancelProcessingJob,
   deleteAiModel,
   deleteAiProviderSecret,
   downloadAiModel,
   getAiProviderStatus,
+  listenToAiModelsChanged,
   listAiModels,
   listProcessingJobs,
   pauseProcessingJob,
@@ -14,22 +17,29 @@ import {
   selfTestAiModel,
 } from './ai-client';
 
-const { invokeMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
+  listenMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }));
 
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: listenMock,
+}));
+
 beforeEach(() => {
   invokeMock.mockReset();
   invokeMock.mockResolvedValue({});
+  listenMock.mockReset();
 });
 
 test('ai client uses typed camelCase command names', async () => {
   await listAiModels();
   await downloadAiModel({ modelId: 'small' });
+  await cancelAiModelDownload({ modelId: 'small' });
   await deleteAiModel({ modelId: 'small' });
   await selfTestAiModel({ modelId: 'small' });
   await getAiProviderStatus();
@@ -45,32 +55,52 @@ test('ai client uses typed camelCase command names', async () => {
   expect(invokeMock).toHaveBeenNthCalledWith(2, 'downloadAiModel', {
     input: { modelId: 'small' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(3, 'deleteAiModel', {
+  expect(invokeMock).toHaveBeenNthCalledWith(3, 'cancelAiModelDownload', {
     input: { modelId: 'small' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(4, 'selfTestAiModel', {
+  expect(invokeMock).toHaveBeenNthCalledWith(4, 'deleteAiModel', {
     input: { modelId: 'small' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(5, 'getAiProviderStatus');
-  expect(invokeMock).toHaveBeenNthCalledWith(6, 'saveAiProviderSecret', {
+  expect(invokeMock).toHaveBeenNthCalledWith(5, 'selfTestAiModel', {
+    input: { modelId: 'small' },
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(6, 'getAiProviderStatus');
+  expect(invokeMock).toHaveBeenNthCalledWith(7, 'saveAiProviderSecret', {
     input: { plaintext: 'sk-test', role: 'transcription' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(7, 'deleteAiProviderSecret', {
+  expect(invokeMock).toHaveBeenNthCalledWith(8, 'deleteAiProviderSecret', {
     input: { secretRef: 'ai.secret.transcription.1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(8, 'listProcessingJobs', {
+  expect(invokeMock).toHaveBeenNthCalledWith(9, 'listProcessingJobs', {
     input: { recordingId: 'recording-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(9, 'pauseProcessingJob', {
+  expect(invokeMock).toHaveBeenNthCalledWith(10, 'pauseProcessingJob', {
     input: { jobId: 'job-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(10, 'resumeProcessingJob', {
+  expect(invokeMock).toHaveBeenNthCalledWith(11, 'resumeProcessingJob', {
     input: { jobId: 'job-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(11, 'cancelProcessingJob', {
+  expect(invokeMock).toHaveBeenNthCalledWith(12, 'cancelProcessingJob', {
     input: { jobId: 'job-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(12, 'retryProcessingJob', {
+  expect(invokeMock).toHaveBeenNthCalledWith(13, 'retryProcessingJob', {
     input: { jobId: 'job-1' },
   });
+});
+
+test('ai client listens for full model list updates', async () => {
+  const unlisten = vi.fn();
+  const handler = vi.fn();
+  listenMock.mockImplementation((_eventName, listener) => {
+    listener({ payload: { models: [] } });
+    return Promise.resolve(unlisten);
+  });
+
+  await expect(listenToAiModelsChanged(handler)).resolves.toBe(unlisten);
+
+  expect(listenMock).toHaveBeenCalledWith(
+    aiModelsChangedEvent,
+    expect.any(Function),
+  );
+  expect(handler).toHaveBeenCalledWith({ models: [] });
 });

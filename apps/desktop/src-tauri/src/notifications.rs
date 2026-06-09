@@ -216,6 +216,20 @@ fn execute_stored_action(
                 timestamp_ms,
             )?;
         }
+        "model-download-cancel" => {
+            let model_id = action
+                .payload
+                .get("modelId")
+                .map_or("unknown", String::as_str);
+            save_unavailable_notification(
+                connection,
+                "model-download",
+                "Cancel unavailable",
+                &format!("Model download cancellation is unavailable for {model_id}."),
+                &[],
+                timestamp_ms,
+            )?;
+        }
         "processing-job-cancel" => update_job_or_notify(
             connection,
             action,

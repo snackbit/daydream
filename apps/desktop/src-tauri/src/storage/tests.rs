@@ -15,12 +15,12 @@ use super::{
     list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
     mark_recording_started, migrations, recover_interrupted_recordings, reset_app_settings,
     save_ai_model_asset, save_app_settings, save_notification, save_recorder_scene,
-    update_recording_status, upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
-    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
-    CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
-    CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
-    SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
-    SaveRecorderSceneSourceInput,
+    save_unseen_notification, update_recording_status, upsert_portal_restore_token, AppStorage,
+    CreateActivityIntervalInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
+    CreateRecordingInput, CreateRecordingSegmentInput, CreateTranscriptSegmentInput,
+    CreateTranscriptWordInput, CreateVisualRegionInput, FailRecordingSegmentInput,
+    FinalizeRecordingSegmentInput, SaveAiModelAssetInput, SaveAppSettingInput,
+    SaveNotificationInput, SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
 };
 
 fn migrated_memory_connection() -> Connection {
@@ -37,7 +37,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 10);
+    assert_eq!(schema_version, 11);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -109,6 +109,48 @@ fn notifications_persist_actions_and_dismissal_state() {
             .dismissed_at_ms,
         Some(20)
     );
+}
+
+#[test]
+fn unseen_notification_upsert_clears_dismissal_state() {
+    let connection = migrated_memory_connection();
+    let id = Uuid::now_v7().to_string();
+
+    save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: id.clone(),
+            message: "Started.".to_string(),
+            source: "ai".to_string(),
+            status: "running".to_string(),
+            timestamp_ms: 10,
+            title: "Model download started".to_string(),
+            topic: "model-download".to_string(),
+        },
+    )
+    .expect("save notification");
+    dismiss_notification(&connection, &id, 20).expect("dismiss notification");
+
+    let updated = save_unseen_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id,
+            message: "Cancelled.".to_string(),
+            source: "ai".to_string(),
+            status: "cancelled".to_string(),
+            timestamp_ms: 30,
+            title: "Model download cancelled".to_string(),
+            topic: "model-download".to_string(),
+        },
+    )
+    .expect("upsert notification");
+
+    assert_eq!(updated.dismissed_at_ms, None);
+    assert_eq!(updated.created_at_ms, 10);
+    assert_eq!(updated.updated_at_ms, 30);
+    assert_eq!(updated.status, "cancelled");
 }
 
 #[test]
@@ -551,16 +593,25 @@ fn ai_storage_helpers_preserve_derived_output_provenance() {
     save_ai_model_asset(
         &connection,
         &SaveAiModelAssetInput {
+            checksum: Some("55356645c2b361a969dfd0ef2c5a50d530afd8d5".to_string()),
+            checksum_algorithm: Some("sha1".to_string()),
             display_label: "Whisper small".to_string(),
+            downloaded_bytes: 1,
             download_status: "available".to_string(),
             etag: Some("etag".to_string()),
+            error_code: None,
             id: "small".to_string(),
             local_path: Some("/models/small.bin".to_string()),
             provider: "local-whisper-cpp".to_string(),
             self_test_status: "passed".to_string(),
-            sha256: None,
             size_bytes: Some(1),
+            source_url: Some(
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+                    .to_string(),
+            ),
             timestamp_ms: 1,
+            total_bytes: Some(1),
+            verification_status: "passed".to_string(),
         },
     )
     .expect("save model asset");
@@ -813,7 +864,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 10);
+    assert_eq!(schema_version, 11);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
