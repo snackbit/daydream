@@ -3,6 +3,7 @@ mod ffmpeg;
 mod library;
 mod playback_server;
 pub mod recorder;
+pub mod secret_crypto;
 mod settings;
 pub mod storage;
 mod storage_limits;

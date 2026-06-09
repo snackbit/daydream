@@ -13,6 +13,9 @@ import type {
   RecorderScene,
   RecorderSegment,
   RecorderStatus,
+  ProcessingJob,
+  RecordingTranscript,
+  RecordingVisualObservations,
 } from './index.js';
 
 const unavailableMediaWriterCapabilities = {
@@ -261,6 +264,77 @@ test('recorder contracts support scene and segment metadata', () => {
 
   expect(scene.sources[0]?.sourceKind).toBe('monitor');
   expect(segment.videoStreamIndex).toBe(0);
+});
+
+test('ai contracts support local baseline results and guarded vlm states', () => {
+  const migratedJob = {
+    createdAtMs: 1,
+    errorCode: null,
+    id: 'job-1',
+    kind: 'frame-extraction',
+    progress: 0,
+    recordingId: 'recording-1',
+    status: 'queued',
+    updatedAtMs: 1,
+  } satisfies ProcessingJob;
+  const transcript = {
+    recordingId: 'recording-1',
+    segments: [
+      {
+        chunkId: 'chunk-1',
+        confidence: 0.9,
+        endOffsetMs: 1_000,
+        id: 'segment-1',
+        jobId: 'job-1',
+        model: 'small',
+        provider: 'local-whisper-cpp',
+        recordingId: 'recording-1',
+        segmentId: 'media-segment-1',
+        sourceRole: 'microphone',
+        startOffsetMs: 0,
+        text: 'hello',
+        trackId: 'track-1',
+        words: [
+          {
+            endOffsetMs: 500,
+            id: 'word-1',
+            probability: 0.95,
+            startOffsetMs: 0,
+            text: 'hello',
+            transcriptSegmentId: 'segment-1',
+          },
+        ],
+      },
+    ],
+  } satisfies RecordingTranscript;
+  const visual = {
+    ocrRegions: [
+      {
+        chunkId: 'chunk-2',
+        confidence: 0.88,
+        frameTimestampMs: 500,
+        id: 'ocr-1',
+        jobId: 'job-2',
+        model: 'tesseract',
+        provider: 'tesseract',
+        recordingId: 'recording-1',
+        region: {
+          height: 20,
+          width: 100,
+          x: 10,
+          y: 20,
+        },
+        sourceFrameRef: 'segment-1@500',
+        text: 'Daydream',
+      },
+    ],
+    recordingId: 'recording-1',
+    vlmObservations: [],
+  } satisfies RecordingVisualObservations;
+
+  expect(migratedJob.kind).toBe('frame-extraction');
+  expect(transcript.segments[0]!.provider).toBe('local-whisper-cpp');
+  expect(visual.vlmObservations).toHaveLength(0);
 });
 
 test('recorder contracts support transient live preview metadata', () => {

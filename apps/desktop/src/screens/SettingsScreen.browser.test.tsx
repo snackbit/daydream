@@ -23,8 +23,49 @@ const recorderClient = vi.hoisted(() => ({
 vi.mock('@/features/settings/settings-client', () => settingsClient);
 vi.mock('@/features/recorder/recorder-client', () => recorderClient);
 
+const defaultAiSettings = {
+  activity: {
+    frameDeltas: {
+      enabled: true,
+    },
+    keyboard: {
+      enabled: false,
+      windowMs: 30_000,
+    },
+    mouse: {
+      enabled: false,
+      windowMs: 5_000,
+    },
+  },
+  ocr: {
+    enabled: true,
+    engine: 'tesseract',
+  },
+  processing: {
+    autoStartAfterRecording: true,
+    frameSimilarityEnabled: true,
+    maxParallelChunksPerJob: 1,
+    maxParallelJobs: 1,
+    periodicFullFrameIntervalMs: 300_000,
+  },
+  transcription: {
+    localModelId: 'small',
+    provider: 'local-whisper-cpp',
+    remoteApiKeyRef: null,
+    remoteBaseUrl: null,
+    wordTimestampsEnabled: true,
+  },
+  vision: {
+    apiKeyRef: null,
+    baseUrl: null,
+    model: null,
+    provider: 'disabled',
+  },
+} as const;
+
 const defaultSettingsState = {
   defaults: {
+    ai: defaultAiSettings,
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
@@ -35,6 +76,22 @@ const defaultSettingsState = {
     },
   },
   limits: {
+    ai: {
+      activity: {
+        keyboardWindowMsMax: 300_000,
+        keyboardWindowMsMin: 1_000,
+        mouseWindowMsMax: 300_000,
+        mouseWindowMsMin: 1_000,
+      },
+      processing: {
+        maxParallelChunksPerJobMax: 8,
+        maxParallelChunksPerJobMin: 1,
+        maxParallelJobsMax: 4,
+        maxParallelJobsMin: 1,
+        periodicFullFrameIntervalMsMax: 3_600_000,
+        periodicFullFrameIntervalMsMin: 30_000,
+      },
+    },
     record: {
       fpsMax: 5,
       fpsMin: 1 / 60,
@@ -49,6 +106,7 @@ const defaultSettingsState = {
     },
   },
   settings: {
+    ai: defaultAiSettings,
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
@@ -131,6 +189,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
       settingsClient.previewAppSettingsStorageCleanup,
     ).toHaveBeenCalledWith({
       settings: {
+        ai: defaultAiSettings,
         record: {
           fps: 0.1,
           videoBitrateKbps: 2_000,
@@ -145,6 +204,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
   await waitFor(() =>
     expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
       settings: {
+        ai: defaultAiSettings,
         record: {
           fps: 0.1,
           videoBitrateKbps: 2_000,

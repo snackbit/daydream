@@ -9,6 +9,45 @@ import {
 } from './settings-format';
 
 const settings = {
+  ai: {
+    activity: {
+      frameDeltas: {
+        enabled: true,
+      },
+      keyboard: {
+        enabled: false,
+        windowMs: 30_000,
+      },
+      mouse: {
+        enabled: false,
+        windowMs: 5_000,
+      },
+    },
+    ocr: {
+      enabled: true,
+      engine: 'tesseract',
+    },
+    processing: {
+      autoStartAfterRecording: true,
+      frameSimilarityEnabled: true,
+      maxParallelChunksPerJob: 1,
+      maxParallelJobs: 1,
+      periodicFullFrameIntervalMs: 300_000,
+    },
+    transcription: {
+      localModelId: 'small',
+      provider: 'local-whisper-cpp',
+      remoteApiKeyRef: null,
+      remoteBaseUrl: null,
+      wordTimestampsEnabled: true,
+    },
+    vision: {
+      apiKeyRef: null,
+      baseUrl: null,
+      model: null,
+      provider: 'disabled',
+    },
+  },
   record: {
     fps: 0.2,
     videoBitrateKbps: 1_500,

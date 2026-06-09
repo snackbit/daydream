@@ -92,8 +92,10 @@ in Library playback.
   disabled-by-default behavior, privacy-safe errors, and adapter boundaries.
 - Remote upload paths must be visibly labeled because audio, frames, OCR text,
   transcripts, and model prompts are sensitive private data.
-- API keys are stored in SQLite with explicit warning that they are obscured
-  local secrets, not OS-keyring encrypted secrets.
+- Sensitive settings such as remote API keys are stored as AES-256-GCM
+  encrypted base64 envelopes in the unified settings table, using a Linux
+  Secret Service-backed Daydream app key. macOS and Windows encrypted secret
+  storage return typed not-implemented states until later cross-platform work.
 - Model downloads are app-managed.
 - Local model files live under the app data directory.
 - The default local transcription model is multilingual `small`, not
@@ -384,6 +386,16 @@ Expected settings fields:
 - `ai.activity.mouse.windowMs`
 - `ai.activity.frameDeltas.enabled`
 
+Settings storage format:
+
+- `app_settings` is a key/value table with one row per setting key.
+- `app_settings.value_json` stores typed JSON values.
+- `app_settings.is_sensitive` marks encrypted local secret values.
+- Sensitive setting values use envelope JSON:
+  `{ "v": 1, "alg": "AES-256-GCM", "nonce": "...", "ciphertext": "..." }`.
+- On Linux, the AES key is stored or unlocked through Secret Service. Unsupported
+  platforms return typed not-implemented secret-storage states in M2 Gate A.
+
 ## Native Permission Requirements
 
 - Linux/KDE keyboard and mouse activity monitoring must state which native
@@ -416,7 +428,7 @@ Expected settings fields:
   or prompts only after the user configures the remote provider.
 - No remote endpoint is used by default.
 - API keys must not appear in logs, diagnostics, notifications, or serialized
-  frontend state beyond a redacted presence indicator.
+  frontend state beyond a secret reference or redacted presence indicator.
 - Raw audio, raw frames, OCR text, transcripts, prompts, and model responses are
   private content and must not be logged by default.
 - Notification text must summarize status without embedding private transcript,
@@ -433,9 +445,6 @@ Expected new tables:
 - `ai_model_assets`
   - model ID, provider, display label, local path, size, checksum or etag when
     known, download status, self-test status, created/updated timestamps
-- `ai_endpoint_secrets`
-  - secret reference ID, provider role, obscured secret payload, created/updated
-    timestamps
 - `processing_chunks`
   - job ID, recording ID, source kind, segment ID or time range, status,
     attempt count, progress, error code, created/updated timestamps
@@ -460,7 +469,8 @@ Expected new tables:
 
 Existing table changes:
 
-- `app_settings` is extended or versioned to include AI settings.
+- `app_settings` is migrated to a unified key/value settings table that includes
+  record, storage, AI, and encrypted sensitive setting values.
 - `processing_jobs.kind` must support M2 job kinds such as transcription,
   activity, OCR, VLM, and composite AI processing if the existing enum remains.
 - Existing `capture_events` may be reused for keyboard and mouse activity
@@ -528,12 +538,12 @@ Migration stop boundary:
   notification, transcript, activity, OCR, and VLM result types.
 - [ ] Extend Rust settings structs, defaults, validation, and limits with AI
   settings.
-- [ ] Add embedded SQLite migrations for AI settings, model assets, endpoint
-  secrets, processing chunks, transcript segments, transcript words, activity
+- [ ] Add embedded SQLite migrations for unified key/value app settings, model
+  assets, processing chunks, transcript segments, transcript words, activity
   intervals, OCR regions, VLM observations, and frame similarity entries.
 - [ ] Extend `processing_jobs` support for M2 AI job kinds.
-- [ ] Add storage helpers for AI settings, model assets, secrets, jobs, chunks,
-  and derived result writes.
+- [ ] Add storage helpers for AI settings, encrypted sensitive settings, model
+  assets, jobs, chunks, and derived result writes.
 - [ ] Add tests for fresh migration, existing database migration, AI settings
   validation, secret redaction, and derived output provenance.
 
@@ -550,8 +560,8 @@ Exit Criteria:
 - [ ] Add provider controls for local `whisper.cpp`, remote
   OpenAI-compatible transcription, OCR, VLM, activity tracking, and processing
   concurrency.
-- [ ] Add visible warnings for remote providers and obscured SQLite secret
-  storage.
+- [ ] Add visible warnings for remote providers, encrypted local secret storage,
+  and unsupported macOS/Windows secret storage.
 - [ ] Add model cache controls for download, delete, and smoke test.
 - [ ] Add keyboard and mouse activity toggles with default windows of 30
   seconds and 5 seconds.
@@ -734,8 +744,8 @@ Exit Criteria:
 - [ ] Add tests or log assertions that transcripts, OCR text, prompts, model
   responses, API keys, and raw media are not logged by default.
 - [ ] Update documentation for AI provider behavior, local vs remote data flow,
-  model cache location, API key storage weakness, and activity monitoring
-  privacy.
+  model cache location, Linux-only secret encryption caveat, and activity
+  monitoring privacy.
 
 Exit Criteria:
 

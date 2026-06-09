@@ -8,6 +8,7 @@ use std::{
 use rusqlite::Connection;
 use tauri::Manager;
 
+mod ai;
 mod diagnostics;
 mod portal_tokens;
 mod recordings;
@@ -16,6 +17,14 @@ mod schema;
 mod segments;
 mod settings;
 
+pub use ai::{
+    create_activity_interval, create_frame_similarity_entry, create_ocr_region,
+    create_processing_chunk, create_transcript_segment, create_transcript_word,
+    create_vlm_observation, save_ai_model_asset, AiModelAssetRow, CreateActivityIntervalInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateTranscriptSegmentInput,
+    CreateTranscriptWordInput, CreateVisualRegionInput, ProcessingChunkRow, SaveAiModelAssetInput,
+    TranscriptSegmentRow,
+};
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use portal_tokens::{
     delete_portal_restore_token, get_portal_restore_token, mark_portal_restore_token_used,
@@ -37,7 +46,8 @@ pub use segments::{
     FinalizeRecordingSegmentInput, RecordingSegmentRow,
 };
 pub use settings::{
-    get_app_settings, reset_app_settings, save_app_settings, AppSettingsRow, SaveAppSettingsInput,
+    get_app_setting, list_app_settings, reset_app_settings, save_app_setting, save_app_settings,
+    AppSettingRow, SaveAppSettingInput,
 };
 
 #[cfg(test)]

@@ -82,6 +82,7 @@ export interface DaydreamDiagnostics {
 
 export * from './recorder.js';
 export * from './library.js';
+export * from './ai.js';
 export * from './settings.js';
 
 export interface DebugLoggingDiagnostics {

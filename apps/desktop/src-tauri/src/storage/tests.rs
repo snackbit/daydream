@@ -4,15 +4,20 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-    apply_migrations, collect_database_diagnostics_from_connection, create_recording,
-    create_recording_segment, delete_portal_restore_token, delete_recording,
-    enable_connection_pragmas, fail_recording_segment, finalize_recording_segment,
-    get_app_settings, get_latest_recorder_scene, get_recorder_scene, get_recording,
+    apply_migrations, collect_database_diagnostics_from_connection, create_activity_interval,
+    create_frame_similarity_entry, create_ocr_region, create_processing_chunk, create_recording,
+    create_recording_segment, create_transcript_segment, create_transcript_word,
+    create_vlm_observation, delete_portal_restore_token, delete_recording,
+    enable_connection_pragmas, fail_recording_segment, finalize_recording_segment, get_app_setting,
+    get_latest_recorder_scene, get_recorder_scene, get_recording, list_app_settings,
     list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
     mark_recording_started, migrations, recover_interrupted_recordings, reset_app_settings,
-    save_app_settings, save_recorder_scene, update_recording_status, upsert_portal_restore_token,
-    AppStorage, CreateRecordingInput, CreateRecordingSegmentInput, FailRecordingSegmentInput,
-    FinalizeRecordingSegmentInput, SaveAppSettingsInput, SaveRecorderSceneInput,
+    save_ai_model_asset, save_app_settings, save_recorder_scene, update_recording_status,
+    upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
+    CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+    CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
+    SaveAiModelAssetInput, SaveAppSettingInput, SaveRecorderSceneInput,
     SaveRecorderSceneSourceInput,
 };
 
@@ -30,8 +35,9 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 8);
+    assert_eq!(schema_version, 9);
     assert_eq!(table_counts["app_settings"], 0);
+    assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["recordings"], 0);
     assert_eq!(table_counts["recording_tracks"], 0);
     assert_eq!(table_counts["recording_segments"], 0);
@@ -41,6 +47,13 @@ fn migration_creates_core_tables_and_schema_version() {
     assert_eq!(table_counts["redactions"], 0);
     assert_eq!(table_counts["capture_events"], 0);
     assert_eq!(table_counts["processing_jobs"], 0);
+    assert_eq!(table_counts["processing_chunks"], 0);
+    assert_eq!(table_counts["transcript_segments"], 0);
+    assert_eq!(table_counts["transcript_words"], 0);
+    assert_eq!(table_counts["frame_activity_intervals"], 0);
+    assert_eq!(table_counts["ocr_regions"], 0);
+    assert_eq!(table_counts["vlm_observations"], 0);
+    assert_eq!(table_counts["frame_similarity_entries"], 0);
 }
 
 #[test]
@@ -55,96 +68,446 @@ fn migration_enables_foreign_keys() {
 
 #[test]
 fn app_settings_round_trip_and_reset() {
-    let connection = migrated_memory_connection();
+    let mut connection = migrated_memory_connection();
 
     assert_eq!(
-        get_app_settings(&connection).expect("read empty app settings"),
-        None
+        list_app_settings(&connection).expect("read empty app settings"),
+        Vec::new()
     );
 
     let saved = save_app_settings(
-        &connection,
-        &SaveAppSettingsInput {
-            record_fps: 0.2,
-            record_video_bitrate_kbps: 1_500,
-            storage_retention_days: 7,
-            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
-            updated_at_ms: 10,
-        },
+        &mut connection,
+        &[
+            SaveAppSettingInput {
+                key: "record.fps".to_string(),
+                value_json: "0.2".to_string(),
+                is_sensitive: false,
+                timestamp_ms: 10,
+            },
+            SaveAppSettingInput {
+                key: "storage.sizeLimitBytes".to_string(),
+                value_json: "53687091200".to_string(),
+                is_sensitive: false,
+                timestamp_ms: 10,
+            },
+        ],
     )
     .expect("save app settings");
 
-    assert_eq!(saved.record_fps, 0.2);
-    assert_eq!(saved.record_video_bitrate_kbps, 1_500);
-    assert_eq!(saved.storage_retention_days, 7);
-    assert_eq!(saved.storage_size_limit_bytes, 50 * 1024 * 1024 * 1024);
-    assert_eq!(saved.updated_at_ms, 10);
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].key, "record.fps");
+    assert_eq!(saved[0].value_json, "0.2");
+    assert!(!saved[0].is_sensitive);
+    assert_eq!(saved[0].updated_at_ms, 10);
 
     let updated = save_app_settings(
-        &connection,
-        &SaveAppSettingsInput {
-            record_fps: 5.0,
-            record_video_bitrate_kbps: 10_000,
-            storage_retention_days: 365,
-            storage_size_limit_bytes: 128 * 1024 * 1024 * 1024,
-            updated_at_ms: 20,
-        },
+        &mut connection,
+        &[SaveAppSettingInput {
+            key: "record.fps".to_string(),
+            value_json: "5.0".to_string(),
+            is_sensitive: false,
+            timestamp_ms: 20,
+        }],
     )
     .expect("update app settings");
+    let record_fps = updated
+        .iter()
+        .find(|row| row.key == "record.fps")
+        .expect("record fps row");
 
-    assert_eq!(updated.record_fps, 5.0);
-    assert_eq!(updated.record_video_bitrate_kbps, 10_000);
-    assert_eq!(updated.storage_retention_days, 365);
-    assert_eq!(updated.storage_size_limit_bytes, 128 * 1024 * 1024 * 1024);
-    assert_eq!(updated.updated_at_ms, 20);
+    assert_eq!(record_fps.value_json, "5.0");
+    assert_eq!(record_fps.created_at_ms, 10);
+    assert_eq!(record_fps.updated_at_ms, 20);
 
     reset_app_settings(&connection).expect("reset app settings");
 
     assert_eq!(
-        get_app_settings(&connection).expect("read reset app settings"),
-        None
+        list_app_settings(&connection).expect("read reset app settings"),
+        Vec::new()
     );
 }
 
 #[test]
-fn app_settings_constraints_reject_invalid_values() {
+fn app_settings_can_mark_encrypted_sensitive_rows() {
+    let mut connection = migrated_memory_connection();
+
+    save_app_settings(
+        &mut connection,
+        &[SaveAppSettingInput {
+            key: "ai.transcription.remoteApiKey".to_string(),
+            value_json: r#"{"v":1,"alg":"AES-256-GCM","nonce":"bm9uY2U=","ciphertext":"Y2lwaGVy"}"#
+                .to_string(),
+            is_sensitive: true,
+            timestamp_ms: 10,
+        }],
+    )
+    .expect("save encrypted setting row");
+
+    let row = get_app_setting(&connection, "ai.transcription.remoteApiKey")
+        .expect("read encrypted setting")
+        .expect("encrypted setting row");
+
+    assert!(row.is_sensitive);
+    assert!(!row.value_json.contains("sk-"));
+    assert!(row.value_json.contains("AES-256-GCM"));
+}
+
+#[test]
+fn app_settings_json_must_be_valid() {
+    let mut connection = migrated_memory_connection();
+
+    let error = save_app_settings(
+        &mut connection,
+        &[SaveAppSettingInput {
+            key: "record.fps".to_string(),
+            value_json: "{not-json".to_string(),
+            is_sensitive: false,
+            timestamp_ms: 1,
+        }],
+    )
+    .expect_err("invalid json should fail sqlite constraints");
+
+    assert!(error.to_string().contains("CHECK constraint failed"));
+}
+
+#[test]
+fn app_settings_multi_row_save_is_atomic() {
+    let mut connection = migrated_memory_connection();
+
+    save_app_settings(
+        &mut connection,
+        &[SaveAppSettingInput {
+            key: "record.fps".to_string(),
+            value_json: "0.2".to_string(),
+            is_sensitive: false,
+            timestamp_ms: 1,
+        }],
+    )
+    .expect("save initial app setting");
+
+    let error = save_app_settings(
+        &mut connection,
+        &[
+            SaveAppSettingInput {
+                key: "record.fps".to_string(),
+                value_json: "5.0".to_string(),
+                is_sensitive: false,
+                timestamp_ms: 2,
+            },
+            SaveAppSettingInput {
+                key: "storage.sizeLimitBytes".to_string(),
+                value_json: "{not-json".to_string(),
+                is_sensitive: false,
+                timestamp_ms: 2,
+            },
+        ],
+    )
+    .expect_err("invalid later row should fail whole settings save");
+
+    assert!(error.to_string().contains("CHECK constraint failed"));
+    assert_eq!(
+        get_app_setting(&connection, "record.fps")
+            .expect("read record fps")
+            .expect("record fps row")
+            .value_json,
+        "0.2"
+    );
+    assert!(get_app_setting(&connection, "storage.sizeLimitBytes")
+        .expect("read storage size")
+        .is_none());
+}
+
+#[test]
+fn existing_flat_app_settings_migrate_to_key_value_rows() {
+    let mut connection = Connection::open_in_memory().expect("open in-memory sqlite database");
+    enable_connection_pragmas(&connection).expect("enable sqlite pragmas");
+    migrations()
+        .to_version(&mut connection, 8)
+        .expect("apply v8 migration");
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO app_settings (
+                id,
+                record_fps,
+                record_video_bitrate_kbps,
+                storage_retention_days,
+                storage_size_limit_bytes,
+                updated_at_ms
+            ) VALUES (1, 0.5, 2500, 30, 80530636800, 99)
+            "#,
+            [],
+        )
+        .expect("insert v8 app settings");
+
+    apply_migrations(&mut connection).expect("apply v9 migration");
+
+    assert_eq!(
+        get_app_setting(&connection, "record.fps")
+            .expect("read record fps")
+            .expect("record fps row")
+            .value_json,
+        "0.5"
+    );
+    assert_eq!(
+        get_app_setting(&connection, "storage.sizeLimitBytes")
+            .expect("read storage size")
+            .expect("storage size row")
+            .value_json,
+        "80530636800"
+    );
+}
+
+#[test]
+fn processing_jobs_accept_m2_kinds_after_migration() {
     let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
 
-    for input in [
-        SaveAppSettingsInput {
-            record_fps: 0.0,
-            record_video_bitrate_kbps: 1_500,
-            storage_retention_days: 7,
-            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
-            updated_at_ms: 1,
-        },
-        SaveAppSettingsInput {
-            record_fps: 0.2,
-            record_video_bitrate_kbps: 10_001,
-            storage_retention_days: 7,
-            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
-            updated_at_ms: 1,
-        },
-        SaveAppSettingsInput {
-            record_fps: 0.2,
-            record_video_bitrate_kbps: 1_500,
-            storage_retention_days: 366,
-            storage_size_limit_bytes: 50 * 1024 * 1024 * 1024,
-            updated_at_ms: 1,
-        },
-        SaveAppSettingsInput {
-            record_fps: 0.2,
-            record_video_bitrate_kbps: 1_500,
-            storage_retention_days: 7,
-            storage_size_limit_bytes: 1024 * 1024 * 1024 - 1,
-            updated_at_ms: 1,
-        },
+    for kind in [
+        "activity",
+        "ai-processing",
+        "chunking",
+        "digest",
+        "embedding",
+        "frame-extraction",
+        "ocr",
+        "transcription",
+        "vlm",
     ] {
-        let error = save_app_settings(&connection, &input)
-            .expect_err("invalid app settings should fail sqlite constraints");
-
-        assert!(error.to_string().contains("CHECK constraint failed"));
+        connection
+            .execute(
+                r#"
+                INSERT INTO processing_jobs (
+                    id,
+                    recording_id,
+                    kind,
+                    status,
+                    created_at_ms,
+                    updated_at_ms
+                ) VALUES (?1, ?2, ?3, 'paused', 1, 1)
+                "#,
+                (&Uuid::now_v7().to_string(), &recording_id, kind),
+            )
+            .expect("insert m2 processing job");
     }
+
+    let error = connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'unknown', 'queued', 1, 1)
+            "#,
+            (&Uuid::now_v7().to_string(), &recording_id),
+        )
+        .expect_err("unknown job kind should fail");
+
+    assert!(error.to_string().contains("CHECK constraint failed"));
+}
+
+#[test]
+fn ai_storage_helpers_preserve_derived_output_provenance() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let segment_id = Uuid::now_v7().to_string();
+    let track_id = Uuid::now_v7().to_string();
+    let job_id = Uuid::now_v7().to_string();
+    let chunk_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO recording_tracks (
+                id,
+                recording_id,
+                kind,
+                label,
+                created_at_ms
+            ) VALUES (?1, ?2, 'microphone', 'Microphone', 1)
+            "#,
+            (&track_id, &recording_id),
+        )
+        .expect("insert track");
+    create_recording_segment(
+        &connection,
+        &CreateRecordingSegmentInput {
+            file_path: "/tmp/daydream/0001.mkv".to_string(),
+            id: segment_id.clone(),
+            recording_id: recording_id.clone(),
+            segment_index: 1,
+            started_at_ms: 10,
+        },
+    )
+    .expect("create segment");
+    connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'ai-processing', 'running', 1, 1)
+            "#,
+            (&job_id, &recording_id),
+        )
+        .expect("insert job");
+
+    save_ai_model_asset(
+        &connection,
+        &SaveAiModelAssetInput {
+            display_label: "Whisper small".to_string(),
+            download_status: "available".to_string(),
+            etag: Some("etag".to_string()),
+            id: "small".to_string(),
+            local_path: Some("/models/small.bin".to_string()),
+            provider: "local-whisper-cpp".to_string(),
+            self_test_status: "passed".to_string(),
+            sha256: None,
+            size_bytes: Some(1),
+            timestamp_ms: 1,
+        },
+    )
+    .expect("save model asset");
+    let chunk = create_processing_chunk(
+        &connection,
+        &CreateProcessingChunkInput {
+            attempt_count: 1,
+            created_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            error_code: None,
+            id: chunk_id.clone(),
+            job_id: job_id.clone(),
+            progress: 0.5,
+            recording_id: recording_id.clone(),
+            segment_id: Some(segment_id.clone()),
+            source_kind: "audio".to_string(),
+            start_offset_ms: Some(0),
+            status: "running".to_string(),
+            updated_at_ms: 2,
+        },
+    )
+    .expect("create chunk");
+    let transcript = create_transcript_segment(
+        &connection,
+        &CreateTranscriptSegmentInput {
+            chunk_id: chunk_id.clone(),
+            confidence: Some(0.8),
+            created_at_ms: 2,
+            end_offset_ms: 900,
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            model: Some("small".to_string()),
+            provider: "local-whisper-cpp".to_string(),
+            recording_id: recording_id.clone(),
+            segment_id: segment_id.clone(),
+            source_role: "microphone".to_string(),
+            start_offset_ms: 100,
+            text: "hello".to_string(),
+            track_id: track_id.clone(),
+        },
+    )
+    .expect("create transcript segment");
+    create_transcript_word(
+        &connection,
+        &CreateTranscriptWordInput {
+            end_offset_ms: 200,
+            id: Uuid::now_v7().to_string(),
+            probability: Some(0.9),
+            start_offset_ms: 100,
+            text: "hello".to_string(),
+            transcript_segment_id: transcript.id.clone(),
+        },
+    )
+    .expect("create word");
+    create_activity_interval(
+        &connection,
+        &CreateActivityIntervalInput {
+            chunk_id: Some(chunk_id.clone()),
+            end_offset_ms: 1_000,
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            recording_id: recording_id.clone(),
+            regions_json: Some("[]".to_string()),
+            score: Some(0.7),
+            source_kind: "merged".to_string(),
+            start_offset_ms: 0,
+            state: "active".to_string(),
+        },
+    )
+    .expect("create activity interval");
+    create_ocr_region(
+        &connection,
+        &CreateVisualRegionInput {
+            chunk_id: chunk_id.clone(),
+            confidence: Some(0.95),
+            frame_timestamp_ms: 500,
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            model: Some("tesseract".to_string()),
+            prompt_version: None,
+            provider: "tesseract".to_string(),
+            recording_id: recording_id.clone(),
+            region_height: 20,
+            region_width: 100,
+            region_x: 10,
+            region_y: 20,
+            source_frame_ref: "segment-1@500".to_string(),
+            text: "Daydream".to_string(),
+        },
+    )
+    .expect("create ocr region");
+    create_vlm_observation(
+        &connection,
+        &CreateVisualRegionInput {
+            chunk_id: chunk_id.clone(),
+            confidence: None,
+            frame_timestamp_ms: 500,
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            model: Some("vision".to_string()),
+            prompt_version: Some("m2-test".to_string()),
+            provider: "openai-compatible".to_string(),
+            recording_id: recording_id.clone(),
+            region_height: 20,
+            region_width: 100,
+            region_x: 10,
+            region_y: 20,
+            source_frame_ref: "segment-1@500".to_string(),
+            text: "Editor window".to_string(),
+        },
+    )
+    .expect("create vlm observation");
+    create_frame_similarity_entry(
+        &connection,
+        &CreateFrameSimilarityEntryInput {
+            chunk_id: Some(chunk_id.clone()),
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            last_processed_timestamp_ms: 500,
+            recording_id: recording_id.clone(),
+            region_height: 20,
+            region_width: 100,
+            region_x: 10,
+            region_y: 20,
+            signature: "phash".to_string(),
+            source_frame_ref: "segment-1@500".to_string(),
+        },
+    )
+    .expect("create frame similarity entry");
+
+    assert_eq!(chunk.job_id, job_id);
+    assert_eq!(chunk.recording_id, recording_id);
+    assert_eq!(transcript.chunk_id, chunk_id);
+    assert_eq!(transcript.job_id, job_id);
 }
 
 #[test]
@@ -263,7 +626,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 8);
+    assert_eq!(schema_version, 9);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
@@ -1142,6 +1505,64 @@ fn create_v4_recorder_scene_tables(connection: &Connection) {
     connection
         .execute_batch(
             r#"
+            CREATE TABLE recordings (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                active_scene_id TEXT CHECK (active_scene_id IS NULL OR length(active_scene_id) = 36),
+                created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                started_at_ms INTEGER CHECK (started_at_ms IS NULL OR started_at_ms >= 0),
+                ended_at_ms INTEGER CHECK (ended_at_ms IS NULL OR ended_at_ms >= 0),
+                status TEXT NOT NULL CHECK (status IN ('planned', 'recording', 'paused', 'completed', 'failed', 'deleted')),
+                default_fps REAL NOT NULL CHECK (default_fps > 0),
+                quality_label TEXT NOT NULL CHECK (quality_label IN ('draft', 'standard', 'high', 'ocr', 'balanced-ocr')),
+                storage_dir TEXT NOT NULL,
+                output_root TEXT,
+                primary_video_path TEXT,
+                notes TEXT
+            );
+
+            CREATE TABLE recording_tracks (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                recording_id TEXT NOT NULL CHECK (length(recording_id) = 36),
+                kind TEXT NOT NULL CHECK (kind IN ('screen', 'desktop-audio', 'microphone')),
+                label TEXT NOT NULL,
+                source_id TEXT,
+                path TEXT,
+                codec TEXT,
+                created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE redactions (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                recording_id TEXT NOT NULL CHECK (length(recording_id) = 36),
+                start_offset_ms INTEGER NOT NULL CHECK (start_offset_ms >= 0),
+                end_offset_ms INTEGER NOT NULL CHECK (end_offset_ms > start_offset_ms),
+                reason TEXT,
+                created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE capture_events (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                recording_id TEXT NOT NULL CHECK (length(recording_id) = 36),
+                occurred_at_ms INTEGER NOT NULL CHECK (occurred_at_ms >= 0),
+                offset_ms INTEGER NOT NULL CHECK (offset_ms >= 0),
+                kind TEXT NOT NULL CHECK (kind IN ('keyboard-activity', 'mouse-activity', 'focused-window', 'open-windows', 'capture-state')),
+                payload_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(payload_json)),
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE processing_jobs (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                recording_id TEXT NOT NULL CHECK (length(recording_id) = 36),
+                kind TEXT NOT NULL CHECK (kind IN ('chunking', 'frame-extraction', 'ocr', 'transcription', 'vlm', 'embedding', 'digest')),
+                status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+                created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+                error TEXT,
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE recorder_scenes (
                 id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
                 name TEXT NOT NULL,
@@ -1173,6 +1594,26 @@ fn create_v4_recorder_scene_tables(connection: &Connection) {
                 created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
                 updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
                 FOREIGN KEY (scene_id) REFERENCES recorder_scenes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE recording_segments (
+                id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+                recording_id TEXT NOT NULL CHECK (length(recording_id) = 36),
+                segment_index INTEGER NOT NULL CHECK (segment_index > 0),
+                file_path TEXT NOT NULL,
+                started_at_ms INTEGER NOT NULL CHECK (started_at_ms >= 0),
+                ended_at_ms INTEGER CHECK (ended_at_ms IS NULL OR ended_at_ms >= started_at_ms),
+                duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+                state TEXT NOT NULL CHECK (state IN ('recording', 'finalized', 'failed')),
+                video_stream_index INTEGER CHECK (video_stream_index IS NULL OR video_stream_index >= 0),
+                desktop_audio_stream_index INTEGER CHECK (desktop_audio_stream_index IS NULL OR desktop_audio_stream_index >= 0),
+                microphone_audio_stream_index INTEGER CHECK (microphone_audio_stream_index IS NULL OR microphone_audio_stream_index >= 0),
+                ffmpeg_exit_code INTEGER,
+                error_code TEXT,
+                created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+                updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+                UNIQUE (recording_id, segment_index),
+                FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
             );
             "#,
         )

@@ -778,16 +778,35 @@ fn pending_live_start_uses_saved_record_settings() {
     let storage = test_storage();
     let scene_id = saved_test_scene(&storage);
     storage
-        .with_connection(|connection| {
+        .with_connection_mut(|connection| {
             storage::save_app_settings(
                 connection,
-                &storage::SaveAppSettingsInput {
-                    record_fps: 0.5,
-                    record_video_bitrate_kbps: 2_500,
-                    storage_retention_days: 14,
-                    storage_size_limit_bytes: 75 * 1024 * 1024 * 1024,
-                    updated_at_ms: 5,
-                },
+                &[
+                    storage::SaveAppSettingInput {
+                        key: "record.fps".to_string(),
+                        value_json: "0.5".to_string(),
+                        is_sensitive: false,
+                        timestamp_ms: 5,
+                    },
+                    storage::SaveAppSettingInput {
+                        key: "record.videoBitrateKbps".to_string(),
+                        value_json: "2500".to_string(),
+                        is_sensitive: false,
+                        timestamp_ms: 5,
+                    },
+                    storage::SaveAppSettingInput {
+                        key: "storage.retentionDays".to_string(),
+                        value_json: "14".to_string(),
+                        is_sensitive: false,
+                        timestamp_ms: 5,
+                    },
+                    storage::SaveAppSettingInput {
+                        key: "storage.sizeLimitBytes".to_string(),
+                        value_json: (75_u64 * 1024 * 1024 * 1024).to_string(),
+                        is_sensitive: false,
+                        timestamp_ms: 5,
+                    },
+                ],
             )
         })
         .expect("save app settings");

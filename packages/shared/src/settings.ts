@@ -1,3 +1,5 @@
+import type { AiSettings, AiSettingsLimits } from './ai.js';
+
 export interface AppSettingsState {
   defaults: AppSettings;
   limits: AppSettingsLimits;
@@ -6,6 +8,7 @@ export interface AppSettingsState {
 }
 
 export interface AppSettings {
+  ai: AiSettings;
   record: RecordSettings;
   storage: StorageSettings;
 }
@@ -21,6 +24,7 @@ export interface StorageSettings {
 }
 
 export interface AppSettingsLimits {
+  ai: AiSettingsLimits;
   record: RecordSettingsLimits;
   storage: StorageSettingsLimits;
 }

@@ -48,8 +48,13 @@
 - Remote transcription and VLM remain in scope as guarded provider paths:
   settings, validation, warnings, disabled-by-default behavior, privacy-safe
   errors, and adapter boundaries.
-- API keys are stored in SQLite with explicit warning that this is obscured
-  local storage, not OS keyring encryption.
+- Settings use a unified key/value table instead of specialized flat settings
+  columns.
+- Sensitive settings such as remote API keys are stored as AES-256-GCM
+  encrypted base64 envelopes in SQLite, using a Linux Secret Service-backed
+  Daydream app key.
+- macOS and Windows encrypted secret storage return typed not-implemented
+  states until later cross-platform work.
 - Daydream manages model downloads under app data.
 - Default local transcription model is multilingual `small`.
 - Local transcription choices include multilingual `tiny`, `base`, `small`,
@@ -112,6 +117,12 @@
   - keep the full slice, with finer-grained sub-area goals
   - keep automatic processing as written
   - use the local baseline as the provider completion floor
+- During Gate A planning, user chose:
+  - unified key/value settings storage
+  - typed JSON rows with `is_sensitive`
+  - Linux Secret Service-backed AES-256-GCM envelopes for sensitive settings
+  - contracts/storage only, with no AI command stubs in Gate A
+  - update milestone docs with the new secret-storage direction
 
 ## Repository Evidence
 
@@ -200,6 +211,9 @@
   stop and document the blocker before switching to a vendored binary wrapper.
 - If a remote provider stores or transmits private data in a way not visible to
   the user, stop and update the milestone contract before implementing it.
+- If Linux Secret Service cannot provide or persist the Daydream app encryption
+  key, sensitive settings must fail with a typed unavailable error rather than
+  falling back to plaintext or obscured local storage.
 - If VLM output cannot be runtime-validated into source-linked observations,
   stop before persisting it as structured fact.
 - If model download sources lack checksum or etag metadata, record the weaker
@@ -224,7 +238,7 @@
 - Embeddings and vector search.
 - Chat over recordings.
 - Speaker diarization.
-- OS keyring storage for remote API keys.
+- macOS and Windows encrypted secret storage for remote API keys.
 - Public local API endpoint for external tools.
 - Full cross-platform native activity monitoring.
 - Accuracy benchmark suite across languages, accents, and noisy audio.

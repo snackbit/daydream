@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
 use crate::{
-    storage::{
-        self, AppSettingsRow, AppStorage, SaveAppSettingsInput as StorageSaveAppSettingsInput,
-    },
+    storage::{self, AppSettingRow, AppStorage, SaveAppSettingInput},
     storage_limits::{self, StorageCleanupPreview, StorageCleanupResult},
 };
 
@@ -24,6 +22,20 @@ pub const MIN_STORAGE_RETENTION_DAYS: u32 = 1;
 pub const MAX_STORAGE_RETENTION_DAYS: u32 = 365;
 pub const DEFAULT_STORAGE_SIZE_LIMIT_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 pub const MIN_STORAGE_SIZE_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
+pub const DEFAULT_AI_TRANSCRIPTION_MODEL_ID: &str = "small";
+pub const DEFAULT_AI_KEYBOARD_WINDOW_MS: u32 = 30_000;
+pub const DEFAULT_AI_MOUSE_WINDOW_MS: u32 = 5_000;
+pub const MIN_AI_ACTIVITY_WINDOW_MS: u32 = 1_000;
+pub const MAX_AI_ACTIVITY_WINDOW_MS: u32 = 300_000;
+pub const DEFAULT_AI_MAX_PARALLEL_JOBS: u32 = 1;
+pub const MIN_AI_MAX_PARALLEL_JOBS: u32 = 1;
+pub const MAX_AI_MAX_PARALLEL_JOBS: u32 = 4;
+pub const DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
+pub const MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
+pub const MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 8;
+pub const DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 300_000;
+pub const MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 30_000;
+pub const MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 3_600_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -38,8 +50,76 @@ pub struct AppSettingsState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    pub ai: AiSettings,
     pub record: RecordSettings,
     pub storage: StorageSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSettings {
+    pub activity: AiActivitySettings,
+    pub ocr: AiOcrSettings,
+    pub processing: AiProcessingSettings,
+    pub transcription: AiTranscriptionProviderSettings,
+    pub vision: AiVisionProviderSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranscriptionProviderSettings {
+    pub local_model_id: String,
+    pub provider: String,
+    pub remote_api_key_ref: Option<String>,
+    pub remote_base_url: Option<String>,
+    pub word_timestamps_enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiVisionProviderSettings {
+    pub api_key_ref: Option<String>,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub provider: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiOcrSettings {
+    pub enabled: bool,
+    pub engine: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingSettings {
+    pub auto_start_after_recording: bool,
+    pub frame_similarity_enabled: bool,
+    pub max_parallel_chunks_per_job: u32,
+    pub max_parallel_jobs: u32,
+    pub periodic_full_frame_interval_ms: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiActivitySettings {
+    pub frame_deltas: AiActivitySourceSettings,
+    pub keyboard: AiActivityWindowSettings,
+    pub mouse: AiActivityWindowSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiActivitySourceSettings {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiActivityWindowSettings {
+    pub enabled: bool,
+    pub window_ms: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -59,8 +139,36 @@ pub struct StorageSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsLimits {
+    pub ai: AiSettingsLimits,
     pub record: RecordSettingsLimits,
     pub storage: StorageSettingsLimits,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSettingsLimits {
+    pub activity: AiActivityLimits,
+    pub processing: AiProcessingLimits,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingLimits {
+    pub max_parallel_chunks_per_job_min: u32,
+    pub max_parallel_chunks_per_job_max: u32,
+    pub max_parallel_jobs_min: u32,
+    pub max_parallel_jobs_max: u32,
+    pub periodic_full_frame_interval_ms_min: u32,
+    pub periodic_full_frame_interval_ms_max: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiActivityLimits {
+    pub keyboard_window_ms_min: u32,
+    pub keyboard_window_ms_max: u32,
+    pub mouse_window_ms_min: u32,
+    pub mouse_window_ms_max: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -129,20 +237,12 @@ pub fn save_app_settings(
     storage: State<'_, AppStorage>,
 ) -> Result<AppSettingsState, AppSettingsError> {
     let settings = validate_settings(input.settings)?;
-    let storage_input = StorageSaveAppSettingsInput {
-        record_fps: settings.record.fps,
-        record_video_bitrate_kbps: settings.record.video_bitrate_kbps.into(),
-        storage_retention_days: settings.storage.retention_days.into(),
-        storage_size_limit_bytes: settings.storage.size_limit_bytes.try_into().map_err(
-            |_error| validation_error("storage.sizeLimitBytes", "Storage size limit is too large."),
-        )?,
-        updated_at_ms: now_ms() as i64,
-    };
+    let storage_input = settings_to_storage_inputs(&settings, now_ms() as i64)?;
 
     storage
-        .with_connection(|connection| storage::save_app_settings(connection, &storage_input))
+        .with_connection_mut(|connection| storage::save_app_settings(connection, &storage_input))
         .map_err(storage_error)
-        .and_then(settings_from_storage)
+        .and_then(settings_from_storage_rows)
         .map(|saved_settings| {
             let cleanup = enforce_storage_cleanup_for_settings(&app, &storage, &saved_settings);
             settings_state_with_cleanup(saved_settings, Some(cleanup))
@@ -165,17 +265,16 @@ pub fn reset_app_settings(
 }
 
 pub fn load_app_settings(storage: &AppStorage) -> Result<AppSettings, AppSettingsError> {
-    let row = storage
-        .with_connection(storage::get_app_settings)
+    let rows = storage
+        .with_connection(storage::list_app_settings)
         .map_err(storage_error)?;
 
-    row.map(settings_from_storage)
-        .transpose()
-        .map(|settings| settings.unwrap_or_else(default_settings))
+    settings_from_storage_rows(rows)
 }
 
 pub fn default_settings() -> AppSettings {
     AppSettings {
+        ai: default_ai_settings(),
         record: RecordSettings {
             fps: DEFAULT_RECORD_FPS,
             video_bitrate_kbps: DEFAULT_VIDEO_BITRATE_KBPS,
@@ -187,8 +286,64 @@ pub fn default_settings() -> AppSettings {
     }
 }
 
+pub fn default_ai_settings() -> AiSettings {
+    AiSettings {
+        activity: AiActivitySettings {
+            frame_deltas: AiActivitySourceSettings { enabled: true },
+            keyboard: AiActivityWindowSettings {
+                enabled: false,
+                window_ms: DEFAULT_AI_KEYBOARD_WINDOW_MS,
+            },
+            mouse: AiActivityWindowSettings {
+                enabled: false,
+                window_ms: DEFAULT_AI_MOUSE_WINDOW_MS,
+            },
+        },
+        ocr: AiOcrSettings {
+            enabled: true,
+            engine: "tesseract".to_string(),
+        },
+        processing: AiProcessingSettings {
+            auto_start_after_recording: true,
+            frame_similarity_enabled: true,
+            max_parallel_chunks_per_job: DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+            max_parallel_jobs: DEFAULT_AI_MAX_PARALLEL_JOBS,
+            periodic_full_frame_interval_ms: DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+        },
+        transcription: AiTranscriptionProviderSettings {
+            local_model_id: DEFAULT_AI_TRANSCRIPTION_MODEL_ID.to_string(),
+            provider: "local-whisper-cpp".to_string(),
+            remote_api_key_ref: None,
+            remote_base_url: None,
+            word_timestamps_enabled: true,
+        },
+        vision: AiVisionProviderSettings {
+            api_key_ref: None,
+            base_url: None,
+            model: None,
+            provider: "disabled".to_string(),
+        },
+    }
+}
+
 pub fn settings_limits() -> AppSettingsLimits {
     AppSettingsLimits {
+        ai: AiSettingsLimits {
+            activity: AiActivityLimits {
+                keyboard_window_ms_min: MIN_AI_ACTIVITY_WINDOW_MS,
+                keyboard_window_ms_max: MAX_AI_ACTIVITY_WINDOW_MS,
+                mouse_window_ms_min: MIN_AI_ACTIVITY_WINDOW_MS,
+                mouse_window_ms_max: MAX_AI_ACTIVITY_WINDOW_MS,
+            },
+            processing: AiProcessingLimits {
+                max_parallel_chunks_per_job_min: MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+                max_parallel_chunks_per_job_max: MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+                max_parallel_jobs_min: MIN_AI_MAX_PARALLEL_JOBS,
+                max_parallel_jobs_max: MAX_AI_MAX_PARALLEL_JOBS,
+                periodic_full_frame_interval_ms_min: MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+                periodic_full_frame_interval_ms_max: MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+            },
+        },
         record: RecordSettingsLimits {
             fps_min: MIN_RECORD_FPS,
             fps_max: MAX_RECORD_FPS,
@@ -236,25 +391,254 @@ fn enforce_storage_cleanup_for_settings(
     }
 }
 
-fn settings_from_storage(row: AppSettingsRow) -> Result<AppSettings, AppSettingsError> {
-    validate_settings(AppSettings {
-        record: RecordSettings {
-            fps: row.record_fps,
-            video_bitrate_kbps: row.record_video_bitrate_kbps.try_into().map_err(|_error| {
-                validation_error("record.videoBitrateKbps", "Video bitrate must be positive.")
-            })?,
-        },
-        storage: StorageSettings {
-            retention_days: row.storage_retention_days.try_into().map_err(|_error| {
-                validation_error("storage.retentionDays", "Retention must be positive.")
-            })?,
-            size_limit_bytes: row.storage_size_limit_bytes.try_into().map_err(|_error| {
-                validation_error(
-                    "storage.sizeLimitBytes",
-                    "Storage size limit must be positive.",
-                )
-            })?,
-        },
+fn settings_from_storage_rows(rows: Vec<AppSettingRow>) -> Result<AppSettings, AppSettingsError> {
+    let mut settings = default_settings();
+
+    for row in rows {
+        apply_setting_row(&mut settings, &row)?;
+    }
+
+    validate_settings(settings)
+}
+
+fn apply_setting_row(
+    settings: &mut AppSettings,
+    row: &AppSettingRow,
+) -> Result<(), AppSettingsError> {
+    match row.key.as_str() {
+        "record.fps" => settings.record.fps = setting_value(row)?,
+        "record.videoBitrateKbps" => settings.record.video_bitrate_kbps = setting_value(row)?,
+        "storage.retentionDays" => settings.storage.retention_days = setting_value(row)?,
+        "storage.sizeLimitBytes" => settings.storage.size_limit_bytes = setting_value(row)?,
+        "ai.transcription.provider" => settings.ai.transcription.provider = setting_value(row)?,
+        "ai.transcription.localModelId" => {
+            settings.ai.transcription.local_model_id = setting_value(row)?;
+        }
+        "ai.transcription.remoteBaseUrl" => {
+            settings.ai.transcription.remote_base_url = setting_value(row)?;
+        }
+        "ai.transcription.remoteApiKeyRef" => {
+            settings.ai.transcription.remote_api_key_ref = setting_value(row)?;
+        }
+        "ai.transcription.wordTimestampsEnabled" => {
+            settings.ai.transcription.word_timestamps_enabled = setting_value(row)?;
+        }
+        "ai.vision.provider" => settings.ai.vision.provider = setting_value(row)?,
+        "ai.vision.baseUrl" => settings.ai.vision.base_url = setting_value(row)?,
+        "ai.vision.apiKeyRef" => settings.ai.vision.api_key_ref = setting_value(row)?,
+        "ai.vision.model" => settings.ai.vision.model = setting_value(row)?,
+        "ai.ocr.enabled" => settings.ai.ocr.enabled = setting_value(row)?,
+        "ai.ocr.engine" => settings.ai.ocr.engine = setting_value(row)?,
+        "ai.processing.autoStartAfterRecording" => {
+            settings.ai.processing.auto_start_after_recording = setting_value(row)?;
+        }
+        "ai.processing.maxParallelJobs" => {
+            settings.ai.processing.max_parallel_jobs = setting_value(row)?;
+        }
+        "ai.processing.maxParallelChunksPerJob" => {
+            settings.ai.processing.max_parallel_chunks_per_job = setting_value(row)?;
+        }
+        "ai.processing.periodicFullFrameIntervalMs" => {
+            settings.ai.processing.periodic_full_frame_interval_ms = setting_value(row)?;
+        }
+        "ai.processing.frameSimilarityEnabled" => {
+            settings.ai.processing.frame_similarity_enabled = setting_value(row)?;
+        }
+        "ai.activity.keyboard.enabled" => {
+            settings.ai.activity.keyboard.enabled = setting_value(row)?
+        }
+        "ai.activity.keyboard.windowMs" => {
+            settings.ai.activity.keyboard.window_ms = setting_value(row)?;
+        }
+        "ai.activity.mouse.enabled" => settings.ai.activity.mouse.enabled = setting_value(row)?,
+        "ai.activity.mouse.windowMs" => settings.ai.activity.mouse.window_ms = setting_value(row)?,
+        "ai.activity.frameDeltas.enabled" => {
+            settings.ai.activity.frame_deltas.enabled = setting_value(row)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn setting_value<T: serde::de::DeserializeOwned>(
+    row: &AppSettingRow,
+) -> Result<T, AppSettingsError> {
+    serde_json::from_str(&row.value_json).map_err(|error| AppSettingsError {
+        code: "settings_invalid_value".to_string(),
+        field: Some(row.key.clone()),
+        message: format!("Stored setting value is invalid: {error}"),
+    })
+}
+
+fn settings_to_storage_inputs(
+    settings: &AppSettings,
+    timestamp_ms: i64,
+) -> Result<Vec<SaveAppSettingInput>, AppSettingsError> {
+    Ok(vec![
+        setting_input("record.fps", &settings.record.fps, false, timestamp_ms)?,
+        setting_input(
+            "record.videoBitrateKbps",
+            &settings.record.video_bitrate_kbps,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "storage.retentionDays",
+            &settings.storage.retention_days,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "storage.sizeLimitBytes",
+            &settings.storage.size_limit_bytes,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.provider",
+            &settings.ai.transcription.provider,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.localModelId",
+            &settings.ai.transcription.local_model_id,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.remoteBaseUrl",
+            &settings.ai.transcription.remote_base_url,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.remoteApiKeyRef",
+            &settings.ai.transcription.remote_api_key_ref,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.wordTimestampsEnabled",
+            &settings.ai.transcription.word_timestamps_enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.provider",
+            &settings.ai.vision.provider,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.baseUrl",
+            &settings.ai.vision.base_url,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.apiKeyRef",
+            &settings.ai.vision.api_key_ref,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.model",
+            &settings.ai.vision.model,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.ocr.enabled",
+            &settings.ai.ocr.enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.ocr.engine",
+            &settings.ai.ocr.engine,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.autoStartAfterRecording",
+            &settings.ai.processing.auto_start_after_recording,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.maxParallelJobs",
+            &settings.ai.processing.max_parallel_jobs,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.maxParallelChunksPerJob",
+            &settings.ai.processing.max_parallel_chunks_per_job,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.periodicFullFrameIntervalMs",
+            &settings.ai.processing.periodic_full_frame_interval_ms,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.frameSimilarityEnabled",
+            &settings.ai.processing.frame_similarity_enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.keyboard.enabled",
+            &settings.ai.activity.keyboard.enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.keyboard.windowMs",
+            &settings.ai.activity.keyboard.window_ms,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.mouse.enabled",
+            &settings.ai.activity.mouse.enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.mouse.windowMs",
+            &settings.ai.activity.mouse.window_ms,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.frameDeltas.enabled",
+            &settings.ai.activity.frame_deltas.enabled,
+            false,
+            timestamp_ms,
+        )?,
+    ])
+}
+
+fn setting_input(
+    key: &str,
+    value: &impl Serialize,
+    is_sensitive: bool,
+    timestamp_ms: i64,
+) -> Result<SaveAppSettingInput, AppSettingsError> {
+    Ok(SaveAppSettingInput {
+        key: key.to_string(),
+        value_json: serde_json::to_string(value).map_err(|error| AppSettingsError {
+            code: "settings_invalid_value".to_string(),
+            field: Some(key.to_string()),
+            message: format!("Setting value could not be serialized: {error}"),
+        })?,
+        is_sensitive,
+        timestamp_ms,
     })
 }
 
@@ -286,8 +670,113 @@ fn validate_settings(settings: AppSettings) -> Result<AppSettings, AppSettingsEr
             "Storage size limit must be at least 1 GiB.",
         ));
     }
+    validate_ai_settings(&settings.ai)?;
 
     Ok(settings)
+}
+
+fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
+    validate_one_of(
+        "ai.transcription.provider",
+        &settings.transcription.provider,
+        &["local-whisper-cpp", "openai-compatible"],
+        "Transcription provider must be local Whisper or OpenAI-compatible.",
+    )?;
+    validate_one_of(
+        "ai.transcription.localModelId",
+        &settings.transcription.local_model_id,
+        &[
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large-v3-turbo",
+            "large-v3",
+        ],
+        "Local transcription model must be one of the supported multilingual models.",
+    )?;
+    validate_optional_url(
+        "ai.transcription.remoteBaseUrl",
+        settings.transcription.remote_base_url.as_deref(),
+    )?;
+    validate_one_of(
+        "ai.vision.provider",
+        &settings.vision.provider,
+        &["disabled", "openai-compatible"],
+        "Vision provider must be disabled or OpenAI-compatible.",
+    )?;
+    validate_optional_url("ai.vision.baseUrl", settings.vision.base_url.as_deref())?;
+    validate_one_of(
+        "ai.ocr.engine",
+        &settings.ocr.engine,
+        &["tesseract"],
+        "OCR engine must be Tesseract.",
+    )?;
+    validate_u32_range(
+        "ai.processing.maxParallelJobs",
+        settings.processing.max_parallel_jobs,
+        MIN_AI_MAX_PARALLEL_JOBS,
+        MAX_AI_MAX_PARALLEL_JOBS,
+        "Max parallel jobs must be between 1 and 4.",
+    )?;
+    validate_u32_range(
+        "ai.processing.maxParallelChunksPerJob",
+        settings.processing.max_parallel_chunks_per_job,
+        MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+        MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+        "Max parallel chunks per job must be between 1 and 8.",
+    )?;
+    validate_u32_range(
+        "ai.processing.periodicFullFrameIntervalMs",
+        settings.processing.periodic_full_frame_interval_ms,
+        MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+        MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+        "Periodic full-frame interval must be between 30 seconds and 1 hour.",
+    )?;
+    validate_u32_range(
+        "ai.activity.keyboard.windowMs",
+        settings.activity.keyboard.window_ms,
+        MIN_AI_ACTIVITY_WINDOW_MS,
+        MAX_AI_ACTIVITY_WINDOW_MS,
+        "Keyboard activity window must be between 1 second and 5 minutes.",
+    )?;
+    validate_u32_range(
+        "ai.activity.mouse.windowMs",
+        settings.activity.mouse.window_ms,
+        MIN_AI_ACTIVITY_WINDOW_MS,
+        MAX_AI_ACTIVITY_WINDOW_MS,
+        "Mouse activity window must be between 1 second and 5 minutes.",
+    )?;
+
+    Ok(())
+}
+
+fn validate_one_of(
+    field: &str,
+    value: &str,
+    allowed: &[&str],
+    message: &str,
+) -> Result<(), AppSettingsError> {
+    if !allowed.contains(&value) {
+        return Err(validation_error(field, message));
+    }
+
+    Ok(())
+}
+
+fn validate_optional_url(field: &str, value: Option<&str>) -> Result<(), AppSettingsError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+
+    if value.starts_with("http://") || value.starts_with("https://") {
+        return Ok(());
+    }
+
+    Err(validation_error(
+        field,
+        "Remote endpoint URL must start with http:// or https://.",
+    ))
 }
 
 fn validate_f64_range(
@@ -364,7 +853,7 @@ fn now_ms() -> u64 {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::storage::{self, SaveAppSettingsInput as StorageSaveAppSettingsInput};
+    use crate::storage::{self, SaveAppSettingInput};
 
     use super::*;
 
@@ -380,16 +869,35 @@ mod tests {
     fn load_app_settings_returns_saved_values() {
         let storage = storage::test_storage(PathBuf::from("/tmp/daydream.sqlite3"));
         storage
-            .with_connection(|connection| {
+            .with_connection_mut(|connection| {
                 storage::save_app_settings(
                     connection,
-                    &StorageSaveAppSettingsInput {
-                        record_fps: 5.0,
-                        record_video_bitrate_kbps: 2_500,
-                        storage_retention_days: 30,
-                        storage_size_limit_bytes: 75 * 1024 * 1024 * 1024,
-                        updated_at_ms: 1,
-                    },
+                    &[
+                        SaveAppSettingInput {
+                            key: "record.fps".to_string(),
+                            value_json: "5.0".to_string(),
+                            is_sensitive: false,
+                            timestamp_ms: 1,
+                        },
+                        SaveAppSettingInput {
+                            key: "record.videoBitrateKbps".to_string(),
+                            value_json: "2500".to_string(),
+                            is_sensitive: false,
+                            timestamp_ms: 1,
+                        },
+                        SaveAppSettingInput {
+                            key: "storage.retentionDays".to_string(),
+                            value_json: "30".to_string(),
+                            is_sensitive: false,
+                            timestamp_ms: 1,
+                        },
+                        SaveAppSettingInput {
+                            key: "storage.sizeLimitBytes".to_string(),
+                            value_json: (75_u64 * 1024 * 1024 * 1024).to_string(),
+                            is_sensitive: false,
+                            timestamp_ms: 1,
+                        },
+                    ],
                 )
             })
             .expect("save settings");
@@ -448,6 +956,69 @@ mod tests {
         ] {
             let error =
                 validate_settings(settings).expect_err("invalid settings should fail validation");
+
+            assert_eq!(error.field, Some(field.to_string()));
+        }
+    }
+
+    #[test]
+    fn validate_settings_rejects_invalid_ai_values() {
+        for (settings, field) in [
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            provider: "remote".to_string(),
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.provider",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            local_model_id: "small.en".to_string(),
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.localModelId",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            remote_base_url: Some("file:///tmp/model".to_string()),
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.remoteBaseUrl",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        processing: AiProcessingSettings {
+                            max_parallel_jobs: MAX_AI_MAX_PARALLEL_JOBS + 1,
+                            ..default_settings().ai.processing
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.processing.maxParallelJobs",
+            ),
+        ] {
+            let error = validate_settings(settings)
+                .expect_err("invalid AI settings should fail validation");
 
             assert_eq!(error.field, Some(field.to_string()));
         }
