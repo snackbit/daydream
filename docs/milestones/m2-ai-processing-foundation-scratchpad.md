@@ -2,9 +2,14 @@
 
 ## Current Status
 
-- Planning complete enough to create the initial milestone contract.
-- No M2 implementation has started.
-- No M2 gates are complete.
+- Gate A storage foundation landed in commit `6aa1f34`.
+- M2 is not closed. The full milestone still requires settings UI,
+  notifications, model cache, `whisper.cpp`, transcription providers, scheduler,
+  activity detection, OCR/VLM processing, playback integration, privacy
+  diagnostics, and final validation.
+- Gate A is mostly complete, but one follow-up remains: add explicit
+  `processing_jobs` row helper APIs before scheduler work depends on them.
+- Gates B through J are not complete.
 
 ## Locked Decisions
 
@@ -228,7 +233,12 @@
 
 ## Validation Log
 
-- No M2 validation has run yet.
+- Commit `6aa1f34` added tested shared AI contracts, unified key/value settings
+  storage, encrypted sensitive setting envelopes, M2 storage schema, M2
+  processing job kind support, model/chunk/derived-output storage helpers, and
+  settings/UI test coverage updates.
+- Validation commands from `6aa1f34` are not recorded in this scratchpad. Re-run
+  the relevant TypeScript and Rust gates before treating Gate A as closed.
 
 ## Deferred Follow-Up Candidates
 

@@ -534,18 +534,25 @@ Migration stop boundary:
 
 ## Gate A: AI Contracts, Settings, and Storage
 
-- [ ] Add shared AI settings, provider, model asset, processing job,
+- [x] Add shared AI settings, provider, model asset, processing job,
   notification, transcript, activity, OCR, and VLM result types.
-- [ ] Extend Rust settings structs, defaults, validation, and limits with AI
+- [x] Extend Rust settings structs, defaults, validation, and limits with AI
   settings.
-- [ ] Add embedded SQLite migrations for unified key/value app settings, model
+- [x] Add embedded SQLite migrations for unified key/value app settings, model
   assets, processing chunks, transcript segments, transcript words, activity
   intervals, OCR regions, VLM observations, and frame similarity entries.
-- [ ] Extend `processing_jobs` support for M2 AI job kinds.
+- [x] Extend `processing_jobs` support for M2 AI job kinds.
 - [ ] Add storage helpers for AI settings, encrypted sensitive settings, model
   assets, jobs, chunks, and derived result writes.
-- [ ] Add tests for fresh migration, existing database migration, AI settings
+- [x] Add tests for fresh migration, existing database migration, AI settings
   validation, secret redaction, and derived output provenance.
+
+Status note:
+
+- Commit `6aa1f34` completed the Gate A storage foundation except for explicit
+  `processing_jobs` row helper APIs. M2 job kinds are accepted by the schema,
+  and chunk plus derived-output storage helpers exist, but Gate E still needs
+  concrete job create/update/list helpers before scheduler work can be complete.
 
 Exit Criteria:
 
