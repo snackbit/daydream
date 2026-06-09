@@ -1,21 +1,25 @@
-import {
-  type PointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
-import { Minus, Plus } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { formatDuration } from '../../library-format';
 import { timelineDurationMs } from '../../library-timeline';
-import { TrackLane } from './track-lane';
+import { useStudioTimelineStore } from './studio-timeline-store';
 import {
   buildRulerTicks,
   clampScrollLeft,
@@ -24,13 +28,22 @@ import {
   DEFAULT_TRACK_VIEWPORT_WIDTH_PX,
   INITIAL_TRACK_WINDOW_MS,
   minVisibleWindowMs,
-  type RulerTick,
   TRACK_FOLLOW_EDGE_PX,
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
+  TRACK_SELECTION_DRAG_THRESHOLD_PX,
   TRACK_ZOOM_STEP,
 } from './track-timeline-math';
+import {
+  horizontalWheelDeltaPx,
+  orderedDetailTracks,
+  SortableTrackLane,
+  TimelineRangeLabels,
+  TimeRuler,
+  TrackTimelineToolbar,
+} from './track-timeline-parts';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
+import { useTrackTimelineSelection } from './use-track-timeline-selection';
 import { useWaveformTileQueue } from './use-waveform-tile-queue';
 
 export function TrackTimeline({
@@ -49,13 +62,20 @@ export function TrackTimeline({
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
 }) {
   const { actions, state } = playback;
+  const clipsById = useStudioTimelineStore((store) => store.clipsById);
+  const clearSelection = useStudioTimelineStore(
+    (store) => store.clearSelection,
+  );
+  const laneOrder = useStudioTimelineStore((store) => store.laneOrder);
+  const lanesById = useStudioTimelineStore((store) => store.lanesById);
+  const moveLane = useStudioTimelineStore((store) => store.moveLane);
+  const selectClip = useStudioTimelineStore((store) => store.selectClip);
+  const selectLane = useStudioTimelineStore((store) => store.selectLane);
+  const selection = useStudioTimelineStore((store) => store.selection);
+  const setSelection = useStudioTimelineStore((store) => store.setSelection);
   const totalDurationMs = Math.max(1, timelineDurationMs(detail.segments));
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const dragStateRef = useRef<{ active: boolean; pointerId: number | null }>({
-    active: false,
-    pointerId: null,
-  });
   const programmaticScrollRef = useRef<number | null>(null);
   const [followPlayhead, setFollowPlayhead] = useState(true);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -87,6 +107,20 @@ export function TrackTimeline({
   );
   const canZoomIn = visibleWindowMs > minVisibleWindowMs(totalDurationMs);
   const canZoomOut = visibleWindowMs < totalDurationMs;
+  const orderedTracks = useMemo(
+    () => orderedDetailTracks(detail.tracks, laneOrder),
+    [detail.tracks, laneOrder],
+  );
+  const activeLaneIds = orderedTracks.map((track) => track.id);
+  const selectedClipIds = useMemo(
+    () => new Set(selection.clipIds),
+    [selection.clipIds],
+  );
+  const selectedLaneIds = useMemo(
+    () => new Set(selection.laneIds),
+    [selection.laneIds],
+  );
+  const hasTimeRangeSelection = selection.ranges.length > 0;
   const rulerTicks = useMemo(
     () =>
       buildRulerTicks({
@@ -124,6 +158,30 @@ export function TrackTimeline({
   const { waveformStatus, waveformTiles } = useWaveformTileQueue({
     detail,
     requestRange: waveformRequestRange,
+    timelineWidthPx,
+    totalDurationMs,
+  });
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: TRACK_SELECTION_DRAG_THRESHOLD_PX },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const {
+    handleTimelinePointerDown,
+    handleTimelinePointerEnd,
+    handleTimelinePointerMove,
+    timelineMsFromClientX,
+  } = useTrackTimelineSelection({
+    actions,
+    activeLaneIds,
+    clearSelection,
+    contentRef,
+    selection,
+    setFollowPlayhead,
+    setSelection,
     timelineWidthPx,
     totalDurationMs,
   });
@@ -247,80 +305,6 @@ export function TrackTimeline({
     return () => window.cancelAnimationFrame(frame);
   }, [state.snapshot.seekRevision]);
 
-  function timelineMsFromClientX(clientX: number): number | null {
-    const content = contentRef.current;
-    if (!content) {
-      return null;
-    }
-    const x = clientX - content.getBoundingClientRect().left;
-    const timelineX = x - TRACK_LABEL_WIDTH_PX;
-    if (timelineX < 0) {
-      return null;
-    }
-
-    return clampTimelineMs(
-      (timelineX / timelineWidthPx) * totalDurationMs,
-      totalDurationMs,
-    );
-  }
-
-  function commitPointerTimelineMs(clientX: number) {
-    const nextTimelineMs = timelineMsFromClientX(clientX);
-    if (nextTimelineMs === null) {
-      return;
-    }
-    actions.commitTimelineInput(nextTimelineMs);
-    setFollowPlayhead(true);
-  }
-
-  function handleTimelinePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (
-      event.button !== 0 ||
-      (event.target instanceof Element &&
-        event.target.closest('[data-library-action]'))
-    ) {
-      return;
-    }
-
-    const nextTimelineMs = timelineMsFromClientX(event.clientX);
-    if (nextTimelineMs === null) {
-      return;
-    }
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragStateRef.current = { active: true, pointerId: event.pointerId };
-    actions.handleTimelineInput(nextTimelineMs);
-    setFollowPlayhead(true);
-  }
-
-  function handleTimelinePointerMove(event: PointerEvent<HTMLDivElement>) {
-    if (
-      !dragStateRef.current.active ||
-      dragStateRef.current.pointerId !== event.pointerId
-    ) {
-      return;
-    }
-
-    const nextTimelineMs = timelineMsFromClientX(event.clientX);
-    if (nextTimelineMs !== null) {
-      actions.handleTimelineInput(nextTimelineMs);
-    }
-  }
-
-  function handleTimelinePointerEnd(event: PointerEvent<HTMLDivElement>) {
-    if (
-      !dragStateRef.current.active ||
-      dragStateRef.current.pointerId !== event.pointerId
-    ) {
-      return;
-    }
-
-    dragStateRef.current = { active: false, pointerId: null };
-    event.currentTarget.releasePointerCapture(event.pointerId);
-    commitPointerTimelineMs(event.clientX);
-  }
-
   function handleTimelineWheel(event: WheelEvent) {
     if (event.ctrlKey) {
       event.preventDefault();
@@ -410,52 +394,29 @@ export function TrackTimeline({
     });
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    if (!event.over) {
+      return;
+    }
+    moveLane(String(event.active.id), String(event.over.id));
+  }
+
   return (
     <div className="bg-background flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b px-3">
-        <div className="text-sm font-medium">Tracks</div>
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="text-muted-foreground truncate text-xs">
-            {waveformTiles?.error ??
-              (waveformStatus === 'loading'
-                ? 'Loading waveforms...'
-                : 'Video and audio timeline')}
-          </div>
-          <div
-            aria-label="Track zoom"
-            className="flex shrink-0 items-center gap-1"
-          >
-            <Button
-              aria-label="Zoom out tracks"
-              disabled={!canZoomOut}
-              size="icon-xs"
-              variant="ghost"
-              onClick={() =>
-                zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)
-              }
-            >
-              <Minus className="size-3" />
-            </Button>
-            <div
-              aria-live="polite"
-              className="text-muted-foreground w-12 text-center text-xs tabular-nums"
-            >
-              {zoomPercent}%
-            </div>
-            <Button
-              aria-label="Zoom in tracks"
-              disabled={!canZoomIn}
-              size="icon-xs"
-              variant="ghost"
-              onClick={() =>
-                zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)
-              }
-            >
-              <Plus className="size-3" />
-            </Button>
-          </div>
-        </div>
-      </div>
+      <TrackTimelineToolbar
+        canZoomIn={canZoomIn}
+        canZoomOut={canZoomOut}
+        hasTimeRangeSelection={hasTimeRangeSelection}
+        statusText={
+          waveformTiles?.error ??
+          (waveformStatus === 'loading'
+            ? 'Loading waveforms...'
+            : 'Video and audio timeline')
+        }
+        zoomPercent={zoomPercent}
+        onZoomIn={() => zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)}
+        onZoomOut={() => zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)}
+      />
       <ScrollArea
         className="min-h-0 flex-1"
         scrollbars="both"
@@ -479,6 +440,11 @@ export function TrackTimeline({
             className="bg-primary pointer-events-none absolute top-0 bottom-0 z-30 w-px"
             style={{ left: playheadLeftPx }}
           />
+          <TimelineRangeLabels
+            ranges={selection.ranges}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+          />
           <div
             className="grid"
             style={{
@@ -490,68 +456,50 @@ export function TrackTimeline({
               style={{ height: TRACK_RULER_HEIGHT_PX }}
             />
             <TimeRuler ticks={rulerTicks} timelineWidthPx={timelineWidthPx} />
-            {detail.tracks.map((track) => (
-              <TrackLane
-                detail={detail}
-                key={track.id}
-                mutedTrackIds={mutedTrackIds}
-                playbackAssets={playbackAssets}
-                thumbnailStatus={thumbnailStatus}
-                timelineWidthPx={timelineWidthPx}
-                totalDurationMs={totalDurationMs}
-                track={track}
-                waveformTiles={waveformTiles}
-                onToggleTrackMuted={onToggleTrackMuted}
-              />
-            ))}
           </div>
+          <DndContext
+            collisionDetection={closestCenter}
+            sensors={sensors}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={activeLaneIds}
+              strategy={verticalListSortingStrategy}
+            >
+              {orderedTracks.map((track) => {
+                const lane = lanesById[track.id];
+                if (!lane) {
+                  return null;
+                }
+
+                return (
+                  <SortableTrackLane
+                    clipDrafts={clipsById}
+                    detail={detail}
+                    key={track.id}
+                    lane={lane}
+                    mutedTrackIds={mutedTrackIds}
+                    playbackAssets={playbackAssets}
+                    selectedClipIds={selectedClipIds}
+                    selectedLane={selectedLaneIds.has(track.id)}
+                    thumbnailStatus={thumbnailStatus}
+                    timelineWidthPx={timelineWidthPx}
+                    timeRanges={selection.ranges.filter((range) =>
+                      range.laneIds.includes(track.id),
+                    )}
+                    totalDurationMs={totalDurationMs}
+                    track={track}
+                    waveformTiles={waveformTiles}
+                    onSelectClip={selectClip}
+                    onSelectLane={selectLane}
+                    onToggleTrackMuted={onToggleTrackMuted}
+                  />
+                );
+              })}
+            </SortableContext>
+          </DndContext>
         </div>
       </ScrollArea>
-    </div>
-  );
-}
-
-function horizontalWheelDeltaPx(event: WheelEvent): number {
-  const rawDelta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
-  if (event.deltaMode === 1) {
-    return rawDelta * 16;
-  }
-  if (event.deltaMode === 2) {
-    return rawDelta * DEFAULT_TRACK_VIEWPORT_WIDTH_PX;
-  }
-
-  return rawDelta;
-}
-
-function TimeRuler({
-  ticks,
-  timelineWidthPx,
-}: {
-  ticks: RulerTick[];
-  timelineWidthPx: number;
-}) {
-  return (
-    <div
-      aria-label="Time ruler"
-      className="bg-background relative sticky top-0 z-20 border-b"
-      style={{ height: TRACK_RULER_HEIGHT_PX, width: timelineWidthPx }}
-    >
-      {ticks.map((tick) => (
-        <div
-          className="border-muted-foreground/40 absolute bottom-0 border-l"
-          key={`${tick.timeMs}-${tick.major ? 'major' : 'minor'}`}
-          style={{
-            height: tick.major ? 22 : 10,
-            left: tick.leftPx,
-          }}
-        >
-          {tick.major ? (
-            <div className="text-muted-foreground mt-0.5 ml-1 text-[0.625rem] tabular-nums">
-              {formatDuration(tick.timeMs)}
-            </div>
-          ) : null}
-        </div>
-      ))}
     </div>
   );
 }

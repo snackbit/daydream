@@ -5,7 +5,6 @@ import type {
   AppSettings,
   AppSettingsLimits,
 } from '@daydream/shared';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Card,
   CardContent,
@@ -69,15 +68,6 @@ export function AiSettingsTab({
 
   return (
     <div className="grid gap-4">
-      <Alert>
-        <AlertTitle>Local baseline</AlertTitle>
-        <AlertDescription>
-          Local Whisper and Tesseract remain the default. Remote providers are
-          optional and send private captured content only in later processing
-          gates.
-        </AlertDescription>
-      </Alert>
-
       <Card>
         <CardHeader>
           <CardTitle>Transcription</CardTitle>
@@ -566,20 +556,6 @@ export function AiSettingsTab({
           </FieldGroup>
         </CardContent>
       </Card>
-
-      {providerStatus ? (
-        <div className="text-muted-foreground grid gap-2 border p-3 text-xs md:grid-cols-3">
-          <span>
-            Local transcription:{' '}
-            {providerStatus.localTranscription.modelDownloadStatus}; backend{' '}
-            {providerStatus.localTranscription.selectedBackend}
-          </span>
-          <span>
-            Remote transcription: {providerStatus.remoteTranscription}
-          </span>
-          <span>Vision: {providerStatus.vision}</span>
-        </div>
-      ) : null}
     </div>
   );
 }

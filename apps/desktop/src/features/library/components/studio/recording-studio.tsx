@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/resizable';
 import { StudioPlayer } from './studio-player';
 import { StudioSidebar } from './studio-sidebar';
+import { useStudioTimelineStore } from './studio-timeline-store';
 import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
 
@@ -27,11 +28,18 @@ export function RecordingStudio({
   const [mutedTrackIds, setMutedTrackIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const initializeTimeline = useStudioTimelineStore(
+    (state) => state.initializeFromDetail,
+  );
   const playback = useRecordingPlaybackController({
     detail,
     mutedTrackIds,
     playbackAssets,
   });
+
+  useEffect(() => {
+    initializeTimeline(detail);
+  }, [detail, initializeTimeline]);
 
   function toggleTrackMuted(trackId: string) {
     setMutedTrackIds((current) => {

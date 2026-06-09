@@ -11,6 +11,7 @@ import {
   waitFor,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { useStudioTimelineStore } from '@/features/library/components/studio/studio-timeline-store';
 import { RecordingStudioScreen } from './RecordingStudioScreen';
 
 const client = vi.hoisted(() => ({
@@ -213,6 +214,10 @@ const longPlaybackAssets = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  useStudioTimelineStore.setState(
+    useStudioTimelineStore.getInitialState(),
+    true,
+  );
   vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockImplementation(() =>
     Promise.resolve(),
   );
@@ -291,6 +296,21 @@ function mockTimelineScrollMetrics(viewport: HTMLElement) {
   });
 }
 
+function mockTimelineRect(timeline: HTMLElement) {
+  timeline.getBoundingClientRect = () =>
+    ({
+      bottom: 260,
+      height: 260,
+      left: 0,
+      right: 900,
+      toJSON: () => ({}),
+      top: 0,
+      width: 900,
+      x: 0,
+      y: 0,
+    }) as DOMRect;
+}
+
 function dispatchTrackWheel(
   timeline: HTMLElement,
   init: WheelEventInit,
@@ -303,6 +323,56 @@ function dispatchTrackWheel(
   fireEvent(timeline, event);
 
   return event;
+}
+
+function dragTimelineRange({
+  clientY,
+  ctrlKey = false,
+  pointerId,
+  shiftKey = false,
+  target,
+  timeline,
+  xValues,
+}: {
+  clientY: number;
+  ctrlKey?: boolean;
+  pointerId: number;
+  shiftKey?: boolean;
+  target: HTMLElement;
+  timeline: HTMLElement;
+  xValues: number[];
+}) {
+  const [startX, ...moveXValues] = xValues;
+  expect(startX).toBeDefined();
+
+  fireEvent.pointerDown(target, {
+    button: 0,
+    clientX: startX,
+    clientY,
+    ctrlKey,
+    pointerId,
+    shiftKey,
+  });
+
+  for (const clientX of moveXValues) {
+    fireEvent.pointerMove(timeline, {
+      button: 0,
+      clientX,
+      clientY,
+      ctrlKey,
+      pointerId,
+      shiftKey,
+    });
+  }
+
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: moveXValues[moveXValues.length - 1] ?? startX,
+    clientY,
+    ctrlKey,
+    pointerId,
+    shiftKey,
+  });
 }
 
 test('RecordingStudioScreen renders player controls, metadata sidebar, and tracks', async () => {
@@ -323,7 +393,8 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
     document.querySelectorAll('[data-segment-boundary="start"]'),
   ).toHaveLength(2);
   expect(screen.getByText('Desktop audio')).toBeTruthy();
-  expect(screen.getByText('Annotation and metadata workspace')).toBeTruthy();
+  expect(screen.getByText('Selection and recording metadata')).toBeTruthy();
+  expect(screen.getByText('recording-1')).toBeTruthy();
   expect(await screen.findByLabelText(/mute desktop audio/i)).toBeTruthy();
   expect(await screen.findByLabelText('Audio waveform')).toBeTruthy();
   expect(screen.getAllByLabelText('Video timeline thumbnail')).toHaveLength(3);
@@ -343,6 +414,48 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
       }),
     ),
   );
+});
+
+test('RecordingStudioScreen refresh reconciles new tracks and clips', async () => {
+  client.getLibraryRecording
+    .mockResolvedValueOnce(detail)
+    .mockResolvedValueOnce({
+      ...detail,
+      segments: [
+        ...detail.segments,
+        {
+          ...detail.segments[1]!,
+          id: 'segment-3',
+          playbackOffsetMs: 7_000,
+          segmentIndex: 3,
+        },
+      ],
+      tracks: [
+        ...detail.tracks,
+        {
+          codec: 'opus',
+          description: 'Microphone',
+          id: 'microphone-2',
+          kind: 'microphone',
+          label: 'Microphone',
+          streamIndex: 2,
+        },
+      ],
+    } satisfies LibraryRecordingDetail);
+
+  render(<RecordingStudioScreen />);
+
+  expect(await screen.findByText('Desktop audio')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
+
+  expect(
+    await screen.findByRole('button', { name: /^Select Microphone$/i }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: /^Microphone Segment 3$/i }),
+  ).toBeTruthy();
+  expect(screen.getByText('3 segments')).toBeTruthy();
 });
 
 test('RecordingStudioScreen renames the recording from the detail header', async () => {
@@ -661,6 +774,394 @@ test('RecordingStudioScreen commits ruler seeks through the playback pipeline', 
     container.querySelector('video')?.getAttribute('src') ?? '',
   ).searchParams.get('startMs');
   expect(Number(startMs)).toBeGreaterThan(0);
+});
+
+test('RecordingStudioScreen selects a lane and edits inspector fields', async () => {
+  render(<RecordingStudioScreen />);
+
+  const laneButton = await screen.findByRole('button', {
+    name: /^Select Desktop audio$/i,
+  });
+  fireEvent.click(laneButton);
+
+  const trackName = await screen.findByLabelText('Track name');
+  expect((trackName as HTMLInputElement).value).toBe('Desktop audio');
+  expect(screen.queryByText('recording-1')).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Redact$/i })).toBeNull();
+
+  fireEvent.change(trackName, { target: { value: 'System audio' } });
+  expect(screen.getByDisplayValue('System audio')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /select track color/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /^Rose$/i }));
+  expect(
+    screen.getByRole('button', { name: /select track color/i }).textContent,
+  ).toContain('Rose');
+});
+
+test('RecordingStudioScreen renders each selected lane as its own inspector section', async () => {
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /^Select Video$/i,
+    }),
+  );
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /^Select Desktop audio$/i,
+    }),
+    { ctrlKey: true },
+  );
+
+  const trackNames = await screen.findAllByLabelText('Track name');
+  expect(trackNames.map((input) => (input as HTMLInputElement).value)).toEqual([
+    'Video',
+    'Desktop audio',
+  ]);
+  expect(screen.queryByText('recording-1')).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Redact$/i })).toBeNull();
+});
+
+test('RecordingStudioScreen selects a track from the lane body', async () => {
+  render(<RecordingStudioScreen />);
+
+  await screen.findByLabelText('Track timeline');
+  const laneBody = document.querySelector(
+    '[data-lane-content][data-track-id="desktop-audio-1"]',
+  );
+  expect(laneBody).toBeTruthy();
+
+  fireEvent.click(laneBody as HTMLElement);
+
+  const trackName = await screen.findByLabelText('Track name');
+  expect((trackName as HTMLInputElement).value).toBe('Desktop audio');
+});
+
+test('RecordingStudioScreen ctrl-click adds a lane from the lane body', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /^Select Video$/i,
+    }),
+  );
+  const laneBody = document.querySelector(
+    '[data-lane-content][data-track-id="desktop-audio-1"]',
+  );
+  expect(laneBody).toBeTruthy();
+
+  fireEvent.pointerDown(laneBody as HTMLElement, {
+    button: 0,
+    clientX: 420,
+    clientY: 112,
+    ctrlKey: true,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(laneBody as HTMLElement, {
+    button: 0,
+    clientX: 420,
+    clientY: 112,
+    ctrlKey: true,
+    pointerId: 1,
+  });
+  fireEvent.click(laneBody as HTMLElement, { ctrlKey: true });
+
+  const trackNames = await screen.findAllByLabelText('Track name');
+  expect(trackNames.map((input) => (input as HTMLInputElement).value)).toEqual([
+    'Video',
+    'Desktop audio',
+  ]);
+});
+
+test('RecordingStudioScreen clears selection on a plain timeline click', async () => {
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /^Select Desktop audio$/i,
+    }),
+  );
+  expect(await screen.findByLabelText('Track name')).toBeTruthy();
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  fireEvent.pointerDown(timeline, {
+    button: 0,
+    clientX: 420,
+    clientY: 112,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 420,
+    clientY: 112,
+    pointerId: 1,
+  });
+
+  await waitFor(() =>
+    expect(useStudioTimelineStore.getState().selection).toEqual({
+      clipIds: [],
+      laneIds: [],
+      ranges: [],
+    }),
+  );
+  expect(screen.queryByLabelText('Track name')).toBeNull();
+});
+
+test('RecordingStudioScreen selects all lanes from a ruler drag', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+
+  fireEvent.pointerDown(ruler, {
+    button: 0,
+    clientX: 220,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+
+  expect(await screen.findByText('2 lanes')).toBeTruthy();
+  expect(screen.getByText('Range 1')).toBeTruthy();
+  expect(screen.queryByLabelText('Track name')).toBeNull();
+  expect(screen.queryByText('recording-1')).toBeNull();
+  expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: /^Redact$/i })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: /^Cut$/i })).toHaveLength(2);
+});
+
+test('RecordingStudioScreen ctrl-drag creates one additive range despite many moves', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+
+  dragTimelineRange({
+    clientY: 12,
+    ctrlKey: true,
+    pointerId: 1,
+    target: ruler,
+    timeline,
+    xValues: [220, 260, 300, 360, 420, 520],
+  });
+
+  await waitFor(() =>
+    expect(useStudioTimelineStore.getState().selection.ranges).toHaveLength(1),
+  );
+  expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
+});
+
+test('RecordingStudioScreen ctrl-drag adds one range to an existing range', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+  useStudioTimelineStore.getState().setSelection({
+    clipIds: [],
+    laneIds: [],
+    ranges: [
+      {
+        endMs: 2_000,
+        id: 'seed-range',
+        laneIds: ['video-0', 'desktop-audio-1'],
+        startMs: 1_000,
+      },
+    ],
+  });
+  await waitFor(() =>
+    expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
+  );
+
+  dragTimelineRange({
+    clientY: 12,
+    ctrlKey: true,
+    pointerId: 2,
+    target: ruler,
+    timeline,
+    xValues: [420, 460, 500, 540],
+  });
+
+  await waitFor(() =>
+    expect(useStudioTimelineStore.getState().selection.ranges).toHaveLength(2),
+  );
+  expect(screen.getAllByLabelText('Selected time range')).toHaveLength(2);
+});
+
+test('RecordingStudioScreen ctrl-shift-drag cuts out an existing range', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+  useStudioTimelineStore.getState().setSelection({
+    clipIds: [],
+    laneIds: [],
+    ranges: [
+      {
+        endMs: 7_000,
+        id: 'seed-range',
+        laneIds: ['video-0', 'desktop-audio-1'],
+        startMs: 0,
+      },
+    ],
+  });
+  await waitFor(() =>
+    expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
+  );
+
+  dragTimelineRange({
+    clientY: 12,
+    ctrlKey: true,
+    pointerId: 3,
+    shiftKey: true,
+    target: ruler,
+    timeline,
+    xValues: [220, 260, 320, 420, 520],
+  });
+
+  await waitFor(() => {
+    const [range] = useStudioTimelineStore.getState().selection.ranges;
+    expect(range).toBeDefined();
+    expect(range!.endMs - range!.startMs).toBeLessThan(7_000);
+  });
+  const remainingRange = useStudioTimelineStore.getState().selection.ranges[0]!;
+  expect(remainingRange).toMatchObject({
+    laneIds: ['desktop-audio-1', 'video-0'],
+  });
+  expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
+});
+
+test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+  useStudioTimelineStore.getState().setSelection({
+    clipIds: [],
+    laneIds: [],
+    ranges: [
+      {
+        endMs: 7_000,
+        id: 'seed-range',
+        laneIds: ['video-0', 'desktop-audio-1'],
+        startMs: 6_000,
+      },
+    ],
+  });
+  await waitFor(() =>
+    expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
+  );
+  const firstRange = useStudioTimelineStore.getState().selection.ranges[0]!;
+
+  dragTimelineRange({
+    clientY: 12,
+    ctrlKey: true,
+    pointerId: 2,
+    target: ruler,
+    timeline,
+    xValues: [360, 540],
+  });
+
+  await waitFor(() =>
+    expect(useStudioTimelineStore.getState().selection.ranges).toHaveLength(1),
+  );
+  const mergedRange = useStudioTimelineStore.getState().selection.ranges[0]!;
+  expect(mergedRange).toMatchObject({
+    endMs: firstRange.endMs,
+    laneIds: ['desktop-audio-1', 'video-0'],
+    startMs: firstRange.startMs,
+  });
+  expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
+});
+
+test('RecordingStudioScreen marquee-selects only intersected lane ranges', async () => {
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+
+  fireEvent.pointerDown(timeline, {
+    button: 0,
+    clientX: 220,
+    clientY: 112,
+    pointerId: 1,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 160,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 160,
+    pointerId: 1,
+  });
+
+  expect(await screen.findByText('1 lane')).toBeTruthy();
+  expect(screen.getByText('Range 1')).toBeTruthy();
+  expect(screen.queryByLabelText('Track name')).toBeNull();
+  expect(screen.queryByText('recording-1')).toBeNull();
+});
+
+test('RecordingStudioScreen selects and renames a timeline clip', async () => {
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /^Desktop audio Segment 1$/i,
+    }),
+  );
+
+  const clipTitle = await screen.findByLabelText('Clip title');
+  expect((clipTitle as HTMLInputElement).value).toBe('Segment 1');
+  expect(screen.queryByLabelText('Track name')).toBeNull();
+  expect(screen.queryByText('recording-1')).toBeNull();
+
+  fireEvent.change(clipTitle, { target: { value: 'Intro clip' } });
+  expect(screen.getByDisplayValue('Intro clip')).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: /^Desktop audio Intro clip$/i }),
+  ).toBeTruthy();
+});
+
+test('RecordingStudioScreen exposes compact lane reorder handles', async () => {
+  render(<RecordingStudioScreen />);
+
+  expect(
+    await screen.findByRole('button', { name: /^Reorder Video$/i }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: /^Reorder Desktop audio$/i }),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: /^Move Video down$/i }),
+  ).toBeNull();
+  expect(
+    screen
+      .getAllByRole('button', { name: /^Reorder /i })
+      .map((button) => button.getAttribute('aria-label')),
+  ).toEqual(['Reorder Video', 'Reorder Desktop audio']);
 });
 
 test('RecordingStudioScreen ignores stale playback assets after route changes', async () => {
