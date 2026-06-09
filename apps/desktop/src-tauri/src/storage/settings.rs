@@ -109,6 +109,12 @@ pub fn reset_app_settings(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub fn delete_app_setting(connection: &Connection, key: &str) -> rusqlite::Result<()> {
+    connection.execute("DELETE FROM app_settings WHERE key = ?1", [key])?;
+
+    Ok(())
+}
+
 fn app_setting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppSettingRow> {
     Ok(AppSettingRow {
         key: row.get(0)?,

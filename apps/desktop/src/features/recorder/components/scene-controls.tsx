@@ -4,9 +4,12 @@ import { Columns2, Grid2X2, Rows2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from '@/components/ui/native-select';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   applySceneLayout,
   isSceneUsingAutoCanvas,
@@ -94,13 +97,10 @@ export function SceneControls({
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <NativeSelect
-          aria-label="Canvas preset"
+        <Select
           disabled={disabled}
-          size="sm"
           value={selectedPreset}
-          onChange={(event) => {
-            const value = event.target.value;
+          onValueChange={(value) => {
             if (value === 'auto') {
               onChange(
                 applySceneLayout(
@@ -123,13 +123,18 @@ export function SceneControls({
             onChange(setSceneCanvasSize(scene, preset.width, preset.height));
           }}
         >
-          {canvasPresets.map((preset) => (
-            <NativeSelectOption key={preset.value} value={preset.value}>
-              {preset.label}
-            </NativeSelectOption>
-          ))}
-          <NativeSelectOption value="custom">Custom</NativeSelectOption>
-        </NativeSelect>
+          <SelectTrigger aria-label="Canvas preset" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {canvasPresets.map((preset) => (
+              <SelectItem key={preset.value} value={preset.value}>
+                {preset.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="custom">Custom</SelectItem>
+          </SelectContent>
+        </Select>
 
         <CanvasDimensionInput
           label="W"

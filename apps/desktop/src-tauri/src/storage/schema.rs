@@ -3,9 +3,10 @@ use std::path::Path;
 use rusqlite::Connection;
 use rusqlite_migration::{Migrations, M};
 
-pub(super) const CORE_TABLES: [&str; 18] = [
+pub(super) const CORE_TABLES: [&str; 19] = [
     "app_settings",
     "ai_model_assets",
+    "notifications",
     "recordings",
     "recording_tracks",
     "recording_segments",
@@ -687,6 +688,32 @@ pub(super) fn migrations() -> Migrations<'static> {
         CREATE INDEX idx_ocr_regions_recording_frame ON ocr_regions(recording_id, frame_timestamp_ms);
         CREATE INDEX idx_vlm_observations_recording_frame ON vlm_observations(recording_id, frame_timestamp_ms);
         CREATE INDEX idx_frame_similarity_recording_frame ON frame_similarity_entries(recording_id, source_frame_ref);
+        "#,
+        ),
+        M::up(
+            r#"
+        CREATE TABLE notifications (
+            id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 36),
+            source TEXT NOT NULL CHECK (
+                source IN ('ai', 'capture', 'library', 'recorder', 'settings', 'system')
+            ),
+            topic TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('cancelled', 'failed', 'info', 'running', 'succeeded', 'warning')
+            ),
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            actions_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(actions_json)),
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+            dismissed_at_ms INTEGER CHECK (
+                dismissed_at_ms IS NULL OR dismissed_at_ms >= created_at_ms
+            )
+        );
+
+        CREATE INDEX idx_notifications_status_updated ON notifications(status, updated_at_ms);
+        CREATE INDEX idx_notifications_source_topic ON notifications(source, topic);
+        CREATE INDEX idx_notifications_dismissed_updated ON notifications(dismissed_at_ms, updated_at_ms);
         "#,
         ),
     ])

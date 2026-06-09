@@ -47,9 +47,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from '@/components/ui/native-select';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   deleteLibraryRecordings,
   deleteLibraryRecording,
@@ -308,22 +311,22 @@ export function LibraryScreen() {
               Delete
             </Button>
           ) : null}
-          <NativeSelect
-            aria-label="Sort recordings"
-            value={sortKey}
-            onChange={(event) =>
-              setSortKey(event.currentTarget.value as LibraryRecordingSortKey)
+          <Select
+            onValueChange={(value) =>
+              setSortKey(value as LibraryRecordingSortKey)
             }
+            value={sortKey}
           >
-            <NativeSelectOption value="started">
-              Newest first
-            </NativeSelectOption>
-            <NativeSelectOption value="duration">Duration</NativeSelectOption>
-            <NativeSelectOption value="status">Status</NativeSelectOption>
-            <NativeSelectOption value="availability">
-              Availability
-            </NativeSelectOption>
-          </NativeSelect>
+            <SelectTrigger aria-label="Sort recordings">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="started">Newest first</SelectItem>
+              <SelectItem value="duration">Duration</SelectItem>
+              <SelectItem value="status">Status</SelectItem>
+              <SelectItem value="availability">Availability</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="flex rounded-md border">
             <Button
               aria-label="Grid view"

@@ -10,6 +10,7 @@ use tauri::Manager;
 
 mod ai;
 mod diagnostics;
+mod notifications;
 mod portal_tokens;
 mod recordings;
 mod scenes;
@@ -20,12 +21,19 @@ mod settings;
 pub use ai::{
     create_activity_interval, create_frame_similarity_entry, create_ocr_region,
     create_processing_chunk, create_transcript_segment, create_transcript_word,
-    create_vlm_observation, save_ai_model_asset, AiModelAssetRow, CreateActivityIntervalInput,
-    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateTranscriptSegmentInput,
-    CreateTranscriptWordInput, CreateVisualRegionInput, ProcessingChunkRow, SaveAiModelAssetInput,
+    create_vlm_observation, delete_ai_model_asset, get_ai_model_asset, get_processing_job,
+    list_ai_model_assets, list_processing_jobs, save_ai_model_asset, update_processing_job_status,
+    AiModelAssetRow, CreateActivityIntervalInput, CreateFrameSimilarityEntryInput,
+    CreateProcessingChunkInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+    CreateVisualRegionInput, ProcessingChunkRow, ProcessingJobRow, SaveAiModelAssetInput,
     TranscriptSegmentRow,
 };
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
+pub use notifications::{
+    acknowledge_notifications, delete_all_notifications, delete_notifications,
+    delete_notifications_older_than, dismiss_notification, get_notification, list_notifications,
+    save_notification, NotificationRow, SaveNotificationInput,
+};
 pub use portal_tokens::{
     delete_portal_restore_token, get_portal_restore_token, mark_portal_restore_token_used,
     upsert_portal_restore_token, PortalRestoreTokenRow, LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
@@ -46,8 +54,8 @@ pub use segments::{
     FinalizeRecordingSegmentInput, RecordingSegmentRow,
 };
 pub use settings::{
-    get_app_setting, list_app_settings, reset_app_settings, save_app_setting, save_app_settings,
-    AppSettingRow, SaveAppSettingInput,
+    delete_app_setting, get_app_setting, list_app_settings, reset_app_settings, save_app_setting,
+    save_app_settings, AppSettingRow, SaveAppSettingInput,
 };
 
 #[cfg(test)]

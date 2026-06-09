@@ -15,9 +15,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from '@/components/ui/native-select';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const audioRoleLabels = {
   'desktop-audio': 'Desktop',
@@ -161,18 +164,21 @@ export function AudioSourcePickerDialog({
         </DialogHeader>
 
         {eligibleOptions.length > 0 ? (
-          <NativeSelect
-            aria-label="Audio source"
-            className="w-full"
+          <Select
+            onValueChange={setSelectedOptionValue}
             value={activeOptionValue}
-            onChange={(event) => setSelectedOptionValue(event.target.value)}
           >
-            {eligibleOptions.map((option) => (
-              <NativeSelectOption key={option.value} value={option.value}>
-                {option.label}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+            <SelectTrigger aria-label="Audio source" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {eligibleOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : (
           <div className="text-muted-foreground rounded-md border px-3 py-2 text-xs">
             No more devices available

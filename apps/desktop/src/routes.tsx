@@ -8,6 +8,7 @@ import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
 import { LibraryScreen } from '@/screens/LibraryScreen';
+import { NotificationsScreen } from '@/screens/NotificationsScreen';
 import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
 import { unknownErrorMessage } from './lib/async-store-action';
@@ -53,6 +54,12 @@ const settingsRoute = createRoute({
   path: '/settings',
 });
 
+const notificationsRoute = createRoute({
+  component: NotificationsScreen,
+  getParentRoute: () => rootRoute,
+  path: '/notifications',
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   captureRoute,
@@ -60,6 +67,7 @@ const routeTree = rootRoute.addChildren([
   recordingStudioRoute,
   diagnosticsRoute,
   settingsRoute,
+  notificationsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

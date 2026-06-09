@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SaveAiModelAssetInput {
@@ -17,9 +17,27 @@ pub struct SaveAiModelAssetInput {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AiModelAssetRow {
     pub download_status: String,
+    pub display_label: String,
+    pub etag: Option<String>,
     pub id: String,
+    pub local_path: Option<String>,
     pub provider: String,
     pub self_test_status: String,
+    pub sha256: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcessingJobRow {
+    pub created_at_ms: i64,
+    pub error: Option<String>,
+    pub id: String,
+    pub kind: String,
+    pub recording_id: String,
+    pub status: String,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -177,18 +195,134 @@ pub fn save_ai_model_asset(
         ],
     )?;
 
-    connection.query_row(
-        "SELECT id, provider, download_status, self_test_status FROM ai_model_assets WHERE id = ?1",
-        [&input.id],
-        |row| {
-            Ok(AiModelAssetRow {
-                id: row.get(0)?,
-                provider: row.get(1)?,
-                download_status: row.get(2)?,
-                self_test_status: row.get(3)?,
-            })
-        },
-    )
+    get_ai_model_asset(connection, &input.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
+pub fn get_ai_model_asset(
+    connection: &Connection,
+    id: &str,
+) -> rusqlite::Result<Option<AiModelAssetRow>> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                provider,
+                display_label,
+                local_path,
+                size_bytes,
+                sha256,
+                etag,
+                download_status,
+                self_test_status,
+                created_at_ms,
+                updated_at_ms
+            FROM ai_model_assets
+            WHERE id = ?1
+            "#,
+            [id],
+            ai_model_asset_row,
+        )
+        .optional()
+}
+
+pub fn list_ai_model_assets(connection: &Connection) -> rusqlite::Result<Vec<AiModelAssetRow>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT
+            id,
+            provider,
+            display_label,
+            local_path,
+            size_bytes,
+            sha256,
+            etag,
+            download_status,
+            self_test_status,
+            created_at_ms,
+            updated_at_ms
+        FROM ai_model_assets
+        ORDER BY id
+        "#,
+    )?;
+
+    let rows = statement.query_map([], ai_model_asset_row)?;
+
+    rows.collect()
+}
+
+pub fn delete_ai_model_asset(connection: &Connection, id: &str) -> rusqlite::Result<()> {
+    connection.execute("DELETE FROM ai_model_assets WHERE id = ?1", [id])?;
+
+    Ok(())
+}
+
+pub fn list_processing_jobs(
+    connection: &Connection,
+    recording_id: Option<&str>,
+) -> rusqlite::Result<Vec<ProcessingJobRow>> {
+    let sql = r#"
+        SELECT
+            id,
+            recording_id,
+            kind,
+            status,
+            created_at_ms,
+            updated_at_ms,
+            error
+        FROM processing_jobs
+        WHERE (?1 IS NULL OR recording_id = ?1)
+        ORDER BY updated_at_ms DESC, created_at_ms DESC
+        "#;
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map([recording_id], processing_job_row)?;
+
+    rows.collect()
+}
+
+pub fn get_processing_job(
+    connection: &Connection,
+    id: &str,
+) -> rusqlite::Result<Option<ProcessingJobRow>> {
+    connection
+        .query_row(
+            r#"
+            SELECT
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms,
+                error
+            FROM processing_jobs
+            WHERE id = ?1
+            "#,
+            [id],
+            processing_job_row,
+        )
+        .optional()
+}
+
+pub fn update_processing_job_status(
+    connection: &Connection,
+    id: &str,
+    status: &str,
+    error: Option<&str>,
+    timestamp_ms: i64,
+) -> rusqlite::Result<ProcessingJobRow> {
+    connection.execute(
+        r#"
+        UPDATE processing_jobs
+        SET status = ?2,
+            error = ?3,
+            updated_at_ms = ?4
+        WHERE id = ?1
+        "#,
+        params![id, status, error, timestamp_ms],
+    )?;
+
+    get_processing_job(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
 }
 
 pub fn create_processing_chunk(
@@ -494,4 +628,32 @@ pub fn create_frame_similarity_entry(
     )?;
 
     Ok(())
+}
+
+fn ai_model_asset_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModelAssetRow> {
+    Ok(AiModelAssetRow {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        display_label: row.get(2)?,
+        local_path: row.get(3)?,
+        size_bytes: row.get(4)?,
+        sha256: row.get(5)?,
+        etag: row.get(6)?,
+        download_status: row.get(7)?,
+        self_test_status: row.get(8)?,
+        created_at_ms: row.get(9)?,
+        updated_at_ms: row.get(10)?,
+    })
+}
+
+fn processing_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProcessingJobRow> {
+    Ok(ProcessingJobRow {
+        id: row.get(0)?,
+        recording_id: row.get(1)?,
+        kind: row.get(2)?,
+        status: row.get(3)?,
+        created_at_ms: row.get(4)?,
+        updated_at_ms: row.get(5)?,
+        error: row.get(6)?,
+    })
 }

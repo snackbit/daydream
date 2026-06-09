@@ -102,6 +102,20 @@ pub fn encrypt_sensitive_setting(
     .map_err(crypto_error)
 }
 
+#[cfg(target_os = "linux")]
+pub fn encrypt_sensitive_setting_with_platform_key(
+    plaintext: &str,
+) -> Result<String, SecretCryptoError> {
+    encrypt_sensitive_setting(plaintext, &LinuxSecretServiceKeyProvider)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn encrypt_sensitive_setting_with_platform_key(
+    plaintext: &str,
+) -> Result<String, SecretCryptoError> {
+    encrypt_sensitive_setting(plaintext, &PlatformSecretKeyProvider)
+}
+
 pub fn decrypt_sensitive_setting(
     envelope_json: &str,
     provider: &impl SecretKeyProvider,

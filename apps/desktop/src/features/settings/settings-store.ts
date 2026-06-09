@@ -32,7 +32,7 @@ interface SettingsState {
   ) => Promise<AppSettingsStorageCleanupPreview | null>;
   reset: () => Promise<void>;
   savedScene: RecorderScene | null;
-  save: () => Promise<void>;
+  save: (settings?: AppSettings) => Promise<void>;
   setDraft: (draft: AppSettings) => void;
   settingsState: AppSettingsState | null;
   successMessage: string | null;
@@ -120,9 +120,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     });
   },
   savedScene: null,
-  async save() {
-    const draft = get().draft;
-    if (!draft) {
+  async save(settings) {
+    const settingsToSave = settings ?? get().draft;
+    if (!settingsToSave) {
       set({ error: 'No settings are loaded.' });
       return;
     }
@@ -139,7 +139,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           error: settingsErrorMessage(error),
           mutationStatus: 'error',
         }),
-      run: () => saveAppSettings({ settings: draft }),
+      run: () => saveAppSettings({ settings: settingsToSave }),
       success: (settingsState) =>
         set({
           draft: settingsState.settings,
@@ -175,7 +175,8 @@ function settingsEqual(left: AppSettings, right: AppSettings): boolean {
     left.record.fps === right.record.fps &&
     left.record.videoBitrateKbps === right.record.videoBitrateKbps &&
     left.storage.retentionDays === right.storage.retentionDays &&
-    left.storage.sizeLimitBytes === right.storage.sizeLimitBytes
+    left.storage.sizeLimitBytes === right.storage.sizeLimitBytes &&
+    JSON.stringify(left.ai) === JSON.stringify(right.ai)
   );
 }
 

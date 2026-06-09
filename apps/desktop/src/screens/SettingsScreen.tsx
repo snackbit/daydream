@@ -1,19 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBlocker } from '@tanstack/react-router';
 import type {
+  AiModelAsset,
+  AiProviderStatus,
   AppSettings,
-  AppSettingsLimits,
   AppSettingsStorageCleanupPreview,
 } from '@daydream/shared';
 import { RotateCcw, Save } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import {
   Dialog,
   DialogClose,
@@ -24,30 +19,54 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  deleteAiModel,
+  deleteAiProviderSecret,
+  downloadAiModel,
+  getAiProviderStatus,
+  listAiModels,
+  saveAiProviderSecret,
+  selfTestAiModel,
+} from '@/features/ai/ai-client';
+import { useNotificationsStore } from '@/features/notifications/notifications-store';
+import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
+import {
+  cadenceModeForFps,
+  RecordSettingsTab,
+  type CadenceMode,
+} from '@/features/settings/components/record-settings-tab';
+import { SettingsLeaveDialog } from '@/features/settings/components/settings-leave-dialog';
+import { StorageSettingsTab } from '@/features/settings/components/storage-settings-tab';
+import {
+  collectSupersededAiSecretRefs,
+  settingsForCleanupPreview,
+} from '@/features/settings/settings-ai-secret-utils';
+import {
   estimateOneHourRecordingBytes,
-  formatFps,
-  formatGiB,
   formatSceneDimensions,
   formatStorageSize,
-  gibToBytes,
 } from '@/features/settings/settings-format';
+import {
+  formatSessionCount,
+  screenErrorMessage,
+  validateDraftSettings,
+} from '@/features/settings/settings-screen-utils';
 import { useSettingsStore } from '@/features/settings/settings-store';
 
-type CadenceMode = 'fps' | 'seconds';
 type CleanupConfirmationAction = 'reset' | 'save';
 
 interface CleanupConfirmation {
   action: CleanupConfirmationAction;
+  proceedAfterSuccess: boolean;
   preview: AppSettingsStorageCleanupPreview;
+  settings: AppSettings;
+}
+
+interface AiSettingsSavePreparation {
+  createdSecretRefs: string[];
+  secretRefsToDeleteAfterSave: string[];
+  settings: AppSettings;
 }
 
 export function SettingsScreen() {
@@ -66,11 +85,20 @@ export function SettingsScreen() {
   const setDraft = useSettingsStore((state) => state.setDraft);
   const settingsState = useSettingsStore((state) => state.settingsState);
   const successMessage = useSettingsStore((state) => state.successMessage);
+  const loadNotifications = useNotificationsStore((state) => state.load);
   const [cadenceMode, setCadenceMode] = useState<CadenceMode | null>(null);
   const [cleanupConfirmation, setCleanupConfirmation] =
     useState<CleanupConfirmation | null>(null);
   const [cleanupPreviewing, setCleanupPreviewing] = useState(false);
+  const [aiActionError, setAiActionError] = useState<string | null>(null);
+  const [aiModels, setAiModels] = useState<AiModelAsset[]>([]);
+  const [aiProviderStatus, setAiProviderStatus] =
+    useState<AiProviderStatus | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [transcriptionKeyDraft, setTranscriptionKeyDraft] = useState('');
+  const [visionKeyDraft, setVisionKeyDraft] = useState('');
+  const pendingSecretRefsForDeletion = useRef<string[]>([]);
+  const selectedAiModelId = draft?.ai.transcription.localModelId ?? null;
 
   useEffect(() => {
     if (loadStatus === 'idle') {
@@ -87,7 +115,46 @@ export function SettingsScreen() {
   );
   const saving = mutationStatus === 'loading';
   const busy = saving || cleanupPreviewing;
-  const canSave = Boolean(draft && isDirty && !validationError && !busy);
+  const hasAiSecretDraft = Boolean(
+    transcriptionKeyDraft.trim() || visionKeyDraft.trim(),
+  );
+  const hasUnsavedSettings = isDirty || hasAiSecretDraft;
+  const canSave = Boolean(
+    draft && hasUnsavedSettings && !validationError && !busy,
+  );
+
+  const blocker = useBlocker({
+    enableBeforeUnload: hasUnsavedSettings,
+    shouldBlockFn: ({ current, next }) =>
+      hasUnsavedSettings &&
+      current.pathname === '/settings' &&
+      next.pathname !== '/settings',
+    withResolver: true,
+  });
+
+  const refreshAiScaffolds = useCallback(async () => {
+    try {
+      const [modelList, providerStatus] = await Promise.all([
+        listAiModels(),
+        getAiProviderStatus(),
+      ]);
+      setAiActionError(null);
+      setAiModels(modelList.models);
+      setAiProviderStatus(providerStatus);
+    } catch (error) {
+      setAiActionError(screenErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedAiModelId) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => void refreshAiScaffolds(), 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [refreshAiScaffolds, selectedAiModelId]);
 
   function updateDraft(updater: (draft: AppSettings) => AppSettings) {
     if (!draft) {
@@ -102,7 +169,9 @@ export function SettingsScreen() {
       return;
     }
 
-    await runWithCleanupConfirmation('save', draft);
+    await runWithCleanupConfirmation('save', settingsForCleanupPreview(draft), {
+      proceedAfterSuccess: false,
+    });
   }
 
   async function requestReset() {
@@ -110,55 +179,225 @@ export function SettingsScreen() {
       return;
     }
 
-    await runWithCleanupConfirmation('reset', settingsState.defaults);
+    pendingSecretRefsForDeletion.current = collectSupersededAiSecretRefs(
+      settingsState.settings,
+      settingsState.defaults,
+    );
+    await runWithCleanupConfirmation('reset', settingsState.defaults, {
+      proceedAfterSuccess: false,
+    });
   }
 
   async function runWithCleanupConfirmation(
     action: CleanupConfirmationAction,
     settings: AppSettings,
-  ) {
+    { proceedAfterSuccess }: { proceedAfterSuccess: boolean },
+  ): Promise<boolean> {
     setCleanupPreviewing(true);
     try {
       const preview = await previewStorageCleanup(settings);
       if (!preview) {
-        return;
+        return false;
       }
       if (preview.recordingCount > 0) {
         if (action === 'reset') {
           setResetOpen(false);
         }
-        setCleanupConfirmation({ action, preview });
-        return;
+        setCleanupConfirmation({
+          action,
+          preview,
+          proceedAfterSuccess,
+          settings,
+        });
+        return false;
       }
 
       if (action === 'save') {
-        await save();
-      } else {
-        await confirmReset();
+        return await savePreparedSettings(settings);
       }
+
+      return await confirmReset();
     } finally {
       setCleanupPreviewing(false);
     }
   }
 
-  async function confirmReset() {
+  async function confirmReset(): Promise<boolean> {
     await reset();
+    await deletePendingAiSecrets();
+    await refreshAiScaffolds();
     setCadenceMode(null);
     setResetOpen(false);
+    return true;
   }
 
   async function confirmCleanup() {
-    const action = cleanupConfirmation?.action;
-    if (!action) {
+    const confirmation = cleanupConfirmation;
+    if (!confirmation) {
       return;
     }
 
     setCleanupConfirmation(null);
-    if (action === 'save') {
-      await save();
+    if (confirmation.action === 'save') {
+      const saved = await savePreparedSettings(confirmation.settings);
+      if (saved && confirmation.proceedAfterSuccess) {
+        blocker.proceed?.();
+      }
     } else {
       await confirmReset();
     }
+  }
+
+  async function savePreparedSettings(settings: AppSettings): Promise<boolean> {
+    const preparation = await prepareAiSettingsForSave(settings);
+    if (!preparation) {
+      return false;
+    }
+
+    try {
+      await save(preparation.settings);
+    } catch {
+      await deleteAiSecretsAfterFailure(preparation.createdSecretRefs);
+      return false;
+    }
+
+    pendingSecretRefsForDeletion.current =
+      preparation.secretRefsToDeleteAfterSave;
+    await deletePendingAiSecrets();
+    setTranscriptionKeyDraft('');
+    setVisionKeyDraft('');
+    await refreshAiScaffolds();
+    return true;
+  }
+
+  async function deletePendingAiSecrets() {
+    const secretRefs = pendingSecretRefsForDeletion.current;
+    pendingSecretRefsForDeletion.current = [];
+
+    await deleteAiSecrets(secretRefs);
+  }
+
+  async function prepareAiSettingsForSave(
+    settings: AppSettings,
+  ): Promise<AiSettingsSavePreparation | null> {
+    let nextSettings = settings;
+    const createdSecretRefs: string[] = [];
+    setAiActionError(null);
+    try {
+      if (settings.ai.transcription.provider !== 'openai-compatible') {
+        nextSettings = {
+          ...nextSettings,
+          ai: {
+            ...nextSettings.ai,
+            transcription: {
+              ...nextSettings.ai.transcription,
+              remoteApiKeyRef: null,
+            },
+          },
+        };
+      } else if (transcriptionKeyDraft.trim()) {
+        const secret = await saveAiProviderSecret({
+          plaintext: transcriptionKeyDraft,
+          role: 'transcription',
+        });
+        createdSecretRefs.push(secret.secretRef);
+        nextSettings = {
+          ...nextSettings,
+          ai: {
+            ...nextSettings.ai,
+            transcription: {
+              ...nextSettings.ai.transcription,
+              remoteApiKeyRef: secret.secretRef,
+            },
+          },
+        };
+      }
+
+      if (settings.ai.vision.provider !== 'openai-compatible') {
+        nextSettings = {
+          ...nextSettings,
+          ai: {
+            ...nextSettings.ai,
+            vision: {
+              ...nextSettings.ai.vision,
+              apiKeyRef: null,
+            },
+          },
+        };
+      } else if (visionKeyDraft.trim()) {
+        const secret = await saveAiProviderSecret({
+          plaintext: visionKeyDraft,
+          role: 'vision',
+        });
+        createdSecretRefs.push(secret.secretRef);
+        nextSettings = {
+          ...nextSettings,
+          ai: {
+            ...nextSettings.ai,
+            vision: {
+              ...nextSettings.ai.vision,
+              apiKeyRef: secret.secretRef,
+            },
+          },
+        };
+      }
+
+      return {
+        createdSecretRefs,
+        secretRefsToDeleteAfterSave: collectSupersededAiSecretRefs(
+          settingsState?.settings ?? null,
+          nextSettings,
+        ),
+        settings: nextSettings,
+      };
+    } catch (error) {
+      await deleteAiSecretsAfterFailure(createdSecretRefs);
+      setAiActionError(screenErrorMessage(error));
+      return null;
+    }
+  }
+
+  async function deleteAiSecretsAfterFailure(secretRefs: string[]) {
+    try {
+      await deleteAiSecrets(secretRefs);
+    } catch (error) {
+      setAiActionError(screenErrorMessage(error));
+    }
+  }
+
+  async function runAiModelAction(action: () => Promise<unknown>) {
+    try {
+      setAiActionError(null);
+      await action();
+      await Promise.all([refreshAiScaffolds(), loadNotifications()]);
+    } catch (error) {
+      setAiActionError(screenErrorMessage(error));
+    }
+  }
+
+  async function saveAndLeaveSettings() {
+    if (!draft) {
+      return;
+    }
+
+    const saved = await runWithCleanupConfirmation(
+      'save',
+      settingsForCleanupPreview(draft),
+      { proceedAfterSuccess: true },
+    );
+    if (saved) {
+      blocker.proceed?.();
+    }
+  }
+
+  function discardAndLeaveSettings() {
+    if (settingsState) {
+      setDraft(settingsState.settings);
+    }
+    setTranscriptionKeyDraft('');
+    setVisionKeyDraft('');
+    pendingSecretRefsForDeletion.current = [];
+    blocker.proceed?.();
   }
 
   return (
@@ -251,6 +490,21 @@ export function SettingsScreen() {
         </DialogContent>
       </Dialog>
 
+      <SettingsLeaveDialog
+        busy={busy}
+        canSave={canSave}
+        onDiscard={discardAndLeaveSettings}
+        onOpenChange={(open) => {
+          if (!open && !busy) {
+            blocker.reset?.();
+          }
+        }}
+        onSave={() => void saveAndLeaveSettings()}
+        onStay={() => blocker.reset?.()}
+        open={blocker.status === 'blocked' && !cleanupConfirmation}
+        validationError={validationError}
+      />
+
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>Settings failed</AlertTitle>
@@ -267,6 +521,12 @@ export function SettingsScreen() {
           {validationError}
         </p>
       ) : null}
+      {aiActionError ? (
+        <Alert variant="destructive">
+          <AlertTitle>AI settings failed</AlertTitle>
+          <AlertDescription>{aiActionError}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {!draft || !settingsState ? (
         <div className="text-muted-foreground border p-4 text-sm">
@@ -279,6 +539,7 @@ export function SettingsScreen() {
           <TabsList aria-label="Settings sections">
             <TabsTrigger value="record">Record</TabsTrigger>
             <TabsTrigger value="storage">Storage/Library</TabsTrigger>
+            <TabsTrigger value="ai">AI/LLM</TabsTrigger>
           </TabsList>
 
           <TabsContent value="record">
@@ -302,287 +563,37 @@ export function SettingsScreen() {
               onUpdateDraft={updateDraft}
             />
           </TabsContent>
+
+          <TabsContent value="ai">
+            <AiSettingsTab
+              draft={draft}
+              limits={settingsState.limits}
+              models={aiModels}
+              onChangeTranscriptionKey={setTranscriptionKeyDraft}
+              onChangeVisionKey={setVisionKeyDraft}
+              onDeleteModel={(modelId) =>
+                void runAiModelAction(() => deleteAiModel({ modelId }))
+              }
+              onDownloadModel={(modelId) =>
+                void runAiModelAction(() => downloadAiModel({ modelId }))
+              }
+              onSelfTestModel={(modelId) =>
+                void runAiModelAction(() => selfTestAiModel({ modelId }))
+              }
+              onUpdateDraft={updateDraft}
+              providerStatus={aiProviderStatus}
+              transcriptionKeyDraft={transcriptionKeyDraft}
+              visionKeyDraft={visionKeyDraft}
+            />
+          </TabsContent>
         </Tabs>
       )}
     </section>
   );
 }
 
-interface RecordSettingsTabProps {
-  cadenceMode: CadenceMode;
-  draft: AppSettings;
-  limits: AppSettingsLimits;
-  oneHourEstimate: string;
-  onChangeCadenceMode: (mode: CadenceMode) => void;
-  onUpdateDraft: (updater: (draft: AppSettings) => AppSettings) => void;
-  sceneDimensions: string;
-}
-
-function RecordSettingsTab({
-  cadenceMode,
-  draft,
-  limits,
-  oneHourEstimate,
-  onChangeCadenceMode,
-  onUpdateDraft,
-  sceneDimensions,
-}: RecordSettingsTabProps) {
-  const cadenceValue =
-    cadenceMode === 'seconds' ? 1 / draft.record.fps : draft.record.fps;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Record</CardTitle>
-        <CardDescription>
-          Frame cadence and video bitrate for new recordings.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field>
-            <FieldLabel>Frame cadence</FieldLabel>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                aria-pressed={cadenceMode === 'seconds'}
-                data-variant={
-                  cadenceMode === 'seconds' ? 'secondary' : 'outline'
-                }
-                onClick={() => onChangeCadenceMode('seconds')}
-                type="button"
-                variant={cadenceMode === 'seconds' ? 'secondary' : 'outline'}
-              >
-                One frame every
-              </Button>
-              <Button
-                aria-pressed={cadenceMode === 'fps'}
-                data-variant={cadenceMode === 'fps' ? 'secondary' : 'outline'}
-                onClick={() => onChangeCadenceMode('fps')}
-                type="button"
-                variant={cadenceMode === 'fps' ? 'secondary' : 'outline'}
-              >
-                Frames per second
-              </Button>
-            </div>
-            <div className="flex max-w-sm items-center gap-2">
-              <Input
-                aria-label={
-                  cadenceMode === 'seconds'
-                    ? 'Seconds per frame'
-                    : 'Frames per second'
-                }
-                max={cadenceMode === 'seconds' ? 60 : limits.record.fpsMax}
-                min={cadenceMode === 'seconds' ? 1 : 1}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  onUpdateDraft((current) => ({
-                    ...current,
-                    record: {
-                      ...current.record,
-                      fps: cadenceMode === 'seconds' ? 1 / value : value,
-                    },
-                  }));
-                }}
-                step={cadenceMode === 'seconds' ? 1 : 0.1}
-                type="number"
-                value={formatInputNumber(cadenceValue)}
-              />
-              <span className="text-muted-foreground shrink-0 text-xs">
-                {cadenceMode === 'seconds' ? 'seconds' : 'fps'}
-              </span>
-            </div>
-            <FieldDescription>
-              Current value: {formatFps(draft.record.fps)}.
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="settings-video-bitrate">
-              Video bitrate
-            </FieldLabel>
-            <div className="flex max-w-sm items-center gap-2">
-              <Input
-                id="settings-video-bitrate"
-                max={limits.record.videoBitrateKbpsMax}
-                min={limits.record.videoBitrateKbpsMin}
-                onChange={(event) => {
-                  const value = Math.round(Number(event.target.value));
-                  onUpdateDraft((current) => ({
-                    ...current,
-                    record: {
-                      ...current.record,
-                      videoBitrateKbps: value,
-                    },
-                  }));
-                }}
-                step={50}
-                type="number"
-                value={draft.record.videoBitrateKbps}
-              />
-              <span className="text-muted-foreground shrink-0 text-xs">
-                kbps
-              </span>
-            </div>
-            <FieldDescription>
-              Higher bitrate keeps more visual detail but writes larger files.
-            </FieldDescription>
-          </Field>
-
-          <div className="grid gap-3 border p-4 text-sm md:grid-cols-3">
-            <SummaryMetric label="Scene" value={sceneDimensions} />
-            <SummaryMetric
-              label="Configured cadence"
-              value={formatFps(draft.record.fps)}
-            />
-            <SummaryMetric label="One hour estimate" value={oneHourEstimate} />
-          </div>
-        </FieldGroup>
-      </CardContent>
-    </Card>
+async function deleteAiSecrets(secretRefs: string[]) {
+  await Promise.all(
+    secretRefs.map((secretRef) => deleteAiProviderSecret({ secretRef })),
   );
-}
-
-interface StorageSettingsTabProps {
-  draft: AppSettings;
-  limits: AppSettingsLimits;
-  onUpdateDraft: (updater: (draft: AppSettings) => AppSettings) => void;
-}
-
-function StorageSettingsTab({
-  draft,
-  limits,
-  onUpdateDraft,
-}: StorageSettingsTabProps) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Storage/Library</CardTitle>
-        <CardDescription>
-          Local retention and storage cap for the recording library.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="settings-retention-days">
-              Recording retention
-            </FieldLabel>
-            <div className="flex max-w-sm items-center gap-2">
-              <Input
-                id="settings-retention-days"
-                max={limits.storage.retentionDaysMax}
-                min={limits.storage.retentionDaysMin}
-                onChange={(event) => {
-                  const value = Math.round(Number(event.target.value));
-                  onUpdateDraft((current) => ({
-                    ...current,
-                    storage: {
-                      ...current.storage,
-                      retentionDays: value,
-                    },
-                  }));
-                }}
-                step={1}
-                type="number"
-                value={draft.storage.retentionDays}
-              />
-              <span className="text-muted-foreground shrink-0 text-xs">
-                days
-              </span>
-            </div>
-            <FieldDescription>
-              Range: {limits.storage.retentionDaysMin}-
-              {limits.storage.retentionDaysMax} days.
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="settings-storage-limit">
-              Storage size limit
-            </FieldLabel>
-            <div className="flex max-w-sm items-center gap-2">
-              <Input
-                id="settings-storage-limit"
-                min={formatGiB(limits.storage.sizeLimitBytesMin)}
-                onChange={(event) => {
-                  const value = gibToBytes(Number(event.target.value));
-                  onUpdateDraft((current) => ({
-                    ...current,
-                    storage: {
-                      ...current.storage,
-                      sizeLimitBytes: value,
-                    },
-                  }));
-                }}
-                step={1}
-                type="number"
-                value={formatGiB(draft.storage.sizeLimitBytes)}
-              />
-              <span className="text-muted-foreground shrink-0 text-xs">
-                GiB
-              </span>
-            </div>
-            <FieldDescription>
-              Minimum 1 GiB. No fixed maximum is enforced.
-            </FieldDescription>
-          </Field>
-        </FieldGroup>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SummaryMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="mt-1 text-sm font-medium">{value}</p>
-    </div>
-  );
-}
-
-function validateDraftSettings(
-  draft: AppSettings,
-  limits: AppSettingsLimits,
-): string | null {
-  if (
-    !Number.isFinite(draft.record.fps) ||
-    draft.record.fps < limits.record.fpsMin ||
-    draft.record.fps > limits.record.fpsMax
-  ) {
-    return 'Frame cadence must be between one frame every 60 seconds and 5 fps.';
-  }
-  if (
-    draft.record.videoBitrateKbps < limits.record.videoBitrateKbpsMin ||
-    draft.record.videoBitrateKbps > limits.record.videoBitrateKbpsMax
-  ) {
-    return 'Video bitrate must be between 250 and 10000 kbps.';
-  }
-  if (
-    draft.storage.retentionDays < limits.storage.retentionDaysMin ||
-    draft.storage.retentionDays > limits.storage.retentionDaysMax
-  ) {
-    return 'Retention must be between 1 and 365 days.';
-  }
-  if (draft.storage.sizeLimitBytes < limits.storage.sizeLimitBytesMin) {
-    return 'Storage size limit must be at least 1 GiB.';
-  }
-
-  return null;
-}
-
-function formatInputNumber(value: number): string {
-  if (!Number.isFinite(value)) {
-    return '';
-  }
-
-  return Number.isInteger(value) ? value.toString() : value.toFixed(2);
-}
-
-function formatSessionCount(count: number): string {
-  return `${count} session${count === 1 ? '' : 's'}`;
-}
-
-function cadenceModeForFps(fps: number): CadenceMode {
-  return fps < 1 ? 'seconds' : 'fps';
 }

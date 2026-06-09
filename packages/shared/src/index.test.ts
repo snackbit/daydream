@@ -6,6 +6,7 @@ import type {
   LibraryRecordingSummary,
   LibraryWaveformTiles,
   LibraryWaveforms,
+  Notification,
   RecorderMediaWriterCapabilities,
   RecorderError,
   RecorderPreviewFrame,
@@ -267,6 +268,28 @@ test('recorder contracts support scene and segment metadata', () => {
 });
 
 test('ai contracts support local baseline results and guarded vlm states', () => {
+  const notification = {
+    actions: [
+      {
+        handler: 'model-download-retry',
+        id: 'retry',
+        label: 'Retry',
+        payload: {
+          modelId: 'small',
+        },
+        style: 'secondary',
+      },
+    ],
+    createdAtMs: 1,
+    dismissedAtMs: null,
+    id: 'notification-1',
+    message: 'Model download is not implemented yet.',
+    source: 'ai',
+    status: 'failed',
+    title: 'Download unavailable',
+    topic: 'model-download',
+    updatedAtMs: 1,
+  } satisfies Notification;
   const migratedJob = {
     createdAtMs: 1,
     errorCode: null,
@@ -332,6 +355,7 @@ test('ai contracts support local baseline results and guarded vlm states', () =>
     vlmObservations: [],
   } satisfies RecordingVisualObservations;
 
+  expect(notification.actions[0]!.handler).toBe('model-download-retry');
   expect(migratedJob.kind).toBe('frame-extraction');
   expect(transcript.segments[0]!.provider).toBe('local-whisper-cpp');
   expect(visual.vlmObservations).toHaveLength(0);

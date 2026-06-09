@@ -1,6 +1,8 @@
+mod ai;
 mod diagnostics;
 mod ffmpeg;
 mod library;
+mod notifications;
 mod playback_server;
 pub mod recorder;
 pub mod secret_crypto;
@@ -61,6 +63,24 @@ pub fn run() {
             settings::preview_app_settings_storage_cleanup,
             settings::save_app_settings,
             settings::reset_app_settings,
+            notifications::get_notifications,
+            notifications::acknowledge_notifications,
+            notifications::dismiss_notification,
+            notifications::delete_notifications,
+            notifications::delete_all_notifications,
+            notifications::execute_notification_action,
+            ai::list_ai_models,
+            ai::download_ai_model,
+            ai::delete_ai_model,
+            ai::self_test_ai_model,
+            ai::get_ai_provider_status,
+            ai::save_ai_provider_secret,
+            ai::delete_ai_provider_secret,
+            ai::list_processing_jobs,
+            ai::pause_processing_job,
+            ai::resume_processing_job,
+            ai::cancel_processing_job,
+            ai::retry_processing_job,
             recorder::get_recorder_status,
             recorder::get_recorder_performance_stats,
             recorder::get_capture_sources,

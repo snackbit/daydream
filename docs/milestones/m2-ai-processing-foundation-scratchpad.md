@@ -3,13 +3,20 @@
 ## Current Status
 
 - Gate A storage foundation landed in commit `6aa1f34`.
-- M2 is not closed. The full milestone still requires settings UI,
-  notifications, model cache, `whisper.cpp`, transcription providers, scheduler,
-  activity detection, OCR/VLM processing, playback integration, privacy
-  diagnostics, and final validation.
-- Gate A is mostly complete, but one follow-up remains: add explicit
-  `processing_jobs` row helper APIs before scheduler work depends on them.
-- Gates B through J are not complete.
+- Gate B implementation is complete in the current working tree: AI/LLM
+  settings UI, generic notification center, model/provider command scaffolds,
+  encrypted remote key command flow, notification action dispatch, dirty
+  Settings leave protection, and shadcn Select controls are implemented and
+  validated.
+- M2 is not closed. Gate B settings UI and notification scaffolds are
+  implemented, but the full milestone still requires model cache,
+  `whisper.cpp`, transcription providers, scheduler, activity detection,
+  OCR/VLM processing, playback integration, privacy diagnostics, and final
+  validation.
+- Gate A is complete enough for Gate B. Gate B added the explicit
+  `processing_jobs` list/get/status helper APIs needed by notification action
+  scaffolds; Gate E still needs concrete job creation and scheduler ownership.
+- Gates C through J are not complete.
 
 ## Locked Decisions
 
@@ -128,6 +135,27 @@
   - Linux Secret Service-backed AES-256-GCM envelopes for sensitive settings
   - contracts/storage only, with no AI command stubs in Gate A
   - update milestone docs with the new secret-storage direction
+- During Gate B planning, user chose:
+  - implement real scaffolds, not doc-only placeholders
+  - keep AI settings on the existing broad `getAppSettings`,
+    `saveAppSettings`, and `resetAppSettings` path instead of adding narrow
+    AI-only settings commands
+  - use one dense `AI/LLM` settings tab
+  - create a fully generic notification table, shared contract, header center,
+    and command surface instead of AI-specific notification aliases
+  - store notification actions as code-defined descriptors and dispatch only
+    allowlisted backend handlers from `executeNotificationAction`
+  - route remote provider API keys through separate encrypted secret commands;
+    settings saves persist only returned secret references
+  - delete superseded encrypted API keys after the settings save or reset
+    succeeds, including provider switches away from remote
+  - keep model download and smoke-test buttons active before Gate C by creating
+    unavailable/failed notifications rather than disabling the controls
+  - replace the temporary native select wrapper with shadcn `Select` across the
+    app
+  - intercept dirty Settings navigation with Save, Discard changes, and Stay;
+    if Save needs storage cleanup confirmation, navigation remains blocked
+    until cleanup is confirmed and save succeeds
 
 ## Repository Evidence
 
@@ -239,6 +267,35 @@
   settings/UI test coverage updates.
 - Validation commands from `6aa1f34` are not recorded in this scratchpad. Re-run
   the relevant TypeScript and Rust gates before treating Gate A as closed.
+- Current Gate B validation:
+  - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check`
+    passed.
+  - `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` passed:
+    181 Rust tests.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passed.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint` passed with only existing
+    max-lines warnings in `recorder-workspace-store.ts`, `DiagnosticsScreen.tsx`,
+    and `LibraryScreen.tsx`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop test
+    src/features/ai/ai-client.test.ts
+    src/features/notifications/notifications-client.test.ts
+    src/features/notifications/notifications-store.test.ts
+    src/features/notifications/components/notification-center.browser.test.tsx
+    src/screens/SettingsScreen.browser.test.tsx
+    src/screens/LibraryScreen.browser.test.tsx
+    src/features/recorder/scene-layout.test.ts
+    src/features/recorder/recorder-workspace-store.test.ts
+    src/features/settings/settings-store.test.ts` passed: 9 files, 113 tests.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/shared test`
+    passed: 1 file, 9 tests.
+  - `git diff --check` passed.
+  - Root `COREPACK_HOME=/tmp/corepack corepack yarn test` is not a reliable
+    green command for filtered Gate B tests because the same file filter is
+    forwarded to `@daydream/ffmpeg`, whose `vitest run` command exits 1 when no
+    matching test files exist.
+- Latest review after Gate B found no discrete correctness issues. TypeScript
+  typecheck, ESLint, and Rust tests passed; the JS test run hit a sandbox
+  listen `EPERM` after tests passed.
 
 ## Deferred Follow-Up Candidates
 

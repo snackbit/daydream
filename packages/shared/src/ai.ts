@@ -45,19 +45,30 @@ export type ProcessingChunkStatus =
   | 'running'
   | 'succeeded';
 
-export type AiNotificationKind =
-  | 'model-download'
-  | 'model-self-test'
-  | 'processing-job'
-  | 'provider-status';
+export type NotificationSource =
+  | 'ai'
+  | 'capture'
+  | 'library'
+  | 'recorder'
+  | 'settings'
+  | 'system';
 
-export type AiNotificationStatus =
+export type NotificationStatus =
   | 'cancelled'
   | 'failed'
   | 'info'
   | 'running'
   | 'succeeded'
   | 'warning';
+
+export type NotificationActionStyle = 'default' | 'destructive' | 'secondary';
+
+export type NotificationActionHandler =
+  | 'model-download-retry'
+  | 'processing-job-cancel'
+  | 'processing-job-pause'
+  | 'processing-job-resume'
+  | 'processing-job-retry';
 
 export type TranscriptSourceRole = 'desktop-audio' | 'microphone';
 
@@ -198,24 +209,77 @@ export interface ProcessingJobActionInput {
   jobId: string;
 }
 
-export interface AiNotification {
+export interface NotificationAction {
+  handler: NotificationActionHandler;
+  id: string;
+  label: string;
+  payload: Record<string, string>;
+  style: NotificationActionStyle;
+}
+
+export interface Notification {
+  actions: NotificationAction[];
   createdAtMs: number;
   dismissedAtMs: number | null;
   id: string;
-  jobId: string | null;
-  kind: AiNotificationKind;
   message: string;
-  status: AiNotificationStatus;
+  source: NotificationSource;
+  status: NotificationStatus;
   title: string;
+  topic: string;
   updatedAtMs: number;
 }
 
-export interface AiNotificationList {
-  notifications: AiNotification[];
+export interface NotificationList {
+  notifications: Notification[];
 }
 
-export interface DismissAiNotificationInput {
+export interface AcknowledgeNotificationsInput {
+  notificationIds: string[];
+}
+
+export interface DismissNotificationInput {
   notificationId: string;
+}
+
+export interface DeleteNotificationsInput {
+  notificationIds: string[];
+}
+
+export interface ExecuteNotificationActionInput {
+  actionId: string;
+  notificationId: string;
+}
+
+export interface DownloadAiModelInput {
+  modelId: string;
+}
+
+export interface DeleteAiModelInput {
+  modelId: string;
+}
+
+export interface SelfTestAiModelInput {
+  modelId: string;
+}
+
+export interface SaveAiProviderSecretInput {
+  plaintext: string;
+  role: 'transcription' | 'vision';
+}
+
+export interface DeleteAiProviderSecretInput {
+  secretRef: string;
+}
+
+export interface SaveAiProviderSecretResult {
+  secretRef: string;
+}
+
+export interface AiProviderStatus {
+  localTranscription: 'available' | 'missing';
+  remoteTranscription: 'configured' | 'missing-key' | 'not-configured';
+  vision: 'configured' | 'disabled' | 'missing-key';
 }
 
 export interface RecordingAiResultInput {

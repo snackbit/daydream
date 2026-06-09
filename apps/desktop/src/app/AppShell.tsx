@@ -1,8 +1,16 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { NotificationCenter } from '@/features/notifications/components/notification-center';
 import { RecorderStatusBar } from '@/features/recorder/components/recorder-status-bar';
 import { navigationItems } from './navigation';
+
+const standaloneRouteHeaders = {
+  '/notifications': {
+    description: 'Persistent local status updates and action history.',
+    label: 'Notifications',
+  },
+} as const;
 
 export function AppShell() {
   const pathname = useRouterState({
@@ -12,7 +20,9 @@ export function AppShell() {
   const activeItem =
     navigationItems.find(
       (item) => item.href === pathname || pathname.startsWith(`${item.href}/`),
-    ) ?? navigationItems[0]!;
+    ) ??
+    standaloneRouteHeaders[pathname as keyof typeof standaloneRouteHeaders] ??
+    navigationItems[0]!;
 
   return (
     <div className="bg-background text-foreground grid h-screen min-h-0 grid-cols-[14rem_1fr]">
@@ -55,10 +65,13 @@ export function AppShell() {
             </div>
           </div>
 
-          <Button className="gap-2" disabled variant="outline">
-            <Search className="size-3.5" />
-            Search later
-          </Button>
+          <div className="flex items-center gap-2">
+            <NotificationCenter />
+            <Button className="gap-2" disabled variant="outline">
+              <Search className="size-3.5" />
+              Search later
+            </Button>
+          </div>
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto">

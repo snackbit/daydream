@@ -191,6 +191,22 @@ test('settings store saves dirty draft and resets to defaults', async () => {
   expect(useSettingsStore.getState().draft).toEqual(settingsState.defaults);
 });
 
+test('settings store treats ai edits as dirty settings', async () => {
+  await useSettingsStore.getState().load();
+  useSettingsStore.getState().setDraft({
+    ...settingsState.settings,
+    ai: {
+      ...settingsState.settings.ai,
+      processing: {
+        ...settingsState.settings.ai.processing,
+        maxParallelJobs: 2,
+      },
+    },
+  });
+
+  expect(useSettingsStore.getState().isDirty).toBe(true);
+});
+
 test('settings store previews storage cleanup and summarizes cleanup results', async () => {
   settingsClient.previewAppSettingsStorageCleanup.mockResolvedValue({
     recordingCount: 2,

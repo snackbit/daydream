@@ -4,20 +4,22 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-    apply_migrations, collect_database_diagnostics_from_connection, create_activity_interval,
-    create_frame_similarity_entry, create_ocr_region, create_processing_chunk, create_recording,
-    create_recording_segment, create_transcript_segment, create_transcript_word,
-    create_vlm_observation, delete_portal_restore_token, delete_recording,
-    enable_connection_pragmas, fail_recording_segment, finalize_recording_segment, get_app_setting,
-    get_latest_recorder_scene, get_recorder_scene, get_recording, list_app_settings,
+    acknowledge_notifications, apply_migrations, collect_database_diagnostics_from_connection,
+    create_activity_interval, create_frame_similarity_entry, create_ocr_region,
+    create_processing_chunk, create_recording, create_recording_segment, create_transcript_segment,
+    create_transcript_word, create_vlm_observation, delete_all_notifications, delete_notifications,
+    delete_notifications_older_than, delete_portal_restore_token, delete_recording,
+    dismiss_notification, enable_connection_pragmas, fail_recording_segment,
+    finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
+    get_recorder_scene, get_recording, list_app_settings, list_notifications,
     list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
     mark_recording_started, migrations, recover_interrupted_recordings, reset_app_settings,
-    save_ai_model_asset, save_app_settings, save_recorder_scene, update_recording_status,
-    upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
+    save_ai_model_asset, save_app_settings, save_notification, save_recorder_scene,
+    update_recording_status, upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
     CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
     CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
     CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
-    SaveAiModelAssetInput, SaveAppSettingInput, SaveRecorderSceneInput,
+    SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
     SaveRecorderSceneSourceInput,
 };
 
@@ -35,9 +37,10 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 9);
+    assert_eq!(schema_version, 10);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
+    assert_eq!(table_counts["notifications"], 0);
     assert_eq!(table_counts["recordings"], 0);
     assert_eq!(table_counts["recording_tracks"], 0);
     assert_eq!(table_counts["recording_segments"], 0);
@@ -64,6 +67,190 @@ fn migration_enables_foreign_keys() {
         .expect("query foreign_keys pragma");
 
     assert_eq!(enabled, 1);
+}
+
+#[test]
+fn notifications_persist_actions_and_dismissal_state() {
+    let connection = migrated_memory_connection();
+
+    let saved = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: r#"[{"id":"retry","label":"Retry","handler":"model-download-retry","payload":{"modelId":"small"},"style":"secondary"}]"#.to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "Model download is not implemented in this gate.".to_string(),
+            source: "ai".to_string(),
+            status: "failed".to_string(),
+            timestamp_ms: 10,
+            title: "Download unavailable".to_string(),
+            topic: "model-download".to_string(),
+        },
+    )
+    .expect("save notification");
+
+    assert_eq!(saved.source, "ai");
+    assert_eq!(saved.topic, "model-download");
+    assert!(saved.actions_json.contains("model-download-retry"));
+    assert_eq!(
+        list_notifications(&connection)
+            .expect("list notifications")
+            .len(),
+        1
+    );
+
+    let dismissed = dismiss_notification(&connection, &saved.id, 20).expect("dismiss notification");
+
+    assert_eq!(dismissed.dismissed_at_ms, Some(20));
+    assert_eq!(dismissed.updated_at_ms, 10);
+    assert_eq!(
+        get_notification(&connection, &saved.id)
+            .expect("read notification")
+            .expect("notification row")
+            .dismissed_at_ms,
+        Some(20)
+    );
+}
+
+#[test]
+fn notifications_acknowledge_supplied_unseen_rows_without_deleting_history() {
+    let connection = migrated_memory_connection();
+
+    let first = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "First notification.".to_string(),
+            source: "system".to_string(),
+            status: "info".to_string(),
+            timestamp_ms: 10,
+            title: "First".to_string(),
+            topic: "status".to_string(),
+        },
+    )
+    .expect("save first notification");
+    let second = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "Second notification.".to_string(),
+            source: "system".to_string(),
+            status: "warning".to_string(),
+            timestamp_ms: 20,
+            title: "Second".to_string(),
+            topic: "status".to_string(),
+        },
+    )
+    .expect("save second notification");
+
+    acknowledge_notifications(&connection, std::slice::from_ref(&first.id), 30)
+        .expect("acknowledge notification");
+
+    let rows = list_notifications(&connection).expect("list notifications");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        get_notification(&connection, &first.id)
+            .expect("read first")
+            .expect("first row")
+            .dismissed_at_ms,
+        Some(30)
+    );
+    assert_eq!(
+        get_notification(&connection, &second.id)
+            .expect("read second")
+            .expect("second row")
+            .dismissed_at_ms,
+        None
+    );
+
+    acknowledge_notifications(&connection, &[first.id], 40).expect("acknowledge already seen");
+
+    assert_eq!(
+        get_notification(&connection, &second.id)
+            .expect("read second after duplicate ack")
+            .expect("second row")
+            .dismissed_at_ms,
+        None
+    );
+}
+
+#[test]
+fn notifications_can_be_permanently_deleted_and_pruned_by_age() {
+    let connection = migrated_memory_connection();
+
+    let old = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "Old notification.".to_string(),
+            source: "system".to_string(),
+            status: "info".to_string(),
+            timestamp_ms: 10,
+            title: "Old".to_string(),
+            topic: "status".to_string(),
+        },
+    )
+    .expect("save old notification");
+    let recent = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "Recent notification.".to_string(),
+            source: "system".to_string(),
+            status: "info".to_string(),
+            timestamp_ms: 100,
+            title: "Recent".to_string(),
+            topic: "status".to_string(),
+        },
+    )
+    .expect("save recent notification");
+
+    assert_eq!(
+        delete_notifications(&connection, std::slice::from_ref(&recent.id))
+            .expect("delete one notification"),
+        1
+    );
+    assert!(get_notification(&connection, &recent.id)
+        .expect("read deleted notification")
+        .is_none());
+    assert_eq!(list_notifications(&connection).expect("list rows").len(), 1);
+
+    let replacement = save_notification(
+        &connection,
+        &SaveNotificationInput {
+            actions_json: "[]".to_string(),
+            id: Uuid::now_v7().to_string(),
+            message: "Replacement notification.".to_string(),
+            source: "system".to_string(),
+            status: "info".to_string(),
+            timestamp_ms: 200,
+            title: "Replacement".to_string(),
+            topic: "status".to_string(),
+        },
+    )
+    .expect("save replacement notification");
+
+    assert_eq!(
+        delete_notifications_older_than(&connection, 100).expect("prune old rows"),
+        1
+    );
+    assert!(get_notification(&connection, &old.id)
+        .expect("read pruned notification")
+        .is_none());
+    assert!(get_notification(&connection, &replacement.id)
+        .expect("read replacement notification")
+        .is_some());
+
+    assert_eq!(
+        delete_all_notifications(&connection).expect("delete all notifications"),
+        1
+    );
+    assert!(list_notifications(&connection)
+        .expect("list rows")
+        .is_empty());
 }
 
 #[test]
@@ -626,7 +813,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 9);
+    assert_eq!(schema_version, 10);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

@@ -320,21 +320,24 @@ M2 adds these Tauri command surfaces. Names may be adjusted to the repository's
 existing camelCase command convention during implementation, but the behavior
 must remain equivalent:
 
-- `getAiSettings() -> AiSettingsState`
-- `saveAiSettings(input: SaveAiSettingsInput) -> AiSettingsState`
-- `resetAiSettings() -> AiSettingsState`
+- `getAppSettings() -> AppSettingsState`
+- `saveAppSettings(input: SaveAppSettingsInput) -> AppSettingsState`
+- `resetAppSettings() -> AppSettingsState`
 - `listAiModels() -> AiModelAssetList`
-- `downloadAiModel(input: DownloadAiModelInput) -> AiNotification`
+- `downloadAiModel(input: DownloadAiModelInput) -> Notification`
 - `deleteAiModel(input: DeleteAiModelInput) -> AiModelAssetList`
-- `selfTestAiModel(input: SelfTestAiModelInput) -> AiNotification`
+- `selfTestAiModel(input: SelfTestAiModelInput) -> Notification`
 - `getAiProviderStatus() -> AiProviderStatus`
+- `saveAiProviderSecret(input: SaveAiProviderSecretInput) -> SaveAiProviderSecretResult`
+- `deleteAiProviderSecret(input: DeleteAiProviderSecretInput) -> void`
 - `listProcessingJobs(input?: ListProcessingJobsInput) -> ProcessingJobList`
 - `pauseProcessingJob(input: ProcessingJobActionInput) -> ProcessingJob`
 - `resumeProcessingJob(input: ProcessingJobActionInput) -> ProcessingJob`
 - `cancelProcessingJob(input: ProcessingJobActionInput) -> ProcessingJob`
 - `retryProcessingJob(input: ProcessingJobActionInput) -> ProcessingJob`
-- `getAiNotifications() -> AiNotificationList`
-- `dismissAiNotification(input: DismissAiNotificationInput) -> AiNotificationList`
+- `getNotifications() -> NotificationList`
+- `dismissNotification(input: DismissNotificationInput) -> NotificationList`
+- `executeNotificationAction(input: ExecuteNotificationActionInput) -> NotificationList`
 - `getRecordingTranscript(input: RecordingAiResultInput) -> RecordingTranscript`
 - `getRecordingActivity(input: RecordingAiResultInput) -> RecordingActivity`
 - `getRecordingVisualObservations(input: RecordingAiResultInput) -> RecordingVisualObservations`
@@ -352,7 +355,8 @@ Expected shared payload concepts:
 - `ProcessingJobStatus`
 - `ProcessingChunk`
 - `ProcessingChunkStatus`
-- `AiNotification`
+- `Notification`
+- `NotificationAction`
 - `TranscriptSourceRole`
 - `TranscriptSegment`
 - `TranscriptWord`
@@ -393,6 +397,12 @@ Settings storage format:
 - `app_settings.is_sensitive` marks encrypted local secret values.
 - Sensitive setting values use envelope JSON:
   `{ "v": 1, "alg": "AES-256-GCM", "nonce": "...", "ciphertext": "..." }`.
+- AI settings use the existing broad app settings commands. API keys are saved
+  through a separate encrypted secret command that returns a secret reference,
+  and only that reference is persisted in the visible AI settings object.
+- Replacing a remote API key or switching a provider away from remote deletes
+  the superseded encrypted secret only after the settings save or reset
+  succeeds.
 - On Linux, the AES key is stored or unlocked through Secret Service. Unsupported
   platforms return typed not-implemented secret-storage states in M2 Gate A.
 
@@ -445,6 +455,9 @@ Expected new tables:
 - `ai_model_assets`
   - model ID, provider, display label, local path, size, checksum or etag when
     known, download status, self-test status, created/updated timestamps
+- `notifications`
+  - generic source, topic, status, title, message, JSON action descriptors,
+    created/updated timestamps, and dismissed timestamp
 - `processing_chunks`
   - job ID, recording ID, source kind, segment ID or time range, status,
     attempt count, progress, error code, created/updated timestamps
@@ -542,17 +555,19 @@ Migration stop boundary:
   assets, processing chunks, transcript segments, transcript words, activity
   intervals, OCR regions, VLM observations, and frame similarity entries.
 - [x] Extend `processing_jobs` support for M2 AI job kinds.
-- [ ] Add storage helpers for AI settings, encrypted sensitive settings, model
-  assets, jobs, chunks, and derived result writes.
+- [x] Add storage helpers for AI settings, encrypted sensitive settings, model
+  assets, chunks, and derived result writes.
+- [x] Add `processing_jobs` list/get/status helper APIs needed by notification
+  action scaffolds.
 - [x] Add tests for fresh migration, existing database migration, AI settings
   validation, secret redaction, and derived output provenance.
 
 Status note:
 
-- Commit `6aa1f34` completed the Gate A storage foundation except for explicit
-  `processing_jobs` row helper APIs. M2 job kinds are accepted by the schema,
-  and chunk plus derived-output storage helpers exist, but Gate E still needs
-  concrete job create/update/list helpers before scheduler work can be complete.
+- Commit `6aa1f34` completed the core Gate A storage foundation. The current
+  working tree adds the `processing_jobs` list/get/status helpers needed by
+  Gate B notification action scaffolds. Gate E still owns concrete job
+  creation, claiming, chunk scheduling, and restart recovery.
 
 Exit Criteria:
 
@@ -562,23 +577,37 @@ Exit Criteria:
 
 ## Gate B: AI Settings UI and Notification Center
 
-- [ ] Add an `AI/LLM` tab to Settings using existing shadcn tabs, fields,
+- [x] Add an `AI/LLM` tab to Settings using existing shadcn tabs, fields,
   inputs, selects, alerts, and buttons.
-- [ ] Add provider controls for local `whisper.cpp`, remote
+- [x] Use shadcn `Select` for Settings and other app select controls instead
+  of the temporary native select wrapper.
+- [x] Add provider controls for local `whisper.cpp`, remote
   OpenAI-compatible transcription, OCR, VLM, activity tracking, and processing
   concurrency.
-- [ ] Add visible warnings for remote providers, encrypted local secret storage,
+- [x] Add visible warnings for remote providers, encrypted local secret storage,
   and unsupported macOS/Windows secret storage.
-- [ ] Add model cache controls for download, delete, and smoke test.
-- [ ] Add keyboard and mouse activity toggles with default windows of 30
+- [x] Add model cache controls for download, delete, and smoke test.
+- [x] Add keyboard and mouse activity toggles with default windows of 30
   seconds and 5 seconds.
-- [ ] Add the header notification icon and popover with scrollable persistent
+- [x] Add the header notification icon and popover with scrollable persistent
   notifications.
-- [ ] Wire notification actions for pause, cancel, retry, dismiss, and
+- [x] Wire notification actions for pause, cancel, retry, dismiss, and
   model-download retry.
-- [ ] Add Browser Mode tests for local settings, remote settings, dirty/save
+- [x] Add Browser Mode tests for local settings, remote settings, dirty/save
   state, remote warnings, notification popover behavior, and failed/succeeded
   job states.
+- [x] Intercept dirty Settings navigation with a save/discard/stay dialog and
+  native close/reload protection.
+
+Status note:
+
+- Gate B uses the existing app settings command path for AI settings. It adds
+  separate encrypted secret commands for remote provider keys, generic
+  notifications, code-defined notification action descriptors, and backend
+  allowlist dispatch for notification actions.
+- Model download and self-test buttons are active in Gate B, but they create
+  unavailable/failed notifications until Gate C implements real model download,
+  verification, and `whisper.cpp` smoke testing.
 
 Exit Criteria:
 
