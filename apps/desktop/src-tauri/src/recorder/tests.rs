@@ -15,8 +15,9 @@ use uuid::Uuid;
 
 use super::capture_runtime::CapturePreviewSession;
 use super::commands::{
-    get_recorder_scene, pause_recording, resume_recording, save_recorder_scene,
-    select_capture_sources, start_recording, stop_empty_preview_start, stop_recording,
+    collect_recorder_recording_stats, get_recorder_scene, pause_recording, resume_recording,
+    save_recorder_scene, select_capture_sources, start_recording, stop_empty_preview_start,
+    stop_recording,
 };
 use super::errors::unavailable_error;
 use super::manager::{PreviewStartDecision, RecorderManager};
@@ -101,6 +102,89 @@ fn manager_initial_status_is_idle() {
     assert_eq!(status.active_recording_id, None);
     assert_eq!(status.active_segment_id, None);
     assert!(!status.backend_health.media_writer.available);
+}
+
+#[test]
+fn recording_stats_are_empty_without_active_recording() {
+    let storage = test_storage();
+    let manager = RecorderManager::new(test_app_data_dir());
+
+    let stats =
+        collect_recorder_recording_stats(&storage, &manager, 10).expect("collect recording stats");
+
+    assert_eq!(stats, None);
+}
+
+#[test]
+fn recording_stats_include_active_segment_and_total_file_sizes() {
+    let storage = test_storage();
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let scene_id = saved_test_scene(&storage);
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 100)
+        .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+
+    let first_segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list first segment");
+    let first_segment = first_segments.first().expect("first segment");
+    fs::write(&first_segment.file_path, [1_u8, 2, 3, 4]).expect("write first segment");
+
+    pause_test_recording(&manager, &storage, &recording_id, 200).expect("pause recording");
+    resume_test_recording(&manager, &storage, &recording_id, 250).expect("resume recording");
+
+    let resumed_segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
+        .expect("list resumed segments");
+    let active_segment = resumed_segments.last().expect("active segment");
+    fs::write(&active_segment.file_path, [1_u8, 2, 3, 4, 5, 6, 7]).expect("write active segment");
+
+    let stats = collect_recorder_recording_stats(&storage, &manager, 300)
+        .expect("collect recording stats")
+        .expect("active recording stats");
+
+    assert_eq!(stats.recording_id, recording_id);
+    assert_eq!(stats.recording_started_at_ms, Some(100));
+    assert_eq!(
+        stats.active_segment_id.as_deref(),
+        Some(active_segment.id.as_str())
+    );
+    assert_eq!(stats.active_segment_index, Some(2));
+    assert_eq!(stats.active_segment_started_at_ms, Some(250));
+    assert_eq!(stats.active_segment_size_bytes, Some(7));
+    assert_eq!(stats.total_size_bytes, 11);
+    assert_eq!(stats.segment_count, 2);
+    assert_eq!(stats.updated_at_ms, 300);
+
+    let _ = fs::remove_dir_all(app_data_dir);
+}
+
+#[test]
+fn recording_stats_ignore_missing_segment_files_for_size_totals() {
+    let storage = test_storage();
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let scene_id = saved_test_scene(&storage);
+    let started = start_test_recording(&manager, &storage, start_input(&scene_id), 100)
+        .expect("start recording");
+    let recording_id = started
+        .active_recording_id
+        .clone()
+        .expect("active recording id");
+
+    let stats = collect_recorder_recording_stats(&storage, &manager, 150)
+        .expect("collect recording stats")
+        .expect("active recording stats");
+
+    assert_eq!(stats.recording_id, recording_id);
+    assert_eq!(stats.active_segment_size_bytes, None);
+    assert_eq!(stats.total_size_bytes, 0);
+
+    let _ = fs::remove_dir_all(app_data_dir);
 }
 
 #[test]

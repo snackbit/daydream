@@ -7,6 +7,7 @@ import type {
   RecorderPerformanceStats,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
+  RecorderRecordingStats,
   RecorderScene,
   RecorderStatus,
   ResumeRecordingInput,
@@ -26,6 +27,10 @@ export async function getRecorderStatus(): Promise<RecorderStatus> {
 
 export async function getRecorderPerformanceStats(): Promise<RecorderPerformanceStats> {
   return invoke<RecorderPerformanceStats>('getRecorderPerformanceStats');
+}
+
+export async function getRecorderRecordingStats(): Promise<RecorderRecordingStats | null> {
+  return invoke<RecorderRecordingStats | null>('getRecorderRecordingStats');
 }
 
 export async function getCaptureSources(): Promise<CaptureSourceList> {

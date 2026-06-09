@@ -4,6 +4,7 @@ import type {
   CaptureSource,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
+  RecorderRecordingStats,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -14,6 +15,7 @@ import {
   getAudioSources,
   getCaptureSources,
   getRecorderPreviewStatus,
+  getRecorderRecordingStats,
   getRecorderScene,
   getRecorderStatus,
   listenToRecorderPreviewFrames,
@@ -75,6 +77,9 @@ interface RecorderWorkspaceState {
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   previewStartInFlightSceneId: string | null;
   previewStatus: RecorderPreviewStatus | null;
+  recordingStats: RecorderRecordingStats | null;
+  recordingStatsError: string | null;
+  refreshRecordingStats: () => Promise<void>;
   resume: () => Promise<void>;
   resolveDuplicateCaptureSource: (
     resolution: DuplicateCaptureSourceResolution,
@@ -159,6 +164,8 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
     previewFramesBySceneSourceId: {},
     previewStartInFlightSceneId: null,
     previewStatus: null,
+    recordingStats: null,
+    recordingStatsError: null,
     async pause() {
       const recordingId = get().status?.activeRecordingId;
       if (!recordingId) {
@@ -186,6 +193,29 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
       await runStatusMutation(set, get, 'resume', () =>
         resumeRecording({ recordingId }),
       );
+    },
+    async refreshRecordingStats() {
+      if (get().status?.state !== 'recording') {
+        set({ recordingStats: null, recordingStatsError: null });
+        return;
+      }
+
+      try {
+        const recordingStats = await getRecorderRecordingStats();
+        const status = get().status;
+        if (
+          status?.state !== 'recording' ||
+          (recordingStats !== null &&
+            status.activeRecordingId !== recordingStats.recordingId)
+        ) {
+          set({ recordingStats: null, recordingStatsError: null });
+          return;
+        }
+
+        set({ recordingStats, recordingStatsError: null });
+      } catch (error) {
+        set({ recordingStatsError: errorMessage(error) });
+      }
     },
     resolveDuplicateCaptureSource(resolution) {
       if (workspaceConfigurationLocked(get())) {
@@ -489,6 +519,10 @@ export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
         set({
           error: status.lastError?.message ?? null,
           pendingLifecycleAction: null,
+          recordingStats:
+            status.state === 'recording' ? get().recordingStats : null,
+          recordingStatsError:
+            status.state === 'recording' ? get().recordingStatsError : null,
           status,
         });
       });
@@ -618,6 +652,8 @@ function applyLoadedRecorderWorkspace(
     microphoneAudioSourceId: scene.microphoneAudioSourceId,
     previewFramesBySceneSourceId: {},
     previewStatus,
+    recordingStats: null,
+    recordingStatsError: null,
     scene,
     selectedSceneSourceId: scene.sources[0]?.id ?? null,
     status,
@@ -668,6 +704,10 @@ async function runStatusMutation(
         pendingLifecycleAction: statusShowsCommandInProgress(status)
           ? action
           : null,
+        recordingStats:
+          status.state === 'recording' ? get().recordingStats : null,
+        recordingStatsError:
+          status.state === 'recording' ? get().recordingStatsError : null,
         status,
       });
       if (statusBlocksLifecycle(status)) {
@@ -702,6 +742,10 @@ async function reconcileStatusUntilSettled(
           pendingLifecycleAction: statusShowsCommandInProgress(nextStatus)
             ? action
             : null,
+          recordingStats:
+            nextStatus.state === 'recording' ? get().recordingStats : null,
+          recordingStatsError:
+            nextStatus.state === 'recording' ? get().recordingStatsError : null,
           status: nextStatus,
         });
       },

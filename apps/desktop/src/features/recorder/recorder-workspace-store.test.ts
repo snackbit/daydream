@@ -14,6 +14,7 @@ const client = vi.hoisted(() => ({
   getAudioSources: vi.fn(),
   getCaptureSources: vi.fn(),
   getRecorderPreviewStatus: vi.fn(),
+  getRecorderRecordingStats: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
   listenToRecorderPreviewFrames: vi.fn(),
@@ -148,6 +149,7 @@ beforeEach(() => {
     state: 'idle',
     updatedAtMs: 1,
   });
+  client.getRecorderRecordingStats.mockResolvedValue(null);
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
@@ -1264,6 +1266,40 @@ test('recorder command failures preserve typed recorder error messages', async (
   });
 
   expect(useRecorderWorkspaceStore.getState().error).toBe('Cannot pause now.');
+});
+
+test('refreshRecordingStats stores active recording stats and clears them after recording', async () => {
+  const recordingStatus: RecorderStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    activeSegmentId: 'segment-1',
+    state: 'recording',
+  };
+  const recordingStats = {
+    activeSegmentId: 'segment-1',
+    activeSegmentIndex: 1,
+    activeSegmentSizeBytes: 2_048,
+    activeSegmentStartedAtMs: 1,
+    recordingId: 'recording-1',
+    recordingStartedAtMs: 1,
+    segmentCount: 1,
+    totalSizeBytes: 2_048,
+    updatedAtMs: 2,
+  };
+  client.getRecorderRecordingStats.mockResolvedValue(recordingStats);
+  useRecorderWorkspaceStore.setState({ status: recordingStatus });
+
+  await useRecorderWorkspaceStore.getState().refreshRecordingStats();
+
+  expect(client.getRecorderRecordingStats).toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState().recordingStats).toEqual(
+    recordingStats,
+  );
+
+  useRecorderWorkspaceStore.setState({ status });
+  await useRecorderWorkspaceStore.getState().refreshRecordingStats();
+
+  expect(useRecorderWorkspaceStore.getState().recordingStats).toBeNull();
 });
 
 test('start requires a saved scene before invoking the recorder command', async () => {

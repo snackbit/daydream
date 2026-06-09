@@ -4,7 +4,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
-import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { FullHeightLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -17,18 +17,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { RecordingStudio } from '@/features/library/components/studio/recording-studio';
 import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
   deleteLibraryRecording,
   getLibraryRecording,
+  renameLibraryRecording,
 } from '@/features/library/library-client';
 import {
   availabilityLabel,
   formatDuration,
   formatTimestamp,
 } from '@/features/library/library-format';
+
+const RECORDING_TITLE_MAX_CHARS = 120;
 
 export function RecordingStudioScreen() {
   const { recordingId } = useParams({ strict: false }) as {
@@ -46,6 +51,9 @@ export function RecordingStudioScreen() {
   const [thumbnailStatus, setThumbnailStatus] = useState<
     'error' | 'idle' | 'loading' | 'ready'
   >('idle');
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
 
@@ -116,6 +124,27 @@ export function RecordingStudioScreen() {
     }
   }
 
+  async function confirmRename() {
+    if (!detail) {
+      return;
+    }
+    const trimmedTitle = renameTitle.trim();
+    setError(null);
+    setRenameSaving(true);
+    try {
+      const nextDetail = await renameLibraryRecording({
+        recordingId: detail.id,
+        title: trimmedTitle.length > 0 ? trimmedTitle : null,
+      });
+      setDetail(nextDetail);
+      setRenameDialogOpen(false);
+    } catch (renameError) {
+      setError(errorMessage(renameError));
+    } finally {
+      setRenameSaving(false);
+    }
+  }
+
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
@@ -137,7 +166,7 @@ export function RecordingStudioScreen() {
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
         <div className="min-w-0">
           <h1 className="truncate text-lg font-semibold tracking-normal">
-            {detail ? formatTimestamp(detail.startedAtMs) : 'Recording'}
+            {detail ? recordingTitle(detail) : 'Recording'}
           </h1>
           <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs">
             {detail ? (
@@ -145,6 +174,9 @@ export function RecordingStudioScreen() {
                 <Badge variant="outline">
                   {availabilityLabel(detail.availability)}
                 </Badge>
+                {detail.title ? (
+                  <span>{formatTimestamp(detail.startedAtMs)}</span>
+                ) : null}
                 <span>{formatDuration(detail.durationMs)}</span>
                 <span>{detail.segments.length} segments</span>
               </>
@@ -154,6 +186,19 @@ export function RecordingStudioScreen() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {detail && isRecordingRenameable(detail) ? (
+            <Button
+              className="gap-2"
+              variant="outline"
+              onClick={() => {
+                setRenameTitle(detail.title ?? '');
+                setRenameDialogOpen(true);
+              }}
+            >
+              <Pencil className="size-3.5" />
+              Rename
+            </Button>
+          ) : null}
           {detail && isRecordingDeletable(detail) ? (
             <Button
               className="gap-2"
@@ -221,6 +266,57 @@ export function RecordingStudioScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={renameDialogOpen}
+        onOpenChange={(open) => {
+          setRenameDialogOpen(open);
+          if (!open) {
+            setRenameTitle('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename recording</DialogTitle>
+            <DialogDescription>
+              Leave the title blank to use the recording timestamp.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="studio-recording-title">Title</Label>
+            <Input
+              id="studio-recording-title"
+              maxLength={RECORDING_TITLE_MAX_CHARS + 1}
+              value={renameTitle}
+              onChange={(event) => setRenameTitle(event.target.value)}
+            />
+            <div className="text-muted-foreground text-xs">
+              {renameTitle.trim().length}/{RECORDING_TITLE_MAX_CHARS}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRenameDialogOpen(false);
+                setRenameTitle('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                renameSaving ||
+                renameTitle.trim().length > RECORDING_TITLE_MAX_CHARS
+              }
+              onClick={() => void confirmRename()}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </FullHeightLayout>
   );
 }
@@ -231,4 +327,12 @@ function errorMessage(error: unknown): string {
 
 function isRecordingDeletable(detail: LibraryRecordingDetail): boolean {
   return detail.status === 'completed' || detail.status === 'failed';
+}
+
+function isRecordingRenameable(detail: LibraryRecordingDetail): boolean {
+  return detail.status === 'completed' || detail.status === 'failed';
+}
+
+function recordingTitle(detail: LibraryRecordingDetail): string {
+  return detail.title ?? formatTimestamp(detail.startedAtMs);
 }

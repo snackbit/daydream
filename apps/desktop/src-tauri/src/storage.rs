@@ -42,7 +42,7 @@ pub use recordings::{
     create_recording, delete_recording, get_latest_recording_id, get_recording,
     is_active_recording_status, is_deletable_recording_status, list_recordings,
     mark_recording_completed, mark_recording_started, recover_interrupted_recordings,
-    update_recording_status, CreateRecordingInput, RecordingRow,
+    rename_recording, update_recording_status, CreateRecordingInput, RecordingRow,
 };
 pub use scenes::{
     get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, RecorderSceneRow,

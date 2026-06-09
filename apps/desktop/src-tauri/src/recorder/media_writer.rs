@@ -256,9 +256,17 @@ pub(crate) fn start_synthetic_segment(
     let frame_interval = frame_interval(input.fps);
     let benchmark = benchmark_session_for_input(input);
 
+    let fps = input.fps;
     start_segment_with_frame_pump(input, true, benchmark, move |appsrc, stop| {
         thread::spawn(move || {
-            pump_synthetic_frames(appsrc, canvas_width, canvas_height, frame_interval, stop)
+            pump_synthetic_frames(
+                appsrc,
+                canvas_width,
+                canvas_height,
+                fps,
+                frame_interval,
+                stop,
+            )
         })
     })
 }
@@ -769,6 +777,7 @@ fn pump_synthetic_frames(
     appsrc: gst_app::AppSrc,
     canvas_width: u32,
     canvas_height: u32,
+    fps: f64,
     frame_interval: Duration,
     stop: mpsc::Receiver<FramePumpStop>,
 ) -> Result<(), String> {
@@ -782,6 +791,7 @@ fn pump_synthetic_frames(
             canvas_width,
             canvas_height,
             frame_index,
+            fps,
             frame_interval,
         ) {
             match stop.try_recv() {
@@ -819,6 +829,7 @@ fn pump_composed_frames(
                     DrainReadyFrames {
                         started_at_ms,
                         last_pts: &mut last_pts,
+                        fps,
                         frame_interval,
                         stop_at_ms: stop_request.stop_at_ms,
                         timing: timing.as_ref(),
@@ -837,6 +848,7 @@ fn pump_composed_frames(
                     frame,
                     started_at_ms,
                     &mut last_pts,
+                    fps,
                     frame_interval,
                     timing.as_ref(),
                     benchmark.as_ref(),
@@ -872,6 +884,7 @@ fn drain_ready_composed_frames(
                     frame,
                     context.started_at_ms,
                     context.last_pts,
+                    context.fps,
                     context.frame_interval,
                     context.timing,
                     context.benchmark,
@@ -891,6 +904,7 @@ fn drain_ready_composed_frames(
 
 struct DrainReadyFrames<'a> {
     benchmark: Option<&'a RecorderBenchmarkSession>,
+    fps: f64,
     frame_interval: Duration,
     last_pts: &'a mut Option<Duration>,
     started_at_ms: u64,
@@ -907,6 +921,7 @@ fn push_composed_frame(
     frame: CapturedFrame,
     started_at_ms: u64,
     last_pts: &mut Option<Duration>,
+    fps: f64,
     frame_interval: Duration,
     timing: Option<&SharedCaptureTiming>,
     benchmark: Option<&RecorderBenchmarkSession>,
@@ -927,7 +942,7 @@ fn push_composed_frame(
         );
     }
     let push_started = std::time::Instant::now();
-    push_raw_video_frame_at_pts(appsrc, frame, pts, frame_interval)?;
+    push_raw_video_frame_at_pts(appsrc, frame, pts, fps, frame_interval)?;
     if let Some(benchmark) = benchmark {
         benchmark.record_stage(
             RecorderBenchmarkStage::WriterPush,
@@ -953,6 +968,7 @@ fn push_yuv420p_frame(
     width: u32,
     height: u32,
     frame_index: u64,
+    fps: f64,
     frame_interval: Duration,
 ) -> Result<(), String> {
     let pts = duration_mul(frame_interval, frame_index);
@@ -965,6 +981,7 @@ fn push_yuv420p_frame(
             width,
         },
         pts,
+        fps,
         frame_interval,
     )
 }
@@ -973,9 +990,10 @@ fn push_raw_video_frame_at_pts(
     appsrc: &gst_app::AppSrc,
     frame: PreparedVideoFrame,
     pts: Duration,
+    fps: f64,
     frame_interval: Duration,
 ) -> Result<(), String> {
-    let caps = video_caps(&frame)?;
+    let caps = video_caps(&frame, fps)?;
     let mut buffer = gst::Buffer::from_mut_slice(frame.data);
     {
         let buffer_ref = buffer
@@ -1117,9 +1135,11 @@ fn repack_yuv420p_frame(frame: &CapturedFrame) -> Result<Vec<u8>, RecorderError>
     Ok(output)
 }
 
-fn video_caps(frame: &PreparedVideoFrame) -> Result<gst::Caps, String> {
+fn video_caps(frame: &PreparedVideoFrame, fps: f64) -> Result<gst::Caps, String> {
     let format = gst_video_format(frame.format);
-    let mut builder = gst::Caps::builder("video/x-raw").field("format", format);
+    let mut builder = gst::Caps::builder("video/x-raw")
+        .field("format", format)
+        .field("framerate", gst_framerate_fraction(fps));
     if frame.width > 0 {
         builder = builder.field("width", frame.width as i32);
     }
@@ -1417,19 +1437,30 @@ fn duration_mul(duration: Duration, multiplier: u64) -> Duration {
     Duration::from_nanos(nanos.try_into().unwrap_or(u64::MAX))
 }
 
+fn gst_framerate_fraction(fps: f64) -> gst::Fraction {
+    if !fps.is_finite() || fps <= 0.0 {
+        return gst::Fraction::new(1, 1);
+    }
+    if fps.fract() == 0.0 {
+        return gst::Fraction::new(fps.round().clamp(1.0, 60.0) as i32, 1);
+    }
+    if (fps - 0.5).abs() < f64::EPSILON {
+        return gst::Fraction::new(1, 2);
+    }
+    if (fps - 0.2).abs() < f64::EPSILON {
+        return gst::Fraction::new(1, 5);
+    }
+    if (fps - 0.1).abs() < f64::EPSILON {
+        return gst::Fraction::new(1, 10);
+    }
+
+    gst::Fraction::new((fps * 1000.0).round().clamp(1.0, 60_000.0) as i32, 1000)
+}
+
 #[cfg(test)]
 fn gst_fraction(fps: f64) -> String {
-    if fps.fract() == 0.0 {
-        format!("{fps:.0}/1")
-    } else if (fps - 0.5).abs() < f64::EPSILON {
-        "1/2".to_string()
-    } else if (fps - 0.2).abs() < f64::EPSILON {
-        "1/5".to_string()
-    } else if (fps - 0.1).abs() < f64::EPSILON {
-        "1/10".to_string()
-    } else {
-        format!("{}/1000", (fps * 1000.0).round() as u32)
-    }
+    let fraction = gst_framerate_fraction(fps);
+    format!("{}/{}", fraction.numer(), fraction.denom())
 }
 
 fn key_int_max(fps: f64, seconds: u32) -> u32 {
@@ -1476,7 +1507,8 @@ mod tests {
         frame_is_tightly_packed_for_gstreamer, gst_fraction, gst_video_format, key_int_max,
         live_frame_pts, prepare_video_frame_for_gstreamer, probe_segment_best_effort,
         start_segment_from_frames, start_segment_with_frame_pump, start_synthetic_segment,
-        stream_indexes, validate_segment_capabilities, MediaSegmentInput,
+        stream_indexes, validate_segment_capabilities, video_caps, MediaSegmentInput,
+        PreparedVideoFrame,
     };
 
     #[test]
@@ -1485,6 +1517,25 @@ mod tests {
         assert_eq!(gst_fraction(0.5), "1/2");
         assert_eq!(gst_fraction(0.2), "1/5");
         assert_eq!(gst_fraction(0.1), "1/10");
+        assert_eq!(gst_fraction(120.0), "60/1");
+    }
+
+    #[test]
+    fn video_caps_declare_configured_low_fps_framerate() {
+        gst::init().expect("initialize gstreamer");
+        let frame = PreparedVideoFrame {
+            data: black_yuv420p_frame(1280, 720).expect("black yuv frame"),
+            format: CapturedFrameFormat::Yuv420p,
+            height: 720,
+            width: 1280,
+        };
+        let caps = video_caps(&frame, 0.2).expect("video caps");
+        let framerate = caps
+            .structure(0)
+            .and_then(|structure| structure.get::<gst::Fraction>("framerate").ok())
+            .expect("video caps should include framerate");
+
+        assert_eq!(framerate, gst::Fraction::new(1, 5));
     }
 
     #[test]

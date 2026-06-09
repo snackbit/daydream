@@ -35,6 +35,15 @@ export function CaptureScreen() {
   const previewStatus = useRecorderWorkspaceStore(
     (state) => state.previewStatus,
   );
+  const recordingStats = useRecorderWorkspaceStore(
+    (state) => state.recordingStats,
+  );
+  const recordingStatsError = useRecorderWorkspaceStore(
+    (state) => state.recordingStatsError,
+  );
+  const refreshRecordingStats = useRecorderWorkspaceStore(
+    (state) => state.refreshRecordingStats,
+  );
   const resume = useRecorderWorkspaceStore((state) => state.resume);
   const resolveDuplicateCaptureSource = useRecorderWorkspaceStore(
     (state) => state.resolveDuplicateCaptureSource,
@@ -156,6 +165,31 @@ export function CaptureScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (status?.state !== 'recording') {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | null = null;
+
+    async function pollRecordingStats() {
+      await refreshRecordingStats();
+      if (!cancelled) {
+        timeoutId = window.setTimeout(pollRecordingStats, 1_000);
+      }
+    }
+
+    void pollRecordingStats();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [refreshRecordingStats, status?.activeRecordingId, status?.state]);
+
   return (
     <CaptureWorkspace
       audioSources={audioSources}
@@ -169,6 +203,8 @@ export function CaptureScreen() {
       pendingLifecycleAction={pendingLifecycleAction}
       previewFramesBySceneSourceId={previewFramesBySceneSourceId}
       previewStatus={previewStatus}
+      recordingStats={recordingStats}
+      recordingStatsError={recordingStatsError}
       saveStatus={saveStatus}
       scene={scene}
       selectedSceneSourceId={selectedSceneSourceId}

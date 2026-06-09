@@ -19,6 +19,7 @@ const client = vi.hoisted(() => ({
   deleteLibraryRecording: vi.fn(),
   getLibraryRecording: vi.fn(),
   getRecordingWaveformTiles: vi.fn(),
+  renameLibraryRecording: vi.fn(),
 }));
 
 const router = vi.hoisted(() => ({
@@ -80,6 +81,7 @@ const detail = {
   status: 'completed',
   storageDir: '/tmp/daydream/recordings/recording-1',
   thumbnailPath: '/tmp/daydream/recordings/recording-1/segments/0001.mkv',
+  title: null,
   tracks: [
     {
       codec: 'h264',
@@ -221,6 +223,13 @@ beforeEach(() => {
   client.deleteLibraryRecording.mockResolvedValue(undefined);
   client.closeLibraryPlaybackSession.mockResolvedValue(undefined);
   client.getLibraryRecording.mockResolvedValue(detail);
+  client.renameLibraryRecording.mockImplementation(
+    ({ title }: { recordingId: string; title: string | null }) =>
+      Promise.resolve({
+        ...detail,
+        title,
+      }),
+  );
   client.getRecordingWaveformTiles.mockResolvedValue(waveformTiles);
   client.createLibraryPlaybackSession.mockResolvedValue(playbackAssets);
   router.navigate.mockResolvedValue(undefined);
@@ -254,6 +263,46 @@ function mockScrubberRect(slider: HTMLElement) {
       x: 0,
       y: 0,
     }) as DOMRect;
+}
+
+function trackTimelineViewport(timeline: HTMLElement): HTMLElement {
+  const viewport = timeline.closest('[data-slot="scroll-area-viewport"]');
+  expect(viewport).toBeTruthy();
+
+  return viewport as HTMLElement;
+}
+
+function mockTimelineScrollMetrics(viewport: HTMLElement) {
+  let scrollLeft = 0;
+  Object.defineProperty(viewport, 'scrollLeft', {
+    configurable: true,
+    get: () => scrollLeft,
+    set: (value: number) => {
+      scrollLeft = value;
+    },
+  });
+  Object.defineProperty(viewport, 'clientWidth', {
+    configurable: true,
+    value: 800,
+  });
+  Object.defineProperty(viewport, 'scrollWidth', {
+    configurable: true,
+    value: 2_400,
+  });
+}
+
+function dispatchTrackWheel(
+  timeline: HTMLElement,
+  init: WheelEventInit,
+): WheelEvent {
+  const event = new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  fireEvent(timeline, event);
+
+  return event;
 }
 
 test('RecordingStudioScreen renders player controls, metadata sidebar, and tracks', async () => {
@@ -296,6 +345,30 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   );
 });
 
+test('RecordingStudioScreen renames the recording from the detail header', async () => {
+  render(<RecordingStudioScreen />);
+
+  expect(await screen.findByText('Tracks')).toBeTruthy();
+  expect(client.createLibraryPlaybackSession).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole('button', { name: /rename/i }));
+  fireEvent.change(screen.getByLabelText('Title'), {
+    target: { value: 'Planning recap' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(client.renameLibraryRecording).toHaveBeenCalledWith({
+      recordingId: 'recording-1',
+      title: 'Planning recap',
+    }),
+  );
+  expect(
+    await screen.findByRole('heading', { name: 'Planning recap' }),
+  ).toBeTruthy();
+  expect(client.createLibraryPlaybackSession).toHaveBeenCalledTimes(1);
+});
+
 test('RecordingStudioScreen renders a zoomable track ruler', async () => {
   client.getLibraryRecording.mockResolvedValue(longDetail);
   client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
@@ -318,6 +391,211 @@ test('RecordingStudioScreen renders a zoomable track ruler', async () => {
   fireEvent.click(screen.getByRole('button', { name: /zoom out tracks/i }));
 
   await waitFor(() => expect(screen.getByText('167%')).toBeTruthy());
+});
+
+test('RecordingStudioScreen maps shift-wheel gestures to horizontal track scrolling', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  expect(dispatchTrackWheel(timeline, { deltaY: 120 }).defaultPrevented).toBe(
+    false,
+  );
+  expect(viewport.scrollLeft).toBe(0);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaY: 120,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(120);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaX: 80,
+      deltaY: 400,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(200);
+  expect(screen.getByText('167%')).toBeTruthy();
+});
+
+test('RecordingStudioScreen disables vertical wheel defaults while track zooming', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+  const timelineRect = timeline.getBoundingClientRect();
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      clientX: timelineRect.left + 480,
+      ctrlKey: true,
+      deltaY: -100,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  await waitFor(() => expect(screen.getByText('208%')).toBeTruthy());
+  expect(viewport.scrollLeft).toBe(0);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      ctrlKey: true,
+      deltaY: 100,
+    }).defaultPrevented,
+  ).toBe(true);
+});
+
+test('RecordingStudioScreen disables vertical wheel defaults while shift-scrolling tracks', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaY: 120,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(120);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaY: -120,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(0);
+});
+
+test('RecordingStudioScreen ignores horizontal track wheel gestures without shift', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaX: 80,
+      deltaY: 400,
+    }).defaultPrevented,
+  ).toBe(false);
+
+  expect(viewport.scrollLeft).toBe(0);
+  expect(screen.getByText('167%')).toBeTruthy();
+});
+
+test('RecordingStudioScreen maps shift-wheel line deltas to horizontal track scrolling', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaMode: 1,
+      deltaY: 3,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(48);
+});
+
+test('RecordingStudioScreen maps shift-wheel page deltas to horizontal track scrolling', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  expect(
+    dispatchTrackWheel(timeline, {
+      deltaMode: 2,
+      deltaY: 1,
+      shiftKey: true,
+    }).defaultPrevented,
+  ).toBe(true);
+
+  expect(viewport.scrollLeft).toBe(800);
+});
+
+test('RecordingStudioScreen clamps shift-wheel horizontal scrolling to the timeline bounds', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+
+  fireEvent.wheel(timeline, {
+    deltaY: 3_000,
+    shiftKey: true,
+  });
+
+  expect(viewport.scrollLeft).toBe(1_600);
+
+  fireEvent.wheel(timeline, {
+    deltaY: -3_000,
+    shiftKey: true,
+  });
+
+  expect(viewport.scrollLeft).toBe(0);
+});
+
+test('RecordingStudioScreen keeps ctrl-wheel zoom separate from shift-wheel scrolling', async () => {
+  client.getLibraryRecording.mockResolvedValue(longDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  const viewport = trackTimelineViewport(timeline);
+  mockTimelineScrollMetrics(viewport);
+  const timelineRect = timeline.getBoundingClientRect();
+
+  fireEvent.wheel(timeline, {
+    clientX: timelineRect.left + 480,
+    ctrlKey: true,
+    deltaY: 120,
+    shiftKey: true,
+  });
+
+  await waitFor(() => expect(screen.getByText('133%')).toBeTruthy());
+  expect(viewport.scrollLeft).toBe(0);
 });
 
 test('RecordingStudioScreen queues visible waveform chunks in FIFO order', async () => {

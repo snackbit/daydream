@@ -782,5 +782,11 @@ pub(super) fn migrations() -> Migrations<'static> {
         DROP TABLE ai_model_assets_v1;
         "#,
         ),
+        M::up(
+            r#"
+        ALTER TABLE recordings
+            ADD COLUMN title TEXT;
+        "#,
+        ),
     ])
 }

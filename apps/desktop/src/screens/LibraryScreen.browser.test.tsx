@@ -16,6 +16,7 @@ const client = vi.hoisted(() => ({
   listLibraryRecordings: vi.fn(),
   localAssetUrl: vi.fn((path: string) => `asset://${path}`),
   prepareLibraryRecordingThumbnail: vi.fn(),
+  renameLibraryRecording: vi.fn(),
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -47,6 +48,7 @@ const readyRecording = {
   status: 'completed',
   storageDir: '/tmp/daydream/recordings/recording-ready',
   thumbnailPath: '/tmp/daydream/recordings/recording-ready/segments/0001.mkv',
+  title: null,
 } satisfies LibraryRecordingSummary;
 
 const missingRecording = {
@@ -62,6 +64,7 @@ const missingRecording = {
   status: 'completed',
   storageDir: '/tmp/daydream/recordings/recording-missing',
   thumbnailPath: null,
+  title: null,
 } satisfies LibraryRecordingSummary;
 
 const lockedRecording = {
@@ -77,6 +80,7 @@ const lockedRecording = {
   status: 'recording',
   storageDir: '/tmp/daydream/recordings/recording-locked',
   thumbnailPath: null,
+  title: null,
 } satisfies LibraryRecordingSummary;
 
 beforeEach(() => {
@@ -87,6 +91,16 @@ beforeEach(() => {
   ]);
   client.deleteLibraryRecording.mockResolvedValue(undefined);
   client.deleteLibraryRecordings.mockResolvedValue(undefined);
+  client.renameLibraryRecording.mockImplementation(
+    ({ recordingId, title }: { recordingId: string; title: string | null }) =>
+      Promise.resolve({
+        ...readyRecording,
+        id: recordingId,
+        segments: [],
+        title,
+        tracks: [],
+      }),
+  );
   client.prepareLibraryRecordingThumbnail.mockResolvedValue({
     error: null,
     path: '/tmp/daydream/recordings/recording-ready/playback/segment-1/overview.jpg',
@@ -199,4 +213,45 @@ test('LibraryScreen deletes a recording from the right-click context menu', asyn
     }),
   );
   await waitFor(() => expect(screen.queryByText('Ready')).toBeNull());
+});
+
+test('LibraryScreen renames and clears a recording from the context menu', async () => {
+  const titledRecording = {
+    ...readyRecording,
+    title: 'Initial capture name',
+  } satisfies LibraryRecordingSummary;
+  client.listLibraryRecordings.mockResolvedValue([titledRecording]);
+
+  render(<LibraryScreen />);
+
+  await screen.findByText('Initial capture name');
+  fireEvent.contextMenu(screen.getByText('Initial capture name'));
+  fireEvent.click(await screen.findByText('Rename recording'));
+  fireEvent.change(screen.getByLabelText('Title'), {
+    target: { value: 'Updated capture name' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(client.renameLibraryRecording).toHaveBeenCalledWith({
+      recordingId: 'recording-ready',
+      title: 'Updated capture name',
+    }),
+  );
+  expect(await screen.findByText('Updated capture name')).toBeTruthy();
+
+  fireEvent.contextMenu(screen.getByText('Updated capture name'));
+  fireEvent.click(await screen.findByText('Rename recording'));
+  fireEvent.change(screen.getByLabelText('Title'), {
+    target: { value: '   ' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(client.renameLibraryRecording).toHaveBeenLastCalledWith({
+      recordingId: 'recording-ready',
+      title: null,
+    }),
+  );
+  expect(screen.queryByText('Updated capture name')).toBeNull();
 });

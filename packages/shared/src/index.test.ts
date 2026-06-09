@@ -4,6 +4,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   LibraryRecordingSummary,
+  RenameLibraryRecordingInput,
   LibraryWaveformTiles,
   LibraryWaveforms,
   Notification,
@@ -11,6 +12,7 @@ import type {
   RecorderError,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
+  RecorderRecordingStats,
   RecorderScene,
   RecorderSegment,
   RecorderStatus,
@@ -262,9 +264,21 @@ test('recorder contracts support scene and segment metadata', () => {
     state: 'recording',
     videoStreamIndex: 0,
   } satisfies RecorderSegment;
+  const recordingStats = {
+    activeSegmentId: 'segment-1',
+    activeSegmentIndex: 1,
+    activeSegmentSizeBytes: 1_024,
+    activeSegmentStartedAtMs: 1,
+    recordingId: 'recording-1',
+    recordingStartedAtMs: 1,
+    segmentCount: 1,
+    totalSizeBytes: 1_024,
+    updatedAtMs: 2,
+  } satisfies RecorderRecordingStats;
 
   expect(scene.sources[0]?.sourceKind).toBe('monitor');
   expect(segment.videoStreamIndex).toBe(0);
+  expect(recordingStats.activeSegmentIndex).toBe(1);
 });
 
 test('ai contracts support local baseline results and guarded vlm states', () => {
@@ -396,6 +410,7 @@ test('library contracts support missing recordings and playable details', () => 
     status: 'completed',
     storageDir: '/tmp/daydream/recordings/recording-1',
     thumbnailPath: null,
+    title: 'Workday capture',
   } satisfies LibraryRecordingSummary;
 
   const detail = {
@@ -437,11 +452,17 @@ test('library contracts support missing recordings and playable details', () => 
     availability: 'locked',
     missingReasons: ['Recording is still in progress.'],
     status: 'recording',
+    title: null,
   } satisfies LibraryRecordingSummary;
+  const renameInput = {
+    recordingId: 'recording-1',
+    title: 'Updated capture title',
+  } satisfies RenameLibraryRecordingInput;
 
   expect(missing.availability).toBe('missing-files');
   expect(locked.availability).toBe('locked');
   expect(detail.segments[0]?.pauseAfterMs).toBe(3_000);
+  expect(renameInput.title).toBe('Updated capture title');
 });
 
 test('library waveform contracts support audio lanes', () => {

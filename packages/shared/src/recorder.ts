@@ -285,3 +285,15 @@ export interface RecorderPerformanceStats {
   timing: CaptureTimingDiagnostics | null;
   updatedAtMs: number;
 }
+
+export interface RecorderRecordingStats {
+  activeSegmentId: string | null;
+  activeSegmentIndex: number | null;
+  activeSegmentSizeBytes: number | null;
+  activeSegmentStartedAtMs: number | null;
+  recordingId: string;
+  recordingStartedAtMs: number | null;
+  segmentCount: number;
+  totalSizeBytes: number;
+  updatedAtMs: number;
+}

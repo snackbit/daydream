@@ -5,6 +5,7 @@ import type {
   CaptureSource,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
+  RecorderRecordingStats,
   RecorderScene,
   RecorderStatus,
 } from '@daydream/shared';
@@ -49,6 +50,8 @@ export interface CaptureWorkspaceProps {
   pendingLifecycleAction: RecorderLifecycleAction | null;
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   previewStatus: RecorderPreviewStatus | null;
+  recordingStats: RecorderRecordingStats | null;
+  recordingStatsError: string | null;
   saveStatus: string;
   scene: RecorderScene | null;
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
@@ -78,6 +81,8 @@ export function CaptureWorkspace({
   pendingLifecycleAction,
   previewFramesBySceneSourceId,
   previewStatus,
+  recordingStats,
+  recordingStatsError,
   saveStatus,
   scene,
   pendingDuplicateCaptureSources,
@@ -162,8 +167,11 @@ export function CaptureWorkspace({
             <SceneCanvasPanel
               configurationLocked={configurationLocked}
               previewFramesBySceneSourceId={previewFramesBySceneSourceId}
+              recordingStats={recordingStats}
+              recordingStatsError={recordingStatsError}
               scene={scene}
               selectedSourceId={selectedSceneSourceId}
+              status={status}
               onChange={onChangeScene}
               onSelect={onSelectSceneSource}
             />

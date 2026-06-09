@@ -27,6 +27,7 @@ export interface LibraryRecordingSummary {
   status: string;
   storageDir: string;
   thumbnailPath: string | null;
+  title: string | null;
 }
 
 export interface LibraryRecordingSegment {
@@ -69,6 +70,7 @@ export interface LibraryRecordingDetail {
   status: string;
   storageDir: string;
   thumbnailPath: string | null;
+  title: string | null;
   tracks: LibraryRecordingTrack[];
 }
 
@@ -78,6 +80,11 @@ export interface DeleteLibraryRecordingInput {
 
 export interface DeleteLibraryRecordingsInput {
   recordingIds: string[];
+}
+
+export interface RenameLibraryRecordingInput {
+  recordingId: string;
+  title: string | null;
 }
 
 export interface LibraryWaveformRequest {

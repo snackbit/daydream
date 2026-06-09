@@ -17,6 +17,7 @@ import {
   Grid2X2,
   List,
   Lock,
+  Pencil,
   Play,
   RefreshCw,
   Trash2,
@@ -47,6 +48,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -60,6 +63,7 @@ import {
   listLibraryRecordings,
   localAssetUrl,
   prepareLibraryRecordingThumbnail,
+  renameLibraryRecording,
 } from '@/features/library/library-client';
 import {
   availabilityLabel,
@@ -74,10 +78,20 @@ interface DeleteTarget {
   label: string;
 }
 
+interface RenameTarget {
+  fallbackTitle: string;
+  id: string;
+}
+
+const RECORDING_TITLE_MAX_CHARS = 120;
+
 export function LibraryScreen() {
   const navigate = useNavigate();
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
   const thumbnailLoadRunId = useRef(0);
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(
     null,
@@ -193,6 +207,37 @@ export function LibraryScreen() {
     }
   }
 
+  async function confirmRename() {
+    if (!renameTarget) {
+      return;
+    }
+    const trimmedTitle = renameTitle.trim();
+    setError(null);
+    setRenameSaving(true);
+    try {
+      const detail = await renameLibraryRecording({
+        recordingId: renameTarget.id,
+        title: trimmedTitle.length > 0 ? trimmedTitle : null,
+      });
+      setRecordings((current) =>
+        current.map((recording) =>
+          recording.id === detail.id
+            ? {
+                ...recording,
+                title: detail.title,
+              }
+            : recording,
+        ),
+      );
+      setRenameTarget(null);
+      setRenameTitle('');
+    } catch (renameError) {
+      setError(errorMessage(renameError));
+    } finally {
+      setRenameSaving(false);
+    }
+  }
+
   function selectRecording(
     recording: LibraryRecordingSummary,
     event: MouseEvent<HTMLElement>,
@@ -261,6 +306,17 @@ export function LibraryScreen() {
     if (target) {
       setDeleteTarget(target);
     }
+  }
+
+  function openRenameDialog(recording: LibraryRecordingSummary) {
+    if (!isRecordingRenameable(recording)) {
+      return;
+    }
+    setRenameTarget({
+      fallbackTitle: formatTimestamp(recording.startedAtMs),
+      id: recording.id,
+    });
+    setRenameTitle(recording.title ?? '');
   }
 
   function openRecording(recording: LibraryRecordingSummary) {
@@ -393,6 +449,7 @@ export function LibraryScreen() {
                 openDeleteDialog(deleteSelectionTarget(recording))
               }
               onOpen={() => openRecording(recording)}
+              onRename={() => openRenameDialog(recording)}
               onSelect={(event) => selectRecording(recording, event)}
             />
           ))}
@@ -425,6 +482,59 @@ export function LibraryScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={renameTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameTarget(null);
+            setRenameTitle('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename recording</DialogTitle>
+            <DialogDescription>
+              Set a display title for{' '}
+              {renameTarget?.fallbackTitle ?? 'this recording'}. Leave it blank
+              to use the recording timestamp.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="recording-title">Title</Label>
+            <Input
+              id="recording-title"
+              maxLength={RECORDING_TITLE_MAX_CHARS + 1}
+              value={renameTitle}
+              onChange={(event) => setRenameTitle(event.target.value)}
+            />
+            <div className="text-muted-foreground text-xs">
+              {renameTitle.trim().length}/{RECORDING_TITLE_MAX_CHARS}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRenameTarget(null);
+                setRenameTitle('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                renameSaving ||
+                renameTitle.trim().length > RECORDING_TITLE_MAX_CHARS
+              }
+              onClick={() => void confirmRename()}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageLayout>
   );
 }
@@ -433,6 +543,7 @@ interface RecordingLibraryItemProps {
   isSelected: boolean;
   onDelete: () => void;
   onOpen: () => void;
+  onRename: () => void;
   onSelect: (event: MouseEvent<HTMLElement>) => void;
   recording: LibraryRecordingSummary;
   thumbnailPath: string | null;
@@ -443,6 +554,7 @@ function RecordingLibraryItem({
   isSelected,
   onDelete,
   onOpen,
+  onRename,
   onSelect,
   recording,
   thumbnailPath,
@@ -451,6 +563,9 @@ function RecordingLibraryItem({
   const playable = recording.availability === 'available';
   const locked = recording.availability === 'locked';
   const deletable = isRecordingDeletable(recording);
+  const renameable = isRecordingRenameable(recording);
+  const displayTitle = recordingTitle(recording);
+  const timestampTitle = formatTimestamp(recording.startedAtMs);
 
   return (
     <ContextMenu>
@@ -494,10 +609,9 @@ function RecordingLibraryItem({
           />
           <div className="flex min-w-0 flex-col">
             <CardHeader className="min-w-0 pt-4">
-              <CardTitle className="truncate">
-                {formatTimestamp(recording.startedAtMs)}
-              </CardTitle>
+              <CardTitle className="truncate">{displayTitle}</CardTitle>
               <CardDescription>
+                {recording.title ? `${timestampTitle} · ` : null}
                 {formatDuration(recording.durationMs)} ·{' '}
                 {recording.segmentCount} segment
                 {recording.segmentCount === 1 ? '' : 's'} ·{' '}
@@ -542,6 +656,14 @@ function RecordingLibraryItem({
         </Card>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        <ContextMenuItem
+          className="gap-2"
+          disabled={!renameable}
+          onSelect={onRename}
+        >
+          <Pencil className="size-3.5" />
+          Rename recording
+        </ContextMenuItem>
         <ContextMenuItem
           className="gap-2"
           disabled={!deletable}
@@ -639,6 +761,14 @@ function isRecordingSelectable(recording: LibraryRecordingSummary): boolean {
 
 function isRecordingDeletable(recording: LibraryRecordingSummary): boolean {
   return recording.status === 'completed' || recording.status === 'failed';
+}
+
+function isRecordingRenameable(recording: LibraryRecordingSummary): boolean {
+  return recording.status === 'completed' || recording.status === 'failed';
+}
+
+function recordingTitle(recording: LibraryRecordingSummary): string {
+  return recording.title ?? formatTimestamp(recording.startedAtMs);
 }
 
 function uniqueIds(ids: string[]): string[] {

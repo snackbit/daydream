@@ -28,6 +28,7 @@ pub struct RecordingRow {
     pub started_at_ms: Option<i64>,
     pub status: String,
     pub storage_dir: String,
+    pub title: Option<String>,
 }
 
 pub fn create_recording(
@@ -76,7 +77,8 @@ pub fn get_recording(connection: &Connection, id: &str) -> rusqlite::Result<Reco
             quality_label,
             started_at_ms,
             status,
-            storage_dir
+            storage_dir,
+            title
         FROM recordings
         WHERE id = ?1
         "#,
@@ -98,7 +100,8 @@ pub fn list_recordings(connection: &Connection) -> rusqlite::Result<Vec<Recordin
             quality_label,
             started_at_ms,
             status,
-            storage_dir
+            storage_dir,
+            title
         FROM recordings
         WHERE status != 'deleted'
         ORDER BY COALESCE(started_at_ms, created_at_ms) DESC, id ASC
@@ -128,6 +131,33 @@ pub fn delete_recording(connection: &Connection, id: &str) -> rusqlite::Result<(
     connection.execute("DELETE FROM recordings WHERE id = ?1", [id])?;
 
     Ok(())
+}
+
+pub fn rename_recording(
+    connection: &Connection,
+    id: &str,
+    title: Option<&str>,
+) -> rusqlite::Result<RecordingRow> {
+    let status = connection
+        .query_row("SELECT status FROM recordings WHERE id = ?1", [id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?;
+
+    if let Some(status) = status {
+        if !is_deletable_recording_status(&status) {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "recording status {status} is not renameable"
+            )));
+        }
+    }
+
+    connection.execute(
+        "UPDATE recordings SET title = ?2 WHERE id = ?1",
+        params![id, title],
+    )?;
+
+    get_recording(connection, id)
 }
 
 pub fn recover_interrupted_recordings(
@@ -261,5 +291,6 @@ fn recording_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecordingRow>
         started_at_ms: row.get(7)?,
         status: row.get(8)?,
         storage_dir: row.get(9)?,
+        title: row.get(10)?,
     })
 }

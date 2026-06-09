@@ -13,14 +13,15 @@ use super::{
     finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
     get_recorder_scene, get_recording, list_app_settings, list_notifications,
     list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
-    mark_recording_started, migrations, recover_interrupted_recordings, reset_app_settings,
-    save_ai_model_asset, save_app_settings, save_notification, save_recorder_scene,
-    save_unseen_notification, update_recording_status, upsert_portal_restore_token, AppStorage,
-    CreateActivityIntervalInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
-    CreateRecordingInput, CreateRecordingSegmentInput, CreateTranscriptSegmentInput,
-    CreateTranscriptWordInput, CreateVisualRegionInput, FailRecordingSegmentInput,
-    FinalizeRecordingSegmentInput, SaveAiModelAssetInput, SaveAppSettingInput,
-    SaveNotificationInput, SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
+    mark_recording_started, migrations, recover_interrupted_recordings, rename_recording,
+    reset_app_settings, save_ai_model_asset, save_app_settings, save_notification,
+    save_recorder_scene, save_unseen_notification, update_recording_status,
+    upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
+    CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+    CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
+    SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
+    SaveRecorderSceneSourceInput,
 };
 
 fn migrated_memory_connection() -> Connection {
@@ -37,7 +38,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 11);
+    assert_eq!(schema_version, 12);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -864,11 +865,12 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 11);
+    assert_eq!(schema_version, 12);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
     assert_eq!(migrated.output_root, None);
+    assert_eq!(migrated.title, None);
 }
 
 #[test]
@@ -966,6 +968,7 @@ fn recording_accepts_balanced_ocr_and_minimal_recorder_metadata() {
         Some("/tmp/daydream/recordings".to_string()),
     );
     assert_eq!(recording.quality_label, "balanced-ocr");
+    assert_eq!(recording.title, None);
 
     connection
         .execute("DELETE FROM recorder_scenes WHERE id = ?1", [&scene_id])
@@ -973,6 +976,63 @@ fn recording_accepts_balanced_ocr_and_minimal_recorder_metadata() {
 
     let recording = get_recording(&connection, &recording_id).expect("read recording");
     assert_eq!(recording.active_scene_id, None);
+}
+
+#[test]
+fn recording_title_can_be_renamed_and_cleared_after_completion() {
+    let connection = migrated_memory_connection();
+    let recording_id = Uuid::now_v7().to_string();
+
+    create_recording(
+        &connection,
+        &CreateRecordingInput {
+            id: recording_id.clone(),
+            active_scene_id: None,
+            created_at_ms: 2,
+            default_fps: 1.0,
+            notes: None,
+            output_root: Some("/tmp/daydream/recordings".to_string()),
+            quality_label: "balanced-ocr".to_string(),
+            storage_dir: "/tmp/daydream".to_string(),
+        },
+    )
+    .expect("create recording");
+    mark_recording_started(&connection, &recording_id, 2).expect("mark started");
+    mark_recording_completed(&connection, &recording_id, 10).expect("mark completed");
+
+    let renamed =
+        rename_recording(&connection, &recording_id, Some("Workday review")).expect("rename");
+    assert_eq!(renamed.title.as_deref(), Some("Workday review"));
+
+    let cleared = rename_recording(&connection, &recording_id, None).expect("clear title");
+    assert_eq!(cleared.title, None);
+}
+
+#[test]
+fn recording_title_rename_rejects_active_recordings() {
+    let connection = migrated_memory_connection();
+    let recording_id = Uuid::now_v7().to_string();
+
+    create_recording(
+        &connection,
+        &CreateRecordingInput {
+            id: recording_id.clone(),
+            active_scene_id: None,
+            created_at_ms: 2,
+            default_fps: 1.0,
+            notes: None,
+            output_root: Some("/tmp/daydream/recordings".to_string()),
+            quality_label: "balanced-ocr".to_string(),
+            storage_dir: "/tmp/daydream".to_string(),
+        },
+    )
+    .expect("create recording");
+    mark_recording_started(&connection, &recording_id, 2).expect("mark started");
+
+    let error = rename_recording(&connection, &recording_id, Some("Active"))
+        .expect_err("active recording rename should fail");
+
+    assert!(error.to_string().contains("not renameable"));
 }
 
 #[test]

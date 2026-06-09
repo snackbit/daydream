@@ -22,6 +22,7 @@ const client = vi.hoisted(() => ({
   getAudioSources: vi.fn(),
   getCaptureSources: vi.fn(),
   getRecorderPreviewStatus: vi.fn(),
+  getRecorderRecordingStats: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
   listenToRecorderPreviewFrames: vi.fn(),
@@ -166,6 +167,7 @@ beforeEach(() => {
     state: 'idle',
     updatedAtMs: 1,
   });
+  client.getRecorderRecordingStats.mockResolvedValue(null);
   client.getCaptureSources.mockResolvedValue(captureSources);
   client.getRecorderScene.mockResolvedValue(null);
   client.getAudioSources.mockResolvedValue(audioSources);
@@ -770,12 +772,37 @@ test('CaptureScreen makes scene configuration read-only while recording', async 
   };
   client.getRecorderScene.mockResolvedValue(savedScene);
   client.getRecorderStatus.mockResolvedValue(recordingStatus);
+  client.getRecorderRecordingStats.mockResolvedValue({
+    activeSegmentId: 'segment-1',
+    activeSegmentIndex: 2,
+    activeSegmentSizeBytes: 2_048,
+    activeSegmentStartedAtMs: 1_000,
+    recordingId: 'recording-1',
+    recordingStartedAtMs: 500,
+    segmentCount: 2,
+    totalSizeBytes: 1_048_576,
+    updatedAtMs: 66_000,
+  });
 
   render(<CaptureScreen />);
 
-  const source = await screen.findByTestId('scene-source-main');
+  expect(await screen.findByText('Recording in progress')).toBeTruthy();
   expect(screen.getByText('Status: recording')).toBeTruthy();
+  expect(screen.queryByTestId('scene-source-main')).toBeNull();
+  expect(screen.queryByRole('button', { name: /move main/i })).toBeNull();
   expect(screen.queryAllByRole('button', { name: /resize/i })).toHaveLength(0);
+  expect(screen.getByText('2 of 2')).toBeTruthy();
+  expect(screen.getByText('1:05')).toBeTruthy();
+  expect(screen.getByText('2.05 KB')).toBeTruthy();
+  expect(screen.getByText('1.05 MB')).toBeTruthy();
+  expect(
+    screen.getByText(
+      new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(500)),
+    ),
+  ).toBeTruthy();
   expect(
     (screen.getByRole('button', { name: /^pause$/i }) as HTMLButtonElement)
       .disabled,
@@ -820,12 +847,8 @@ test('CaptureScreen makes scene configuration read-only while recording', async 
       }) as HTMLButtonElement
     ).disabled,
   ).toBe(true);
-  expect(
-    (screen.getByLabelText(/canvas preset/i) as HTMLSelectElement).disabled,
-  ).toBe(true);
-  expect(
-    (screen.getByLabelText(/canvas w/i) as HTMLInputElement).disabled,
-  ).toBe(true);
+  expect(screen.queryByLabelText(/canvas preset/i)).toBeNull();
+  expect(screen.queryByLabelText(/canvas w/i)).toBeNull();
   expect(
     (screen.getByRole('checkbox', { name: /aspect/i }) as HTMLButtonElement)
       .disabled,
@@ -834,25 +857,6 @@ test('CaptureScreen makes scene configuration read-only while recording', async 
     (screen.getByRole('button', { name: /^fit$/i }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
-
-  const rectBeforeDrag =
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect;
-  const moveHandle = screen.getByRole('button', { name: /move main/i });
-  fireEvent.pointerDown(moveHandle, { clientX: 20, clientY: 40, pointerId: 1 });
-  fireEvent.pointerMove(source.parentElement ?? source, {
-    clientX: 120,
-    clientY: 140,
-    pointerId: 1,
-  });
-  fireEvent.pointerUp(source.parentElement ?? source, {
-    clientX: 120,
-    clientY: 140,
-    pointerId: 1,
-  });
-
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual(
-    rectBeforeDrag,
-  );
 
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
   fireEvent.click(screen.getByRole('button', { name: /add monitor sources/i }));

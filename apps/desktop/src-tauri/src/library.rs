@@ -19,6 +19,7 @@ use crate::{
 const WAVEFORM_SAMPLE_INTERVAL_MS: usize = 50;
 const WAVEFORM_TILE_DURATION_MS: i64 = 15_000;
 const WAVEFORM_TILE_CACHE_VERSION: &str = "v2";
+const RECORDING_TITLE_MAX_CHARS: usize = 120;
 const WAVEFORM_TILE_RESOLUTIONS_MS: &[i64] =
     &[5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 
@@ -46,6 +47,7 @@ pub struct LibraryRecordingSummary {
     status: String,
     storage_dir: String,
     thumbnail_path: Option<String>,
+    title: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,6 +65,7 @@ pub struct LibraryRecordingDetail {
     status: String,
     storage_dir: String,
     thumbnail_path: Option<String>,
+    title: Option<String>,
     tracks: Vec<LibraryRecordingTrack>,
 }
 
@@ -113,6 +116,13 @@ pub struct DeleteLibraryRecordingInput {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteLibraryRecordingsInput {
     recording_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameLibraryRecordingInput {
+    recording_id: String,
+    title: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -378,6 +388,24 @@ pub fn delete_library_recordings(
     Ok(())
 }
 
+#[tauri::command(rename = "renameLibraryRecording")]
+pub fn rename_library_recording(
+    input: RenameLibraryRecordingInput,
+    storage: State<'_, AppStorage>,
+) -> Result<LibraryRecordingDetail, String> {
+    let title = normalize_recording_title(input.title)?;
+    let recording = storage
+        .with_connection(|connection| {
+            storage::rename_recording(connection, &input.recording_id, title.as_deref())
+        })
+        .map_err(|error| error.to_string())?;
+    let segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
+
+    Ok(detail_from_rows(&recording, &segments))
+}
+
 #[tauri::command(rename = "getRecordingWaveforms")]
 pub fn get_recording_waveforms(
     input: LibraryWaveformRequest,
@@ -509,6 +537,7 @@ fn detail_from_rows(
         status: summary.status,
         storage_dir: summary.storage_dir,
         thumbnail_path: summary.thumbnail_path,
+        title: summary.title,
         tracks: tracks_from_segments(segments),
     }
 }
@@ -563,7 +592,25 @@ fn summary_from_rows(
             .iter()
             .find(|segment| Path::new(&segment.file_path).is_file())
             .map(|segment| segment.file_path.clone()),
+        title: recording.title.clone(),
     }
+}
+
+fn normalize_recording_title(title: Option<String>) -> Result<Option<String>, String> {
+    let Some(title) = title else {
+        return Ok(None);
+    };
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > RECORDING_TITLE_MAX_CHARS {
+        return Err(format!(
+            "Recording title must be {RECORDING_TITLE_MAX_CHARS} characters or fewer."
+        ));
+    }
+
+    Ok(Some(trimmed.to_string()))
 }
 
 fn delete_recording_row(
@@ -1674,6 +1721,43 @@ mod tests {
     }
 
     #[test]
+    fn summary_and_detail_include_recording_title() {
+        let temp_dir = test_dir("recording-title");
+        fs::create_dir_all(&temp_dir).expect("create temp recording dir");
+        let mut recording = recording_row(&temp_dir);
+        recording.title = Some("Workday review".to_string());
+        let segment_path = temp_dir.join("segments/0001.mkv");
+        fs::create_dir_all(segment_path.parent().expect("segment parent"))
+            .expect("create segment dir");
+        fs::write(&segment_path, [1_u8]).expect("write segment");
+        let segments = vec![segment_row(segment_path, "finalized")];
+
+        let summary = summary_from_rows(&recording, &segments);
+        let detail = detail_from_rows(&recording, &segments);
+
+        let _ = fs::remove_dir_all(temp_dir);
+        assert_eq!(summary.title.as_deref(), Some("Workday review"));
+        assert_eq!(detail.title.as_deref(), Some("Workday review"));
+    }
+
+    #[test]
+    fn normalize_recording_title_trims_clears_and_rejects_long_values() {
+        assert_eq!(
+            normalize_recording_title(Some("  Workday review  ".to_string())).expect("trim"),
+            Some("Workday review".to_string()),
+        );
+        assert_eq!(
+            normalize_recording_title(Some("   ".to_string())).expect("clear"),
+            None,
+        );
+        assert!(
+            normalize_recording_title(Some("x".repeat(RECORDING_TITLE_MAX_CHARS + 1)))
+                .expect_err("long title should fail")
+                .contains("characters or fewer")
+        );
+    }
+
+    #[test]
     fn delete_guard_rejects_active_recordings() {
         let temp_dir = test_dir("delete-guard-active-recording");
         let mut recording = recording_row(&temp_dir);
@@ -1915,6 +1999,7 @@ mod tests {
             started_at_ms: Some(1_000),
             status: "completed".to_string(),
             storage_dir: path_to_string(storage_dir),
+            title: None,
         }
     }
 

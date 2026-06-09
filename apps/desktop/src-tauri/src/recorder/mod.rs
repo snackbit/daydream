@@ -41,6 +41,14 @@ pub fn get_recorder_performance_stats(
     commands::get_recorder_performance_stats(manager)
 }
 
+#[tauri::command(rename = "getRecorderRecordingStats")]
+pub fn get_recorder_recording_stats(
+    storage: State<'_, AppStorage>,
+    manager: State<'_, RecorderManager>,
+) -> Result<Option<RecorderRecordingStats>, RecorderError> {
+    commands::get_recorder_recording_stats(storage, manager)
+}
+
 #[tauri::command(rename = "getCaptureSources")]
 pub fn get_capture_sources(
     manager: State<'_, RecorderManager>,

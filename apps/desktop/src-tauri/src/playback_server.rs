@@ -21,6 +21,8 @@ use crate::{
 };
 
 const PREVIEW_LONG_EDGE_PX: i64 = 3_840;
+const MAX_PLAYBACK_VIDEO_FPS: f64 = 60.0;
+const MIN_PLAYBACK_VIDEO_FPS: f64 = 1.0;
 const THUMBNAIL_WIDTH_PX: i64 = 320;
 const THUMBNAIL_INTERVAL_MS: i64 = 3_000;
 const THUMBNAIL_WORKER_COUNT: usize = 2;
@@ -43,6 +45,7 @@ struct PlaybackSegment {
     desktop_audio_stream_index: Option<i64>,
     file_path: String,
     microphone_audio_stream_index: Option<i64>,
+    playback_fps: f64,
     video_stream_index: Option<i64>,
 }
 
@@ -172,6 +175,7 @@ impl PlaybackServer {
                     desktop_audio_stream_index: segment.desktop_audio_stream_index,
                     file_path: segment.file_path.clone(),
                     microphone_audio_stream_index: segment.microphone_audio_stream_index,
+                    playback_fps: playback_video_fps(recording.default_fps),
                     video_stream_index: segment.video_stream_index,
                 },
             );
@@ -570,7 +574,7 @@ fn stream_video(
         .args(input_seek_ffmpeg_args(start_ms, &segment.file_path))
         .args(["-map", &format!("0:{video_stream_index}")])
         .arg("-an");
-    append_video_encoder_args(&mut command, encoder);
+    append_video_encoder_args_with_fps(&mut command, encoder, segment.playback_fps);
     command
         .args([
             "-movflags",
@@ -768,33 +772,50 @@ fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body:
 }
 
 fn append_video_encoder_args(command: &mut Command, encoder: &VideoEncoder) {
+    append_video_encoder_args_with_fps(command, encoder, MIN_PLAYBACK_VIDEO_FPS);
+}
+
+fn append_video_encoder_args_with_fps(command: &mut Command, encoder: &VideoEncoder, fps: f64) {
+    let fps_filter = format!("fps={:.3}", playback_video_fps(fps));
     let scale_filter = format!(
         "scale=w='if(gte(iw,ih),min(iw,{PREVIEW_LONG_EDGE_PX}),-2)':h='if(gte(iw,ih),-2,min(ih,{PREVIEW_LONG_EDGE_PX}))'"
     );
     match encoder {
         VideoEncoder::Amf => {
             command
-                .args(["-vf", &format!("{scale_filter},format=yuv420p")])
+                .args([
+                    "-vf",
+                    &format!("{fps_filter},{scale_filter},format=yuv420p"),
+                ])
                 .args(["-c:v", "h264_amf", "-quality", "speed"]);
         }
         VideoEncoder::Nvenc => {
             command
-                .args(["-vf", &format!("{scale_filter},format=yuv420p")])
+                .args([
+                    "-vf",
+                    &format!("{fps_filter},{scale_filter},format=yuv420p"),
+                ])
                 .args(["-c:v", "h264_nvenc", "-preset", "p3", "-tune", "ull"]);
         }
         VideoEncoder::Qsv => {
             command
-                .args(["-vf", &format!("{scale_filter},format=nv12")])
+                .args(["-vf", &format!("{fps_filter},{scale_filter},format=nv12")])
                 .args(["-c:v", "h264_qsv", "-preset", "veryfast"]);
         }
         VideoEncoder::Vaapi => {
             command
-                .args(["-vf", &format!("{scale_filter},format=nv12,hwupload")])
+                .args([
+                    "-vf",
+                    &format!("{fps_filter},{scale_filter},format=nv12,hwupload"),
+                ])
                 .args(["-c:v", "h264_vaapi"]);
         }
         VideoEncoder::Libx264 => {
             command
-                .args(["-vf", &format!("{scale_filter},format=yuv420p")])
+                .args([
+                    "-vf",
+                    &format!("{fps_filter},{scale_filter},format=yuv420p"),
+                ])
                 .args([
                     "-c:v",
                     "libx264",
@@ -810,6 +831,14 @@ fn append_video_encoder_args(command: &mut Command, encoder: &VideoEncoder) {
                     "23",
                 ]);
         }
+    }
+}
+
+fn playback_video_fps(recording_fps: f64) -> f64 {
+    if recording_fps.is_finite() && recording_fps > 0.0 {
+        recording_fps.clamp(MIN_PLAYBACK_VIDEO_FPS, MAX_PLAYBACK_VIDEO_FPS)
+    } else {
+        MIN_PLAYBACK_VIDEO_FPS
     }
 }
 
@@ -1035,11 +1064,33 @@ mod tests {
     }
 
     #[test]
+    fn playback_video_fps_clamps_to_browser_safe_range() {
+        assert_eq!(playback_video_fps(0.2), 1.0);
+        assert_eq!(playback_video_fps(30.0), 30.0);
+        assert_eq!(playback_video_fps(1_000.0), 60.0);
+        assert_eq!(playback_video_fps(f64::NAN), 1.0);
+    }
+
+    #[test]
+    fn video_encoder_args_force_clamped_output_fps() {
+        let mut command = Command::new("ffmpeg");
+        append_video_encoder_args_with_fps(&mut command, &VideoEncoder::Libx264, 1_000.0);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(args.contains(&"-vf".to_string()));
+        assert!(args.iter().any(|arg| arg.starts_with("fps=60.000,scale=")));
+    }
+
+    #[test]
     fn thumbnail_args_seek_after_input_and_write_jpeg_pipe() {
         let segment = PlaybackSegment {
             desktop_audio_stream_index: None,
             file_path: "/tmp/daydream/segment.mkv".to_string(),
             microphone_audio_stream_index: None,
+            playback_fps: 1.0,
             video_stream_index: Some(0),
         };
         let args = thumbnail_ffmpeg_args(&segment, 0, 3_000);
@@ -1083,6 +1134,7 @@ mod tests {
                 desktop_audio_stream_index: None,
                 file_path: "/tmp/daydream/segment.mkv".to_string(),
                 microphone_audio_stream_index: None,
+                playback_fps: 1.0,
                 video_stream_index: Some(0),
             },
             video_stream_index: 0,

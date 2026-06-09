@@ -16,6 +16,7 @@ import {
   getCaptureSources,
   getRecorderPerformanceStats,
   getRecorderPreviewStatus,
+  getRecorderRecordingStats,
   getRecorderScene,
   getRecorderStatus,
   listenToRecorderPreviewFrames,
@@ -169,6 +170,14 @@ test('getRecorderPerformanceStats uses locked camelCase command name', async () 
   await getRecorderPerformanceStats();
 
   expect(invokeMock).toHaveBeenCalledWith('getRecorderPerformanceStats');
+});
+
+test('getRecorderRecordingStats uses locked camelCase command name', async () => {
+  invokeMock.mockResolvedValue(null);
+
+  await getRecorderRecordingStats();
+
+  expect(invokeMock).toHaveBeenCalledWith('getRecorderRecordingStats');
 });
 
 test('recorder write helpers pass input payloads unchanged', async () => {

@@ -13,6 +13,7 @@ import type {
   LibraryWaveformTiles,
   LibraryWaveformRequest,
   LibraryWaveforms,
+  RenameLibraryRecordingInput,
 } from '@daydream/shared';
 
 export async function listLibraryRecordings(): Promise<
@@ -39,6 +40,12 @@ export async function deleteLibraryRecordings(
   input: DeleteLibraryRecordingsInput,
 ): Promise<void> {
   return invoke<void>('deleteLibraryRecordings', { input });
+}
+
+export async function renameLibraryRecording(
+  input: RenameLibraryRecordingInput,
+): Promise<LibraryRecordingDetail> {
+  return invoke<LibraryRecordingDetail>('renameLibraryRecording', { input });
 }
 
 export async function getRecordingWaveforms(

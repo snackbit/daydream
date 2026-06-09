@@ -1,6 +1,5 @@
 import {
   type PointerEvent,
-  type WheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -322,20 +321,52 @@ export function TrackTimeline({
     commitPointerTimelineMs(event.clientX);
   }
 
-  function handleTimelineWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!event.ctrlKey) {
+  function handleTimelineWheel(event: WheelEvent) {
+    if (event.ctrlKey) {
+      event.preventDefault();
+      const zoomIn = event.deltaY < 0;
+      zoomVisibleWindow(
+        zoomIn
+          ? visibleWindowMs / TRACK_ZOOM_STEP
+          : visibleWindowMs * TRACK_ZOOM_STEP,
+        event.clientX,
+      );
+      return;
+    }
+
+    if (!event.shiftKey) {
       return;
     }
 
     event.preventDefault();
-    const zoomIn = event.deltaY < 0;
-    zoomVisibleWindow(
-      zoomIn
-        ? visibleWindowMs / TRACK_ZOOM_STEP
-        : visibleWindowMs * TRACK_ZOOM_STEP,
-      event.clientX,
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const deltaPx = horizontalWheelDeltaPx(event);
+    if (deltaPx === 0) {
+      return;
+    }
+    const nextScrollLeft = clampScrollLeft(
+      viewport.scrollLeft + deltaPx,
+      viewport,
     );
+    viewport.scrollLeft = nextScrollLeft;
+    setScrollLeft(nextScrollLeft);
+    if (state.snapshot.isPlaying) {
+      setFollowPlayhead(false);
+    }
   }
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) {
+      return;
+    }
+
+    content.addEventListener('wheel', handleTimelineWheel, { passive: false });
+    return () => content.removeEventListener('wheel', handleTimelineWheel);
+  });
 
   function zoomVisibleWindow(nextWindowMs: number, anchorClientX?: number) {
     const viewport = viewportRef.current;
@@ -442,7 +473,6 @@ export function TrackTimeline({
           onPointerDown={handleTimelinePointerDown}
           onPointerMove={handleTimelinePointerMove}
           onPointerUp={handleTimelinePointerEnd}
-          onWheel={handleTimelineWheel}
         >
           <div
             aria-hidden="true"
@@ -479,6 +509,18 @@ export function TrackTimeline({
       </ScrollArea>
     </div>
   );
+}
+
+function horizontalWheelDeltaPx(event: WheelEvent): number {
+  const rawDelta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
+  if (event.deltaMode === 1) {
+    return rawDelta * 16;
+  }
+  if (event.deltaMode === 2) {
+    return rawDelta * DEFAULT_TRACK_VIEWPORT_WIDTH_PX;
+  }
+
+  return rawDelta;
 }
 
 function TimeRuler({
