@@ -9,6 +9,7 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { LoaderCircle } from 'lucide-react';
+import { FullHeightLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type {
   DuplicateCaptureSourceCandidate,
@@ -107,7 +108,7 @@ export function CaptureWorkspace({
   );
 
   return (
-    <section className="flex min-h-full flex-col">
+    <FullHeightLayout>
       <CaptureToolbar
         configurationLocked={configurationLocked}
         isDirty={isDirty}
@@ -196,7 +197,7 @@ export function CaptureWorkspace({
           }
         />
       </div>
-    </section>
+    </FullHeightLayout>
   );
 }
 

@@ -1,4 +1,5 @@
 import { Activity, LockKeyhole, ScanText, Video } from 'lucide-react';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 
 const readinessItems = [
   {
@@ -25,18 +26,18 @@ const readinessItems = [
 
 export function HomeScreen() {
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-normal">
-          Daydream desktop scaffold
-        </h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          This shell is ready for Linux/Wayland-first capture work. The first
-          implemented backend command is diagnostics with a real media writer
-          probe; recording, storage, redaction, OCR, transcription, and indexing
-          remain intentionally stubbed.
-        </p>
-      </div>
+    <PageLayout>
+      <PageHeader
+        title="Daydream desktop scaffold"
+        description={
+          <>
+            This shell is ready for Linux/Wayland-first capture work. The first
+            implemented backend command is diagnostics with a real media writer
+            probe; recording, storage, redaction, OCR, transcription, and
+            indexing remain intentionally stubbed.
+          </>
+        }
+      />
 
       <div className="grid gap-3 md:grid-cols-2">
         {readinessItems.map((item) => {
@@ -60,6 +61,6 @@ export function HomeScreen() {
           );
         })}
       </div>
-    </section>
+    </PageLayout>
   );
 }

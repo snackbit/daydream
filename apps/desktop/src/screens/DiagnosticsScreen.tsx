@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { RecorderMediaWriterCapabilities } from '@daydream/shared';
 import { CheckCircle2, Clipboard, RefreshCw, XCircle } from 'lucide-react';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { getDebugLogBundle } from '@/features/diagnostics/diagnostics-client';
@@ -54,63 +55,62 @@ export function DiagnosticsScreen() {
   }
 
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">
-            Diagnostics
-          </h1>
-          <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
+    <PageLayout>
+      <PageHeader
+        title="Diagnostics"
+        description={
+          <>
             Runtime facts, media writer health, storage paths, and native
             recorder capability probes. This screen is intentionally verbose for
             early development.
-          </p>
-        </div>
-
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex gap-2">
-            <Button
-              className="gap-2"
-              disabled={!diagnostics}
-              onClick={() => void copyDebugLogBundle()}
-              variant="outline"
+          </>
+        }
+        actions={
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-2">
+              <Button
+                className="gap-2"
+                disabled={!diagnostics}
+                onClick={() => void copyDebugLogBundle()}
+                variant="outline"
+              >
+                <Clipboard className="size-3.5" />
+                Copy Debug Bundle
+              </Button>
+              <Button
+                className="gap-2"
+                disabled={!diagnostics}
+                onClick={() => void copyRawDiagnosticsJson()}
+                variant="outline"
+              >
+                <Clipboard className="size-3.5" />
+                Copy JSON
+              </Button>
+              <Button
+                className="gap-2"
+                onClick={() => runAsyncAction(load)}
+                variant="outline"
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </Button>
+            </div>
+            <p
+              aria-live="polite"
+              className="text-muted-foreground min-h-5 text-xs"
             >
-              <Clipboard className="size-3.5" />
-              Copy Debug Bundle
-            </Button>
-            <Button
-              className="gap-2"
-              disabled={!diagnostics}
-              onClick={() => void copyRawDiagnosticsJson()}
-              variant="outline"
-            >
-              <Clipboard className="size-3.5" />
-              Copy JSON
-            </Button>
-            <Button
-              className="gap-2"
-              onClick={() => runAsyncAction(load)}
-              variant="outline"
-            >
-              <RefreshCw className="size-3.5" />
-              Refresh
-            </Button>
+              {copyStatus === 'copied' ? 'Diagnostics JSON copied.' : null}
+              {copyStatus === 'failed'
+                ? 'Unable to copy diagnostics JSON.'
+                : null}
+              {bundleCopyStatus === 'copied' ? 'Debug bundle copied.' : null}
+              {bundleCopyStatus === 'failed'
+                ? 'Unable to copy debug bundle.'
+                : null}
+            </p>
           </div>
-          <p
-            aria-live="polite"
-            className="text-muted-foreground min-h-5 text-xs"
-          >
-            {copyStatus === 'copied' ? 'Diagnostics JSON copied.' : null}
-            {copyStatus === 'failed'
-              ? 'Unable to copy diagnostics JSON.'
-              : null}
-            {bundleCopyStatus === 'copied' ? 'Debug bundle copied.' : null}
-            {bundleCopyStatus === 'failed'
-              ? 'Unable to copy debug bundle.'
-              : null}
-          </p>
-        </div>
-      </div>
+        }
+      />
 
       {error ? (
         <div className="border-destructive/40 bg-destructive/10 text-destructive border p-4 text-sm">
@@ -501,7 +501,7 @@ export function DiagnosticsScreen() {
           {JSON.stringify(diagnostics ?? { status }, null, 2)}
         </pre>
       </div>
-    </section>
+    </PageLayout>
   );
 }
 

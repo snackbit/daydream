@@ -1,3 +1,5 @@
+import { PageHeader, PageLayout } from '@/app/PageLayout';
+
 export interface PlaceholderScreenProps {
   summary: string;
   title: string;
@@ -5,17 +7,12 @@ export interface PlaceholderScreenProps {
 
 export function PlaceholderScreen({ summary, title }: PlaceholderScreenProps) {
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-normal">{title}</h1>
-        <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-          {summary}
-        </p>
-      </div>
+    <PageLayout>
+      <PageHeader title={title} description={summary} />
       <div className="bg-card text-muted-foreground border p-4 text-sm">
         Placeholder only. The scaffold keeps the navigation surface in place
         without pretending this feature is implemented.
       </div>
-    </section>
+    </PageLayout>
   );
 }

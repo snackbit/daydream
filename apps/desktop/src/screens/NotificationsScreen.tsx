@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Notification } from '@daydream/shared';
 import { Trash2 } from 'lucide-react';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -62,28 +63,22 @@ export function NotificationsScreen() {
   ).length;
 
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">
-            Notifications
-          </h1>
-          <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-            Local status history for model, capture, recorder, and processing
-            work.
-          </p>
-        </div>
-
-        <Button
-          className="gap-2"
-          disabled={deletableCount === 0 || status === 'loading'}
-          onClick={() => void deleteAll()}
-          variant="destructive"
-        >
-          <Trash2 className="size-3.5" />
-          Dismiss all notifications
-        </Button>
-      </div>
+    <PageLayout>
+      <PageHeader
+        title="Notifications"
+        description="Local status history for model, capture, recorder, and processing work."
+        actions={
+          <Button
+            className="gap-2"
+            disabled={deletableCount === 0 || status === 'loading'}
+            onClick={() => void deleteAll()}
+            variant="destructive"
+          >
+            <Trash2 className="size-3.5" />
+            Dismiss all notifications
+          </Button>
+        }
+      />
 
       {status === 'loading' ? (
         <div className="text-muted-foreground border p-4 text-sm">
@@ -202,7 +197,7 @@ export function NotificationsScreen() {
           </section>
         ))}
       </div>
-    </section>
+    </PageLayout>
   );
 }
 

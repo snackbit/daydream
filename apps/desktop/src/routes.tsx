@@ -4,6 +4,7 @@ import {
   createRouter,
 } from '@tanstack/react-router';
 import { AppShell } from '@/app/AppShell';
+import { NarrowPageLayout } from '@/app/PageLayout';
 import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
@@ -74,7 +75,7 @@ export const router = createRouter({ routeTree });
 
 function RouteErrorScreen({ error }: { error: unknown }) {
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3 p-6">
+    <NarrowPageLayout>
       <h1 className="text-xl font-semibold tracking-normal">
         Something failed
       </h1>
@@ -84,7 +85,7 @@ function RouteErrorScreen({ error }: { error: unknown }) {
       <pre className="bg-muted overflow-auto border p-3 text-xs">
         {unknownErrorMessage(error)}
       </pre>
-    </div>
+    </NarrowPageLayout>
   );
 }
 

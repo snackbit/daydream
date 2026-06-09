@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -274,87 +275,84 @@ export function LibraryScreen() {
   }
 
   return (
-    <section className="flex min-h-full flex-col gap-4 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal">Library</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Local recordings stored on this machine.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="text-muted-foreground mr-2 text-xs">
-            {selectedIds.length > 0
-              ? `${selectedIds.length} selected · ${formatFileSize(
-                  selectedSizeBytes,
-                )}`
-              : `${recordings.length} recordings · ${formatFileSize(
-                  librarySizeBytes,
-                )} library size`}
-          </div>
-          {selectedIds.length > 0 ? (
+    <PageLayout>
+      <PageHeader
+        title="Library"
+        description="Local recordings stored on this machine."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-muted-foreground mr-2 text-xs">
+              {selectedIds.length > 0
+                ? `${selectedIds.length} selected · ${formatFileSize(
+                    selectedSizeBytes,
+                  )}`
+                : `${recordings.length} recordings · ${formatFileSize(
+                    librarySizeBytes,
+                  )} library size`}
+            </div>
+            {selectedIds.length > 0 ? (
+              <Button
+                className="gap-2"
+                variant="destructive"
+                onClick={() => {
+                  openDeleteDialog({
+                    ids: selectedIds,
+                    label:
+                      selectedIds.length === 1
+                        ? '1 recording'
+                        : `${selectedIds.length} recordings`,
+                  });
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                Delete
+              </Button>
+            ) : null}
+            <Select
+              onValueChange={(value) =>
+                setSortKey(value as LibraryRecordingSortKey)
+              }
+              value={sortKey}
+            >
+              <SelectTrigger aria-label="Sort recordings">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="started">Newest first</SelectItem>
+                <SelectItem value="duration">Duration</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+                <SelectItem value="availability">Availability</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="flex rounded-md border">
+              <Button
+                aria-label="Grid view"
+                size="icon"
+                variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                onClick={() => setViewMode('grid')}
+              >
+                <Grid2X2 className="size-4" />
+              </Button>
+              <Button
+                aria-label="List view"
+                size="icon"
+                variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                onClick={() => setViewMode('list')}
+              >
+                <List className="size-4" />
+              </Button>
+            </div>
             <Button
               className="gap-2"
-              variant="destructive"
-              onClick={() => {
-                openDeleteDialog({
-                  ids: selectedIds,
-                  label:
-                    selectedIds.length === 1
-                      ? '1 recording'
-                      : `${selectedIds.length} recordings`,
-                });
-              }}
+              variant="outline"
+              onClick={() => void load()}
             >
-              <Trash2 className="size-3.5" />
-              Delete
-            </Button>
-          ) : null}
-          <Select
-            onValueChange={(value) =>
-              setSortKey(value as LibraryRecordingSortKey)
-            }
-            value={sortKey}
-          >
-            <SelectTrigger aria-label="Sort recordings">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="started">Newest first</SelectItem>
-              <SelectItem value="duration">Duration</SelectItem>
-              <SelectItem value="status">Status</SelectItem>
-              <SelectItem value="availability">Availability</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="flex rounded-md border">
-            <Button
-              aria-label="Grid view"
-              size="icon"
-              variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
-              onClick={() => setViewMode('grid')}
-            >
-              <Grid2X2 className="size-4" />
-            </Button>
-            <Button
-              aria-label="List view"
-              size="icon"
-              variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-              onClick={() => setViewMode('list')}
-            >
-              <List className="size-4" />
+              <RefreshCw className="size-3.5" />
+              Refresh
             </Button>
           </div>
-          <Button
-            className="gap-2"
-            variant="outline"
-            onClick={() => void load()}
-          >
-            <RefreshCw className="size-3.5" />
-            Refresh
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {error ? (
         <Alert variant="destructive">
@@ -427,7 +425,7 @@ export function LibraryScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </section>
+    </PageLayout>
   );
 }
 

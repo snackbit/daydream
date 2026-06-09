@@ -5,6 +5,7 @@ import type {
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { AlertTriangle, RefreshCw, Trash2 } from 'lucide-react';
+import { FullHeightLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -132,7 +133,7 @@ export function RecordingStudioScreen() {
   );
 
   return (
-    <section className="flex min-h-full flex-col">
+    <FullHeightLayout>
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
         <div className="min-w-0">
           <h1 className="truncate text-lg font-semibold tracking-normal">
@@ -220,7 +221,7 @@ export function RecordingStudioScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </section>
+    </FullHeightLayout>
   );
 }
 

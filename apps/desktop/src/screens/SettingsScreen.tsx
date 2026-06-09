@@ -7,6 +7,7 @@ import type {
   AppSettingsStorageCleanupPreview,
 } from '@daydream/shared';
 import { RotateCcw, Save } from 'lucide-react';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -435,53 +436,50 @@ export function SettingsScreen() {
   }
 
   return (
-    <section className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">Settings</h1>
-          <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
-            Capture and library defaults stored locally in Daydream.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2 md:justify-end">
-          <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-            <DialogTrigger asChild>
-              <Button disabled={busy || !draft} variant="outline">
-                <RotateCcw className="size-3.5" />
-                Reset
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Reset settings?</DialogTitle>
-                <DialogDescription>
-                  This restores capture and storage settings to defaults. It
-                  does not delete recordings or scenes.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button disabled={busy} variant="outline">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button
-                  disabled={busy}
-                  onClick={() => void requestReset()}
-                  variant="destructive"
-                >
-                  Reset settings
+    <PageLayout>
+      <PageHeader
+        title="Settings"
+        description="Capture and library defaults stored locally in Daydream."
+        actions={
+          <>
+            <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+              <DialogTrigger asChild>
+                <Button disabled={busy || !draft} variant="outline">
+                  <RotateCcw className="size-3.5" />
+                  Reset
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          <Button disabled={!canSave} onClick={() => void requestSave()}>
-            <Save className="size-3.5" />
-            Save
-          </Button>
-        </div>
-      </div>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Reset settings?</DialogTitle>
+                  <DialogDescription>
+                    This restores capture and storage settings to defaults. It
+                    does not delete recordings or scenes.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button disabled={busy} variant="outline">
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button
+                    disabled={busy}
+                    onClick={() => void requestReset()}
+                    variant="destructive"
+                  >
+                    Reset settings
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Button disabled={!canSave} onClick={() => void requestSave()}>
+              <Save className="size-3.5" />
+              Save
+            </Button>
+          </>
+        }
+      />
 
       <Dialog
         open={Boolean(cleanupConfirmation)}
@@ -622,7 +620,7 @@ export function SettingsScreen() {
           </TabsContent>
         </Tabs>
       )}
-    </section>
+    </PageLayout>
   );
 }
 

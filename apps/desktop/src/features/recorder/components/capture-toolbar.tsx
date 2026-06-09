@@ -5,6 +5,7 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
+import { PageHeader } from '@/app/PageLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { RecorderLifecycleAction } from '../recorder-workspace-store';
@@ -60,9 +61,84 @@ export function CaptureToolbar({
     (status?.state !== 'recording' && status?.state !== 'paused');
 
   return (
-    <div className="flex shrink-0 items-start justify-between gap-4 border-b px-6 py-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-normal">Capture</h1>
+    <div className="shrink-0 border-b p-6">
+      <PageHeader
+        title="Capture"
+        actions={
+          <>
+            <Button
+              className="gap-2"
+              disabled={
+                configurationLocked ||
+                lifecycleLocked ||
+                !scene ||
+                !isDirty ||
+                saveStatus === 'loading'
+              }
+              onClick={onSave}
+              variant="outline"
+            >
+              {saveStatus === 'loading' ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <Save className="size-3.5" />
+              )}
+              Save
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={startDisabled}
+              onClick={onStart}
+            >
+              <ToolbarButtonIcon
+                action="start"
+                activeAction={activeLifecycleAction}
+                icon={<Play className="size-3.5" />}
+              />
+              {activeLifecycleAction === 'start' ? 'Starting' : 'Start'}
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={pauseDisabled}
+              onClick={onPause}
+              variant="outline"
+            >
+              <ToolbarButtonIcon
+                action="pause"
+                activeAction={activeLifecycleAction}
+                icon={<Pause className="size-3.5" />}
+              />
+              {activeLifecycleAction === 'pause' ? 'Pausing' : 'Pause'}
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={resumeDisabled}
+              onClick={onResume}
+              variant="outline"
+            >
+              <ToolbarButtonIcon
+                action="resume"
+                activeAction={activeLifecycleAction}
+                icon={<Play className="size-3.5" />}
+              />
+              {activeLifecycleAction === 'resume' ? 'Resuming' : 'Resume'}
+            </Button>
+            <Button
+              className="gap-2"
+              disabled={stopDisabled}
+              onClick={onStop}
+              variant="destructive"
+            >
+              <ToolbarButtonIcon
+                action="stop"
+                activeAction={activeLifecycleAction}
+                icon={<Square className="size-3.5" />}
+              />
+              {activeLifecycleAction === 'stop' ? 'Stopping' : 'Stop'}
+            </Button>
+          </>
+        }
+      >
         <div className="mt-2 flex flex-wrap gap-2">
           <Badge variant="secondary">
             Status: {status?.state ?? loadStatus}
@@ -80,76 +156,7 @@ export function CaptureToolbar({
             Preview: {previewLabel(previewStatus)}
           </Badge>
         </div>
-      </div>
-
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          className="gap-2"
-          disabled={
-            configurationLocked ||
-            lifecycleLocked ||
-            !scene ||
-            !isDirty ||
-            saveStatus === 'loading'
-          }
-          onClick={onSave}
-          variant="outline"
-        >
-          {saveStatus === 'loading' ? (
-            <LoaderCircle className="size-3.5 animate-spin" />
-          ) : (
-            <Save className="size-3.5" />
-          )}
-          Save
-        </Button>
-        <Button className="gap-2" disabled={startDisabled} onClick={onStart}>
-          <ToolbarButtonIcon
-            action="start"
-            activeAction={activeLifecycleAction}
-            icon={<Play className="size-3.5" />}
-          />
-          {activeLifecycleAction === 'start' ? 'Starting' : 'Start'}
-        </Button>
-        <Button
-          className="gap-2"
-          disabled={pauseDisabled}
-          onClick={onPause}
-          variant="outline"
-        >
-          <ToolbarButtonIcon
-            action="pause"
-            activeAction={activeLifecycleAction}
-            icon={<Pause className="size-3.5" />}
-          />
-          {activeLifecycleAction === 'pause' ? 'Pausing' : 'Pause'}
-        </Button>
-        <Button
-          className="gap-2"
-          disabled={resumeDisabled}
-          onClick={onResume}
-          variant="outline"
-        >
-          <ToolbarButtonIcon
-            action="resume"
-            activeAction={activeLifecycleAction}
-            icon={<Play className="size-3.5" />}
-          />
-          {activeLifecycleAction === 'resume' ? 'Resuming' : 'Resume'}
-        </Button>
-        <Button
-          className="gap-2"
-          disabled={stopDisabled}
-          onClick={onStop}
-          variant="destructive"
-        >
-          <ToolbarButtonIcon
-            action="stop"
-            activeAction={activeLifecycleAction}
-            icon={<Square className="size-3.5" />}
-          />
-          {activeLifecycleAction === 'stop' ? 'Stopping' : 'Stop'}
-        </Button>
-      </div>
+      </PageHeader>
     </div>
   );
 }
