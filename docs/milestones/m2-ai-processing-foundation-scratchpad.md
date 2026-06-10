@@ -8,11 +8,10 @@
   encrypted remote key command flow, notification action dispatch, dirty
   Settings leave protection, and shadcn Select controls are implemented and
   validated.
-- M2 is not closed. Gate B settings UI and notification scaffolds are
-  implemented, but the full milestone still requires model cache,
-  `whisper.cpp`, transcription providers, scheduler, activity detection,
-  OCR/VLM processing, playback integration, privacy diagnostics, and final
-  validation.
+- M2 is not closed. Gates A through D have implementation coverage in the
+  current milestone history, but the full milestone still requires scheduler,
+  activity detection, OCR/VLM processing, playback integration, privacy
+  diagnostics, and final validation.
 - Gate A is complete enough for Gate B. Gate B added the explicit
   `processing_jobs` list/get/status helper APIs needed by notification action
   scaffolds; Gate E still needs concrete job creation and scheduler ownership.
@@ -226,6 +225,25 @@
     rather than adding a separate download-attempt table
   - do not run automated tests against Hugging Face or real Whisper model files;
     tests should mock HTTP and C API behavior
+- During Gate D planning and implementation, user chose:
+  - implement a Rust-owned loopback transcription endpoint instead of exposing
+    a public local API
+  - keep the endpoint bound to `127.0.0.1` on an ephemeral port with a
+    per-session bearer token
+  - use the OpenAI-compatible `/v1/audio/transcriptions` multipart request
+    shape for both local and remote transcription
+  - request `verbose_json` plus segment timestamps for every provider request,
+    and word timestamps only when the setting requests them
+  - map the current selected transcription model ID through the provider
+    adapter; Gate E may add a dedicated remote transcription model setting if
+    real provider validation shows that local and remote model IDs need to
+    diverge
+  - keep remote transcription disabled unless the user selected the remote
+    provider and configured both endpoint and encrypted API key reference
+  - handle cancellation in the REST adapter with a shared cancellation flag;
+    Gate E still owns job-state propagation into that flag
+  - keep provider errors privacy-safe by not surfacing response bodies, API
+    keys, raw audio bytes, transcripts, or model output in default errors
 
 ## Repository Evidence
 
@@ -268,6 +286,8 @@
 - Existing frontend notification event precedent uses kebab-case event names
   such as `recorder-status-changed`; Gate C should follow that pattern with
   `ai-models-changed`.
+- Gate D added `reqwest` multipart support and a direct `tokio` dependency for
+  cancellable REST waits. No external HTTP server crate was added.
 
 ## External Evidence
 
@@ -348,6 +368,10 @@
   handling.
 - Loopback REST endpoint lifecycle must be tied to app lifecycle to avoid
   dangling local services.
+- The Gate D local endpoint currently serializes accepted requests on one
+  listener thread. That is acceptable until Gate E introduces chunk scheduling;
+  Gate E must decide whether local transcription concurrency is controlled by
+  scheduler parallelism, endpoint workers, or both.
 
 ## Stop Boundaries
 
@@ -414,6 +438,40 @@
 - Latest review after Gate B found no discrete correctness issues. TypeScript
   typecheck, ESLint, and Rust tests passed; the JS test run hit a sandbox
   listen `EPERM` after tests passed.
+- Current Gate D validation:
+  - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml` passed.
+  - Elevated `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+    passed: 216 Rust tests. Elevation was required because the sandbox denied
+    loopback socket binding with `EPERM`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint` passed with only existing
+    max-lines warnings in `recorder-workspace-store.ts`, `DiagnosticsScreen.tsx`,
+    and `LibraryScreen.tsx`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passed.
+  - Sandboxed `COREPACK_HOME=/tmp/corepack corepack yarn test` failed before
+    app assertions because Vitest could not bind `::1` with `EPERM`.
+  - Elevated `COREPACK_HOME=/tmp/corepack corepack yarn test` ran 25 files and
+    240 tests, but failed two existing `CaptureScreen.browser.test.tsx`
+    assertions around canvas preset and audio picker behavior. These failures
+    are outside Gate D's Rust transcription provider path.
+
+## Gate D Closeout Notes
+
+- Completion proof: Rust unit tests cover loopback binding, token-required and
+  wrong-token rejection, valid local verbose JSON response mapping, remote
+  multipart upload shape, bearer auth, safe auth failure errors, cancelled REST
+  requests, local disconnect propagation into the Whisper cancel flag, local
+  missing-model typed errors, silent empty transcripts, segment timestamp
+  validation, word timestamp parsing, binary multipart payload preservation, and
+  WAV input validation.
+- Privacy proof: provider request failures are mapped to typed errors without
+  response bodies, API keys, raw audio content, transcripts, or model response
+  text. The local bearer token is generated per server instance and is not
+  logged.
+- Downstream reconciliation: Gate E remains responsible for durable job
+  scheduling, demuxing/addressing separate audio tracks, converting provider
+  timestamps to recording-relative offsets, persisting transcript records, and
+  propagating job cancellation into the Gate D cancellation flag. No Gate F-J
+  deliverables need changes from Gate D.
 
 ## Deferred Follow-Up Candidates
 

@@ -141,6 +141,20 @@ pub fn decrypt_sensitive_setting(
 }
 
 #[cfg(target_os = "linux")]
+pub fn decrypt_sensitive_setting_with_platform_key(
+    envelope_json: &str,
+) -> Result<String, SecretCryptoError> {
+    decrypt_sensitive_setting(envelope_json, &LinuxSecretServiceKeyProvider)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn decrypt_sensitive_setting_with_platform_key(
+    envelope_json: &str,
+) -> Result<String, SecretCryptoError> {
+    decrypt_sensitive_setting(envelope_json, &PlatformSecretKeyProvider)
+}
+
+#[cfg(target_os = "linux")]
 fn secret_service_error(error: impl std::fmt::Display) -> SecretCryptoError {
     SecretCryptoError {
         code: "secret_service_unavailable".to_string(),

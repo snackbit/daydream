@@ -10,6 +10,7 @@ mod settings;
 pub mod storage;
 mod storage_limits;
 mod telemetry;
+mod transcription;
 mod whisper_backend;
 
 use tauri::Manager;
@@ -23,6 +24,7 @@ pub fn run() {
             telemetry::initialize(app.handle())?;
             let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
             let ai_model_manager = ai::AiModelManager::new();
+            let transcription_provider_manager = transcription::TranscriptionProviderManager::new();
             let storage = storage::initialize(app.handle())?;
             match settings::load_app_settings(&storage) {
                 Ok(app_settings) => {
@@ -45,6 +47,7 @@ pub fn run() {
             let playback_server = playback_server::PlaybackServer::start()?;
             app.manage(storage);
             app.manage(ai_model_manager);
+            app.manage(transcription_provider_manager);
             app.manage(recorder_manager);
             app.manage(playback_server);
 

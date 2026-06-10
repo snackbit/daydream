@@ -698,19 +698,25 @@ Exit Criteria:
 
 ## Gate D: Local and Remote Transcription REST Providers
 
-- [ ] Implement the loopback-only, token-protected local transcription REST
+- [x] Implement the loopback-only, token-protected local transcription REST
   endpoint.
-- [ ] Map local `whisper.cpp` transcription into an OpenAI-compatible verbose
+- [x] Map local `whisper.cpp` transcription into an OpenAI-compatible verbose
   JSON style response with segment timestamps and optional word timestamps.
-- [ ] Add the remote OpenAI-compatible transcription provider.
-- [ ] Add provider adapter logic so internal processing uses REST for both
+- [x] Add the remote OpenAI-compatible transcription provider.
+- [x] Add provider adapter logic so internal processing uses REST for both
   local and remote transcription.
-- [ ] Add request cancellation and timeout handling.
-- [ ] Add redacted error handling for invalid endpoint, invalid key,
+- [x] Add request cancellation and timeout handling.
+- [x] Add redacted error handling for invalid endpoint, invalid key,
   unavailable local model, oversized input, and provider failure.
-- [ ] Add tests for loopback binding, token enforcement, no-token rejection,
+- [x] Add tests for loopback binding, token enforcement, no-token rejection,
   provider switching, segment timestamp parsing, word timestamp parsing, and
   private-content-safe logging.
+
+Status note:
+
+- Gate D adds the provider boundary only. Gate E still owns job enqueueing,
+  per-track demux/addressing, recording-relative timestamp conversion, durable
+  transcript persistence, and job-driven cancellation wiring.
 
 Exit Criteria:
 
