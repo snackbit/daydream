@@ -1,3 +1,4 @@
+mod activity_input;
 mod benchmark;
 mod capture_runtime;
 mod commands;
@@ -111,12 +112,13 @@ pub fn stop_recorder_preview(
 }
 
 #[tauri::command(rename = "startRecording")]
-pub async fn start_recording(
+pub async fn start_recording<R: tauri::Runtime>(
     input: StartRecordingInput,
+    app: tauri::AppHandle<R>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    commands::start_recording(input, storage, manager).await
+    commands::start_recording(input, app, storage, manager).await
 }
 
 #[tauri::command(rename = "pauseRecording")]
@@ -129,12 +131,13 @@ pub fn pause_recording(
 }
 
 #[tauri::command(rename = "resumeRecording")]
-pub async fn resume_recording(
+pub async fn resume_recording<R: tauri::Runtime>(
     input: ResumeRecordingInput,
+    app: tauri::AppHandle<R>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
-    commands::resume_recording(input, storage, manager).await
+    commands::resume_recording(input, app, storage, manager).await
 }
 
 #[tauri::command(rename = "stopRecording")]

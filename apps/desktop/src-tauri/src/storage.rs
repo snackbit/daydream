@@ -19,14 +19,24 @@ mod segments;
 mod settings;
 
 pub use ai::{
-    create_activity_interval, create_frame_similarity_entry, create_ocr_region,
-    create_processing_chunk, create_transcript_segment, create_transcript_word,
-    create_vlm_observation, delete_ai_model_asset, get_ai_model_asset, get_processing_job,
-    list_ai_model_assets, list_processing_jobs, save_ai_model_asset, update_processing_job_status,
-    AiModelAssetRow, CreateActivityIntervalInput, CreateFrameSimilarityEntryInput,
-    CreateProcessingChunkInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
-    CreateVisualRegionInput, ProcessingChunkRow, ProcessingJobRow, SaveAiModelAssetInput,
-    TranscriptSegmentRow,
+    cancel_processing_chunks, create_activity_interval, create_capture_event,
+    create_frame_similarity_entry, create_ocr_region, create_processing_chunk,
+    create_processing_job, create_transcript_segment, create_transcript_word,
+    create_vlm_observation, delete_activity_output_for_chunks, delete_ai_model_asset,
+    delete_transcript_output_for_chunks, get_ai_model_asset,
+    get_latest_processing_job_for_recording, get_processing_chunk, get_processing_job,
+    get_recording_track, get_recording_track_by_kind, get_transcript_segment,
+    list_activity_intervals, list_ai_model_assets, list_capture_events, list_processing_chunks,
+    list_processing_chunks_by_status, list_processing_jobs, list_processing_jobs_by_status,
+    list_recording_tracks, list_transcript_segments, list_transcript_words,
+    processing_job_chunk_progress, recording_has_redactions, requeue_processing_chunks,
+    retry_processing_job_chunks, save_ai_model_asset, update_processing_chunk_status,
+    update_processing_job_status, upsert_recording_track, ActivityIntervalRow, AiModelAssetRow,
+    CaptureEventRow, CreateActivityIntervalInput, CreateCaptureEventInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateProcessingJobInput,
+    CreateTranscriptSegmentInput, CreateTranscriptWordInput, CreateVisualRegionInput,
+    ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow, SaveAiModelAssetInput,
+    TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
 };
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use notifications::{

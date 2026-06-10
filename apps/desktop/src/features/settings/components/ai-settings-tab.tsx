@@ -224,25 +224,50 @@ export function AiSettingsTab({
             />
 
             {remoteTranscription ? (
-              <RemoteProviderFields
-                baseUrl={draft.ai.transcription.remoteBaseUrl ?? ''}
-                hasSavedKey={Boolean(draft.ai.transcription.remoteApiKeyRef)}
-                keyDraft={transcriptionKeyDraft}
-                onBaseUrlChange={(value) => {
-                  onUpdateDraft((current) => ({
-                    ...current,
-                    ai: {
-                      ...current.ai,
-                      transcription: {
-                        ...current.ai.transcription,
-                        remoteBaseUrl: value || null,
+              <>
+                <RemoteProviderFields
+                  baseUrl={draft.ai.transcription.remoteBaseUrl ?? ''}
+                  hasSavedKey={Boolean(draft.ai.transcription.remoteApiKeyRef)}
+                  keyDraft={transcriptionKeyDraft}
+                  onBaseUrlChange={(value) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          remoteBaseUrl: value || null,
+                        },
                       },
-                    },
-                  }));
-                }}
-                onKeyChange={onChangeTranscriptionKey}
-                prefix="transcription"
-              />
+                    }));
+                  }}
+                  onKeyChange={onChangeTranscriptionKey}
+                  prefix="transcription"
+                />
+                <Field>
+                  <FieldLabel htmlFor="ai-transcription-remote-model">
+                    Remote model
+                  </FieldLabel>
+                  <Input
+                    id="ai-transcription-remote-model"
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      onUpdateDraft((current) => ({
+                        ...current,
+                        ai: {
+                          ...current.ai,
+                          transcription: {
+                            ...current.ai.transcription,
+                            remoteModel: value || null,
+                          },
+                        },
+                      }));
+                    }}
+                    placeholder="whisper-1"
+                    value={draft.ai.transcription.remoteModel ?? ''}
+                  />
+                </Field>
+              </>
             ) : null}
           </FieldGroup>
         </CardContent>
@@ -469,7 +494,7 @@ export function AiSettingsTab({
             </div>
             <CheckboxField
               checked={draft.ai.activity.keyboard.enabled}
-              description="Requires platform support in later gates."
+              description="Linux uses privileged /dev/input timing only; key values and typed text are not stored."
               label="Use keyboard activity"
               onCheckedChange={(checked) => {
                 onUpdateDraft((current) => ({
@@ -512,7 +537,7 @@ export function AiSettingsTab({
             />
             <CheckboxField
               checked={draft.ai.activity.mouse.enabled}
-              description="Requires platform support in later gates."
+              description="Linux uses privileged /dev/input timing only; coordinates and target content are not stored."
               label="Use mouse activity"
               onCheckedChange={(checked) => {
                 onUpdateDraft((current) => ({

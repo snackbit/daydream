@@ -316,29 +316,29 @@ test('ai contracts support local baseline results and guarded vlm states', () =>
   } satisfies ProcessingJob;
   const transcript = {
     recordingId: 'recording-1',
-    segments: [
+    tracks: [
       {
-        chunkId: 'chunk-1',
-        confidence: 0.9,
-        endOffsetMs: 1_000,
-        id: 'segment-1',
-        jobId: 'job-1',
-        model: 'small',
-        provider: 'local-whisper-cpp',
-        recordingId: 'recording-1',
-        segmentId: 'media-segment-1',
         sourceRole: 'microphone',
-        startOffsetMs: 0,
-        text: 'hello',
         trackId: 'track-1',
-        words: [
+        segments: [
           {
-            endOffsetMs: 500,
-            id: 'word-1',
-            probability: 0.95,
+            confidence: 0.9,
+            endOffsetMs: 1_000,
+            id: 'segment-1',
+            model: 'small',
+            provider: 'local-whisper-cpp',
+            segmentId: 'media-segment-1',
             startOffsetMs: 0,
             text: 'hello',
-            transcriptSegmentId: 'segment-1',
+            words: [
+              {
+                endOffsetMs: 500,
+                id: 'word-1',
+                probability: 0.95,
+                startOffsetMs: 0,
+                text: 'hello',
+              },
+            ],
           },
         ],
       },
@@ -371,7 +371,7 @@ test('ai contracts support local baseline results and guarded vlm states', () =>
 
   expect(notification.actions[0]!.handler).toBe('model-download-retry');
   expect(migratedJob.kind).toBe('frame-extraction');
-  expect(transcript.segments[0]!.provider).toBe('local-whisper-cpp');
+  expect(transcript.tracks[0]!.segments[0]!.provider).toBe('local-whisper-cpp');
   expect(visual.vlmObservations).toHaveLength(0);
 });
 

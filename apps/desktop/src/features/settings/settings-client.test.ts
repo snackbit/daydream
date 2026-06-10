@@ -53,6 +53,7 @@ test('settings client uses typed camelCase command names', async () => {
           provider: 'local-whisper-cpp',
           remoteApiKeyRef: null,
           remoteBaseUrl: null,
+          remoteModel: null,
           wordTimestampsEnabled: true,
         },
         vision: {

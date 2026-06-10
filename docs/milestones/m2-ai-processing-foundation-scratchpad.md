@@ -8,14 +8,15 @@
   encrypted remote key command flow, notification action dispatch, dirty
   Settings leave protection, and shadcn Select controls are implemented and
   validated.
-- M2 is not closed. Gates A through D have implementation coverage in the
-  current milestone history, but the full milestone still requires scheduler,
-  activity detection, OCR/VLM processing, playback integration, privacy
-  diagnostics, and final validation.
+- M2 is not closed. Gates A through F have implementation coverage in the
+  current milestone history, but the full milestone still requires full
+  OCR/VLM processing, playback integration, privacy diagnostics, and final
+  validation.
 - Gate A is complete enough for Gate B. Gate B added the explicit
   `processing_jobs` list/get/status helper APIs needed by notification action
-  scaffolds; Gate E still needs concrete job creation and scheduler ownership.
-- Gates C through J are not complete.
+  scaffolds. Gate E added concrete job creation and scheduler ownership for
+  audio transcription.
+- Gates G through J are not complete.
 
 ## Locked Decisions
 
@@ -37,9 +38,10 @@
   separate milestone files.
 - M2 should be fine-grained into sub-area goals so the broad slice remains
   reviewable during implementation.
-- Processing starts automatically after recording stop.
-- Automatic processing after stop is a known and user-approved exception to the
-  repository's normal redaction-before-processing direction.
+- Gate E starts processing manually from Library recording detail. Automatic
+  processing after stop is deferred.
+- Redacted recordings are blocked from Gate E processing until redaction-aware
+  chunk splitting exists.
 - Processing is resumable, chunked, and background-job based.
 - Jobs support pause, cancel, retry, restart recovery, and max parallel job
   settings.
@@ -94,6 +96,12 @@
 - Do not persist extra cropped region images by default.
 - Native activity uses cross-platform interfaces with real validation on the
   current Linux/KDE target.
+- Gate F uses privileged Linux evdev for keyboard and mouse activity timing.
+  It stores only debounced timing events and safe payload metadata, never key
+  codes, button codes, typed text, coordinates, clipboard data, target content,
+  or device names.
+- Unsupported input activity adapters produce unavailable states instead of
+  fake success.
 - Keyboard activity default window: 30 seconds.
 - Mouse activity default window: 5 seconds.
 - Redaction-before-processing is deferred in M2. Processing happens
@@ -472,6 +480,84 @@
   timestamps to recording-relative offsets, persisting transcript records, and
   propagating job cancellation into the Gate D cancellation flag. No Gate F-J
   deliverables need changes from Gate D.
+
+## Gate E Closeout Notes
+
+- User-facing processing uses one `ai-processing` job per recording. Internally,
+  chunks are planned per finalized segment, audio source role, and bounded
+  15-minute transcription slice.
+- `processing_chunks.track_id` was added in schema version 13 so chunks point to
+  stable `recording_tracks` rows for desktop audio or microphone.
+- Manual start is exposed through `startRecordingAiProcessing` and the Library
+  recording detail header. Automatic post-stop enqueueing remains deferred.
+- Remote transcription now has `ai.transcription.remoteModel`, defaulting to
+  unset. Remote processing readiness requires base URL, API key ref, and model.
+- Provider readiness is static. Local requires an available selected model file;
+  remote performs no network probe.
+- Gate E refuses redacted recordings until redaction-aware chunk splitting is
+  implemented. That prevents processing cut spans.
+- Chunk execution is conservative: it does not exceed configured limits and
+  currently runs one chunk at a time per job.
+- Review fix after Gate E:
+  - status query helpers use no SQL `LIMIT` for unbounded calls instead of
+    interpolating `usize::MAX`;
+  - extracted temp WAV files are removed by a cleanup guard on success, failure,
+    timeout, cancellation, and transcript persistence errors;
+  - FFmpeg extraction now slices audio with `-ss` and `-t` for each 15-minute
+    processing chunk.
+- Current Gate E validation:
+  - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml` passed.
+  - Elevated `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+    passed: 216 Rust tests. Elevation was required because the sandbox denied
+    loopback socket binding with `EPERM`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint:fix` passed with only
+    existing max-lines warnings in `recorder-workspace-store.ts`,
+    `DiagnosticsScreen.tsx`, and `LibraryScreen.tsx`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint` passed with the same
+    existing max-lines warnings.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passed.
+  - Elevated focused desktop Vitest passed: 6 files, 63 tests.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/shared
+    vitest run src/index.test.ts` passed: 1 file, 9 tests.
+  - Elevated broad JS test run still hits two unrelated
+    `CaptureScreen.browser.test.tsx` failures around canvas preset and audio
+    picker behavior.
+
+## Gate F Closeout Notes
+
+- Gate F adds privileged Linux evdev input timing capture during recording,
+  unsupported-platform unavailable states, frame-delta activity processing,
+  merged activity intervals, durable activity output cleanup on retry, and the
+  `getRecordingActivity` query path.
+- Privacy proof: evdev processing only stores debounced timing events with
+  safe source/bucket metadata. It does not persist key codes, button codes,
+  typed text, coordinates, clipboard data, target content, device names, raw
+  frames, or frame crops.
+- Downstream reconciliation: Gate H can now query activity intervals for
+  playback lane rendering. Gate I still owns derived-data invalidation helpers
+  and broader diagnostics. No Gate G contract changes are needed.
+- Current Gate F validation:
+  - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml` passed.
+  - Elevated `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+    passed: 225 Rust tests. Elevation was required because sandboxed loopback
+    socket binding fails with `EPERM` in transcription tests.
+  - Focused Rust activity tests passed:
+    `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ai::tests`
+    and
+    `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recorder::activity_input::tests`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint:fix` passed with only
+    existing max-lines warnings in `recorder-workspace-store.ts`,
+    `DiagnosticsScreen.tsx`, and `LibraryScreen.tsx`.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint` passed with the same
+    existing max-lines warnings.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passed.
+  - Elevated focused desktop/shared Vitest passed: 5 desktop files with 21
+    tests, plus 1 shared file with 9 tests.
+  - Sandboxed `COREPACK_HOME=/tmp/corepack corepack yarn test` passed 16 files
+    and 143 assertions before failing on sandbox `listen EPERM` for `::1`.
+  - Elevated broad `COREPACK_HOME=/tmp/corepack corepack yarn test` still hits
+    the two known unrelated `CaptureScreen.browser.test.tsx` failures around
+    canvas preset and audio picker behavior.
 
 ## Deferred Follow-Up Candidates
 

@@ -970,6 +970,7 @@ fn public_lifecycle_commands_use_media_writer_manager_contracts() {
 
     let start_error = tauri::async_runtime::block_on(start_recording(
         start_input("missing-scene"),
+        app.handle().clone(),
         app.state::<storage::AppStorage>(),
         app.state::<RecorderManager>(),
     ))
@@ -986,6 +987,7 @@ fn public_lifecycle_commands_use_media_writer_manager_contracts() {
         ResumeRecordingInput {
             recording_id: Uuid::now_v7().to_string(),
         },
+        app.handle().clone(),
         app.state::<storage::AppStorage>(),
         app.state::<RecorderManager>(),
     ))
@@ -1053,6 +1055,7 @@ fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() 
 
     let started = tauri::async_runtime::block_on(start_recording(
         start_input(&scene_id),
+        app.handle().clone(),
         app.state::<storage::AppStorage>(),
         app.state::<RecorderManager>(),
     ))
@@ -1085,6 +1088,7 @@ fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() 
         ResumeRecordingInput {
             recording_id: recording_id.clone(),
         },
+        app.handle().clone(),
         app.state::<storage::AppStorage>(),
         app.state::<RecorderManager>(),
     ))

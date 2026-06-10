@@ -59,3 +59,4 @@ pulse = { package = "libpulse-binding", version = "2.30.1" }
 gstreamer = "0.24"
 gstreamer-app = "0.24"
 gstreamer-pbutils = "0.24"
+evdev = "0.13.2"

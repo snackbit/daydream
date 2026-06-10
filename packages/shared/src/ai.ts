@@ -105,6 +105,7 @@ export interface AiTranscriptionProviderSettings {
   provider: AiProviderKind;
   remoteApiKeyRef: string | null;
   remoteBaseUrl: string | null;
+  remoteModel: string | null;
   wordTimestampsEnabled: boolean;
 }
 
@@ -249,6 +250,45 @@ export interface ProcessingJobActionInput {
   jobId: string;
 }
 
+export interface StartRecordingAiProcessingInput {
+  recordingId: string;
+}
+
+export interface GetRecordingTranscriptInput {
+  recordingId: string;
+}
+
+export interface RecordingTranscript {
+  recordingId: string;
+  tracks: RecordingTranscriptTrack[];
+}
+
+export interface RecordingTranscriptTrack {
+  sourceRole: TranscriptSourceRole;
+  trackId: string;
+  segments: RecordingTranscriptSegment[];
+}
+
+export interface RecordingTranscriptSegment {
+  confidence: number | null;
+  endOffsetMs: number;
+  id: string;
+  model: string | null;
+  provider: string;
+  segmentId: string;
+  startOffsetMs: number;
+  text: string;
+  words: RecordingTranscriptWord[];
+}
+
+export interface RecordingTranscriptWord {
+  endOffsetMs: number;
+  id: string;
+  probability: number | null;
+  startOffsetMs: number;
+  text: string;
+}
+
 export interface NotificationAction {
   handler: NotificationActionHandler;
   id: string;
@@ -350,11 +390,6 @@ export interface TranscriptWord {
   startOffsetMs: number;
   text: string;
   transcriptSegmentId: string;
-}
-
-export interface RecordingTranscript {
-  recordingId: string;
-  segments: TranscriptSegment[];
 }
 
 export interface ActivityInterval {

@@ -34,6 +34,25 @@ pub struct WhisperBackendError {
     pub message: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhisperExecutionBackend {
+    Cpu,
+    Gpu,
+}
+
+impl WhisperExecutionBackend {
+    pub fn from_setting(value: &str) -> Result<Self, WhisperBackendError> {
+        match value {
+            "cpu" => Ok(Self::Cpu),
+            "vulkan" | "cuda" => Ok(Self::Gpu),
+            _ => Err(WhisperBackendError {
+                code: "ai_transcription_backend_invalid".to_string(),
+                message: "Local transcription backend must be CPU, Vulkan, or CUDA.".to_string(),
+            }),
+        }
+    }
+}
+
 pub fn backend_status() -> WhisperBackendStatus {
     WhisperBackendStatus {
         cuda_compiled: cfg!(feature = "whisper-cuda"),
@@ -41,14 +60,17 @@ pub fn backend_status() -> WhisperBackendStatus {
     }
 }
 
-pub fn load_and_unload_model(path: &Path) -> Result<(), WhisperBackendError> {
+pub fn load_and_unload_model(
+    path: &Path,
+    backend: WhisperExecutionBackend,
+) -> Result<(), WhisperBackendError> {
     let path =
         CString::new(path.to_string_lossy().as_bytes()).map_err(|_error| WhisperBackendError {
             code: "ai_model_path_invalid".to_string(),
             message: "Model path contains an invalid byte.".to_string(),
         })?;
 
-    let params = unsafe { bindings::whisper_context_default_params() };
+    let params = context_params_for_backend(backend);
     let context =
         unsafe { bindings::whisper_init_from_file_with_params_no_state(path.as_ptr(), params) };
     if context.is_null() {
@@ -67,6 +89,7 @@ pub fn load_and_unload_model(path: &Path) -> Result<(), WhisperBackendError> {
 pub fn transcribe_wav(
     model_path: &Path,
     audio_path: &Path,
+    backend: WhisperExecutionBackend,
     word_timestamps: bool,
     cancel: Arc<AtomicBool>,
 ) -> Result<VerboseTranscription, WhisperBackendError> {
@@ -81,10 +104,9 @@ pub fn transcribe_wav(
         return Err(cancelled_error());
     }
 
-    let params = unsafe { bindings::whisper_context_default_params() };
-    let context = unsafe {
-        bindings::whisper_init_from_file_with_params_no_state(model_path.as_ptr(), params)
-    };
+    let params = context_params_for_backend(backend);
+    let context =
+        unsafe { bindings::whisper_init_from_file_with_params(model_path.as_ptr(), params) };
     if context.is_null() {
         return Err(WhisperBackendError {
             code: "ai_model_load_failed".to_string(),
@@ -98,6 +120,24 @@ pub fn transcribe_wav(
         transcription.duration = Some(wav.samples.len() as f64 / 16_000.0);
         transcription
     })
+}
+
+fn context_params_for_backend(
+    backend: WhisperExecutionBackend,
+) -> bindings::whisper_context_params {
+    let mut params = unsafe { bindings::whisper_context_default_params() };
+    match backend {
+        WhisperExecutionBackend::Cpu => {
+            params.use_gpu = false;
+            params.flash_attn = false;
+            params.gpu_device = 0;
+        }
+        WhisperExecutionBackend::Gpu => {
+            params.use_gpu = true;
+            params.gpu_device = 0;
+        }
+    }
+    params
 }
 
 fn run_whisper_full(
@@ -294,6 +334,45 @@ fn cancelled_error() -> WhisperBackendError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpu_backend_disables_gpu_context() {
+        let params = context_params_for_backend(WhisperExecutionBackend::Cpu);
+
+        assert!(!params.use_gpu);
+        assert!(!params.flash_attn);
+        assert_eq!(params.gpu_device, 0);
+    }
+
+    #[test]
+    fn gpu_backend_enables_gpu_context() {
+        let params = context_params_for_backend(WhisperExecutionBackend::Gpu);
+
+        assert!(params.use_gpu);
+        assert_eq!(params.gpu_device, 0);
+    }
+
+    #[test]
+    fn backend_setting_maps_supported_values() {
+        assert_eq!(
+            WhisperExecutionBackend::from_setting("cpu").expect("cpu"),
+            WhisperExecutionBackend::Cpu
+        );
+        assert_eq!(
+            WhisperExecutionBackend::from_setting("vulkan").expect("vulkan"),
+            WhisperExecutionBackend::Gpu
+        );
+        assert_eq!(
+            WhisperExecutionBackend::from_setting("cuda").expect("cuda"),
+            WhisperExecutionBackend::Gpu
+        );
+        assert_eq!(
+            WhisperExecutionBackend::from_setting("metal")
+                .expect_err("invalid backend")
+                .code,
+            "ai_transcription_backend_invalid"
+        );
+    }
 
     #[test]
     fn wav_reader_accepts_16khz_mono_pcm() {

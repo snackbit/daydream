@@ -40,6 +40,7 @@ const settings = {
       provider: 'local-whisper-cpp',
       remoteApiKeyRef: null,
       remoteBaseUrl: null,
+      remoteModel: null,
       wordTimestampsEnabled: true,
     },
     vision: {

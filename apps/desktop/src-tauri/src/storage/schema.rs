@@ -788,5 +788,15 @@ pub(super) fn migrations() -> Migrations<'static> {
             ADD COLUMN title TEXT;
         "#,
         ),
+        M::up(
+            r#"
+        ALTER TABLE processing_chunks
+            ADD COLUMN track_id TEXT
+                CHECK (track_id IS NULL OR length(track_id) = 36)
+                REFERENCES recording_tracks(id) ON DELETE SET NULL;
+
+        CREATE INDEX idx_processing_chunks_track_status ON processing_chunks(track_id, status);
+        "#,
+        ),
     ])
 }

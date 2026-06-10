@@ -7,6 +7,8 @@ import {
   deleteAiProviderSecret,
   downloadAiModel,
   getAiProviderStatus,
+  getRecordingActivity,
+  getRecordingTranscript,
   listenToAiModelsChanged,
   listAiModels,
   listProcessingJobs,
@@ -15,6 +17,7 @@ import {
   resumeProcessingJob,
   saveAiProviderSecret,
   selfTestAiModel,
+  startRecordingAiProcessing,
 } from './ai-client';
 
 const { invokeMock, listenMock } = vi.hoisted(() => ({
@@ -50,6 +53,9 @@ test('ai client uses typed camelCase command names', async () => {
   await resumeProcessingJob({ jobId: 'job-1' });
   await cancelProcessingJob({ jobId: 'job-1' });
   await retryProcessingJob({ jobId: 'job-1' });
+  await startRecordingAiProcessing({ recordingId: 'recording-1' });
+  await getRecordingTranscript({ recordingId: 'recording-1' });
+  await getRecordingActivity({ recordingId: 'recording-1' });
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'listAiModels');
   expect(invokeMock).toHaveBeenNthCalledWith(2, 'downloadAiModel', {
@@ -85,6 +91,15 @@ test('ai client uses typed camelCase command names', async () => {
   });
   expect(invokeMock).toHaveBeenNthCalledWith(13, 'retryProcessingJob', {
     input: { jobId: 'job-1' },
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(14, 'startRecordingAiProcessing', {
+    input: { recordingId: 'recording-1' },
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(15, 'getRecordingTranscript', {
+    input: { recordingId: 'recording-1' },
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(16, 'getRecordingActivity', {
+    input: { recordingId: 'recording-1' },
   });
 });
 

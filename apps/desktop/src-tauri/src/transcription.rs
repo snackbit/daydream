@@ -29,6 +29,7 @@ use crate::{
 const TRANSCRIPTION_PATH: &str = "/v1/audio/transcriptions";
 const MAX_TRANSCRIPTION_UPLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const HTTP_HEADER_LIMIT_BYTES: usize = 32 * 1024;
+const LOCAL_BACKEND_FORM_FIELD: &str = "daydream_local_backend";
 
 #[derive(Clone)]
 pub struct TranscriptionProviderManager {
@@ -92,6 +93,7 @@ pub struct TranscriptionError {
 pub struct LocalTranscriptionInput {
     pub audio_path: PathBuf,
     pub cancel: Arc<AtomicBool>,
+    pub local_backend: String,
     pub model_id: String,
     pub model_path: PathBuf,
     pub word_timestamps: bool,
@@ -112,9 +114,15 @@ impl LocalTranscriptionRunner for WhisperCppTranscriptionRunner {
         &self,
         input: LocalTranscriptionInput,
     ) -> Result<VerboseTranscription, TranscriptionError> {
+        let backend = whisper_backend::WhisperExecutionBackend::from_setting(&input.local_backend)
+            .map_err(|error| TranscriptionError {
+                code: error.code,
+                message: error.message,
+            })?;
         whisper_backend::transcribe_wav(
             &input.model_path,
             &input.audio_path,
+            backend,
             input.word_timestamps,
             input.cancel,
         )
@@ -176,7 +184,10 @@ impl TranscriptionProviderManager {
                 )
                 .await
             }
-            TranscriptionProviderKind::LocalWhisperCpp => self.transcribe_local(app, request).await,
+            TranscriptionProviderKind::LocalWhisperCpp => {
+                self.transcribe_local(app, request, &app_settings.ai.transcription.local_backend)
+                    .await
+            }
         }
     }
 
@@ -184,6 +195,7 @@ impl TranscriptionProviderManager {
         &self,
         app: &AppHandle,
         request: TranscriptionRequest,
+        local_backend: &str,
     ) -> Result<VerboseTranscription, TranscriptionError> {
         let endpoint = self.local_endpoint(app)?;
         transcribe_via_rest(
@@ -192,6 +204,7 @@ impl TranscriptionProviderManager {
             &request.audio_path,
             &request.model,
             request.word_timestamps,
+            Some(local_backend),
             request.timeout,
             Some(request.cancel),
         )
@@ -384,6 +397,9 @@ fn handle_local_transcription_request(
     let multipart = parse_multipart_form(&request.body, &boundary)?;
     let model_id = multipart.text("model")?;
     let response_format = multipart.text("response_format")?;
+    let local_backend = multipart
+        .optional_text(LOCAL_BACKEND_FORM_FIELD)
+        .unwrap_or(settings::DEFAULT_AI_TRANSCRIPTION_BACKEND);
     if response_format != "verbose_json" {
         return Err(transcription_error(
             "ai_transcription_response_format_invalid",
@@ -411,6 +427,7 @@ fn handle_local_transcription_request(
     let result = context.runner.transcribe(LocalTranscriptionInput {
         audio_path: audio_path.clone(),
         cancel,
+        local_backend: local_backend.to_string(),
         model_id: model_id.to_string(),
         model_path,
         word_timestamps,
@@ -490,6 +507,7 @@ pub async fn transcribe_remote(
         audio_path,
         model,
         word_timestamps,
+        None,
         timeout,
         cancel,
     )
@@ -502,6 +520,7 @@ async fn transcribe_via_rest(
     audio_path: &Path,
     model: &str,
     word_timestamps: bool,
+    local_backend: Option<&str>,
     timeout: Duration,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<VerboseTranscription, TranscriptionError> {
@@ -527,6 +546,9 @@ async fn transcribe_via_rest(
         .text("timestamp_granularities[]", "segment");
     if word_timestamps {
         form = form.text("timestamp_granularities[]", "word");
+    }
+    if let Some(local_backend) = local_backend {
+        form = form.text(LOCAL_BACKEND_FORM_FIELD, local_backend.to_string());
     }
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -879,6 +901,10 @@ impl MultipartForm {
         })
     }
 
+    fn optional_text(&self, name: &str) -> Option<&str> {
+        self.texts(name).into_iter().next()
+    }
+
     fn texts(&self, name: &str) -> Vec<&str> {
         self.fields
             .iter()
@@ -1144,6 +1170,7 @@ mod tests {
                 &audio_path,
                 "tiny",
                 true,
+                None,
                 Duration::from_secs(5),
                 None,
             )
@@ -1157,6 +1184,7 @@ mod tests {
                 &audio_path,
                 "tiny",
                 true,
+                None,
                 Duration::from_secs(5),
                 None,
             )
@@ -1186,6 +1214,7 @@ mod tests {
                 &audio_path,
                 "tiny",
                 true,
+                Some("vulkan"),
                 Duration::from_secs(5),
                 None,
             )
@@ -1198,6 +1227,7 @@ mod tests {
             let calls = runner.calls.lock().expect("calls");
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].model_id, "tiny");
+            assert_eq!(calls[0].local_backend, "vulkan");
             assert!(calls[0].word_timestamps);
             assert!(calls[0].model_path.is_file());
 
@@ -1221,6 +1251,7 @@ mod tests {
                 &audio_path,
                 "tiny",
                 true,
+                None,
                 Duration::from_secs(5),
                 None,
             )
@@ -1258,6 +1289,7 @@ mod tests {
                     &request_audio_path,
                     "tiny",
                     false,
+                    None,
                     Duration::from_secs(10),
                     Some(request_cancel),
                 )
@@ -1462,6 +1494,7 @@ mod tests {
                 &audio_path,
                 "tiny",
                 false,
+                None,
                 Duration::from_secs(5),
                 Some(cancel),
             )

@@ -14,6 +14,7 @@ use crate::storage::{
 };
 use crate::{settings, storage_limits};
 
+use super::activity_input::ActivityMonitorHandle;
 use super::capture_runtime::{
     capture_timing_snapshot, CapturePreviewSession, CaptureSession, SharedCaptureTiming,
 };
@@ -97,6 +98,7 @@ pub(crate) struct ActiveSegment {
 
 #[derive(Debug)]
 pub(crate) struct RecordingSegmentRuntime {
+    activity_monitor: Option<ActivityMonitorHandle>,
     capture: Option<Box<dyn CaptureSession>>,
     media_writer: MediaWriterSegment,
     timing: Option<SharedCaptureTiming>,
@@ -134,10 +136,15 @@ impl RecordingSegmentRuntime {
         timing: Option<SharedCaptureTiming>,
     ) -> Self {
         Self {
+            activity_monitor: None,
             capture,
             media_writer,
             timing,
         }
+    }
+
+    pub(crate) fn attach_activity_monitor(&mut self, activity_monitor: ActivityMonitorHandle) {
+        self.activity_monitor = Some(activity_monitor);
     }
 
     pub(crate) fn capture_timing(&self) -> Option<SharedCaptureTiming> {
@@ -145,6 +152,9 @@ impl RecordingSegmentRuntime {
     }
 
     fn stop(mut self, stop_at_ms: u64) -> Result<(), RecorderError> {
+        if let Some(activity_monitor) = self.activity_monitor.take() {
+            activity_monitor.stop();
+        }
         let capture_error = self
             .capture
             .take()

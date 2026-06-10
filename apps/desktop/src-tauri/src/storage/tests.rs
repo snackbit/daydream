@@ -12,9 +12,10 @@ use super::{
     dismiss_notification, enable_connection_pragmas, fail_recording_segment,
     finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
     get_recorder_scene, get_recording, list_app_settings, list_notifications,
-    list_recording_segments, mark_portal_restore_token_used, mark_recording_completed,
-    mark_recording_started, migrations, recover_interrupted_recordings, rename_recording,
-    reset_app_settings, save_ai_model_asset, save_app_settings, save_notification,
+    list_processing_chunks_by_status, list_processing_jobs_by_status, list_recording_segments,
+    mark_portal_restore_token_used, mark_recording_completed, mark_recording_started, migrations,
+    recover_interrupted_recordings, rename_recording, reset_app_settings,
+    retry_processing_job_chunks, save_ai_model_asset, save_app_settings, save_notification,
     save_recorder_scene, save_unseen_notification, update_recording_status,
     upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
     CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
@@ -38,7 +39,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 12);
+    assert_eq!(schema_version, 13);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -542,6 +543,248 @@ fn processing_jobs_accept_m2_kinds_after_migration() {
 }
 
 #[test]
+fn processing_status_helpers_support_unbounded_queries_without_overflowing_limit() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let job_id = Uuid::now_v7().to_string();
+
+    for index in 0..3 {
+        connection
+            .execute(
+                r#"
+                INSERT INTO processing_jobs (
+                    id,
+                    recording_id,
+                    kind,
+                    status,
+                    created_at_ms,
+                    updated_at_ms
+                ) VALUES (?1, ?2, 'ai-processing', 'running', ?3, ?3)
+                "#,
+                (
+                    if index == 0 {
+                        job_id.clone()
+                    } else {
+                        Uuid::now_v7().to_string()
+                    },
+                    &recording_id,
+                    index + 1,
+                ),
+            )
+            .expect("insert running processing job");
+    }
+
+    for index in 0..3 {
+        create_processing_chunk(
+            &connection,
+            &CreateProcessingChunkInput {
+                attempt_count: 0,
+                created_at_ms: index + 1,
+                end_offset_ms: Some((index + 1) * 1_000),
+                error_code: None,
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                progress: 0.0,
+                recording_id: recording_id.clone(),
+                segment_id: None,
+                source_kind: "audio".to_string(),
+                start_offset_ms: Some(index * 1_000),
+                status: "failed".to_string(),
+                track_id: None,
+                updated_at_ms: index + 1,
+            },
+        )
+        .expect("insert failed processing chunk");
+    }
+
+    let jobs = list_processing_jobs_by_status(&connection, "ai-processing", &["running"], None)
+        .expect("list unbounded jobs");
+    let chunks = list_processing_chunks_by_status(&connection, &job_id, &["failed"], None)
+        .expect("list unbounded chunks");
+    let limited_jobs =
+        list_processing_jobs_by_status(&connection, "ai-processing", &["running"], Some(2))
+            .expect("list limited jobs");
+    let huge_limit_chunks =
+        list_processing_chunks_by_status(&connection, &job_id, &["failed"], Some(usize::MAX))
+            .expect("list chunks with huge bounded limit");
+
+    assert_eq!(jobs.len(), 3);
+    assert_eq!(chunks.len(), 3);
+    assert_eq!(limited_jobs.len(), 2);
+    assert_eq!(huge_limit_chunks.len(), 3);
+}
+
+#[test]
+fn retry_processing_job_requeues_terminal_chunks_and_clears_their_outputs() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let segment_id = Uuid::now_v7().to_string();
+    let track_id = Uuid::now_v7().to_string();
+    let job_id = Uuid::now_v7().to_string();
+    let failed_chunk_id = Uuid::now_v7().to_string();
+    let cancelled_chunk_id = Uuid::now_v7().to_string();
+    let succeeded_chunk_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO recording_tracks (
+                id,
+                recording_id,
+                kind,
+                label,
+                created_at_ms
+            ) VALUES (?1, ?2, 'microphone', 'Microphone', 1)
+            "#,
+            (&track_id, &recording_id),
+        )
+        .expect("insert track");
+    create_recording_segment(
+        &connection,
+        &CreateRecordingSegmentInput {
+            file_path: "/tmp/daydream/0001.mkv".to_string(),
+            id: segment_id.clone(),
+            recording_id: recording_id.clone(),
+            segment_index: 1,
+            started_at_ms: 10,
+        },
+    )
+    .expect("create segment");
+    connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                error,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'ai-processing', 'failed', 'chunk failed', 1, 2)
+            "#,
+            (&job_id, &recording_id),
+        )
+        .expect("insert failed job");
+
+    for (index, chunk_id, status, source_kind) in [
+        (0, &failed_chunk_id, "failed", "audio"),
+        (1, &cancelled_chunk_id, "cancelled", "activity"),
+        (2, &succeeded_chunk_id, "succeeded", "audio"),
+    ] {
+        create_processing_chunk(
+            &connection,
+            &CreateProcessingChunkInput {
+                attempt_count: 1,
+                created_at_ms: index + 1,
+                end_offset_ms: Some((index + 1) * 1_000),
+                error_code: if status == "succeeded" {
+                    None
+                } else {
+                    Some("processing-failed".to_string())
+                },
+                id: chunk_id.clone(),
+                job_id: job_id.clone(),
+                progress: if status == "succeeded" { 1.0 } else { 0.5 },
+                recording_id: recording_id.clone(),
+                segment_id: Some(segment_id.clone()),
+                source_kind: source_kind.to_string(),
+                start_offset_ms: Some(index * 1_000),
+                status: status.to_string(),
+                track_id: Some(track_id.clone()),
+                updated_at_ms: index + 2,
+            },
+        )
+        .expect("insert processing chunk");
+    }
+
+    for chunk_id in [&failed_chunk_id, &succeeded_chunk_id] {
+        create_transcript_segment(
+            &connection,
+            &CreateTranscriptSegmentInput {
+                chunk_id: chunk_id.clone(),
+                confidence: Some(0.8),
+                created_at_ms: 5,
+                end_offset_ms: 900,
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                model: Some("small".to_string()),
+                provider: "local-whisper-cpp".to_string(),
+                recording_id: recording_id.clone(),
+                segment_id: segment_id.clone(),
+                source_role: "microphone".to_string(),
+                start_offset_ms: 100,
+                text: "hello".to_string(),
+                track_id: track_id.clone(),
+            },
+        )
+        .expect("insert transcript segment");
+    }
+
+    for chunk_id in [&cancelled_chunk_id, &succeeded_chunk_id] {
+        create_activity_interval(
+            &connection,
+            &CreateActivityIntervalInput {
+                chunk_id: Some(chunk_id.clone()),
+                end_offset_ms: 1_000,
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                recording_id: recording_id.clone(),
+                regions_json: Some("[]".to_string()),
+                score: Some(0.7),
+                source_kind: "merged".to_string(),
+                start_offset_ms: 0,
+                state: "active".to_string(),
+            },
+        )
+        .expect("insert activity interval");
+    }
+
+    let retried =
+        retry_processing_job_chunks(&connection, &job_id, 99).expect("retry processing job");
+
+    let queued_chunks = list_processing_chunks_by_status(&connection, &job_id, &["queued"], None)
+        .expect("list queued chunks");
+    let succeeded_chunks =
+        list_processing_chunks_by_status(&connection, &job_id, &["succeeded"], None)
+            .expect("list succeeded chunks");
+    let count_by_chunk = |table_name: &str, chunk_id: &str| -> i64 {
+        connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table_name} WHERE chunk_id = ?1"),
+                [chunk_id],
+                |row| row.get(0),
+            )
+            .expect("count rows by chunk")
+    };
+
+    assert_eq!(retried.status, "queued");
+    assert_eq!(retried.error, None);
+    assert_eq!(queued_chunks.len(), 2);
+    assert!(queued_chunks
+        .iter()
+        .any(|chunk| chunk.id == failed_chunk_id && chunk.error_code.is_none()));
+    assert!(queued_chunks
+        .iter()
+        .any(|chunk| chunk.id == cancelled_chunk_id && chunk.error_code.is_none()));
+    assert_eq!(succeeded_chunks.len(), 1);
+    assert_eq!(succeeded_chunks[0].id, succeeded_chunk_id);
+    assert_eq!(count_by_chunk("transcript_segments", &failed_chunk_id), 0);
+    assert_eq!(
+        count_by_chunk("transcript_segments", &succeeded_chunk_id),
+        1
+    );
+    assert_eq!(
+        count_by_chunk("frame_activity_intervals", &cancelled_chunk_id),
+        0
+    );
+    assert_eq!(
+        count_by_chunk("frame_activity_intervals", &succeeded_chunk_id),
+        1
+    );
+}
+
+#[test]
 fn ai_storage_helpers_preserve_derived_output_provenance() {
     let connection = migrated_memory_connection();
     let recording_id = create_test_recording(&connection);
@@ -631,6 +874,7 @@ fn ai_storage_helpers_preserve_derived_output_provenance() {
             source_kind: "audio".to_string(),
             start_offset_ms: Some(0),
             status: "running".to_string(),
+            track_id: Some(track_id.clone()),
             updated_at_ms: 2,
         },
     )
@@ -865,7 +1109,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 12);
+    assert_eq!(schema_version, 13);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

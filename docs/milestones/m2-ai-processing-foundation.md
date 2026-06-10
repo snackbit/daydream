@@ -377,6 +377,7 @@ Expected settings fields:
 - `ai.transcription.localModelId`
 - `ai.transcription.remoteBaseUrl`
 - `ai.transcription.remoteApiKeyRef`
+- `ai.transcription.remoteModel`
 - `ai.transcription.wordTimestampsEnabled`
 - `ai.vision.provider`: `openai-compatible` or `disabled`
 - `ai.vision.baseUrl`
@@ -728,17 +729,30 @@ Exit Criteria:
 ## Gate E: Processing Job Scheduler and Audio Transcription
 
 - [ ] Implement automatic AI job enqueueing when a recording stops.
-- [ ] Implement durable chunk planning for recording segments and separate
+- [x] Add manual Library detail start action and Tauri command for recording
+  AI processing.
+- [x] Implement durable chunk planning for recording segments and separate
   audio tracks.
-- [ ] Implement app-start recovery that resumes queued or running chunks safely.
-- [ ] Implement max parallel jobs and max parallel chunks settings.
-- [ ] Implement pause, cancel, retry, and resume behavior.
-- [ ] Demux or address desktop audio and microphone streams separately.
-- [ ] Persist transcript segments and transcript words with recording-relative
+- [x] Implement app-start recovery that resumes queued or running chunks safely.
+- [x] Implement max parallel job limiting and conservative chunk execution that
+  does not exceed the chunk limit.
+- [x] Implement pause, cancel, retry, and resume behavior.
+- [x] Demux or address desktop audio and microphone streams separately.
+- [x] Persist transcript segments and transcript words with recording-relative
   timestamps, source role, track ID, provider, model, job ID, and chunk ID.
 - [ ] Add tests for one audio track, desktop plus microphone tracks, no audio,
   failed segment exclusion, restart recovery, pause/cancel/retry, and timestamp
   conversion.
+
+Status note:
+
+- Gate E now has manual processing start, durable per-segment/per-audio-source
+  chunks, startup recovery, provider readiness checks, notification updates,
+  FFmpeg audio extraction, transcription persistence, and a transcript query
+  command.
+- Automatic post-stop enqueueing remains deferred by product decision. The
+  current path refuses to enqueue redacted recordings until redaction-aware
+  chunk splitting exists, so cut spans are not processed accidentally.
 
 Exit Criteria:
 
@@ -749,18 +763,18 @@ Exit Criteria:
 
 ## Gate F: Activity Adapters and Activity Lane Data
 
-- [ ] Add cross-platform keyboard/mouse activity adapter interfaces.
-- [ ] Implement Linux/KDE validation path for keyboard and mouse activity
+- [x] Add cross-platform keyboard/mouse activity adapter interfaces.
+- [x] Implement Linux/KDE validation path for keyboard and mouse activity
   timing where native permissions and session constraints allow it.
-- [ ] Add unsupported adapters for platforms that are not implemented in M2.
-- [ ] Record keyboard and mouse activity timing without key values, typed text,
+- [x] Add unsupported adapters for platforms that are not implemented in M2.
+- [x] Record keyboard and mouse activity timing without key values, typed text,
   clipboard data, or target content.
-- [ ] Implement frame-delta activity scoring from sampled video frames.
-- [ ] Merge keyboard, mouse, and frame-delta signals into activity intervals
+- [x] Implement frame-delta activity scoring from sampled video frames.
+- [x] Merge keyboard, mouse, and frame-delta signals into activity intervals
   using configured activity windows.
-- [ ] Persist active, idle, and unknown activity intervals with source
+- [x] Persist active, idle, and unknown activity intervals with source
   provenance.
-- [ ] Add tests for default windows, settings changes, frame-only activity,
+- [x] Add tests for default windows, settings changes, frame-only activity,
   input-only activity, unavailable input adapter, and privacy-safe event data.
 
 Exit Criteria:

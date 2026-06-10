@@ -3,8 +3,12 @@ use std::fs;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, error, info, warn};
 
-use crate::storage::{self, AppStorage, RecordingSegmentRow};
+use crate::{
+    settings,
+    storage::{self, AppStorage, RecordingSegmentRow},
+};
 
+use super::activity_input;
 use super::errors::{lifecycle_error, storage_error};
 use super::manager::{now_ms, PreviewStartDecision, RecorderManager};
 use super::platform;
@@ -214,8 +218,9 @@ pub(crate) fn stop_empty_preview_start(
     manager.stop_preview(now_ms()).map(Some)
 }
 
-pub async fn start_recording(
+pub async fn start_recording<R: tauri::Runtime>(
     input: StartRecordingInput,
+    app: AppHandle<R>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
@@ -260,7 +265,7 @@ pub async fn start_recording(
         let _ = manager.clear_selecting_to_idle(now_ms());
         return Err(error);
     }
-    let media = match platform::start_live_segment(&pending.segment_input, prepared) {
+    let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
         Ok(media) => media,
         Err(error) => {
             error!(
@@ -274,6 +279,7 @@ pub async fn start_recording(
             return Err(error);
         }
     };
+    attach_activity_monitor(&app, &storage, &pending.recording_id, &mut media);
     info!(
         recording_id = %pending.recording_id,
         segment_index = pending.segment_index,
@@ -298,8 +304,9 @@ pub fn pause_recording<R: tauri::Runtime>(
     Ok(status)
 }
 
-pub async fn resume_recording(
+pub async fn resume_recording<R: tauri::Runtime>(
     input: ResumeRecordingInput,
+    app: AppHandle<R>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
@@ -331,15 +338,43 @@ pub async fn resume_recording(
         let _ = manager.restore_paused_after_selecting(pending.active.clone(), now_ms());
         return Err(error);
     }
-    let media = match platform::start_live_segment(&pending.segment_input, prepared) {
+    let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
         Ok(media) => media,
         Err(error) => {
             let _ = manager.fail_pending_segment(&storage, &pending, now_ms(), &error);
             return Err(error);
         }
     };
+    attach_activity_monitor(&app, &storage, &input.recording_id, &mut media);
 
     manager.activate_pending_segment(pending, media, now_ms())
+}
+
+fn attach_activity_monitor(
+    app: &AppHandle<impl tauri::Runtime>,
+    storage: &AppStorage,
+    recording_id: &str,
+    media: &mut super::manager::RecordingSegmentRuntime,
+) {
+    let Ok(app_settings) = settings::load_app_settings(storage) else {
+        warn!("Input activity monitor skipped because settings failed to load.");
+        return;
+    };
+    let recording_started_at_ms = storage
+        .with_connection(|connection| storage::get_recording(connection, recording_id))
+        .ok()
+        .and_then(|recording| recording.started_at_ms)
+        .and_then(|started_at_ms| u64::try_from(started_at_ms).ok())
+        .unwrap_or_else(now_ms);
+    let Some(monitor) = activity_input::start_activity_monitor(
+        app.clone(),
+        recording_id.to_string(),
+        recording_started_at_ms,
+        &app_settings.ai.activity,
+    ) else {
+        return;
+    };
+    media.attach_activity_monitor(monitor);
 }
 
 pub fn stop_recording<R: tauri::Runtime>(

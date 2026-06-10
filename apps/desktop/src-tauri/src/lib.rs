@@ -50,6 +50,7 @@ pub fn run() {
             app.manage(transcription_provider_manager);
             app.manage(recorder_manager);
             app.manage(playback_server);
+            ai::start_processing_worker(app.handle().clone());
 
             Ok(())
         })
@@ -61,6 +62,8 @@ pub fn run() {
             library::delete_library_recording,
             library::delete_library_recordings,
             library::get_library_recording,
+            ai::get_recording_activity,
+            ai::get_recording_transcript,
             library::get_recording_waveform_tiles,
             library::get_recording_waveforms,
             library::list_library_recordings,
@@ -85,6 +88,7 @@ pub fn run() {
             ai::save_ai_provider_secret,
             ai::delete_ai_provider_secret,
             ai::list_processing_jobs,
+            ai::start_recording_ai_processing,
             ai::pause_processing_job,
             ai::resume_processing_job,
             ai::cancel_processing_job,

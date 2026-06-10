@@ -23,6 +23,10 @@ const client = vi.hoisted(() => ({
   renameLibraryRecording: vi.fn(),
 }));
 
+const aiClient = vi.hoisted(() => ({
+  startRecordingAiProcessing: vi.fn(),
+}));
+
 const router = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
@@ -32,6 +36,7 @@ const routeState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/library/library-client', () => client);
+vi.mock('@/features/ai/ai-client', () => aiClient);
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => router.navigate,
@@ -237,6 +242,16 @@ beforeEach(() => {
   );
   client.getRecordingWaveformTiles.mockResolvedValue(waveformTiles);
   client.createLibraryPlaybackSession.mockResolvedValue(playbackAssets);
+  aiClient.startRecordingAiProcessing.mockResolvedValue({
+    createdAtMs: 1,
+    errorCode: null,
+    id: 'job-1',
+    kind: 'ai-processing',
+    progress: 0,
+    recordingId: 'recording-1',
+    status: 'queued',
+    updatedAtMs: 1,
+  });
   router.navigate.mockResolvedValue(undefined);
 });
 
@@ -456,6 +471,20 @@ test('RecordingStudioScreen refresh reconciles new tracks and clips', async () =
     screen.getByRole('button', { name: /^Microphone Segment 3$/i }),
   ).toBeTruthy();
   expect(screen.getByText('3 segments')).toBeTruthy();
+});
+
+test('RecordingStudioScreen starts AI processing from the detail header', async () => {
+  render(<RecordingStudioScreen />);
+
+  expect(await screen.findByText('Tracks')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /process ai/i }));
+
+  await waitFor(() =>
+    expect(aiClient.startRecordingAiProcessing).toHaveBeenCalledWith({
+      recordingId: 'recording-1',
+    }),
+  );
 });
 
 test('RecordingStudioScreen renames the recording from the detail header', async () => {

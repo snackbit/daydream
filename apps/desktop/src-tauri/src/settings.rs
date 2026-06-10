@@ -74,6 +74,7 @@ pub struct AiTranscriptionProviderSettings {
     pub provider: String,
     pub remote_api_key_ref: Option<String>,
     pub remote_base_url: Option<String>,
+    pub remote_model: Option<String>,
     pub word_timestamps_enabled: bool,
 }
 
@@ -318,6 +319,7 @@ pub fn default_ai_settings() -> AiSettings {
             provider: "local-whisper-cpp".to_string(),
             remote_api_key_ref: None,
             remote_base_url: None,
+            remote_model: None,
             word_timestamps_enabled: true,
         },
         vision: AiVisionProviderSettings {
@@ -424,6 +426,9 @@ fn apply_setting_row(
         "ai.transcription.remoteBaseUrl" => {
             settings.ai.transcription.remote_base_url = setting_value(row)?;
         }
+        "ai.transcription.remoteModel" => {
+            settings.ai.transcription.remote_model = setting_value(row)?;
+        }
         "ai.transcription.remoteApiKeyRef" => {
             settings.ai.transcription.remote_api_key_ref = setting_value(row)?;
         }
@@ -523,6 +528,12 @@ fn settings_to_storage_inputs(
         setting_input(
             "ai.transcription.remoteBaseUrl",
             &settings.ai.transcription.remote_base_url,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.remoteModel",
+            &settings.ai.transcription.remote_model,
             false,
             timestamp_ms,
         )?,
@@ -713,6 +724,11 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         "ai.transcription.remoteBaseUrl",
         settings.transcription.remote_base_url.as_deref(),
     )?;
+    validate_optional_text(
+        "ai.transcription.remoteModel",
+        settings.transcription.remote_model.as_deref(),
+        120,
+    )?;
     validate_one_of(
         "ai.vision.provider",
         &settings.vision.provider,
@@ -825,6 +841,21 @@ fn validate_optional_url(field: &str, value: Option<&str>) -> Result<(), AppSett
         field,
         "Remote endpoint URL must start with http:// or https://.",
     ))
+}
+
+fn validate_optional_text(
+    field: &str,
+    value: Option<&str>,
+    max_chars: usize,
+) -> Result<(), AppSettingsError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.chars().count() <= max_chars {
+        return Ok(());
+    }
+
+    Err(validation_error(field, "Setting value is too long."))
 }
 
 fn validate_f64_range(
@@ -959,6 +990,35 @@ mod tests {
     }
 
     #[test]
+    fn load_app_settings_handles_saved_vulkan_by_build_feature() {
+        let storage = storage::test_storage(PathBuf::from("/tmp/daydream.sqlite3"));
+        storage
+            .with_connection_mut(|connection| {
+                storage::save_app_setting(
+                    connection,
+                    &SaveAppSettingInput {
+                        key: "ai.transcription.localBackend".to_string(),
+                        value_json: "\"vulkan\"".to_string(),
+                        is_sensitive: false,
+                        timestamp_ms: 1,
+                    },
+                )
+            })
+            .expect("save settings");
+
+        let settings = load_app_settings(&storage).expect("load settings");
+
+        if cfg!(feature = "whisper-vulkan") {
+            assert_eq!(settings.ai.transcription.local_backend, "vulkan");
+        } else {
+            assert_eq!(
+                settings.ai.transcription.local_backend,
+                DEFAULT_AI_TRANSCRIPTION_BACKEND
+            );
+        }
+    }
+
+    #[test]
     fn validate_settings_rejects_out_of_range_values() {
         for (settings, field) in [
             (
@@ -1037,6 +1097,19 @@ mod tests {
                     ..default_settings()
                 },
                 "ai.transcription.localModelId",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            local_backend: "metal".to_string(),
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.localBackend",
             ),
             (
                 AppSettings {

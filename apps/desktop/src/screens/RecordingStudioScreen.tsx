@@ -4,7 +4,13 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
-import { AlertTriangle, Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 import { FullHeightLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { startRecordingAiProcessing } from '@/features/ai/ai-client';
 import { RecordingStudio } from '@/features/library/components/studio/recording-studio';
 import {
   closeLibraryPlaybackSession,
@@ -54,6 +61,7 @@ export function RecordingStudioScreen() {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
+  const [processingStartBusy, setProcessingStartBusy] = useState(false);
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
 
@@ -145,6 +153,21 @@ export function RecordingStudioScreen() {
     }
   }
 
+  async function startAiProcessing() {
+    if (!detail) {
+      return;
+    }
+    setError(null);
+    setProcessingStartBusy(true);
+    try {
+      await startRecordingAiProcessing({ recordingId: detail.id });
+    } catch (processingError) {
+      setError(errorMessage(processingError));
+    } finally {
+      setProcessingStartBusy(false);
+    }
+  }
+
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
@@ -186,6 +209,17 @@ export function RecordingStudioScreen() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {detail ? (
+            <Button
+              className="gap-2"
+              disabled={!isAiProcessingStartable(detail) || processingStartBusy}
+              variant="outline"
+              onClick={() => void startAiProcessing()}
+            >
+              <Sparkles className="size-3.5" />
+              Process AI
+            </Button>
+          ) : null}
           {detail && isRecordingRenameable(detail) ? (
             <Button
               className="gap-2"
@@ -331,6 +365,10 @@ function isRecordingDeletable(detail: LibraryRecordingDetail): boolean {
 
 function isRecordingRenameable(detail: LibraryRecordingDetail): boolean {
   return detail.status === 'completed' || detail.status === 'failed';
+}
+
+function isAiProcessingStartable(detail: LibraryRecordingDetail): boolean {
+  return detail.status === 'completed' && detail.availability === 'available';
 }
 
 function recordingTitle(detail: LibraryRecordingDetail): string {
