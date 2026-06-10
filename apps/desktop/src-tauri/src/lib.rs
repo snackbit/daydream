@@ -7,6 +7,7 @@ mod playback_server;
 pub mod recorder;
 pub mod secret_crypto;
 mod settings;
+mod startup;
 pub mod storage;
 mod storage_limits;
 mod telemetry;
@@ -25,6 +26,7 @@ pub fn run() {
             let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
             let ai_model_manager = ai::AiModelManager::new();
             let transcription_provider_manager = transcription::TranscriptionProviderManager::new();
+            let startup_manager = startup::AppStartupManager::new();
             let storage = storage::initialize(app.handle())?;
             match settings::load_app_settings(&storage) {
                 Ok(app_settings) => {
@@ -50,11 +52,15 @@ pub fn run() {
             app.manage(transcription_provider_manager);
             app.manage(recorder_manager);
             app.manage(playback_server);
+            app.manage(startup_manager);
             ai::start_processing_worker(app.handle().clone());
+            startup::start_app_startup(app.handle().clone());
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            startup::get_app_startup_status,
+            startup::retry_app_startup,
             library::close_library_playback_session,
             library::create_library_playback_session,
             diagnostics::get_diagnostics,

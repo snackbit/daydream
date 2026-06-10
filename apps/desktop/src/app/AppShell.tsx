@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NotificationCenter } from '@/features/notifications/components/notification-center';
 import { RecorderStatusBar } from '@/features/recorder/components/recorder-status-bar';
+import { StartupWarningBanner } from '@/features/startup/components/startup-warning-banner';
 import { navigationItems } from './navigation';
 
 const standaloneRouteHeaders = {
@@ -73,6 +74,8 @@ export function AppShell() {
             </Button>
           </div>
         </header>
+
+        <StartupWarningBanner />
 
         <main className="min-h-0 flex-1 overflow-y-auto">
           <Outlet />

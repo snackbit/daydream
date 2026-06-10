@@ -84,6 +84,7 @@ export * from './recorder.js';
 export * from './library.js';
 export * from './ai.js';
 export * from './settings.js';
+export * from './startup.js';
 
 export interface DebugLoggingDiagnostics {
   enabled: boolean;

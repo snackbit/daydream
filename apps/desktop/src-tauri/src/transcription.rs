@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -99,43 +99,190 @@ pub struct LocalTranscriptionInput {
     pub word_timestamps: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct LocalTranscriptionWarmup {
+    pub local_backend: String,
+    pub model_id: String,
+    pub model_path: PathBuf,
+}
+
 pub trait LocalTranscriptionRunner: Send + Sync + 'static {
+    fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
+        let _input = input;
+        Ok(())
+    }
+
     fn transcribe(
         &self,
         input: LocalTranscriptionInput,
     ) -> Result<VerboseTranscription, TranscriptionError>;
 }
 
-#[derive(Clone, Debug, Default)]
-struct WhisperCppTranscriptionRunner;
+struct WhisperCppTranscriptionRunner {
+    sender: Mutex<mpsc::Sender<WhisperWorkerCommand>>,
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+enum WhisperWorkerCommand {
+    Stop,
+    Transcribe {
+        input: LocalTranscriptionInput,
+        response: mpsc::Sender<Result<VerboseTranscription, TranscriptionError>>,
+    },
+    Warm {
+        input: LocalTranscriptionWarmup,
+        response: mpsc::Sender<Result<(), TranscriptionError>>,
+    },
+}
+
+struct CachedWhisperModel {
+    backend: whisper_backend::WhisperExecutionBackend,
+    model: whisper_backend::LoadedWhisperModel,
+    model_id: String,
+    model_path: PathBuf,
+}
+
+impl WhisperCppTranscriptionRunner {
+    fn new() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("daydream-whisper-cache".to_string())
+            .spawn(move || run_whisper_worker(receiver))
+            .expect("spawn whisper cache worker");
+
+        Self {
+            sender: Mutex::new(sender),
+            thread: Mutex::new(Some(thread)),
+        }
+    }
+
+    fn send_command<T>(
+        &self,
+        build: impl FnOnce(mpsc::Sender<Result<T, TranscriptionError>>) -> WhisperWorkerCommand,
+    ) -> Result<T, TranscriptionError> {
+        let (response, receiver) = mpsc::channel();
+        self.sender
+            .lock()
+            .expect("whisper worker sender")
+            .send(build(response))
+            .map_err(|_error| {
+                transcription_error(
+                    "ai_transcription_local_worker_unavailable",
+                    "Local transcription worker is unavailable.",
+                )
+            })?;
+        receiver.recv().map_err(|_error| {
+            transcription_error(
+                "ai_transcription_local_worker_unavailable",
+                "Local transcription worker stopped before returning a result.",
+            )
+        })?
+    }
+}
+
+impl Default for WhisperCppTranscriptionRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for WhisperCppTranscriptionRunner {
+    fn drop(&mut self) {
+        if let Ok(sender) = self.sender.lock() {
+            let _ = sender.send(WhisperWorkerCommand::Stop);
+        }
+        if let Ok(mut thread) = self.thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+}
 
 impl LocalTranscriptionRunner for WhisperCppTranscriptionRunner {
+    fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
+        self.send_command(|response| WhisperWorkerCommand::Warm { input, response })
+    }
+
     fn transcribe(
         &self,
         input: LocalTranscriptionInput,
     ) -> Result<VerboseTranscription, TranscriptionError> {
-        let backend = whisper_backend::WhisperExecutionBackend::from_setting(&input.local_backend)
-            .map_err(|error| TranscriptionError {
-                code: error.code,
-                message: error.message,
-            })?;
-        whisper_backend::transcribe_wav(
-            &input.model_path,
-            &input.audio_path,
-            backend,
-            input.word_timestamps,
-            input.cancel,
-        )
-        .map_err(|error| TranscriptionError {
-            code: error.code,
-            message: error.message,
-        })
+        self.send_command(|response| WhisperWorkerCommand::Transcribe { input, response })
     }
+}
+
+fn run_whisper_worker(receiver: mpsc::Receiver<WhisperWorkerCommand>) {
+    let mut cached_model: Option<CachedWhisperModel> = None;
+
+    while let Ok(command) = receiver.recv() {
+        match command {
+            WhisperWorkerCommand::Stop => break,
+            WhisperWorkerCommand::Warm { input, response } => {
+                let result = ensure_cached_model(
+                    &mut cached_model,
+                    &input.model_id,
+                    &input.model_path,
+                    &input.local_backend,
+                )
+                .map(|_model| ());
+                let _ = response.send(result);
+            }
+            WhisperWorkerCommand::Transcribe { input, response } => {
+                let result = check_cancelled(Some(input.cancel.as_ref())).and_then(|()| {
+                    ensure_cached_model(
+                        &mut cached_model,
+                        &input.model_id,
+                        &input.model_path,
+                        &input.local_backend,
+                    )
+                    .and_then(|model| {
+                        model
+                            .model
+                            .transcribe_wav(&input.audio_path, input.word_timestamps, input.cancel)
+                            .map_err(whisper_error)
+                    })
+                });
+                let _ = response.send(result);
+            }
+        }
+    }
+}
+
+fn ensure_cached_model<'a>(
+    cached_model: &'a mut Option<CachedWhisperModel>,
+    model_id: &str,
+    model_path: &Path,
+    local_backend: &str,
+) -> Result<&'a mut CachedWhisperModel, TranscriptionError> {
+    let backend = whisper_backend::WhisperExecutionBackend::from_setting(local_backend)
+        .map_err(whisper_error)?;
+    let needs_load = cached_model.as_ref().is_none_or(|cached| {
+        cached.model_id != model_id || cached.model_path != model_path || cached.backend != backend
+    });
+
+    if needs_load {
+        let model = whisper_backend::LoadedWhisperModel::load(model_path, backend)
+            .map_err(whisper_error)?;
+        *cached_model = Some(CachedWhisperModel {
+            backend,
+            model,
+            model_id: model_id.to_string(),
+            model_path: model_path.to_path_buf(),
+        });
+    }
+
+    cached_model.as_mut().ok_or_else(|| {
+        transcription_error(
+            "ai_transcription_local_model_unavailable",
+            "Local transcription model is not available.",
+        )
+    })
 }
 
 impl TranscriptionProviderManager {
     pub fn new() -> Self {
-        Self::with_local_runner(Arc::new(WhisperCppTranscriptionRunner))
+        Self::with_local_runner(Arc::new(WhisperCppTranscriptionRunner::new()))
     }
 
     pub fn with_local_runner(local_runner: Arc<dyn LocalTranscriptionRunner>) -> Self {
@@ -209,6 +356,47 @@ impl TranscriptionProviderManager {
             Some(request.cancel),
         )
         .await
+    }
+
+    pub fn warm_selected_local_model(
+        &self,
+        app: &AppHandle,
+        storage: &AppStorage,
+    ) -> Result<Option<LocalTranscriptionWarmup>, TranscriptionError> {
+        let app_settings =
+            settings::load_app_settings(storage).map_err(|error| TranscriptionError {
+                code: error.code,
+                message: error.message,
+            })?;
+        if selected_transcription_provider(&app_settings)?
+            != TranscriptionProviderKind::LocalWhisperCpp
+        {
+            return Ok(None);
+        }
+
+        let app_data_dir = app.path().app_data_dir().map_err(|error| {
+            transcription_error(
+                "ai_transcription_app_data_unavailable",
+                &format!("App data directory is unavailable: {error}"),
+            )
+        })?;
+        let model_id = app_settings.ai.transcription.local_model_id;
+        let model_path = local_whisper_model_path(&app_data_dir, &model_id);
+        if !model_path.is_file() {
+            return Err(transcription_error(
+                "ai_transcription_local_model_unavailable",
+                "Selected local transcription model is not available.",
+            ));
+        }
+
+        let warmup = LocalTranscriptionWarmup {
+            local_backend: app_settings.ai.transcription.local_backend,
+            model_id,
+            model_path,
+        };
+        self.local_runner.warm_model(warmup.clone())?;
+
+        Ok(Some(warmup))
     }
 
     fn local_endpoint(
@@ -1085,6 +1273,13 @@ fn storage_error(error: rusqlite::Error) -> TranscriptionError {
     )
 }
 
+fn whisper_error(error: whisper_backend::WhisperBackendError) -> TranscriptionError {
+    TranscriptionError {
+        code: error.code,
+        message: error.message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1309,6 +1504,27 @@ mod tests {
             drop(server);
             let _ = fs::remove_dir_all(temp_dir);
         });
+    }
+
+    #[test]
+    fn whisper_runner_honors_pre_cancelled_transcribe_without_loading_model() {
+        let temp_dir = temp_test_dir();
+        let runner = WhisperCppTranscriptionRunner::new();
+        let cancel = Arc::new(AtomicBool::new(true));
+
+        let error = runner
+            .transcribe(LocalTranscriptionInput {
+                audio_path: temp_dir.join("missing.wav"),
+                cancel,
+                local_backend: "cpu".to_string(),
+                model_id: "tiny".to_string(),
+                model_path: temp_dir.join("missing-model.bin"),
+                word_timestamps: false,
+            })
+            .expect_err("pre-cancelled local transcription");
+
+        assert_eq!(error.code, "ai_transcription_cancelled");
+        let _ = fs::remove_dir_all(temp_dir);
     }
 
     #[test]

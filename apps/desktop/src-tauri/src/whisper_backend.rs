@@ -64,6 +64,74 @@ pub fn load_and_unload_model(
     path: &Path,
     backend: WhisperExecutionBackend,
 ) -> Result<(), WhisperBackendError> {
+    let _model = LoadedWhisperModel::load(path, backend)?;
+
+    Ok(())
+}
+
+pub struct LoadedWhisperModel {
+    context: *mut bindings::whisper_context,
+}
+
+impl LoadedWhisperModel {
+    pub fn load(
+        path: &Path,
+        backend: WhisperExecutionBackend,
+    ) -> Result<Self, WhisperBackendError> {
+        let path = CString::new(path.to_string_lossy().as_bytes()).map_err(|_error| {
+            WhisperBackendError {
+                code: "ai_model_path_invalid".to_string(),
+                message: "Model path contains an invalid byte.".to_string(),
+            }
+        })?;
+
+        let params = context_params_for_backend(backend);
+        let context =
+            unsafe { bindings::whisper_init_from_file_with_params(path.as_ptr(), params) };
+        if context.is_null() {
+            return Err(WhisperBackendError {
+                code: "ai_model_load_failed".to_string(),
+                message: "Whisper model could not be loaded.".to_string(),
+            });
+        }
+
+        Ok(Self { context })
+    }
+
+    pub fn transcribe_wav(
+        &mut self,
+        audio_path: &Path,
+        word_timestamps: bool,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<VerboseTranscription, WhisperBackendError> {
+        let wav = read_mono_pcm16_wav(audio_path)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
+        }
+
+        run_whisper_full(self.context, &wav.samples, word_timestamps, &cancel).map(
+            |mut transcription| {
+                transcription.duration = Some(wav.samples.len() as f64 / 16_000.0);
+                transcription
+            },
+        )
+    }
+}
+
+impl Drop for LoadedWhisperModel {
+    fn drop(&mut self) {
+        if !self.context.is_null() {
+            unsafe { bindings::whisper_free(self.context) };
+            self.context = std::ptr::null_mut();
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn load_and_unload_model_without_state(
+    path: &Path,
+    backend: WhisperExecutionBackend,
+) -> Result<(), WhisperBackendError> {
     let path =
         CString::new(path.to_string_lossy().as_bytes()).map_err(|_error| WhisperBackendError {
             code: "ai_model_path_invalid".to_string(),
@@ -93,33 +161,8 @@ pub fn transcribe_wav(
     word_timestamps: bool,
     cancel: Arc<AtomicBool>,
 ) -> Result<VerboseTranscription, WhisperBackendError> {
-    let model_path = CString::new(model_path.to_string_lossy().as_bytes()).map_err(|_error| {
-        WhisperBackendError {
-            code: "ai_model_path_invalid".to_string(),
-            message: "Model path contains an invalid byte.".to_string(),
-        }
-    })?;
-    let wav = read_mono_pcm16_wav(audio_path)?;
-    if cancel.load(Ordering::SeqCst) {
-        return Err(cancelled_error());
-    }
-
-    let params = context_params_for_backend(backend);
-    let context =
-        unsafe { bindings::whisper_init_from_file_with_params(model_path.as_ptr(), params) };
-    if context.is_null() {
-        return Err(WhisperBackendError {
-            code: "ai_model_load_failed".to_string(),
-            message: "Whisper model could not be loaded.".to_string(),
-        });
-    }
-    let result = run_whisper_full(context, &wav.samples, word_timestamps, &cancel);
-    unsafe { bindings::whisper_free(context) };
-
-    result.map(|mut transcription| {
-        transcription.duration = Some(wav.samples.len() as f64 / 16_000.0);
-        transcription
-    })
+    let mut model = LoadedWhisperModel::load(model_path, backend)?;
+    model.transcribe_wav(audio_path, word_timestamps, cancel)
 }
 
 fn context_params_for_backend(
