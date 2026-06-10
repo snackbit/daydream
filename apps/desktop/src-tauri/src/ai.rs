@@ -24,21 +24,30 @@ use uuid::Uuid;
 
 use crate::{
     ffmpeg,
-    notifications::{self, Notification, NotificationAction},
+    notifications::Notification,
     secret_crypto, settings,
     storage::{
         self, ActivityIntervalRow, AiModelAssetRow, AppStorage, CaptureEventRow,
         CreateActivityIntervalInput, CreateProcessingChunkInput, CreateProcessingJobInput,
         CreateTranscriptSegmentInput, CreateTranscriptWordInput, NotificationRow,
         ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow,
-        SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, TranscriptSegmentRow,
-        TranscriptWordRow, UpsertRecordingTrackInput,
+        SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow, TranscriptWordRow,
+        UpsertRecordingTrackInput,
     },
     transcription::{self, TranscriptionProviderManager, TranscriptionRequest},
     whisper_backend,
 };
 
 pub const AI_MODELS_CHANGED_EVENT: &str = "ai-models-changed";
+mod notification_helpers;
+use notification_helpers::{
+    model_download_cancel_action, model_download_retry_action, notification_from_row,
+    processing_failed_actions, processing_paused_actions, processing_retry_actions,
+    processing_running_actions, save_job_progress_notification, save_job_running_notification,
+    save_model_download_notification, save_model_notification, save_processing_notification,
+    status_to_notification_status, ModelDownloadNotificationInput, ProcessingNotificationInput,
+};
+
 const MODEL_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 const MODEL_PROGRESS_UPDATE_BYTES: i64 = 4 * 1024 * 1024;
 const AI_PROCESSING_JOB_KIND: &str = "ai-processing";
@@ -426,13 +435,15 @@ pub fn download_ai_model(
                 )?;
                 save_model_download_notification(
                     connection,
-                    catalog.id,
-                    input.notification_id.as_deref(),
-                    "succeeded",
-                    "Model already downloaded",
-                    &format!("{} is already available locally.", catalog.label),
-                    &[],
-                    timestamp_ms,
+                    ModelDownloadNotificationInput {
+                        actions: &[],
+                        message: &format!("{} is already available locally.", catalog.label),
+                        model_id: catalog.id,
+                        preferred_notification_id: input.notification_id.as_deref(),
+                        status: "succeeded",
+                        timestamp_ms,
+                        title: "Model already downloaded",
+                    },
                 )
             })
             .map_err(storage_error)?;
@@ -470,19 +481,21 @@ pub fn download_ai_model(
             save_catalog_model(connection, catalog, patch, timestamp_ms)?;
             save_model_download_notification(
                 connection,
-                catalog.id,
-                input.notification_id.as_deref(),
-                status_to_notification_status(status),
-                if state == DownloadRequestState::Queued {
-                    "Model download queued"
-                } else if state == DownloadRequestState::AlreadyRunning {
-                    "Model download already running"
-                } else {
-                    "Model download started"
+                ModelDownloadNotificationInput {
+                    actions: &[model_download_cancel_action(catalog.id)],
+                    message: &format!("{} will download from Hugging Face.", catalog.label),
+                    model_id: catalog.id,
+                    preferred_notification_id: input.notification_id.as_deref(),
+                    status: status_to_notification_status(status),
+                    timestamp_ms,
+                    title: if state == DownloadRequestState::Queued {
+                        "Model download queued"
+                    } else if state == DownloadRequestState::AlreadyRunning {
+                        "Model download already running"
+                    } else {
+                        "Model download started"
+                    },
                 },
-                &format!("{} will download from Hugging Face.", catalog.label),
-                &[model_download_cancel_action(catalog.id)],
-                timestamp_ms,
             )
         })
         .map_err(storage_error)?;
@@ -959,13 +972,15 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
                         )?;
                         save_processing_notification(
                             connection,
-                            &claimed.recording_id,
-                            Some(&claimed.id),
-                            "failed",
-                            "AI processing failed",
-                            &format!("AI processing failed: {}.", error.code),
-                            &processing_failed_actions(&claimed.id),
-                            now_ms(),
+                            ProcessingNotificationInput {
+                                actions: &processing_failed_actions(&claimed.id),
+                                job_id: Some(&claimed.id),
+                                message: &format!("AI processing failed: {}.", error.code),
+                                recording_id: &claimed.recording_id,
+                                status: "failed",
+                                timestamp_ms: now_ms(),
+                                title: "AI processing failed",
+                            },
                         )
                         .map(|_row| ())
                     });
@@ -1127,13 +1142,15 @@ fn enqueue_recording_ai_processing(
             }
             save_processing_notification(
                 connection,
-                recording_id,
-                Some(&job_id),
-                "running",
-                "AI processing queued",
-                "AI processing is queued for this recording.",
-                &processing_running_actions(&job_id),
-                timestamp_ms,
+                ProcessingNotificationInput {
+                    actions: &processing_running_actions(&job_id),
+                    job_id: Some(&job_id),
+                    message: "AI processing is queued for this recording.",
+                    recording_id,
+                    status: "running",
+                    timestamp_ms,
+                    title: "AI processing queued",
+                },
             )?;
             Ok(job)
         })
@@ -1339,13 +1356,15 @@ async fn process_recording_ai_job(app: AppHandle, job_id: String) -> Result<(), 
                         )?;
                         save_processing_notification(
                             connection,
-                            &current.recording_id,
-                            Some(&job_id),
-                            "info",
-                            "AI processing paused",
-                            "Audio transcription is paused.",
-                            &processing_paused_actions(&job_id),
-                            now_ms(),
+                            ProcessingNotificationInput {
+                                actions: &processing_paused_actions(&job_id),
+                                job_id: Some(&job_id),
+                                message: "Audio transcription is paused.",
+                                recording_id: &current.recording_id,
+                                status: "info",
+                                timestamp_ms: now_ms(),
+                                title: "AI processing paused",
+                            },
                         )
                         .map(|_row| ())
                     })
@@ -1363,13 +1382,15 @@ async fn process_recording_ai_job(app: AppHandle, job_id: String) -> Result<(), 
                         )?;
                         save_processing_notification(
                             connection,
-                            &current.recording_id,
-                            Some(&job_id),
-                            "cancelled",
-                            "AI processing cancelled",
-                            "Audio transcription was cancelled.",
-                            &processing_retry_actions(&job_id),
-                            now_ms(),
+                            ProcessingNotificationInput {
+                                actions: &processing_retry_actions(&job_id),
+                                job_id: Some(&job_id),
+                                message: "Audio transcription was cancelled.",
+                                recording_id: &current.recording_id,
+                                status: "cancelled",
+                                timestamp_ms: now_ms(),
+                                title: "AI processing cancelled",
+                            },
                         )
                         .map(|_row| ())
                     })
@@ -2456,13 +2477,15 @@ fn finish_processing_job(storage: &AppStorage, job_id: &str) -> Result<(), AiErr
             };
             save_processing_notification(
                 connection,
-                &job.recording_id,
-                Some(job_id),
-                notification_status,
-                title,
-                message,
-                &actions,
-                now_ms(),
+                ProcessingNotificationInput {
+                    actions: &actions,
+                    job_id: Some(job_id),
+                    message,
+                    recording_id: &job.recording_id,
+                    status: notification_status,
+                    timestamp_ms: now_ms(),
+                    title,
+                },
             )
             .map(|_row| ())
         })
@@ -2493,13 +2516,15 @@ fn fail_processing_job(
             )?;
             save_processing_notification(
                 connection,
-                &job.recording_id,
-                Some(job_id),
-                "failed",
-                "AI processing failed",
-                &format!("Audio transcription failed: {error_code}."),
-                &processing_failed_actions(job_id),
-                now_ms(),
+                ProcessingNotificationInput {
+                    actions: &processing_failed_actions(job_id),
+                    job_id: Some(job_id),
+                    message: &format!("Audio transcription failed: {error_code}."),
+                    recording_id: &job.recording_id,
+                    status: "failed",
+                    timestamp_ms: now_ms(),
+                    title: "AI processing failed",
+                },
             )
             .map(|_row| ())
         })
@@ -2527,13 +2552,15 @@ fn spawn_model_download(app: AppHandle, model_id: String) {
                     )?;
                     save_model_download_notification(
                         connection,
-                        catalog.id,
-                        None,
-                        "failed",
-                        "Model download failed",
-                        &format!("{} download failed: {}.", catalog.label, error.code),
-                        &[model_download_retry_action(catalog.id)],
-                        timestamp_ms,
+                        ModelDownloadNotificationInput {
+                            actions: &[model_download_retry_action(catalog.id)],
+                            message: &format!("{} download failed: {}.", catalog.label, error.code),
+                            model_id: catalog.id,
+                            preferred_notification_id: None,
+                            status: "failed",
+                            timestamp_ms,
+                            title: "Model download failed",
+                        },
                     )
                     .map(|_row| ())
                 });
@@ -2814,13 +2841,15 @@ async fn finalize_model_download(
             )?;
             save_model_download_notification(
                 connection,
-                catalog.id,
-                None,
-                notification_status,
-                notification_title,
-                &notification_message,
-                &[],
-                timestamp_ms,
+                ModelDownloadNotificationInput {
+                    actions: &[],
+                    message: &notification_message,
+                    model_id: catalog.id,
+                    preferred_notification_id: None,
+                    status: notification_status,
+                    timestamp_ms,
+                    title: notification_title,
+                },
             )
             .map(|_row| ())
         })
@@ -2910,13 +2939,15 @@ fn save_cancelled_download(
             )?;
             save_model_download_notification(
                 connection,
-                catalog.id,
-                None,
-                "cancelled",
-                "Model download cancelled",
-                &format!("{} download was cancelled.", catalog.label),
-                &[model_download_retry_action(catalog.id)],
-                timestamp_ms,
+                ModelDownloadNotificationInput {
+                    actions: &[model_download_retry_action(catalog.id)],
+                    message: &format!("{} download was cancelled.", catalog.label),
+                    model_id: catalog.id,
+                    preferred_notification_id: None,
+                    status: "cancelled",
+                    timestamp_ms,
+                    title: "Model download cancelled",
+                },
             )
             .map(|_row| ())
         })
@@ -2947,27 +2978,31 @@ fn save_cancel_download_result(
         )?;
         save_model_download_notification(
             connection,
-            catalog.id,
-            preferred_notification_id,
-            "cancelled",
-            "Model download cancelled",
-            &format!("{} download was cancelled.", catalog.label),
-            &[model_download_retry_action(catalog.id)],
-            timestamp_ms,
+            ModelDownloadNotificationInput {
+                actions: &[model_download_retry_action(catalog.id)],
+                message: &format!("{} download was cancelled.", catalog.label),
+                model_id: catalog.id,
+                preferred_notification_id,
+                status: "cancelled",
+                timestamp_ms,
+                title: "Model download cancelled",
+            },
         )
     } else {
         save_model_download_notification(
             connection,
-            catalog.id,
-            preferred_notification_id,
-            "warning",
-            "Model download not running",
-            &format!(
-                "{} has no active or queued download to cancel.",
-                catalog.label
-            ),
-            &[model_download_retry_action(catalog.id)],
-            timestamp_ms,
+            ModelDownloadNotificationInput {
+                actions: &[model_download_retry_action(catalog.id)],
+                message: &format!(
+                    "{} has no active or queued download to cancel.",
+                    catalog.label
+                ),
+                model_id: catalog.id,
+                preferred_notification_id,
+                status: "warning",
+                timestamp_ms,
+                title: "Model download not running",
+            },
         )
     }
 }
@@ -3427,335 +3462,19 @@ fn save_readiness_failure(
     let _ = storage.with_connection(|connection| {
         save_processing_notification(
             connection,
-            recording_id,
-            None,
-            "warning",
-            "AI processing unavailable",
-            &notification_message,
-            &[],
-            now_ms(),
+            ProcessingNotificationInput {
+                actions: &[],
+                job_id: None,
+                message: &notification_message,
+                recording_id,
+                status: "warning",
+                timestamp_ms: now_ms(),
+                title: "AI processing unavailable",
+            },
         )
         .map(|_row| ())
     });
     ai_error(code, message)
-}
-
-fn save_model_notification(
-    connection: &rusqlite::Connection,
-    status: &str,
-    topic: &str,
-    title: &str,
-    message: &str,
-    actions: &[NotificationAction],
-    timestamp_ms: i64,
-) -> rusqlite::Result<NotificationRow> {
-    let actions_json =
-        serde_json::to_string(actions).map_err(|_error| rusqlite::Error::InvalidQuery)?;
-    storage::save_notification(
-        connection,
-        &SaveNotificationInput {
-            actions_json,
-            id: Uuid::now_v7().to_string(),
-            message: message.to_string(),
-            source: "ai".to_string(),
-            status: status.to_string(),
-            timestamp_ms,
-            title: title.to_string(),
-            topic: topic.to_string(),
-        },
-    )
-}
-
-fn save_job_running_notification(
-    storage: &AppStorage,
-    job: &ProcessingJobRow,
-) -> Result<(), AiError> {
-    storage
-        .with_connection(|connection| {
-            save_processing_notification(
-                connection,
-                &job.recording_id,
-                Some(&job.id),
-                "running",
-                "AI processing running",
-                "Audio transcription is running for this recording.",
-                &processing_running_actions(&job.id),
-                now_ms(),
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)
-}
-
-fn save_job_progress_notification(storage: &AppStorage, job_id: &str) -> Result<(), AiError> {
-    storage
-        .with_connection(|connection| {
-            let job = storage::get_processing_job(connection, job_id)?
-                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-            let (total, succeeded, average) =
-                storage::processing_job_chunk_progress(connection, job_id)?;
-            let percent = if total == 0 {
-                0
-            } else {
-                (average * 100.0).round() as i64
-            };
-            save_processing_notification(
-                connection,
-                &job.recording_id,
-                Some(job_id),
-                "running",
-                "AI processing running",
-                &format!(
-                    "Audio transcription is {percent}% complete ({succeeded}/{total} chunks)."
-                ),
-                &processing_running_actions(job_id),
-                now_ms(),
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)
-}
-
-fn save_processing_notification(
-    connection: &rusqlite::Connection,
-    recording_id: &str,
-    job_id: Option<&str>,
-    status: &str,
-    title: &str,
-    message: &str,
-    actions: &[NotificationAction],
-    timestamp_ms: i64,
-) -> rusqlite::Result<NotificationRow> {
-    let actions_json =
-        serde_json::to_string(actions).map_err(|_error| rusqlite::Error::InvalidQuery)?;
-    let notification_id = find_processing_notification_id(connection, recording_id, job_id)?
-        .unwrap_or_else(|| Uuid::now_v7().to_string());
-
-    storage::save_unseen_notification(
-        connection,
-        &SaveNotificationInput {
-            actions_json,
-            id: notification_id,
-            message: message.to_string(),
-            source: "ai".to_string(),
-            status: status.to_string(),
-            timestamp_ms,
-            title: title.to_string(),
-            topic: "processing-job".to_string(),
-        },
-    )
-}
-
-fn find_processing_notification_id(
-    connection: &rusqlite::Connection,
-    recording_id: &str,
-    job_id: Option<&str>,
-) -> rusqlite::Result<Option<String>> {
-    let mut fallback = None;
-    for row in storage::list_notifications(connection)? {
-        if row.source != "ai" || row.topic != "processing-job" {
-            continue;
-        }
-        let actions = serde_json::from_str::<Vec<NotificationAction>>(&row.actions_json)
-            .map_err(|_error| rusqlite::Error::InvalidQuery)?;
-        let has_job = job_id.is_some_and(|job_id| {
-            actions.iter().any(|action| {
-                action
-                    .payload
-                    .get("jobId")
-                    .is_some_and(|candidate| candidate == job_id)
-            })
-        });
-        if has_job {
-            return Ok(Some(row.id));
-        }
-        if job_id.is_none() && row.message.contains(recording_id) {
-            fallback.get_or_insert(row.id);
-        }
-    }
-
-    Ok(fallback)
-}
-
-fn processing_running_actions(job_id: &str) -> Vec<NotificationAction> {
-    vec![
-        processing_action(
-            "pause",
-            "Pause",
-            "processing-job-pause",
-            job_id,
-            "secondary",
-        ),
-        processing_action(
-            "cancel",
-            "Cancel",
-            "processing-job-cancel",
-            job_id,
-            "destructive",
-        ),
-    ]
-}
-
-fn processing_paused_actions(job_id: &str) -> Vec<NotificationAction> {
-    vec![
-        processing_action(
-            "resume",
-            "Resume",
-            "processing-job-resume",
-            job_id,
-            "default",
-        ),
-        processing_action(
-            "cancel",
-            "Cancel",
-            "processing-job-cancel",
-            job_id,
-            "destructive",
-        ),
-    ]
-}
-
-fn processing_retry_actions(job_id: &str) -> Vec<NotificationAction> {
-    vec![processing_action(
-        "retry",
-        "Retry",
-        "processing-job-retry",
-        job_id,
-        "default",
-    )]
-}
-
-fn processing_failed_actions(job_id: &str) -> Vec<NotificationAction> {
-    processing_retry_actions(job_id)
-}
-
-fn processing_action(
-    id: &str,
-    label: &str,
-    handler: &str,
-    job_id: &str,
-    style: &str,
-) -> NotificationAction {
-    let mut payload = BTreeMap::new();
-    payload.insert("jobId".to_string(), job_id.to_string());
-    NotificationAction {
-        handler: handler.to_string(),
-        id: id.to_string(),
-        label: label.to_string(),
-        payload,
-        style: style.to_string(),
-    }
-}
-
-fn save_model_download_notification(
-    connection: &rusqlite::Connection,
-    model_id: &str,
-    preferred_notification_id: Option<&str>,
-    status: &str,
-    title: &str,
-    message: &str,
-    actions: &[NotificationAction],
-    timestamp_ms: i64,
-) -> rusqlite::Result<NotificationRow> {
-    let actions_json =
-        serde_json::to_string(actions).map_err(|_error| rusqlite::Error::InvalidQuery)?;
-    let notification_id =
-        find_model_download_notification_id(connection, model_id, preferred_notification_id)?
-            .unwrap_or_else(|| Uuid::now_v7().to_string());
-
-    storage::save_unseen_notification(
-        connection,
-        &SaveNotificationInput {
-            actions_json,
-            id: notification_id,
-            message: message.to_string(),
-            source: "ai".to_string(),
-            status: status.to_string(),
-            timestamp_ms,
-            title: title.to_string(),
-            topic: "model-download".to_string(),
-        },
-    )
-}
-
-fn find_model_download_notification_id(
-    connection: &rusqlite::Connection,
-    model_id: &str,
-    preferred_notification_id: Option<&str>,
-) -> rusqlite::Result<Option<String>> {
-    if let Some(notification_id) = preferred_notification_id {
-        if let Some(row) = storage::get_notification(connection, notification_id)? {
-            if row.source == "ai" && row.topic == "model-download" {
-                return Ok(Some(row.id));
-            }
-        }
-    }
-
-    let mut fallback = None;
-    for row in storage::list_notifications(connection)? {
-        if row.source != "ai" || row.topic != "model-download" {
-            continue;
-        }
-
-        let actions = serde_json::from_str::<Vec<NotificationAction>>(&row.actions_json)
-            .map_err(|_error| rusqlite::Error::InvalidQuery)?;
-        let has_model = actions.iter().any(|action| {
-            action
-                .payload
-                .get("modelId")
-                .is_some_and(|candidate| candidate == model_id)
-        });
-
-        if !has_model {
-            continue;
-        }
-
-        if row.status == "running" {
-            return Ok(Some(row.id));
-        }
-
-        fallback.get_or_insert(row.id);
-    }
-
-    Ok(fallback)
-}
-
-fn notification_from_row(row: NotificationRow) -> Result<Notification, AiError> {
-    notifications::notification_from_row(row).map_err(|error| AiError {
-        code: error.code,
-        message: error.message,
-    })
-}
-
-fn model_download_retry_action(model_id: &str) -> NotificationAction {
-    NotificationAction {
-        handler: "model-download-retry".to_string(),
-        id: "retry".to_string(),
-        label: "Retry".to_string(),
-        payload: BTreeMap::from([("modelId".to_string(), model_id.to_string())]),
-        style: "secondary".to_string(),
-    }
-}
-
-fn model_download_cancel_action(model_id: &str) -> NotificationAction {
-    NotificationAction {
-        handler: "model-download-cancel".to_string(),
-        id: "cancel".to_string(),
-        label: "Cancel".to_string(),
-        payload: BTreeMap::from([("modelId".to_string(), model_id.to_string())]),
-        style: "destructive".to_string(),
-    }
-}
-
-fn status_to_notification_status(status: &str) -> &'static str {
-    match status {
-        "queued" => "info",
-        "downloading" => "running",
-        "cancelled" => "cancelled",
-        "failed" => "failed",
-        "available" => "succeeded",
-        _ => "info",
-    }
 }
 
 fn ensure_catalog_model(model_id: &str) -> Result<&'static CatalogModel, AiError> {
@@ -4362,13 +4081,15 @@ mod tests {
 
                 let updated = save_model_download_notification(
                     connection,
-                    "small",
-                    Some(&started.id),
-                    "cancelled",
-                    "Model download cancelled",
-                    "Whisper small download was cancelled.",
-                    &[model_download_retry_action("small")],
-                    30,
+                    ModelDownloadNotificationInput {
+                        actions: &[model_download_retry_action("small")],
+                        message: "Whisper small download was cancelled.",
+                        model_id: "small",
+                        preferred_notification_id: Some(&started.id),
+                        status: "cancelled",
+                        timestamp_ms: 30,
+                        title: "Model download cancelled",
+                    },
                 )?;
 
                 assert_eq!(updated.id, started.id);

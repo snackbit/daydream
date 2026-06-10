@@ -846,12 +846,14 @@ fn pump_composed_frames(
                 if let Err(error) = push_composed_frame(
                     &appsrc,
                     frame,
-                    started_at_ms,
-                    &mut last_pts,
-                    fps,
-                    frame_interval,
-                    timing.as_ref(),
-                    benchmark.as_ref(),
+                    ComposedFramePushContext {
+                        benchmark: benchmark.as_ref(),
+                        fps,
+                        frame_interval,
+                        last_pts: &mut last_pts,
+                        started_at_ms,
+                        timing: timing.as_ref(),
+                    },
                 ) {
                     match stop.try_recv() {
                         Ok(_) | Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -882,12 +884,14 @@ fn drain_ready_composed_frames(
                 push_composed_frame(
                     appsrc,
                     frame,
-                    context.started_at_ms,
-                    context.last_pts,
-                    context.fps,
-                    context.frame_interval,
-                    context.timing,
-                    context.benchmark,
+                    ComposedFramePushContext {
+                        benchmark: context.benchmark,
+                        fps: context.fps,
+                        frame_interval: context.frame_interval,
+                        last_pts: context.last_pts,
+                        started_at_ms: context.started_at_ms,
+                        timing: context.timing,
+                    },
                 )?;
                 drained_frames = drained_frames.saturating_add(1);
             }
@@ -912,6 +916,15 @@ struct DrainReadyFrames<'a> {
     timing: Option<&'a SharedCaptureTiming>,
 }
 
+struct ComposedFramePushContext<'a> {
+    benchmark: Option<&'a RecorderBenchmarkSession>,
+    fps: f64,
+    frame_interval: Duration,
+    last_pts: &'a mut Option<Duration>,
+    started_at_ms: u64,
+    timing: Option<&'a SharedCaptureTiming>,
+}
+
 fn frame_is_after_stop(frame_timestamp_ms: u64, stop_at_ms: u64) -> bool {
     frame_timestamp_ms > stop_at_ms
 }
@@ -919,19 +932,19 @@ fn frame_is_after_stop(frame_timestamp_ms: u64, stop_at_ms: u64) -> bool {
 fn push_composed_frame(
     appsrc: &gst_app::AppSrc,
     frame: CapturedFrame,
-    started_at_ms: u64,
-    last_pts: &mut Option<Duration>,
-    fps: f64,
-    frame_interval: Duration,
-    timing: Option<&SharedCaptureTiming>,
-    benchmark: Option<&RecorderBenchmarkSession>,
+    context: ComposedFramePushContext<'_>,
 ) -> Result<(), String> {
-    let pts = live_frame_pts(frame.timestamp_ms, started_at_ms, frame_interval, *last_pts);
+    let pts = live_frame_pts(
+        frame.timestamp_ms,
+        context.started_at_ms,
+        context.frame_interval,
+        *context.last_pts,
+    );
     let timestamp_ms = frame.timestamp_ms;
     let convert_started = std::time::Instant::now();
     let frame_format = frame.format;
     let frame = prepare_video_frame_for_gstreamer(frame).map_err(|error| error.message)?;
-    if let Some(benchmark) = benchmark {
+    if let Some(benchmark) = context.benchmark {
         benchmark.record_stage(
             RecorderBenchmarkStage::WriterConvert,
             convert_started.elapsed(),
@@ -942,8 +955,8 @@ fn push_composed_frame(
         );
     }
     let push_started = std::time::Instant::now();
-    push_raw_video_frame_at_pts(appsrc, frame, pts, fps, frame_interval)?;
-    if let Some(benchmark) = benchmark {
+    push_raw_video_frame_at_pts(appsrc, frame, pts, context.fps, context.frame_interval)?;
+    if let Some(benchmark) = context.benchmark {
         benchmark.record_stage(
             RecorderBenchmarkStage::WriterPush,
             push_started.elapsed(),
@@ -953,8 +966,8 @@ fn push_composed_frame(
             None,
         );
     }
-    *last_pts = Some(pts);
-    if let Some(timing) = timing {
+    *context.last_pts = Some(pts);
+    if let Some(timing) = context.timing {
         record_frame_sent_to_writer(timing);
     }
 

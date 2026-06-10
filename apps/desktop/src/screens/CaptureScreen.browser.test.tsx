@@ -358,9 +358,8 @@ test('CaptureScreen updates canvas presets and layout actions', async () => {
 
   await screen.findAllByText('Monitor 1');
 
-  fireEvent.change(screen.getByLabelText(/canvas preset/i), {
-    target: { value: '2560x1440' },
-  });
+  fireEvent.click(screen.getByLabelText(/canvas preset/i));
+  fireEvent.click(await screen.findByRole('option', { name: '2560 x 1440' }));
   expect(useRecorderWorkspaceStore.getState().scene).toMatchObject({
     canvasHeight: 1440,
     canvasWidth: 2560,
@@ -1085,25 +1084,27 @@ test('CaptureScreen audio picker shows every unadded device', async () => {
   });
   const select = within(dialog).getByLabelText(/audio source/i);
 
+  fireEvent.click(select);
+
   expect(
-    within(select).getByRole('option', {
+    await screen.findByRole('option', {
       name: 'Secondary desktop monitor',
     }),
   ).toBeTruthy();
   expect(
-    within(select).getByRole('option', {
+    screen.getByRole('option', {
       name: 'Microphone (default)',
     }),
   ).toBeTruthy();
   expect(
-    within(select).queryByRole('option', {
+    screen.queryByRole('option', {
       name: 'Desktop monitor (default)',
     }),
   ).toBeNull();
 
-  fireEvent.change(select, {
-    target: { value: 'secondary-desktop' },
-  });
+  fireEvent.click(
+    screen.getByRole('option', { name: 'Secondary desktop monitor' }),
+  );
   fireEvent.click(within(dialog).getByRole('button', { name: /^add$/i }));
 
   expect(useRecorderWorkspaceStore.getState().desktopAudioSourceId).toBe(

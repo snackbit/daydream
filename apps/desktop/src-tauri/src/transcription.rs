@@ -345,16 +345,16 @@ impl TranscriptionProviderManager {
         local_backend: &str,
     ) -> Result<VerboseTranscription, TranscriptionError> {
         let endpoint = self.local_endpoint(app)?;
-        transcribe_via_rest(
-            &endpoint.url,
-            Some(&endpoint.token),
-            &request.audio_path,
-            &request.model,
-            request.word_timestamps,
-            Some(local_backend),
-            request.timeout,
-            Some(request.cancel),
-        )
+        transcribe_via_rest(RestTranscriptionRequest {
+            audio_path: &request.audio_path,
+            bearer_token: Some(&endpoint.token),
+            cancel: Some(request.cancel),
+            endpoint: &endpoint.url,
+            local_backend: Some(local_backend),
+            model: &request.model,
+            timeout: request.timeout,
+            word_timestamps: request.word_timestamps,
+        })
         .await
     }
 
@@ -596,8 +596,7 @@ fn handle_local_transcription_request(
     }
     let word_timestamps = multipart
         .texts("timestamp_granularities[]")
-        .iter()
-        .any(|value| *value == "word");
+        .contains(&"word");
     let file = multipart.file("file")?;
     let model_path = local_whisper_model_path(&context.app_data_dir, model_id);
     if !model_path.is_file() {
@@ -689,29 +688,43 @@ pub async fn transcribe_remote(
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<VerboseTranscription, TranscriptionError> {
     let endpoint = transcription_endpoint_url(base_url)?;
-    transcribe_via_rest(
-        &endpoint,
-        Some(api_key),
+    transcribe_via_rest(RestTranscriptionRequest {
         audio_path,
-        model,
-        word_timestamps,
-        None,
-        timeout,
+        bearer_token: Some(api_key),
         cancel,
-    )
+        endpoint: &endpoint,
+        local_backend: None,
+        model,
+        timeout,
+        word_timestamps,
+    })
     .await
 }
 
-async fn transcribe_via_rest(
-    endpoint: &str,
-    bearer_token: Option<&str>,
-    audio_path: &Path,
-    model: &str,
-    word_timestamps: bool,
-    local_backend: Option<&str>,
-    timeout: Duration,
+struct RestTranscriptionRequest<'a> {
+    audio_path: &'a Path,
+    bearer_token: Option<&'a str>,
     cancel: Option<Arc<AtomicBool>>,
+    endpoint: &'a str,
+    local_backend: Option<&'a str>,
+    model: &'a str,
+    timeout: Duration,
+    word_timestamps: bool,
+}
+
+async fn transcribe_via_rest(
+    request: RestTranscriptionRequest<'_>,
 ) -> Result<VerboseTranscription, TranscriptionError> {
+    let RestTranscriptionRequest {
+        audio_path,
+        bearer_token,
+        cancel,
+        endpoint,
+        local_backend,
+        model,
+        timeout,
+        word_timestamps,
+    } = request;
     check_cancelled(cancel.as_deref())?;
     let bytes = fs::read(audio_path).map_err(file_error)?;
     check_cancelled(cancel.as_deref())?;
@@ -1359,30 +1372,30 @@ mod tests {
             assert!(endpoint.address.ip().is_loopback());
             let audio_path = temp_dir.join("audio.wav");
             fs::write(&audio_path, b"audio").expect("audio file");
-            let no_token = transcribe_via_rest(
-                &endpoint.url,
-                None,
-                &audio_path,
-                "tiny",
-                true,
-                None,
-                Duration::from_secs(5),
-                None,
-            )
+            let no_token = transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &audio_path,
+                bearer_token: None,
+                cancel: None,
+                endpoint: &endpoint.url,
+                local_backend: None,
+                model: "tiny",
+                timeout: Duration::from_secs(5),
+                word_timestamps: true,
+            })
             .await
             .expect_err("missing token should fail");
             assert_eq!(no_token.code, "ai_transcription_remote_auth_failed");
 
-            let wrong_token = transcribe_via_rest(
-                &endpoint.url,
-                Some("wrong"),
-                &audio_path,
-                "tiny",
-                true,
-                None,
-                Duration::from_secs(5),
-                None,
-            )
+            let wrong_token = transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &audio_path,
+                bearer_token: Some("wrong"),
+                cancel: None,
+                endpoint: &endpoint.url,
+                local_backend: None,
+                model: "tiny",
+                timeout: Duration::from_secs(5),
+                word_timestamps: true,
+            })
             .await
             .expect_err("wrong token should fail");
             assert_eq!(wrong_token.code, "ai_transcription_remote_auth_failed");
@@ -1403,16 +1416,17 @@ mod tests {
             let audio_path = temp_dir.join("audio.wav");
             fs::write(&audio_path, b"audio").expect("audio file");
 
-            let response = transcribe_via_rest(
-                &server.endpoint().url,
-                Some(&server.endpoint().token),
-                &audio_path,
-                "tiny",
-                true,
-                Some("vulkan"),
-                Duration::from_secs(5),
-                None,
-            )
+            let endpoint = server.endpoint();
+            let response = transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &audio_path,
+                bearer_token: Some(&endpoint.token),
+                cancel: None,
+                endpoint: &endpoint.url,
+                local_backend: Some("vulkan"),
+                model: "tiny",
+                timeout: Duration::from_secs(5),
+                word_timestamps: true,
+            })
             .await
             .expect("valid local response");
 
@@ -1440,16 +1454,17 @@ mod tests {
             let audio_path = temp_dir.join("audio.wav");
             fs::write(&audio_path, b"audio").expect("audio file");
 
-            let error = transcribe_via_rest(
-                &server.endpoint().url,
-                Some(&server.endpoint().token),
-                &audio_path,
-                "tiny",
-                true,
-                None,
-                Duration::from_secs(5),
-                None,
-            )
+            let endpoint = server.endpoint();
+            let error = transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &audio_path,
+                bearer_token: Some(&endpoint.token),
+                cancel: None,
+                endpoint: &endpoint.url,
+                local_backend: None,
+                model: "tiny",
+                timeout: Duration::from_secs(5),
+                word_timestamps: true,
+            })
             .await
             .expect_err("missing model");
 
@@ -1478,16 +1493,16 @@ mod tests {
             let request_audio_path = audio_path.clone();
 
             let request = tauri::async_runtime::spawn(async move {
-                transcribe_via_rest(
-                    &url,
-                    Some(&token),
-                    &request_audio_path,
-                    "tiny",
-                    false,
-                    None,
-                    Duration::from_secs(10),
-                    Some(request_cancel),
-                )
+                transcribe_via_rest(RestTranscriptionRequest {
+                    audio_path: &request_audio_path,
+                    bearer_token: Some(&token),
+                    cancel: Some(request_cancel),
+                    endpoint: &url,
+                    local_backend: None,
+                    model: "tiny",
+                    timeout: Duration::from_secs(10),
+                    word_timestamps: false,
+                })
                 .await
             });
 
@@ -1704,16 +1719,16 @@ mod tests {
             fs::write(&audio_path, b"private audio").expect("audio");
             let cancel = Arc::new(AtomicBool::new(true));
 
-            let error = transcribe_via_rest(
-                "http://127.0.0.1:9/v1/audio/transcriptions",
-                Some("sk-secret"),
-                &audio_path,
-                "tiny",
-                false,
-                None,
-                Duration::from_secs(5),
-                Some(cancel),
-            )
+            let error = transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &audio_path,
+                bearer_token: Some("sk-secret"),
+                cancel: Some(cancel),
+                endpoint: "http://127.0.0.1:9/v1/audio/transcriptions",
+                local_backend: None,
+                model: "tiny",
+                timeout: Duration::from_secs(5),
+                word_timestamps: false,
+            })
             .await
             .expect_err("cancelled request");
 

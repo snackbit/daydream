@@ -134,7 +134,7 @@ fn storage_cleanup_plan(
         .iter()
         .filter(|entry| is_cleanup_eligible(&entry.recording))
         .filter(|entry| retention_reference_ms(&entry.recording) < retention_cutoff_ms)
-        .map(|entry| cleanup_candidate(entry))
+        .map(cleanup_candidate)
         .collect::<Vec<_>>();
     candidates.sort_by(cleanup_candidate_order);
     for candidate in &candidates {
@@ -152,7 +152,7 @@ fn storage_cleanup_plan(
             .iter()
             .filter(|entry| is_cleanup_eligible(&entry.recording))
             .filter(|entry| !planned_ids.contains(&entry.recording.id))
-            .map(|entry| cleanup_candidate(entry))
+            .map(cleanup_candidate)
             .collect::<Vec<_>>();
         cap_candidates.sort_by(cleanup_candidate_order);
 

@@ -212,7 +212,7 @@ fn execute_stored_action(
                 "model-download",
                 "Download unavailable",
                 &format!("Model download is not implemented yet for {model_id}."),
-                &[action.clone()],
+                std::slice::from_ref(action),
                 timestamp_ms,
             )?;
         }
