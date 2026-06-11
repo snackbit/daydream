@@ -9,6 +9,7 @@ use tauri::{Manager, State};
 use crate::{
     storage::{self, AppSettingRow, AppStorage, SaveAppSettingInput},
     storage_limits::{self, StorageCleanupPreview, StorageCleanupResult},
+    whisper_backend,
 };
 
 pub const DEFAULT_RECORD_FPS: f64 = 0.2;
@@ -24,6 +25,7 @@ pub const DEFAULT_STORAGE_SIZE_LIMIT_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 pub const MIN_STORAGE_SIZE_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
 pub const DEFAULT_AI_TRANSCRIPTION_MODEL_ID: &str = "small";
 pub const DEFAULT_AI_TRANSCRIPTION_BACKEND: &str = "cpu";
+pub const DEFAULT_AI_TRANSCRIPTION_LANGUAGE: &str = "auto";
 pub const DEFAULT_AI_KEYBOARD_WINDOW_MS: u32 = 30_000;
 pub const DEFAULT_AI_MOUSE_WINDOW_MS: u32 = 5_000;
 pub const MIN_AI_ACTIVITY_WINDOW_MS: u32 = 1_000;
@@ -37,6 +39,18 @@ pub const MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 8;
 pub const DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 300_000;
 pub const MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 30_000;
 pub const MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 3_600_000;
+pub const DEFAULT_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -45.0;
+pub const MIN_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -80.0;
+pub const MAX_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -20.0;
+pub const DEFAULT_AI_TRANSCRIPTION_MIN_SPEECH_MS: u32 = 250;
+pub const MIN_AI_TRANSCRIPTION_MIN_SPEECH_MS: u32 = 50;
+pub const MAX_AI_TRANSCRIPTION_MIN_SPEECH_MS: u32 = 2_000;
+pub const DEFAULT_AI_TRANSCRIPTION_MERGE_GAP_MS: u32 = 700;
+pub const MIN_AI_TRANSCRIPTION_MERGE_GAP_MS: u32 = 0;
+pub const MAX_AI_TRANSCRIPTION_MERGE_GAP_MS: u32 = 5_000;
+pub const DEFAULT_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 3.0;
+pub const MIN_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 1.0;
+pub const MAX_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 10.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -52,11 +66,25 @@ pub struct AppSettingsState {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub ai: AiSettings,
+    pub debug: DebugSettings,
+    pub expert: ExpertSettings,
     pub record: RecordSettings,
     pub storage: StorageSettings,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSettings {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpertSettings {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettings {
     pub activity: AiActivitySettings,
@@ -66,15 +94,21 @@ pub struct AiSettings {
     pub vision: AiVisionProviderSettings,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiTranscriptionProviderSettings {
+    pub language: String,
     pub local_backend: String,
     pub local_model_id: String,
+    pub max_initial_timestamp_seconds: f64,
+    pub merge_gap_ms: u32,
+    pub min_speech_ms: u32,
     pub provider: String,
     pub remote_api_key_ref: Option<String>,
     pub remote_base_url: Option<String>,
     pub remote_model: Option<String>,
+    pub silence_gate_enabled: bool,
+    pub silence_threshold_db: f64,
     pub word_timestamps_enabled: bool,
 }
 
@@ -147,11 +181,25 @@ pub struct AppSettingsLimits {
     pub storage: StorageSettingsLimits,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettingsLimits {
     pub activity: AiActivityLimits,
     pub processing: AiProcessingLimits,
+    pub transcription: AiTranscriptionLimits,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranscriptionLimits {
+    pub max_initial_timestamp_seconds_min: f64,
+    pub max_initial_timestamp_seconds_max: f64,
+    pub merge_gap_ms_min: u32,
+    pub merge_gap_ms_max: u32,
+    pub min_speech_ms_min: u32,
+    pub min_speech_ms_max: u32,
+    pub silence_threshold_db_min: f64,
+    pub silence_threshold_db_max: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -278,6 +326,8 @@ pub fn load_app_settings(storage: &AppStorage) -> Result<AppSettings, AppSetting
 pub fn default_settings() -> AppSettings {
     AppSettings {
         ai: default_ai_settings(),
+        debug: DebugSettings { enabled: false },
+        expert: ExpertSettings { enabled: false },
         record: RecordSettings {
             fps: DEFAULT_RECORD_FPS,
             video_bitrate_kbps: DEFAULT_VIDEO_BITRATE_KBPS,
@@ -314,12 +364,18 @@ pub fn default_ai_settings() -> AiSettings {
             periodic_full_frame_interval_ms: DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
         },
         transcription: AiTranscriptionProviderSettings {
+            language: DEFAULT_AI_TRANSCRIPTION_LANGUAGE.to_string(),
             local_backend: DEFAULT_AI_TRANSCRIPTION_BACKEND.to_string(),
             local_model_id: DEFAULT_AI_TRANSCRIPTION_MODEL_ID.to_string(),
+            max_initial_timestamp_seconds: DEFAULT_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS,
+            merge_gap_ms: DEFAULT_AI_TRANSCRIPTION_MERGE_GAP_MS,
+            min_speech_ms: DEFAULT_AI_TRANSCRIPTION_MIN_SPEECH_MS,
             provider: "local-whisper-cpp".to_string(),
             remote_api_key_ref: None,
             remote_base_url: None,
             remote_model: None,
+            silence_gate_enabled: true,
+            silence_threshold_db: DEFAULT_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB,
             word_timestamps_enabled: true,
         },
         vision: AiVisionProviderSettings {
@@ -347,6 +403,18 @@ pub fn settings_limits() -> AppSettingsLimits {
                 max_parallel_jobs_max: MAX_AI_MAX_PARALLEL_JOBS,
                 periodic_full_frame_interval_ms_min: MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
                 periodic_full_frame_interval_ms_max: MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+            },
+            transcription: AiTranscriptionLimits {
+                max_initial_timestamp_seconds_min:
+                    MIN_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS,
+                max_initial_timestamp_seconds_max:
+                    MAX_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS,
+                merge_gap_ms_min: MIN_AI_TRANSCRIPTION_MERGE_GAP_MS,
+                merge_gap_ms_max: MAX_AI_TRANSCRIPTION_MERGE_GAP_MS,
+                min_speech_ms_min: MIN_AI_TRANSCRIPTION_MIN_SPEECH_MS,
+                min_speech_ms_max: MAX_AI_TRANSCRIPTION_MIN_SPEECH_MS,
+                silence_threshold_db_min: MIN_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB,
+                silence_threshold_db_max: MAX_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB,
             },
         },
         record: RecordSettingsLimits {
@@ -411,6 +479,8 @@ fn apply_setting_row(
     row: &AppSettingRow,
 ) -> Result<(), AppSettingsError> {
     match row.key.as_str() {
+        "debug.enabled" => settings.debug.enabled = setting_value(row)?,
+        "expert.enabled" => settings.expert.enabled = setting_value(row)?,
         "record.fps" => settings.record.fps = setting_value(row)?,
         "record.videoBitrateKbps" => settings.record.video_bitrate_kbps = setting_value(row)?,
         "storage.retentionDays" => settings.storage.retention_days = setting_value(row)?,
@@ -423,6 +493,18 @@ fn apply_setting_row(
             settings.ai.transcription.local_backend =
                 coerce_stored_transcription_backend(setting_value(row)?);
         }
+        "ai.transcription.language" => {
+            settings.ai.transcription.language = setting_value(row)?;
+        }
+        "ai.transcription.maxInitialTimestampSeconds" => {
+            settings.ai.transcription.max_initial_timestamp_seconds = setting_value(row)?;
+        }
+        "ai.transcription.mergeGapMs" => {
+            settings.ai.transcription.merge_gap_ms = setting_value(row)?;
+        }
+        "ai.transcription.minSpeechMs" => {
+            settings.ai.transcription.min_speech_ms = setting_value(row)?;
+        }
         "ai.transcription.remoteBaseUrl" => {
             settings.ai.transcription.remote_base_url = setting_value(row)?;
         }
@@ -431,6 +513,12 @@ fn apply_setting_row(
         }
         "ai.transcription.remoteApiKeyRef" => {
             settings.ai.transcription.remote_api_key_ref = setting_value(row)?;
+        }
+        "ai.transcription.silenceGateEnabled" => {
+            settings.ai.transcription.silence_gate_enabled = setting_value(row)?;
+        }
+        "ai.transcription.silenceThresholdDb" => {
+            settings.ai.transcription.silence_threshold_db = setting_value(row)?;
         }
         "ai.transcription.wordTimestampsEnabled" => {
             settings.ai.transcription.word_timestamps_enabled = setting_value(row)?;
@@ -488,6 +576,18 @@ fn settings_to_storage_inputs(
     timestamp_ms: i64,
 ) -> Result<Vec<SaveAppSettingInput>, AppSettingsError> {
     Ok(vec![
+        setting_input(
+            "debug.enabled",
+            &settings.debug.enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "expert.enabled",
+            &settings.expert.enabled,
+            false,
+            timestamp_ms,
+        )?,
         setting_input("record.fps", &settings.record.fps, false, timestamp_ms)?,
         setting_input(
             "record.videoBitrateKbps",
@@ -526,6 +626,30 @@ fn settings_to_storage_inputs(
             timestamp_ms,
         )?,
         setting_input(
+            "ai.transcription.language",
+            &settings.ai.transcription.language,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.maxInitialTimestampSeconds",
+            &settings.ai.transcription.max_initial_timestamp_seconds,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.mergeGapMs",
+            &settings.ai.transcription.merge_gap_ms,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.minSpeechMs",
+            &settings.ai.transcription.min_speech_ms,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
             "ai.transcription.remoteBaseUrl",
             &settings.ai.transcription.remote_base_url,
             false,
@@ -540,6 +664,18 @@ fn settings_to_storage_inputs(
         setting_input(
             "ai.transcription.remoteApiKeyRef",
             &settings.ai.transcription.remote_api_key_ref,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.silenceGateEnabled",
+            &settings.ai.transcription.silence_gate_enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.transcription.silenceThresholdDb",
+            &settings.ai.transcription.silence_threshold_db,
             false,
             timestamp_ms,
         )?,
@@ -720,6 +856,28 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         "Local transcription model must be one of the supported multilingual models.",
     )?;
     validate_transcription_backend(&settings.transcription.local_backend)?;
+    validate_transcription_language(&settings.transcription.language)?;
+    validate_f64_range(
+        "ai.transcription.maxInitialTimestampSeconds",
+        settings.transcription.max_initial_timestamp_seconds,
+        MIN_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS,
+        MAX_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS,
+        "Max initial timestamp must be between 1 and 10 seconds.",
+    )?;
+    validate_u32_range(
+        "ai.transcription.mergeGapMs",
+        settings.transcription.merge_gap_ms,
+        MIN_AI_TRANSCRIPTION_MERGE_GAP_MS,
+        MAX_AI_TRANSCRIPTION_MERGE_GAP_MS,
+        "Transcription merge gap must be between 0 and 5000 ms.",
+    )?;
+    validate_u32_range(
+        "ai.transcription.minSpeechMs",
+        settings.transcription.min_speech_ms,
+        MIN_AI_TRANSCRIPTION_MIN_SPEECH_MS,
+        MAX_AI_TRANSCRIPTION_MIN_SPEECH_MS,
+        "Minimum speech duration must be between 50 and 2000 ms.",
+    )?;
     validate_optional_url(
         "ai.transcription.remoteBaseUrl",
         settings.transcription.remote_base_url.as_deref(),
@@ -728,6 +886,13 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         "ai.transcription.remoteModel",
         settings.transcription.remote_model.as_deref(),
         120,
+    )?;
+    validate_f64_range(
+        "ai.transcription.silenceThresholdDb",
+        settings.transcription.silence_threshold_db,
+        MIN_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB,
+        MAX_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB,
+        "Silence threshold must be between -80 and -20 dBFS.",
     )?;
     validate_one_of(
         "ai.vision.provider",
@@ -803,6 +968,17 @@ fn validate_transcription_backend(value: &str) -> Result<(), AppSettingsError> {
     Err(validation_error(
         "ai.transcription.localBackend",
         "Selected local transcription backend is not available in this build.",
+    ))
+}
+
+fn validate_transcription_language(value: &str) -> Result<(), AppSettingsError> {
+    if value == DEFAULT_AI_TRANSCRIPTION_LANGUAGE || whisper_backend::language_supported(value) {
+        return Ok(());
+    }
+
+    Err(validation_error(
+        "ai.transcription.language",
+        "Transcription language must be auto or one of the supported Whisper languages.",
     ))
 }
 
@@ -976,6 +1152,12 @@ mod tests {
                             is_sensitive: false,
                             timestamp_ms: 1,
                         },
+                        SaveAppSettingInput {
+                            key: "ai.transcription.language".to_string(),
+                            value_json: "\"de\"".to_string(),
+                            is_sensitive: false,
+                            timestamp_ms: 1,
+                        },
                     ],
                 )
             })
@@ -987,6 +1169,7 @@ mod tests {
         assert_eq!(settings.record.video_bitrate_kbps, 2_500);
         assert_eq!(settings.storage.retention_days, 30);
         assert_eq!(settings.storage.size_limit_bytes, 75 * 1024 * 1024 * 1024);
+        assert_eq!(settings.ai.transcription.language, "de");
     }
 
     #[test]
@@ -1115,6 +1298,19 @@ mod tests {
                 AppSettings {
                     ai: AiSettings {
                         transcription: AiTranscriptionProviderSettings {
+                            language: "klingon".to_string(),
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.language",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
                             remote_base_url: Some("file:///tmp/model".to_string()),
                             ..default_settings().ai.transcription
                         },
@@ -1123,6 +1319,59 @@ mod tests {
                     ..default_settings()
                 },
                 "ai.transcription.remoteBaseUrl",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            max_initial_timestamp_seconds:
+                                MAX_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS + 1.0,
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.maxInitialTimestampSeconds",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            silence_threshold_db: MIN_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB - 1.0,
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.silenceThresholdDb",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            min_speech_ms: MIN_AI_TRANSCRIPTION_MIN_SPEECH_MS - 1,
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.minSpeechMs",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        transcription: AiTranscriptionProviderSettings {
+                            merge_gap_ms: MAX_AI_TRANSCRIPTION_MERGE_GAP_MS + 1,
+                            ..default_settings().ai.transcription
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.transcription.mergeGapMs",
             ),
             (
                 AppSettings {

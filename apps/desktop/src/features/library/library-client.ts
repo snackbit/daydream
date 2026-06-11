@@ -3,6 +3,8 @@ import type {
   CloseLibraryPlaybackSessionRequest,
   DeleteLibraryRecordingInput,
   DeleteLibraryRecordingsInput,
+  LibraryRecordingDebugData,
+  LibraryRecordingDebugInput,
   LibraryPlaybackAssetRequest,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -46,6 +48,14 @@ export async function renameLibraryRecording(
   input: RenameLibraryRecordingInput,
 ): Promise<LibraryRecordingDetail> {
   return invoke<LibraryRecordingDetail>('renameLibraryRecording', { input });
+}
+
+export async function getLibraryRecordingDebug(
+  input: LibraryRecordingDebugInput,
+): Promise<LibraryRecordingDebugData> {
+  return invoke<LibraryRecordingDebugData>('getLibraryRecordingDebug', {
+    input,
+  });
 }
 
 export async function getRecordingWaveforms(

@@ -19,6 +19,9 @@ const client = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/diagnostics/diagnostics-client', () => client);
+vi.mock('@/features/settings/use-debug-enabled', () => ({
+  useDebugEnabled: () => true,
+}));
 
 const mediaWriterCapabilities = {
   appsrc: true,
@@ -52,8 +55,14 @@ const diagnostics = {
       maxParallelChunksPerJob: 1,
       maxParallelJobs: 1,
       transcriptionBackend: 'cpu',
+      transcriptionLanguage: 'auto',
+      transcriptionMaxInitialTimestampSeconds: 3,
+      transcriptionMergeGapMs: 700,
+      transcriptionMinSpeechMs: 250,
       transcriptionModel: 'large-v3-turbo',
       transcriptionProvider: 'local-whisper-cpp',
+      transcriptionSilenceGateEnabled: true,
+      transcriptionSilenceThresholdDb: -45,
       wordTimestampsEnabled: true,
     },
     transcriptTracks: [],

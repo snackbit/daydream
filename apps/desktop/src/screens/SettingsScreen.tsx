@@ -33,6 +33,7 @@ import {
 } from '@/features/ai/ai-client';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
+import { GeneralSettingsTab } from '@/features/settings/components/general-settings-tab';
 import {
   cadenceModeForFps,
   RecordSettingsTab,
@@ -567,12 +568,17 @@ export function SettingsScreen() {
             : 'Loading settings.'}
         </div>
       ) : (
-        <Tabs defaultValue="record">
+        <Tabs defaultValue="general">
           <TabsList aria-label="Settings sections">
+            <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="record">Record</TabsTrigger>
             <TabsTrigger value="storage">Storage/Library</TabsTrigger>
             <TabsTrigger value="ai">AI/LLM</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="general">
+            <GeneralSettingsTab draft={draft} onUpdateDraft={updateDraft} />
+          </TabsContent>
 
           <TabsContent value="record">
             <RecordSettingsTab

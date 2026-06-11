@@ -51,8 +51,14 @@ export interface AiProcessingSettingsDiagnostics {
   maxParallelChunksPerJob: number;
   maxParallelJobs: number;
   transcriptionBackend: AiTranscriptionBackend;
+  transcriptionLanguage: string;
+  transcriptionMaxInitialTimestampSeconds: number;
+  transcriptionMergeGapMs: number;
+  transcriptionMinSpeechMs: number;
   transcriptionModel: string;
   transcriptionProvider: AiProviderKind;
+  transcriptionSilenceGateEnabled: boolean;
+  transcriptionSilenceThresholdDb: number;
   wordTimestampsEnabled: boolean;
 }
 
@@ -71,6 +77,7 @@ export interface AiProcessingChunkDiagnostics {
   errorCode: string | null;
   id: string;
   progress: number;
+  resultCode: string | null;
   segmentId: string | null;
   sourceKind: ProcessingChunkSourceKind;
   startOffsetMs: number | null;

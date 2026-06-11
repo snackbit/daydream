@@ -50,6 +50,8 @@ struct TranscriptionProviderState {
 pub struct TranscriptionRequest {
     pub audio_path: PathBuf,
     pub cancel: Arc<AtomicBool>,
+    pub language: String,
+    pub max_initial_timestamp_seconds: f64,
     pub model: String,
     pub timeout: Duration,
     pub word_timestamps: bool,
@@ -97,7 +99,9 @@ pub struct TranscriptionError {
 pub struct LocalTranscriptionInput {
     pub audio_path: PathBuf,
     pub cancel: Arc<AtomicBool>,
+    pub language: String,
     pub local_backend: String,
+    pub max_initial_timestamp_seconds: f64,
     pub model_id: String,
     pub model_path: PathBuf,
     pub word_timestamps: bool,
@@ -419,7 +423,9 @@ impl LocalTranscriptionRunner for WhisperProcessTranscriptionRunner {
                 bearer_token: Some(&endpoint.token),
                 cancel: Some(input.cancel),
                 endpoint: &endpoint.transcription_url,
+                language: &input.language,
                 local_backend: Some(&input.local_backend),
+                max_initial_timestamp_seconds: Some(input.max_initial_timestamp_seconds),
                 model: &input.model_id,
                 timeout: LOCAL_WORKER_WARMUP_TIMEOUT,
                 word_timestamps: input.word_timestamps,
@@ -456,7 +462,13 @@ fn run_whisper_worker(receiver: mpsc::Receiver<WhisperWorkerCommand>) {
                     .and_then(|model| {
                         model
                             .model
-                            .transcribe_wav(&input.audio_path, input.word_timestamps, input.cancel)
+                            .transcribe_wav(
+                                &input.audio_path,
+                                &input.language,
+                                input.max_initial_timestamp_seconds as f32,
+                                input.word_timestamps,
+                                input.cancel,
+                            )
                             .map_err(whisper_error)
                     })
                 });
@@ -544,6 +556,8 @@ impl TranscriptionProviderManager {
                     &api_key,
                     &request.audio_path,
                     &request.model,
+                    &app_settings.ai.transcription.language,
+                    request.max_initial_timestamp_seconds,
                     request.word_timestamps,
                     request.timeout,
                     Some(request.cancel),
@@ -569,7 +583,9 @@ impl TranscriptionProviderManager {
             bearer_token: Some(&endpoint.token),
             cancel: Some(request.cancel),
             endpoint: &endpoint.url,
+            language: &request.language,
             local_backend: Some(local_backend),
+            max_initial_timestamp_seconds: Some(request.max_initial_timestamp_seconds),
             model: &request.model,
             timeout: request.timeout,
             word_timestamps: request.word_timestamps,
@@ -600,6 +616,21 @@ impl TranscriptionProviderManager {
             )
         })?;
         let model_id = app_settings.ai.transcription.local_model_id;
+        let model = storage
+            .with_connection(|connection| storage::get_ai_model_asset(connection, &model_id))
+            .map_err(storage_error)?
+            .ok_or_else(|| {
+                transcription_error(
+                    "ai_transcription_local_model_unavailable",
+                    "Selected local transcription model has not been downloaded.",
+                )
+            })?;
+        if !is_local_model_ready_for_warmup(&model) {
+            return Err(transcription_error(
+                "ai_transcription_local_model_unavailable",
+                "Selected local transcription model is not ready to load.",
+            ));
+        }
         let model_path = local_whisper_model_path(&app_data_dir, &model_id);
         if !model_path.is_file() {
             return Err(transcription_error(
@@ -654,6 +685,10 @@ impl TranscriptionProviderManager {
                 )
             })
     }
+}
+
+fn is_local_model_ready_for_warmup(model: &storage::AiModelAssetRow) -> bool {
+    model.download_status == "available" && model.verification_status == "passed"
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -881,6 +916,13 @@ fn handle_local_transcription_request(
     let word_timestamps = multipart
         .texts("timestamp_granularities[]")
         .contains(&"word");
+    let max_initial_timestamp_seconds = multipart
+        .optional_text("max_initial_timestamp_seconds")
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(settings::DEFAULT_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS);
+    let language = multipart
+        .optional_text("language")
+        .unwrap_or(settings::DEFAULT_AI_TRANSCRIPTION_LANGUAGE);
     let file = multipart.file("file")?;
     let model_path = local_whisper_model_path(&context.app_data_dir, model_id);
     if !model_path.is_file() {
@@ -898,7 +940,9 @@ fn handle_local_transcription_request(
     let result = context.runner.transcribe(LocalTranscriptionInput {
         audio_path: audio_path.clone(),
         cancel,
+        language: language.to_string(),
         local_backend: local_backend.to_string(),
+        max_initial_timestamp_seconds,
         model_id: model_id.to_string(),
         model_path,
         word_timestamps,
@@ -992,6 +1036,8 @@ pub async fn transcribe_remote(
     api_key: &str,
     audio_path: &Path,
     model: &str,
+    language: &str,
+    _max_initial_timestamp_seconds: f64,
     word_timestamps: bool,
     timeout: Duration,
     cancel: Option<Arc<AtomicBool>>,
@@ -1002,7 +1048,9 @@ pub async fn transcribe_remote(
         bearer_token: Some(api_key),
         cancel,
         endpoint: &endpoint,
+        language,
         local_backend: None,
+        max_initial_timestamp_seconds: None,
         model,
         timeout,
         word_timestamps,
@@ -1059,7 +1107,9 @@ struct RestTranscriptionRequest<'a> {
     bearer_token: Option<&'a str>,
     cancel: Option<Arc<AtomicBool>>,
     endpoint: &'a str,
+    language: &'a str,
     local_backend: Option<&'a str>,
+    max_initial_timestamp_seconds: Option<f64>,
     model: &'a str,
     timeout: Duration,
     word_timestamps: bool,
@@ -1073,7 +1123,9 @@ async fn transcribe_via_rest(
         bearer_token,
         cancel,
         endpoint,
+        language,
         local_backend,
+        max_initial_timestamp_seconds,
         model,
         timeout,
         word_timestamps,
@@ -1101,8 +1153,17 @@ async fn transcribe_via_rest(
     if word_timestamps {
         form = form.text("timestamp_granularities[]", "word");
     }
+    if language != settings::DEFAULT_AI_TRANSCRIPTION_LANGUAGE {
+        form = form.text("language", language.to_string());
+    }
     if let Some(local_backend) = local_backend {
         form = form.text(LOCAL_BACKEND_FORM_FIELD, local_backend.to_string());
+    }
+    if let Some(max_initial_timestamp_seconds) = max_initial_timestamp_seconds {
+        form = form.text(
+            "max_initial_timestamp_seconds",
+            max_initial_timestamp_seconds.to_string(),
+        );
     }
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -1750,7 +1811,9 @@ mod tests {
                 bearer_token: None,
                 cancel: None,
                 endpoint: &endpoint.url,
+                language: "auto",
                 local_backend: None,
+                max_initial_timestamp_seconds: None,
                 model: "tiny",
                 timeout: Duration::from_secs(5),
                 word_timestamps: true,
@@ -1764,7 +1827,9 @@ mod tests {
                 bearer_token: Some("wrong"),
                 cancel: None,
                 endpoint: &endpoint.url,
+                language: "auto",
                 local_backend: None,
+                max_initial_timestamp_seconds: None,
                 model: "tiny",
                 timeout: Duration::from_secs(5),
                 word_timestamps: true,
@@ -1795,7 +1860,9 @@ mod tests {
                 bearer_token: Some(&endpoint.token),
                 cancel: None,
                 endpoint: &endpoint.url,
+                language: "auto",
                 local_backend: Some("vulkan"),
+                max_initial_timestamp_seconds: Some(3.0),
                 model: "tiny",
                 timeout: Duration::from_secs(5),
                 word_timestamps: true,
@@ -1809,7 +1876,9 @@ mod tests {
             let calls = runner.calls.lock().expect("calls");
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].model_id, "tiny");
+            assert_eq!(calls[0].language, "auto");
             assert_eq!(calls[0].local_backend, "vulkan");
+            assert_eq!(calls[0].max_initial_timestamp_seconds, 3.0);
             assert!(calls[0].word_timestamps);
             assert!(calls[0].model_path.is_file());
 
@@ -1877,7 +1946,9 @@ mod tests {
                 bearer_token: Some(&endpoint.token),
                 cancel: None,
                 endpoint: &endpoint.url,
+                language: "auto",
                 local_backend: None,
+                max_initial_timestamp_seconds: None,
                 model: "tiny",
                 timeout: Duration::from_secs(5),
                 word_timestamps: true,
@@ -1890,6 +1961,17 @@ mod tests {
             drop(server);
             let _ = fs::remove_dir_all(temp_dir);
         });
+    }
+
+    #[test]
+    fn local_model_warmup_requires_available_verified_model() {
+        let ready = test_model_asset_row("available", "passed");
+        let downloading = test_model_asset_row("downloading", "pending");
+        let unverified = test_model_asset_row("available", "pending");
+
+        assert!(is_local_model_ready_for_warmup(&ready));
+        assert!(!is_local_model_ready_for_warmup(&downloading));
+        assert!(!is_local_model_ready_for_warmup(&unverified));
     }
 
     #[test]
@@ -1915,7 +1997,9 @@ mod tests {
                     bearer_token: Some(&token),
                     cancel: Some(request_cancel),
                     endpoint: &url,
+                    language: "auto",
                     local_backend: None,
+                    max_initial_timestamp_seconds: None,
                     model: "tiny",
                     timeout: Duration::from_secs(10),
                     word_timestamps: false,
@@ -1948,7 +2032,9 @@ mod tests {
             .transcribe(LocalTranscriptionInput {
                 audio_path: temp_dir.join("missing.wav"),
                 cancel,
+                language: "auto".to_string(),
                 local_backend: "cpu".to_string(),
+                max_initial_timestamp_seconds: 3.0,
                 model_id: "tiny".to_string(),
                 model_path: temp_dir.join("missing-model.bin"),
                 word_timestamps: false,
@@ -2039,6 +2125,8 @@ mod tests {
                 "sk-test",
                 &audio_path,
                 "tiny",
+                "de",
+                3.0,
                 true,
                 Duration::from_secs(5),
                 None,
@@ -2052,6 +2140,8 @@ mod tests {
             assert!(request.contains("authorization: Bearer sk-test"));
             assert!(request.contains("name=\"model\""));
             assert!(request.contains("tiny"));
+            assert!(request.contains("name=\"language\""));
+            assert!(request.contains("de"));
             assert!(request.contains("name=\"timestamp_granularities[]\""));
             assert!(request.contains("word"));
             assert!(request.contains("segment"));
@@ -2073,6 +2163,8 @@ mod tests {
                 "sk-secret",
                 &audio_path,
                 "tiny",
+                "auto",
+                3.0,
                 false,
                 Duration::from_secs(5),
                 None,
@@ -2105,6 +2197,8 @@ mod tests {
                 "sk-secret",
                 &audio_path,
                 "tiny",
+                "auto",
+                3.0,
                 false,
                 Duration::from_secs(5),
                 None,
@@ -2132,6 +2226,8 @@ mod tests {
                 "sk-secret",
                 &audio_path,
                 "tiny",
+                "auto",
+                3.0,
                 false,
                 Duration::from_secs(5),
                 None,
@@ -2160,7 +2256,9 @@ mod tests {
                 bearer_token: Some("sk-secret"),
                 cancel: Some(cancel),
                 endpoint: "http://127.0.0.1:9/v1/audio/transcriptions",
+                language: "auto",
                 local_backend: None,
+                max_initial_timestamp_seconds: None,
                 model: "tiny",
                 timeout: Duration::from_secs(5),
                 word_timestamps: false,
@@ -2205,6 +2303,31 @@ mod tests {
         let path = local_whisper_model_path(app_data_dir, model_id);
         fs::create_dir_all(path.parent().expect("model parent")).expect("model dir");
         fs::write(path, b"model").expect("model file");
+    }
+
+    fn test_model_asset_row(
+        download_status: &str,
+        verification_status: &str,
+    ) -> storage::AiModelAssetRow {
+        storage::AiModelAssetRow {
+            checksum: None,
+            checksum_algorithm: None,
+            created_at_ms: 1,
+            display_label: "Whisper tiny".to_string(),
+            downloaded_bytes: 0,
+            download_status: download_status.to_string(),
+            etag: None,
+            error_code: None,
+            id: "tiny".to_string(),
+            local_path: None,
+            provider: "local-whisper-cpp".to_string(),
+            self_test_status: "not-run".to_string(),
+            size_bytes: Some(1),
+            source_url: None,
+            total_bytes: Some(1),
+            updated_at_ms: 1,
+            verification_status: verification_status.to_string(),
+        }
     }
 
     struct OneShotServer {

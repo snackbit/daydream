@@ -10,7 +10,7 @@ export function StartupWarningBanner() {
   }
 
   return (
-    <Alert className="rounded-none border-x-0 border-t-0">
+    <Alert className="rounded-none border-x-0 border-t-0 px-4">
       <AlertTriangle className="size-4" />
       <AlertTitle>Some startup work needs attention</AlertTitle>
       <AlertDescription>

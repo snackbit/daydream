@@ -13,12 +13,17 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { useStudioTimelineStore } from '@/features/library/components/studio/studio-timeline-store';
+import {
+  TRACK_LANE_HEIGHT_PX,
+  TRACK_RULER_HEIGHT_PX,
+} from '@/features/library/components/studio/track-timeline-math';
 import { RecordingStudioScreen } from './RecordingStudioScreen';
 
 const client = vi.hoisted(() => ({
   closeLibraryPlaybackSession: vi.fn(),
   createLibraryPlaybackSession: vi.fn(),
   deleteLibraryRecording: vi.fn(),
+  getLibraryRecordingDebug: vi.fn(),
   getLibraryRecording: vi.fn(),
   getRecordingWaveformTiles: vi.fn(),
   renameLibraryRecording: vi.fn(),
@@ -40,6 +45,9 @@ const routeState = vi.hoisted(() => ({
 
 vi.mock('@/features/library/library-client', () => client);
 vi.mock('@/features/ai/ai-client', () => aiClient);
+vi.mock('@/features/settings/use-debug-enabled', () => ({
+  useDebugEnabled: () => false,
+}));
 
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => router.navigate,
@@ -509,6 +517,7 @@ test('RecordingStudioScreen shows processed AI state without a spinner', async (
         jobId: 'job-1',
         progress: 1,
         recordingId: 'recording-1',
+        resultCode: null,
         segmentId: 'segment-1',
         sourceKind: 'audio',
         startOffsetMs: 0,
@@ -617,6 +626,7 @@ test('RecordingStudioScreen treats active chunks as processing even when the job
         jobId: 'job-1',
         progress: 0.5,
         recordingId: 'recording-1',
+        resultCode: null,
         segmentId: 'segment-1',
         sourceKind: 'audio',
         startOffsetMs: 0,
@@ -679,6 +689,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
         jobId: 'job-1',
         progress: 0.05,
         recordingId: 'recording-1',
+        resultCode: null,
         segmentId: 'segment-1',
         sourceKind: 'audio',
         startOffsetMs: 0,
@@ -721,6 +732,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
         jobId: 'job-1',
         progress: 1,
         recordingId: 'recording-1',
+        resultCode: null,
         segmentId: 'segment-1',
         sourceKind: 'audio',
         startOffsetMs: 0,
@@ -737,6 +749,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
         jobId: 'job-1',
         progress: 0,
         recordingId: 'recording-1',
+        resultCode: null,
         segmentId: 'segment-2',
         sourceKind: 'audio',
         startOffsetMs: 5_000,
@@ -787,6 +800,125 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
     (screen.getByRole('button', { name: /retry ai/i }) as HTMLButtonElement)
       .disabled,
   ).toBe(false);
+});
+
+test('RecordingStudioScreen renders transcript text by transcript segment offsets', async () => {
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [],
+    job: {
+      createdAtMs: 1,
+      errorCode: null,
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 1,
+      recordingId: 'recording-1',
+      status: 'succeeded',
+      updatedAtMs: 2,
+    },
+    recordingId: 'recording-1',
+    transcript: {
+      recordingId: 'recording-1',
+      tracks: [
+        {
+          segments: [
+            {
+              confidence: null,
+              endOffsetMs: 800,
+              id: 'transcript-1',
+              model: 'small',
+              provider: 'local-whisper-cpp',
+              segmentId: 'segment-1',
+              startOffsetMs: 500,
+              text: 'First words',
+              words: [],
+            },
+            {
+              confidence: null,
+              endOffsetMs: 1_500,
+              id: 'transcript-2',
+              model: 'small',
+              provider: 'local-whisper-cpp',
+              segmentId: 'segment-1',
+              startOffsetMs: 1_200,
+              text: 'Later words',
+              words: [],
+            },
+          ],
+          sourceRole: 'desktop-audio',
+          trackId: 'desktop-audio-1',
+        },
+      ],
+    },
+    transcriptionTracks: [
+      {
+        chunks: [
+          {
+            attemptCount: 1,
+            endOffsetMs: 2_000,
+            errorCode: null,
+            id: 'chunk-1',
+            progress: 1,
+            result: 'text',
+            resultCode: null,
+            segmentId: 'segment-1',
+            startOffsetMs: 0,
+            status: 'succeeded',
+            text: 'First words Later words',
+            transcriptSegments: [
+              {
+                confidence: null,
+                endOffsetMs: 800,
+                id: 'transcript-1',
+                model: 'small',
+                provider: 'local-whisper-cpp',
+                segmentId: 'segment-1',
+                startOffsetMs: 500,
+                text: 'First words',
+                words: [],
+              },
+              {
+                confidence: null,
+                endOffsetMs: 1_500,
+                id: 'transcript-2',
+                model: 'small',
+                provider: 'local-whisper-cpp',
+                segmentId: 'segment-1',
+                startOffsetMs: 1_200,
+                text: 'Later words',
+                words: [],
+              },
+            ],
+          },
+        ],
+        description: 'Desktop audio transcription',
+        label: 'Transcription',
+        libraryTrackId: 'desktop-audio-1',
+        sourceRole: 'desktop-audio',
+        status: 'complete',
+        statusLabel: 'Transcription complete',
+        textSegmentCount: 2,
+        trackId: 'desktop-audio-1',
+        trackKey: 'desktop-audio',
+      },
+    ],
+  });
+
+  render(<RecordingStudioScreen />);
+
+  const firstText = await screen.findByText('First words');
+  const secondText = screen.getByText('Later words');
+  expect(
+    screen.getAllByLabelText('Transcription segment processed with text'),
+  ).toHaveLength(2);
+
+  const firstBlock = firstText.parentElement;
+  const secondBlock = secondText.parentElement;
+  expect(firstBlock).toBeTruthy();
+  expect(secondBlock).toBeTruthy();
+  expect(firstBlock?.style.left).toBe('25%');
+  expect(firstBlock?.style.width).toBe('15%');
+  expect(secondBlock?.style.left).toBe('60%');
+  expect(secondBlock?.style.width).toBe('15%');
 });
 
 test('RecordingStudioScreen renames the recording from the detail header', async () => {
@@ -1429,23 +1561,25 @@ test('RecordingStudioScreen marquee-selects only intersected lane ranges', async
 
   const timeline = await screen.findByLabelText('Track timeline');
   mockTimelineRect(timeline);
+  const firstLaneDragStartY = TRACK_RULER_HEIGHT_PX + 16;
+  const firstLaneDragEndY = TRACK_RULER_HEIGHT_PX + TRACK_LANE_HEIGHT_PX - 16;
 
   fireEvent.pointerDown(timeline, {
     button: 0,
     clientX: 220,
-    clientY: 112,
+    clientY: firstLaneDragStartY,
     pointerId: 1,
   });
   fireEvent.pointerMove(timeline, {
     button: 0,
     clientX: 520,
-    clientY: 160,
+    clientY: firstLaneDragEndY,
     pointerId: 1,
   });
   fireEvent.pointerUp(timeline, {
     button: 0,
     clientX: 520,
-    clientY: 160,
+    clientY: firstLaneDragEndY,
     pointerId: 1,
   });
 

@@ -77,9 +77,15 @@ pub struct AiProcessingSettingsDiagnostics {
     auto_start_after_recording: bool,
     max_parallel_chunks_per_job: u32,
     max_parallel_jobs: u32,
+    transcription_max_initial_timestamp_seconds: f64,
+    transcription_merge_gap_ms: u32,
     transcription_backend: String,
+    transcription_language: String,
+    transcription_min_speech_ms: u32,
     transcription_model: String,
     transcription_provider: String,
+    transcription_silence_gate_enabled: bool,
+    transcription_silence_threshold_db: f64,
     word_timestamps_enabled: bool,
 }
 
@@ -102,6 +108,7 @@ pub struct AiProcessingChunkDiagnostics {
     error_code: Option<String>,
     id: String,
     progress: f64,
+    result_code: Option<String>,
     segment_id: Option<String>,
     source_kind: String,
     start_offset_ms: Option<i64>,
@@ -263,9 +270,18 @@ fn collect_ai_processing_diagnostics(
                 auto_start_after_recording: settings.ai.processing.auto_start_after_recording,
                 max_parallel_chunks_per_job: settings.ai.processing.max_parallel_chunks_per_job,
                 max_parallel_jobs: settings.ai.processing.max_parallel_jobs,
+                transcription_max_initial_timestamp_seconds: settings
+                    .ai
+                    .transcription
+                    .max_initial_timestamp_seconds,
+                transcription_merge_gap_ms: settings.ai.transcription.merge_gap_ms,
                 transcription_backend: settings.ai.transcription.local_backend,
+                transcription_language: settings.ai.transcription.language,
+                transcription_min_speech_ms: settings.ai.transcription.min_speech_ms,
                 transcription_model: settings.ai.transcription.local_model_id,
                 transcription_provider: settings.ai.transcription.provider,
+                transcription_silence_gate_enabled: settings.ai.transcription.silence_gate_enabled,
+                transcription_silence_threshold_db: settings.ai.transcription.silence_threshold_db,
                 word_timestamps_enabled: settings.ai.transcription.word_timestamps_enabled,
             });
 
@@ -353,6 +369,7 @@ fn chunk_diagnostics(
         error_code: chunk.error_code,
         id: chunk.id,
         progress: chunk.progress,
+        result_code: chunk.result_code,
         segment_id: chunk.segment_id,
         source_kind: chunk.source_kind,
         start_offset_ms: chunk.start_offset_ms,

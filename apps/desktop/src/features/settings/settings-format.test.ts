@@ -35,12 +35,18 @@ const settings = {
       periodicFullFrameIntervalMs: 300_000,
     },
     transcription: {
+      language: 'auto',
       localBackend: 'cpu',
       localModelId: 'small',
+      maxInitialTimestampSeconds: 3,
+      mergeGapMs: 700,
+      minSpeechMs: 250,
       provider: 'local-whisper-cpp',
       remoteApiKeyRef: null,
       remoteBaseUrl: null,
       remoteModel: null,
+      silenceGateEnabled: true,
+      silenceThresholdDb: -45,
       wordTimestampsEnabled: true,
     },
     vision: {
@@ -49,6 +55,12 @@ const settings = {
       model: null,
       provider: 'disabled',
     },
+  },
+  debug: {
+    enabled: false,
+  },
+  expert: {
+    enabled: false,
   },
   record: {
     fps: 0.2,

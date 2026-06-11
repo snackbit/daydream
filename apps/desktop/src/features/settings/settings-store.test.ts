@@ -41,12 +41,18 @@ const defaultAiSettings = {
     periodicFullFrameIntervalMs: 300_000,
   },
   transcription: {
+    language: 'auto',
     localBackend: 'cpu',
     localModelId: 'small',
+    maxInitialTimestampSeconds: 3,
+    mergeGapMs: 700,
+    minSpeechMs: 250,
     provider: 'local-whisper-cpp',
     remoteApiKeyRef: null,
     remoteBaseUrl: null,
     remoteModel: null,
+    silenceGateEnabled: true,
+    silenceThresholdDb: -45,
     wordTimestampsEnabled: true,
   },
   vision: {
@@ -60,6 +66,12 @@ const defaultAiSettings = {
 const settingsState = {
   defaults: {
     ai: defaultAiSettings,
+    debug: {
+      enabled: false,
+    },
+    expert: {
+      enabled: false,
+    },
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
@@ -85,6 +97,16 @@ const settingsState = {
         periodicFullFrameIntervalMsMax: 3_600_000,
         periodicFullFrameIntervalMsMin: 30_000,
       },
+      transcription: {
+        maxInitialTimestampSecondsMax: 10,
+        maxInitialTimestampSecondsMin: 1,
+        mergeGapMsMax: 5_000,
+        mergeGapMsMin: 0,
+        minSpeechMsMax: 2_000,
+        minSpeechMsMin: 50,
+        silenceThresholdDbMax: -20,
+        silenceThresholdDbMin: -80,
+      },
     },
     record: {
       fpsMax: 5,
@@ -101,6 +123,12 @@ const settingsState = {
   },
   settings: {
     ai: defaultAiSettings,
+    debug: {
+      enabled: false,
+    },
+    expert: {
+      enabled: false,
+    },
     record: {
       fps: 0.5,
       videoBitrateKbps: 2_500,

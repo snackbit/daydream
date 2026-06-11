@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NotificationCenter } from '@/features/notifications/components/notification-center';
 import { RecorderStatusBar } from '@/features/recorder/components/recorder-status-bar';
+import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 import { StartupWarningBanner } from '@/features/startup/components/startup-warning-banner';
 import { navigationItems } from './navigation';
 
@@ -14,16 +15,21 @@ const standaloneRouteHeaders = {
 } as const;
 
 export function AppShell() {
+  const debugEnabled = useDebugEnabled();
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const visibleNavigationItems = navigationItems.filter(
+    (item) => item.href !== '/diagnostics' || debugEnabled,
+  );
 
   const activeItem =
-    navigationItems.find(
+    visibleNavigationItems.find(
       (item) => item.href === pathname || pathname.startsWith(`${item.href}/`),
     ) ??
     standaloneRouteHeaders[pathname as keyof typeof standaloneRouteHeaders] ??
-    navigationItems[0]!;
+    navigationItems.find((item) => item.href === pathname) ??
+    visibleNavigationItems[0]!;
 
   return (
     <div className="bg-background text-foreground grid h-screen min-h-0 grid-cols-[14rem_1fr]">
@@ -36,7 +42,7 @@ export function AppShell() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-          {navigationItems.map((item) => {
+          {visibleNavigationItems.map((item) => {
             const Icon = item.icon;
             const isActive = item.href === pathname;
 

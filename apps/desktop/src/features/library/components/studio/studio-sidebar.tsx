@@ -1,5 +1,10 @@
 import type { ReactNode } from 'react';
-import type { LibraryRecordingDetail } from '@daydream/shared';
+import type {
+  LibraryRecordingDetail,
+  RecordingAiProcessingState,
+  RecordingTranscriptionChunkState,
+  RecordingTranscriptionTrackState,
+} from '@daydream/shared';
 import { AlertTriangle, Lock, Scissors, ShieldX } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -25,7 +30,13 @@ interface StudioSidebarSegmentSelection extends StudioClipDraft {
   clipId: string;
 }
 
-export function StudioSidebar({ detail }: { detail: LibraryRecordingDetail }) {
+export function StudioSidebar({
+  aiProcessingState,
+  detail,
+}: {
+  aiProcessingState: RecordingAiProcessingState | null;
+  detail: LibraryRecordingDetail;
+}) {
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const selection = useStudioTimelineStore((state) => state.selection);
@@ -41,6 +52,7 @@ export function StudioSidebar({ detail }: { detail: LibraryRecordingDetail }) {
       Boolean(segment),
     );
   const content = renderStudioSidebarContent({
+    aiProcessingState,
     detail,
     selectedLanes,
     selectedRanges: selection.ranges,
@@ -84,38 +96,65 @@ export function StudioSidebar({ detail }: { detail: LibraryRecordingDetail }) {
 }
 
 function renderStudioSidebarContent({
+  aiProcessingState,
   detail,
   selectedLanes,
   selectedRanges,
   selectedSegments,
 }: {
+  aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   selectedLanes: StudioLaneDraft[];
   selectedRanges: StudioTimeRangeSelection[];
   selectedSegments: StudioSidebarSegmentSelection[];
 }) {
   if (selectedRanges.length > 0) {
-    return <StudioSidebarComponentSelection selections={selectedRanges} />;
+    return (
+      <StudioSidebarComponentSelection
+        aiProcessingState={aiProcessingState}
+        selections={selectedRanges}
+      />
+    );
   }
 
   if (selectedSegments.length > 0) {
     return selectedSegments.map((segment) => (
-      <StudioSidebarSectionSegment key={segment.clipId} segment={segment} />
+      <StudioSidebarSectionSegment
+        aiProcessingState={aiProcessingState}
+        key={segment.clipId}
+        segment={segment}
+      />
     ));
   }
 
   if (selectedLanes.length > 0) {
     return selectedLanes.map((lane) => (
-      <StudioSidebarSectionLane key={lane.trackId} lane={lane} />
+      <StudioSidebarSectionLane
+        aiProcessingState={aiProcessingState}
+        key={lane.trackId}
+        lane={lane}
+      />
     ));
   }
 
-  return <StudioSidebarRecordingSection detail={detail} />;
+  return (
+    <StudioSidebarRecordingSection
+      aiProcessingState={aiProcessingState}
+      detail={detail}
+    />
+  );
 }
 
-function StudioSidebarSectionLane({ lane }: { lane: StudioLaneDraft }) {
+function StudioSidebarSectionLane({
+  aiProcessingState,
+  lane,
+}: {
+  aiProcessingState: RecordingAiProcessingState | null;
+  lane: StudioLaneDraft;
+}) {
   const renameLane = useStudioTimelineStore((state) => state.renameLane);
   const setLaneColor = useStudioTimelineStore((state) => state.setLaneColor);
+  const transcriptionTrack = transcriptionTrackForLane(aiProcessingState, lane);
 
   return (
     <StudioSidebarSection title={lane.label}>
@@ -126,18 +165,29 @@ function StudioSidebarSectionLane({ lane }: { lane: StudioLaneDraft }) {
       />
       <MetadataRow label="Type" value={trackKindLabel(lane.kind)} />
       <MetadataRow label="Source" value={lane.description} />
+      {transcriptionTrack ? (
+        <TranscriptionTrackDetails track={transcriptionTrack} />
+      ) : null}
     </StudioSidebarSection>
   );
 }
 
 function StudioSidebarSectionSegment({
+  aiProcessingState,
   segment,
 }: {
+  aiProcessingState: RecordingAiProcessingState | null;
   segment: StudioSidebarSegmentSelection;
 }) {
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const renameClip = useStudioTimelineStore((state) => state.renameClip);
   const lane = lanesById[segment.trackId] ?? null;
+  const transcriptionTrack =
+    lane === null ? null : transcriptionTrackForLane(aiProcessingState, lane);
+  const chunks =
+    transcriptionTrack?.chunks.filter(
+      (chunk) => chunk.segmentId === segment.segmentId,
+    ) ?? [];
 
   return (
     <StudioSidebarSection title={segment.title}>
@@ -153,13 +203,16 @@ function StudioSidebarSectionSegment({
       </label>
       <MetadataRow label="Track" value={lane?.label ?? ''} />
       <MetadataRow label="Segment" value={segment.segmentId} />
+      {chunks.length > 0 ? <TranscriptionChunkDetails chunks={chunks} /> : null}
     </StudioSidebarSection>
   );
 }
 
 function StudioSidebarComponentSelection({
+  aiProcessingState,
   selections,
 }: {
+  aiProcessingState: RecordingAiProcessingState | null;
   selections: StudioTimeRangeSelection[];
 }) {
   const selectedLaneCount = new Set(
@@ -190,6 +243,10 @@ function StudioSidebarComponentSelection({
           />
         ))}
       </div>
+      <TranscriptionSelectionDetails
+        aiProcessingState={aiProcessingState}
+        selections={selections}
+      />
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="outline">
           <ShieldX data-icon="inline-start" />
@@ -205,8 +262,10 @@ function StudioSidebarComponentSelection({
 }
 
 function StudioSidebarRecordingSection({
+  aiProcessingState,
   detail,
 }: {
+  aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
 }) {
   return (
@@ -217,8 +276,129 @@ function StudioSidebarRecordingSection({
         value={formatTimestamp(detail.startedAtMs)}
       />
       <MetadataRow label="Duration" value={formatDuration(detail.durationMs)} />
+      {aiProcessingState?.job ? (
+        <>
+          <MetadataRow label="AI job" value={aiProcessingState.job.status} />
+          <MetadataRow
+            label="Chunks"
+            value={String(aiProcessingState.chunks.length)}
+          />
+        </>
+      ) : null}
+      {aiProcessingState?.transcriptionTracks?.map((track) => (
+        <TranscriptionTrackDetails key={track.trackKey} track={track} />
+      ))}
     </StudioSidebarSection>
   );
+}
+
+function TranscriptionTrackDetails({
+  track,
+}: {
+  track: RecordingTranscriptionTrackState;
+}) {
+  return (
+    <div className="space-y-1 border-t pt-2">
+      <MetadataRow label="Speech" value={track.statusLabel} />
+      <MetadataRow label="Chunks" value={String(track.chunks.length)} />
+      <MetadataRow label="Text" value={String(track.textSegmentCount)} />
+      {track.chunks.some((chunk) => chunk.errorCode) ? (
+        <MetadataRow
+          label="Error"
+          value={
+            track.chunks.find((chunk) => chunk.errorCode)?.errorCode ??
+            'Unknown'
+          }
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TranscriptionChunkDetails({
+  chunks,
+}: {
+  chunks: RecordingTranscriptionChunkState[];
+}) {
+  const text = chunks
+    .map((chunk) => chunk.text)
+    .filter((value): value is string => Boolean(value))
+    .join(' ');
+
+  return (
+    <div className="space-y-1 border-t pt-2">
+      <MetadataRow label="Chunks" value={String(chunks.length)} />
+      <MetadataRow label="State" value={chunkSummary(chunks)} />
+      {chunks.some((chunk) => chunk.resultCode) ? (
+        <MetadataRow label="Result" value={chunkSummaryByResultCode(chunks)} />
+      ) : null}
+      {text ? <MetadataRow label="Text" value={text} /> : null}
+    </div>
+  );
+}
+
+function TranscriptionSelectionDetails({
+  aiProcessingState,
+  selections,
+}: {
+  aiProcessingState: RecordingAiProcessingState | null;
+  selections: StudioTimeRangeSelection[];
+}) {
+  const chunks =
+    aiProcessingState?.transcriptionTracks?.flatMap((track) =>
+      track.chunks.filter((chunk) =>
+        selections.some(
+          (selection) =>
+            selection.laneIds.includes(track.libraryTrackId ?? '') &&
+            (chunk.startOffsetMs ?? 0) < selection.endMs &&
+            (chunk.endOffsetMs ?? chunk.startOffsetMs ?? 0) > selection.startMs,
+        ),
+      ),
+    ) ?? [];
+
+  if (chunks.length === 0) {
+    return null;
+  }
+
+  return <TranscriptionChunkDetails chunks={chunks} />;
+}
+
+function transcriptionTrackForLane(
+  aiProcessingState: RecordingAiProcessingState | null,
+  lane: StudioLaneDraft,
+): RecordingTranscriptionTrackState | null {
+  return (
+    aiProcessingState?.transcriptionTracks?.find(
+      (track) =>
+        track.libraryTrackId === lane.trackId || track.sourceRole === lane.kind,
+    ) ?? null
+  );
+}
+
+function chunkSummary(chunks: RecordingTranscriptionChunkState[]): string {
+  const counts = chunks.reduce<Record<string, number>>((summary, chunk) => {
+    summary[chunk.result] = (summary[chunk.result] ?? 0) + 1;
+    return summary;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([state, count]) => `${state}: ${count}`)
+    .join(', ');
+}
+
+function chunkSummaryByResultCode(
+  chunks: RecordingTranscriptionChunkState[],
+): string {
+  const counts = chunks.reduce<Record<string, number>>((summary, chunk) => {
+    if (chunk.resultCode) {
+      summary[chunk.resultCode] = (summary[chunk.resultCode] ?? 0) + 1;
+    }
+    return summary;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([state, count]) => `${state}: ${count}`)
+    .join(', ');
 }
 
 function EditableLaneFields({

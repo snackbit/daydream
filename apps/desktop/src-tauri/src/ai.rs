@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -61,6 +61,7 @@ const FRAME_DELTA_SAMPLE_INTERVAL_MS: i64 = 1_000;
 const FRAME_DELTA_WIDTH: usize = 64;
 const FRAME_DELTA_HEIGHT: usize = 36;
 const FRAME_DELTA_THRESHOLD: f64 = 0.005;
+const TRANSCRIPTION_RESULT_SKIPPED_SILENCE: &str = "skipped-silence";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +154,7 @@ pub struct AiProviderStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiLocalTranscriptionStatus {
+    pub available_languages: Vec<AiTranscriptionLanguageStatus>,
     pub available_backends: Vec<AiBackendStatus>,
     pub checksum_status: String,
     pub local_model_id: String,
@@ -168,6 +170,13 @@ pub struct AiBackendStatus {
     pub available: bool,
     pub id: String,
     pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranscriptionLanguageStatus {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -200,6 +209,7 @@ pub struct ProcessingChunk {
     pub job_id: String,
     pub progress: f64,
     pub recording_id: String,
+    pub result_code: Option<String>,
     pub segment_id: Option<String>,
     pub source_kind: String,
     pub start_offset_ms: Option<i64>,
@@ -245,6 +255,39 @@ pub struct RecordingAiProcessingState {
     pub job: Option<ProcessingJob>,
     pub recording_id: String,
     pub transcript: RecordingTranscript,
+    pub transcription_tracks: Vec<RecordingTranscriptionTrackState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingTranscriptionTrackState {
+    pub chunks: Vec<RecordingTranscriptionChunkState>,
+    pub description: String,
+    pub label: String,
+    pub library_track_id: Option<String>,
+    pub source_role: String,
+    pub status: String,
+    pub status_label: String,
+    pub text_segment_count: usize,
+    pub track_id: Option<String>,
+    pub track_key: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingTranscriptionChunkState {
+    pub attempt_count: i64,
+    pub end_offset_ms: Option<i64>,
+    pub error_code: Option<String>,
+    pub id: String,
+    pub progress: f64,
+    pub result: String,
+    pub result_code: Option<String>,
+    pub segment_id: Option<String>,
+    pub start_offset_ms: Option<i64>,
+    pub status: String,
+    pub text: Option<String>,
+    pub transcript_segments: Vec<RecordingTranscriptSegment>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -432,6 +475,227 @@ impl AiModelManager {
     }
 }
 
+pub fn recover_model_downloads(app: AppHandle) {
+    if let Err(error) = recover_model_downloads_inner(&app) {
+        tracing::warn!(
+            error_code = %error.code,
+            "AI model download recovery failed."
+        );
+    }
+}
+
+fn recover_model_downloads_inner(app: &AppHandle) -> Result<(), AiError> {
+    let storage = app.state::<AppStorage>();
+    let manager = app.state::<AiModelManager>();
+    let mut recoverable = storage
+        .with_connection(storage::list_ai_model_assets)
+        .map_err(storage_error)?
+        .into_iter()
+        .filter_map(|row| {
+            if !matches!(row.download_status.as_str(), "downloading" | "queued") {
+                return None;
+            }
+            catalog_model(&row.id).map(|catalog| (catalog, row))
+        })
+        .collect::<Vec<_>>();
+
+    recoverable
+        .sort_by_key(|(_catalog, row)| (row.download_status != "downloading", row.updated_at_ms));
+
+    for (catalog, row) in recoverable {
+        recover_model_download(app, &storage, &manager, catalog, &row)?;
+    }
+
+    Ok(())
+}
+
+fn recover_model_download(
+    app: &AppHandle,
+    storage: &AppStorage,
+    manager: &AiModelManager,
+    catalog: &'static CatalogModel,
+    row: &AiModelAssetRow,
+) -> Result<(), AiError> {
+    let final_path = model_path(app, catalog)?;
+    let partial_path = partial_model_path(app, catalog)?;
+    match recover_model_files(catalog, &partial_path, &final_path)? {
+        RecoveredModelFiles::VerifiedFinal => {
+            let local_path = final_path.to_string_lossy().to_string();
+            storage
+                .with_connection(|connection| {
+                    let timestamp_ms = now_ms();
+                    save_catalog_model(
+                        connection,
+                        catalog,
+                        ModelAssetPatch {
+                            download_status: "available".into(),
+                            downloaded_bytes: catalog.size_bytes,
+                            error_code: None,
+                            local_path: Some(local_path.as_str().into()),
+                            total_bytes: Some(catalog.size_bytes),
+                            verification_status: "passed".into(),
+                            ..ModelAssetPatch::from_existing(connection, catalog)?
+                        },
+                        timestamp_ms,
+                    )?;
+                    save_model_download_notification(
+                        connection,
+                        ModelDownloadNotificationInput {
+                            actions: &[],
+                            message: &format!(
+                                "{} was recovered from a verified local file.",
+                                catalog.label
+                            ),
+                            model_id: catalog.id,
+                            preferred_notification_id: None,
+                            status: "succeeded",
+                            timestamp_ms,
+                            title: "Model download recovered",
+                        },
+                    )
+                    .map(|_row| ())
+                })
+                .map_err(storage_error)?;
+            emit_model_list(app);
+        }
+        RecoveredModelFiles::Partial(downloaded_bytes) => {
+            resume_recovered_model_download(app, storage, manager, catalog, downloaded_bytes)?;
+        }
+        RecoveredModelFiles::None => {
+            if row.download_status == "queued" && row.downloaded_bytes == 0 {
+                resume_recovered_model_download(app, storage, manager, catalog, 0)?;
+            } else {
+                storage
+                    .with_connection(|connection| {
+                        let timestamp_ms = now_ms();
+                        save_catalog_model(
+                            connection,
+                            catalog,
+                            ModelAssetPatch {
+                                download_status: "failed".into(),
+                                downloaded_bytes: 0,
+                                error_code: Some("ai_model_download_partial_missing".into()),
+                                local_path: None,
+                                verification_status: "failed".into(),
+                                ..ModelAssetPatch::from_existing(connection, catalog)?
+                            },
+                            timestamp_ms,
+                        )?;
+                        save_model_download_notification(
+                            connection,
+                            ModelDownloadNotificationInput {
+                                actions: &[model_download_retry_action(catalog.id)],
+                                message: &format!(
+                                    "{} download could not resume because its partial file is missing.",
+                                    catalog.label
+                                ),
+                                model_id: catalog.id,
+                                preferred_notification_id: None,
+                                status: "failed",
+                                timestamp_ms,
+                                title: "Model download needs retry",
+                            },
+                        )
+                        .map(|_row| ())
+                    })
+                    .map_err(storage_error)?;
+                emit_model_list(app);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn resume_recovered_model_download(
+    app: &AppHandle,
+    storage: &AppStorage,
+    manager: &AiModelManager,
+    catalog: &'static CatalogModel,
+    downloaded_bytes: i64,
+) -> Result<(), AiError> {
+    let state = manager.request_download(catalog.id);
+    let status = if state == DownloadRequestState::Queued {
+        "queued"
+    } else {
+        "downloading"
+    };
+    storage
+        .with_connection(|connection| {
+            let timestamp_ms = now_ms();
+            save_catalog_model(
+                connection,
+                catalog,
+                ModelAssetPatch {
+                    download_status: status.into(),
+                    downloaded_bytes,
+                    error_code: None,
+                    local_path: None,
+                    total_bytes: Some(catalog.size_bytes),
+                    verification_status: "pending".into(),
+                    ..ModelAssetPatch::from_existing(connection, catalog)?
+                },
+                timestamp_ms,
+            )?;
+            save_model_download_notification(
+                connection,
+                ModelDownloadNotificationInput {
+                    actions: &[model_download_cancel_action(catalog.id)],
+                    message: &format!(
+                        "{} download will resume from local partial data.",
+                        catalog.label
+                    ),
+                    model_id: catalog.id,
+                    preferred_notification_id: None,
+                    status: status_to_notification_status(status),
+                    timestamp_ms,
+                    title: if state == DownloadRequestState::Queued {
+                        "Model download queued"
+                    } else {
+                        "Model download resumed"
+                    },
+                },
+            )
+            .map(|_row| ())
+        })
+        .map_err(storage_error)?;
+    emit_model_list(app);
+
+    if state == DownloadRequestState::Started {
+        spawn_model_download(app.clone(), catalog.id.to_string());
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RecoveredModelFiles {
+    None,
+    Partial(i64),
+    VerifiedFinal,
+}
+
+fn recover_model_files(
+    catalog: &CatalogModel,
+    partial_path: &Path,
+    final_path: &Path,
+) -> Result<RecoveredModelFiles, AiError> {
+    if final_path.is_file() {
+        if is_verified_model_file(final_path, catalog)? {
+            return Ok(RecoveredModelFiles::VerifiedFinal);
+        }
+        delete_file_if_exists(final_path)?;
+    }
+
+    match prepare_partial_download(catalog, partial_path)? {
+        PartialDownloadResume::Complete => Ok(RecoveredModelFiles::Partial(catalog.size_bytes)),
+        PartialDownloadResume::Resume(length) if length > 0 => {
+            Ok(RecoveredModelFiles::Partial(length as i64))
+        }
+        PartialDownloadResume::Resume(_length) => Ok(RecoveredModelFiles::None),
+    }
+}
+
 #[tauri::command(rename = "listAiModels")]
 pub fn list_ai_models(storage: State<'_, AppStorage>) -> Result<AiModelAssetList, AiError> {
     model_list(&storage)
@@ -446,7 +710,7 @@ pub fn download_ai_model(
 ) -> Result<Notification, AiError> {
     let catalog = ensure_catalog_model(&input.model_id)?;
     let existing_model_path = model_path(&app, catalog)?;
-    if existing_model_path.is_file() {
+    if existing_model_path.is_file() && is_verified_model_file(&existing_model_path, catalog)? {
         let notification = storage
             .with_connection(|connection| {
                 let timestamp_ms = now_ms();
@@ -481,6 +745,9 @@ pub fn download_ai_model(
         emit_model_list(&app);
 
         return notification_from_row(notification);
+    }
+    if existing_model_path.is_file() {
+        delete_file_if_exists(&existing_model_path)?;
     }
 
     let state = manager.request_download(catalog.id);
@@ -547,7 +814,23 @@ pub fn cancel_ai_model_download(
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
     let catalog = ensure_catalog_model(&input.model_id)?;
-    let cancelled = manager.cancel_download(catalog.id);
+    let active_or_queued_cancelled = manager.cancel_download(catalog.id);
+    let persisted_cancelled = if active_or_queued_cancelled {
+        false
+    } else {
+        storage
+            .with_connection(|connection| storage::get_ai_model_asset(connection, catalog.id))
+            .map_err(storage_error)?
+            .is_some_and(|model| matches!(model.download_status.as_str(), "downloading" | "queued"))
+    };
+    let cancelled = active_or_queued_cancelled || persisted_cancelled;
+    let downloaded = if cancelled {
+        let partial_path = partial_model_path(&app, catalog)?;
+        let final_path = model_path(&app, catalog)?;
+        Some(downloaded_bytes(&partial_path, &final_path))
+    } else {
+        None
+    };
     let notification = storage
         .with_connection(|connection| {
             let timestamp_ms = now_ms();
@@ -556,6 +839,7 @@ pub fn cancel_ai_model_download(
                 catalog,
                 input.notification_id.as_deref(),
                 cancelled,
+                downloaded,
                 timestamp_ms,
             )
         })
@@ -719,6 +1003,13 @@ pub fn get_ai_provider_status(storage: State<'_, AppStorage>) -> Result<AiProvid
 
     Ok(AiProviderStatus {
         local_transcription: AiLocalTranscriptionStatus {
+            available_languages: whisper_backend::supported_languages()
+                .into_iter()
+                .map(|language| AiTranscriptionLanguageStatus {
+                    id: language.id,
+                    label: language.label,
+                })
+                .collect(),
             available_backends: vec![
                 AiBackendStatus {
                     available: true,
@@ -1228,6 +1519,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                         job_id: job_id.clone(),
                         progress: 0.0,
                         recording_id: recording_id.to_string(),
+                        result_code: None,
                         segment_id: Some(plan.segment_id),
                         source_kind: "audio".to_string(),
                         start_offset_ms: Some(plan.start_offset_ms),
@@ -1249,6 +1541,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                         job_id: job_id.clone(),
                         progress: 0.0,
                         recording_id: recording_id.to_string(),
+                        result_code: None,
                         segment_id: Some(plan.segment_id),
                         source_kind: "activity".to_string(),
                         start_offset_ms: Some(plan.start_offset_ms),
@@ -1603,7 +1896,7 @@ async fn process_audio_chunk(
     monitor.abort();
 
     match result {
-        Ok(()) => {
+        Ok(outcome) => {
             storage
                 .with_connection(|connection| {
                     storage::update_processing_chunk_status(
@@ -1613,8 +1906,16 @@ async fn process_audio_chunk(
                         1.0,
                         None,
                         now_ms(),
-                    )
-                    .map(|_row| ())
+                    )?;
+                    if let Some(result_code) = outcome.result_code.as_deref() {
+                        storage::update_processing_chunk_result_code(
+                            connection,
+                            &chunk.id,
+                            Some(result_code),
+                            now_ms(),
+                        )?;
+                    }
+                    Ok(())
                 })
                 .map_err(storage_error)?;
             save_job_progress_notification(&storage, job_id)?;
@@ -1880,11 +2181,16 @@ async fn process_activity_chunk(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AudioChunkProcessingOutcome {
+    result_code: Option<String>,
+}
+
 async fn process_audio_chunk_inner(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     cancel: Arc<AtomicBool>,
-) -> Result<(), AiError> {
+) -> Result<AudioChunkProcessingOutcome, AiError> {
     let storage = app.state::<AppStorage>();
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
     let provider_name = app_settings.ai.transcription.provider.clone();
@@ -1988,44 +2294,140 @@ async fn process_audio_chunk_inner(
     );
     let model = selected_transcription_model(&app_settings)?;
     let provider = app.state::<TranscriptionProviderManager>();
+    let transcription_ranges = if app_settings.ai.transcription.silence_gate_enabled {
+        whisper_backend::detect_speech_ranges(
+            temp_audio.path(),
+            whisper_backend::SilenceGateConfig {
+                merge_gap_ms: i64::from(app_settings.ai.transcription.merge_gap_ms),
+                min_speech_ms: i64::from(app_settings.ai.transcription.min_speech_ms),
+                silence_threshold_db: app_settings.ai.transcription.silence_threshold_db,
+            },
+        )
+        .map_err(whisper_backend_error)?
+    } else {
+        vec![whisper_backend::SpeechRange {
+            end_ms: slice_duration_ms,
+            start_ms: 0,
+        }]
+    }
+    .into_iter()
+    .filter(|range| range.end_ms > range.start_ms)
+    .collect::<Vec<_>>();
+
+    storage
+        .with_connection(|connection| {
+            storage::delete_transcript_output_for_chunks(
+                connection,
+                std::slice::from_ref(&chunk.id),
+            )
+        })
+        .map_err(storage_error)?;
+
+    if transcription_ranges.is_empty() {
+        tracing::info!(
+            recording_id = %chunk.recording_id,
+            job_id = %chunk.job_id,
+            chunk_id = %chunk.id,
+            track_id = %track.id,
+            source_role = %track.kind,
+            silence_threshold_db = app_settings.ai.transcription.silence_threshold_db,
+            min_speech_ms = app_settings.ai.transcription.min_speech_ms,
+            "ai_processing_audio_chunk_skipped_silence"
+        );
+        return Ok(AudioChunkProcessingOutcome {
+            result_code: Some(TRANSCRIPTION_RESULT_SKIPPED_SILENCE.to_string()),
+        });
+    }
+
     tracing::info!(
         chunk_id = %chunk.id,
         job_id = %chunk.job_id,
         model = %model,
         provider = %provider_name,
         backend = %app_settings.ai.transcription.local_backend,
+        speech_range_count = transcription_ranges.len(),
         "AI transcription started."
     );
-    let transcription = provider
-        .transcribe(
-            app,
-            &storage,
-            TranscriptionRequest {
-                audio_path: temp_audio.path().to_path_buf(),
-                cancel: cancel.clone(),
-                model: model.clone(),
-                timeout: TRANSCRIPTION_TIMEOUT,
-                word_timestamps: app_settings.ai.transcription.word_timestamps_enabled,
-            },
-        )
-        .await
-        .map_err(transcription_error)?;
-    tracing::info!(
-        chunk_id = %chunk.id,
-        job_id = %chunk.job_id,
-        segment_count = transcription.segments.len(),
-        word_count = transcription.words.len(),
-        text_char_count = transcription
-            .segments
-            .iter()
-            .map(|segment| segment.text.trim().chars().count())
-            .sum::<usize>(),
-        "AI transcription completed."
-    );
+    let mut pending_transcriptions = Vec::with_capacity(transcription_ranges.len());
+    for (range_index, range) in transcription_ranges.iter().enumerate() {
+        check_atomic_cancel(&cancel)?;
+        let mut range_audio = None;
+        let audio_path = if range.start_ms == 0 && range.end_ms == slice_duration_ms {
+            temp_audio.path().to_path_buf()
+        } else {
+            let range_duration_ms = range.end_ms.checked_sub(range.start_ms).ok_or_else(|| {
+                ai_error(
+                    "ai_processing_audio_range_invalid",
+                    "Detected transcription range is invalid.",
+                )
+            })?;
+            let range_path =
+                processing_temp_audio_range_path(app, &chunk.job_id, &chunk.id, range_index)?;
+            let temp_range_audio = TempAudioFile::new(range_path);
+            extract_audio_stream(
+                &segment.file_path,
+                stream_index,
+                slice_start_ms + range.start_ms,
+                range_duration_ms,
+                temp_range_audio.path(),
+                &cancel,
+            )?;
+            let path = temp_range_audio.path().to_path_buf();
+            range_audio = Some(temp_range_audio);
+            path
+        };
+        let transcription = provider
+            .transcribe(
+                app,
+                &storage,
+                TranscriptionRequest {
+                    audio_path,
+                    cancel: cancel.clone(),
+                    language: app_settings.ai.transcription.language.clone(),
+                    max_initial_timestamp_seconds: app_settings
+                        .ai
+                        .transcription
+                        .max_initial_timestamp_seconds,
+                    model: model.clone(),
+                    timeout: TRANSCRIPTION_TIMEOUT,
+                    word_timestamps: app_settings.ai.transcription.word_timestamps_enabled,
+                },
+            )
+            .await
+            .map_err(transcription_error)?;
+        drop(range_audio);
+        tracing::info!(
+            chunk_id = %chunk.id,
+            job_id = %chunk.job_id,
+            speech_range_index = range_index,
+            speech_range_start_ms = range.start_ms,
+            speech_range_end_ms = range.end_ms,
+            segment_count = transcription.segments.len(),
+            word_count = transcription.words.len(),
+            text_char_count = transcription
+                .segments
+                .iter()
+                .map(|segment| segment.text.trim().chars().count())
+                .sum::<usize>(),
+            "AI transcription range completed."
+        );
+        check_atomic_cancel(&cancel)?;
+        pending_transcriptions.push(PendingTranscription {
+            base_offset_ms: chunk_start_offset_ms + range.start_ms,
+            transcription,
+        });
+    }
     check_atomic_cancel(&cancel)?;
-    persist_transcription(app, chunk, &track, &provider_name, &model, transcription)?;
+    persist_transcriptions(
+        app,
+        chunk,
+        &track,
+        &provider_name,
+        &model,
+        pending_transcriptions,
+    )?;
 
-    Ok(())
+    Ok(AudioChunkProcessingOutcome { result_code: None })
 }
 
 async fn process_activity_chunk_inner(
@@ -2507,6 +2909,21 @@ fn processing_temp_audio_path(
     job_id: &str,
     chunk_id: &str,
 ) -> Result<PathBuf, AiError> {
+    let directory = processing_temp_audio_directory(app, job_id)?;
+    Ok(directory.join(format!("{chunk_id}.wav")))
+}
+
+fn processing_temp_audio_range_path(
+    app: &AppHandle,
+    job_id: &str,
+    chunk_id: &str,
+    range_index: usize,
+) -> Result<PathBuf, AiError> {
+    let directory = processing_temp_audio_directory(app, job_id)?;
+    Ok(directory.join(format!("{chunk_id}-{range_index}.wav")))
+}
+
+fn processing_temp_audio_directory(app: &AppHandle, job_id: &str) -> Result<PathBuf, AiError> {
     let directory = app
         .path()
         .app_data_dir()
@@ -2520,7 +2937,7 @@ fn processing_temp_audio_path(
         .join("transcription")
         .join(job_id);
     fs::create_dir_all(&directory).map_err(file_error)?;
-    Ok(directory.join(format!("{chunk_id}.wav")))
+    Ok(directory)
 }
 
 struct TempAudioFile {
@@ -2605,15 +3022,30 @@ fn ffmpeg_audio_extract_args(
     ]
 }
 
-fn persist_transcription(
+struct PendingTranscription {
+    base_offset_ms: i64,
+    transcription: transcription::VerboseTranscription,
+}
+
+#[derive(Debug, Default)]
+struct PersistedTranscriptionStats {
+    segment_count: usize,
+    text_char_count: usize,
+    word_count: usize,
+}
+
+fn persist_transcriptions(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     track: &RecordingTrackRow,
     provider: &str,
     model: &str,
-    transcription: transcription::VerboseTranscription,
+    transcriptions: Vec<PendingTranscription>,
 ) -> Result<(), AiError> {
-    if transcription.segments.is_empty() {
+    if transcriptions
+        .iter()
+        .all(|pending| pending.transcription.segments.is_empty())
+    {
         tracing::info!(
             recording_id = %chunk.recording_id,
             job_id = %chunk.job_id,
@@ -2624,87 +3056,152 @@ fn persist_transcription(
         );
         return Ok(());
     }
-    let storage = app.state::<AppStorage>();
-    let base_offset_ms = chunk.start_offset_ms.unwrap_or(0);
     let segment_id = chunk.segment_id.clone().ok_or_else(|| {
         ai_error(
             "ai_processing_segment_missing",
             "Processing segment is missing.",
         )
     })?;
-    let segment_count = transcription.segments.len();
-    let word_count = transcription.words.len();
-    let text_char_count = transcription
-        .segments
-        .iter()
-        .map(|segment| segment.text.trim().chars().count())
-        .sum::<usize>();
-    storage
-        .with_connection(|connection| {
-            storage::delete_transcript_output_for_chunks(
+    let storage = app.state::<AppStorage>();
+    let stats = storage
+        .with_connection_mut(|connection| {
+            persist_transcriptions_for_chunk(
                 connection,
-                std::slice::from_ref(&chunk.id),
-            )?;
-            for segment in transcription.segments {
-                let text = segment.text.trim().to_string();
-                if text.is_empty() {
-                    continue;
-                }
-                let transcript_segment_id = Uuid::now_v7().to_string();
-                let start_offset_ms = base_offset_ms + seconds_to_ms(segment.start);
-                let end_offset_ms = base_offset_ms + seconds_to_ms(segment.end);
-                storage::create_transcript_segment(
-                    connection,
-                    &CreateTranscriptSegmentInput {
-                        chunk_id: chunk.id.clone(),
-                        confidence: None,
-                        created_at_ms: now_ms(),
-                        end_offset_ms,
-                        id: transcript_segment_id.clone(),
-                        job_id: chunk.job_id.clone(),
-                        model: Some(model.to_string()),
-                        provider: provider.to_string(),
-                        recording_id: chunk.recording_id.clone(),
-                        segment_id: segment_id.clone(),
-                        source_role: track.kind.clone(),
-                        start_offset_ms,
-                        text,
-                        track_id: track.id.clone(),
-                    },
-                )?;
-                for word in transcription
-                    .words
-                    .iter()
-                    .filter(|word| word.start >= segment.start && word.end <= segment.end)
-                {
-                    storage::create_transcript_word(
-                        connection,
-                        &CreateTranscriptWordInput {
-                            end_offset_ms: base_offset_ms + seconds_to_ms(word.end),
-                            id: Uuid::now_v7().to_string(),
-                            probability: word.probability,
-                            start_offset_ms: base_offset_ms + seconds_to_ms(word.start),
-                            text: word.word.trim().to_string(),
-                            transcript_segment_id: transcript_segment_id.clone(),
-                        },
-                    )?;
-                }
-            }
-            Ok(())
+                chunk,
+                track,
+                provider,
+                model,
+                &segment_id,
+                transcriptions,
+            )
         })
         .map_err(storage_error)?;
+    if stats.segment_count == 0 {
+        tracing::info!(
+            recording_id = %chunk.recording_id,
+            job_id = %chunk.job_id,
+            chunk_id = %chunk.id,
+            track_id = chunk.track_id.as_deref().unwrap_or(""),
+            source_role = %track.kind,
+            "ai_processing_transcript_persist_skipped_empty"
+        );
+        return Ok(());
+    }
     tracing::info!(
         recording_id = %chunk.recording_id,
         job_id = %chunk.job_id,
         chunk_id = %chunk.id,
         track_id = %track.id,
         source_role = %track.kind,
-        segment_count,
-        word_count,
-        text_char_count,
+        segment_count = stats.segment_count,
+        word_count = stats.word_count,
+        text_char_count = stats.text_char_count,
         "ai_processing_transcript_persisted"
     );
     Ok(())
+}
+
+fn persist_transcriptions_for_chunk(
+    connection: &mut rusqlite::Connection,
+    chunk: &ProcessingChunkRow,
+    track: &RecordingTrackRow,
+    provider: &str,
+    model: &str,
+    segment_id: &str,
+    transcriptions: Vec<PendingTranscription>,
+) -> rusqlite::Result<PersistedTranscriptionStats> {
+    let transaction = connection.transaction()?;
+    let mut stats = PersistedTranscriptionStats::default();
+
+    for pending in transcriptions {
+        for segment in pending.transcription.segments {
+            let text = segment.text.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let transcript_segment_id = Uuid::now_v7().to_string();
+            let segment_words =
+                transcription_words_for_segment(&segment, &pending.transcription.words);
+            let (start_offset_ms, end_offset_ms) =
+                transcript_segment_offsets_ms(pending.base_offset_ms, &segment, &segment_words);
+            storage::create_transcript_segment(
+                &transaction,
+                &CreateTranscriptSegmentInput {
+                    chunk_id: chunk.id.clone(),
+                    confidence: None,
+                    created_at_ms: now_ms(),
+                    end_offset_ms,
+                    id: transcript_segment_id.clone(),
+                    job_id: chunk.job_id.clone(),
+                    model: Some(model.to_string()),
+                    provider: provider.to_string(),
+                    recording_id: chunk.recording_id.clone(),
+                    segment_id: segment_id.to_string(),
+                    source_role: track.kind.clone(),
+                    start_offset_ms,
+                    text: text.clone(),
+                    track_id: track.id.clone(),
+                },
+            )?;
+            stats.segment_count += 1;
+            stats.text_char_count += text.chars().count();
+            for word in segment_words {
+                storage::create_transcript_word(
+                    &transaction,
+                    &CreateTranscriptWordInput {
+                        end_offset_ms: pending.base_offset_ms + seconds_to_ms(word.end),
+                        id: Uuid::now_v7().to_string(),
+                        probability: word.probability,
+                        start_offset_ms: pending.base_offset_ms + seconds_to_ms(word.start),
+                        text: word.word.trim().to_string(),
+                        transcript_segment_id: transcript_segment_id.clone(),
+                    },
+                )?;
+                stats.word_count += 1;
+            }
+        }
+    }
+
+    transaction.commit()?;
+    Ok(stats)
+}
+
+fn transcription_words_for_segment<'a>(
+    segment: &transcription::VerboseTranscriptionSegment,
+    words: &'a [transcription::VerboseTranscriptionWord],
+) -> Vec<&'a transcription::VerboseTranscriptionWord> {
+    words
+        .iter()
+        .filter(|word| {
+            word.start >= segment.start
+                && word.end <= segment.end
+                && word.end > word.start
+                && word.start.is_finite()
+                && word.end.is_finite()
+                && !word.word.trim().is_empty()
+        })
+        .collect()
+}
+
+fn transcript_segment_offsets_ms(
+    base_offset_ms: i64,
+    segment: &transcription::VerboseTranscriptionSegment,
+    words: &[&transcription::VerboseTranscriptionWord],
+) -> (i64, i64) {
+    let start_seconds = words
+        .iter()
+        .map(|word| word.start)
+        .reduce(f64::min)
+        .unwrap_or(segment.start);
+    let end_seconds = words
+        .iter()
+        .map(|word| word.end)
+        .reduce(f64::max)
+        .unwrap_or(segment.end);
+    let start_offset_ms = base_offset_ms + seconds_to_ms(start_seconds);
+    let end_offset_ms = base_offset_ms + seconds_to_ms(end_seconds);
+
+    (start_offset_ms, end_offset_ms.max(start_offset_ms))
 }
 
 fn finish_processing_job(
@@ -3291,17 +3788,20 @@ fn save_cancel_download_result(
     catalog: &CatalogModel,
     preferred_notification_id: Option<&str>,
     cancelled: bool,
+    downloaded: Option<i64>,
     timestamp_ms: i64,
 ) -> rusqlite::Result<NotificationRow> {
     if cancelled {
+        let existing = ModelAssetPatch::from_existing(connection, catalog)?;
         save_catalog_model(
             connection,
             catalog,
             ModelAssetPatch {
                 download_status: "cancelled".into(),
+                downloaded_bytes: downloaded.unwrap_or(existing.downloaded_bytes),
                 error_code: Some("ai_model_download_cancelled".into()),
                 verification_status: "unknown".into(),
-                ..ModelAssetPatch::from_existing(connection, catalog)?
+                ..existing
             },
             timestamp_ms,
         )?;
@@ -3496,7 +3996,7 @@ fn transcript_for_recording(
     ))
 }
 
-fn processing_state_for_recording(
+pub(crate) fn processing_state_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingAiProcessingState, AiError> {
@@ -3509,24 +4009,238 @@ fn processing_state_for_recording(
             )
         })
         .map_err(storage_error)?;
-    let chunks = if let Some(job) = &job_row {
+    let chunk_rows = if let Some(job) = &job_row {
         storage
             .with_connection(|connection| storage::list_processing_chunks(connection, &job.id))
             .map_err(storage_error)?
-            .into_iter()
-            .map(processing_chunk_from_row)
-            .collect()
     } else {
         Vec::new()
     };
     let transcript = transcript_for_recording(storage, recording_id)?;
+    let recording_segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, recording_id))
+        .map_err(storage_error)?;
+    let recording_tracks = storage
+        .with_connection(|connection| storage::list_recording_tracks(connection, recording_id))
+        .map_err(storage_error)?;
+    let chunks = chunk_rows
+        .iter()
+        .cloned()
+        .map(processing_chunk_from_row)
+        .collect::<Vec<_>>();
+    let transcription_tracks = transcription_tracks_for_recording(
+        recording_id,
+        &recording_segments,
+        &recording_tracks,
+        &chunks,
+        &transcript,
+    );
 
     Ok(RecordingAiProcessingState {
         chunks,
         job: job_row.map(|job| processing_job_from_row_with_storage(storage, job)),
         recording_id: recording_id.to_string(),
         transcript,
+        transcription_tracks,
     })
+}
+
+fn transcription_tracks_for_recording(
+    _recording_id: &str,
+    recording_segments: &[RecordingSegmentRow],
+    recording_tracks: &[RecordingTrackRow],
+    chunks: &[ProcessingChunk],
+    transcript: &RecordingTranscript,
+) -> Vec<RecordingTranscriptionTrackState> {
+    let track_roles_by_id = recording_tracks
+        .iter()
+        .map(|track| (track.id.clone(), track.kind.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut source_roles = audio_source_roles_from_segments(recording_segments);
+    for role in chunks.iter().filter_map(|chunk| {
+        chunk
+            .track_id
+            .as_ref()
+            .and_then(|track_id| track_roles_by_id.get(track_id))
+            .cloned()
+    }) {
+        source_roles.insert(role);
+    }
+    for role in transcript
+        .tracks
+        .iter()
+        .map(|track| track.source_role.clone())
+    {
+        source_roles.insert(role);
+    }
+
+    source_roles
+        .into_iter()
+        .filter_map(|source_role| {
+            if !matches!(source_role.as_str(), "desktop-audio" | "microphone") {
+                return None;
+            }
+            let track_id = recording_tracks
+                .iter()
+                .find(|track| track.kind == source_role)
+                .map(|track| track.id.clone());
+            let library_track_id = library_audio_track_id(recording_segments, &source_role);
+            let transcript_segments = transcript
+                .tracks
+                .iter()
+                .filter(|track| track.source_role == source_role)
+                .flat_map(|track| track.segments.clone())
+                .collect::<Vec<_>>();
+            let track_chunks = chunks
+                .iter()
+                .filter(|chunk| {
+                    chunk.source_kind == "audio"
+                        && chunk.track_id.as_ref().is_some_and(|chunk_track_id| {
+                            track_roles_by_id
+                                .get(chunk_track_id)
+                                .is_some_and(|role| role == &source_role)
+                        })
+                })
+                .map(|chunk| transcription_chunk_state(chunk, &transcript_segments))
+                .collect::<Vec<_>>();
+            let (status, status_label) =
+                transcription_track_status(&track_chunks, !library_track_id.is_some());
+
+            Some(RecordingTranscriptionTrackState {
+                chunks: track_chunks,
+                description: transcription_track_description(
+                    &source_role,
+                    library_track_id.as_deref(),
+                ),
+                label: transcription_track_label(&source_role).to_string(),
+                library_track_id,
+                source_role: source_role.clone(),
+                status,
+                status_label,
+                text_segment_count: transcript_segments.len(),
+                track_id,
+                track_key: source_role,
+            })
+        })
+        .collect()
+}
+
+fn audio_source_roles_from_segments(segments: &[RecordingSegmentRow]) -> BTreeSet<String> {
+    let mut roles = BTreeSet::new();
+    for segment in segments {
+        if segment.desktop_audio_stream_index.is_some() {
+            roles.insert("desktop-audio".to_string());
+        }
+        if segment.microphone_audio_stream_index.is_some() {
+            roles.insert("microphone".to_string());
+        }
+    }
+    roles
+}
+
+fn library_audio_track_id(segments: &[RecordingSegmentRow], source_role: &str) -> Option<String> {
+    let stream_index = segments.iter().find_map(|segment| match source_role {
+        "desktop-audio" => segment.desktop_audio_stream_index,
+        "microphone" => segment.microphone_audio_stream_index,
+        _ => None,
+    })?;
+    Some(format!("{source_role}-{stream_index}"))
+}
+
+fn transcription_chunk_state(
+    chunk: &ProcessingChunk,
+    transcript_segments: &[RecordingTranscriptSegment],
+) -> RecordingTranscriptionChunkState {
+    let chunk_start_ms = chunk.start_offset_ms.unwrap_or(0);
+    let chunk_end_ms = chunk.end_offset_ms.unwrap_or(chunk_start_ms);
+    let chunk_segments = transcript_segments
+        .iter()
+        .filter(|segment| {
+            segment.start_offset_ms < chunk_end_ms && segment.end_offset_ms > chunk_start_ms
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let text = chunk_segments
+        .iter()
+        .map(|segment| segment.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let result = match chunk.status.as_str() {
+        "queued" => "queued",
+        "running" => "running",
+        "failed" => "failed",
+        "cancelled" => "cancelled",
+        "succeeded" if chunk.result_code.as_deref() == Some("skipped-silence") => "skipped-silence",
+        "succeeded" if text.is_empty() => "no-speech",
+        "succeeded" => "text",
+        _ => "unknown",
+    }
+    .to_string();
+
+    RecordingTranscriptionChunkState {
+        attempt_count: chunk.attempt_count,
+        end_offset_ms: chunk.end_offset_ms,
+        error_code: chunk.error_code.clone(),
+        id: chunk.id.clone(),
+        progress: chunk.progress,
+        result,
+        result_code: chunk.result_code.clone(),
+        segment_id: chunk.segment_id.clone(),
+        start_offset_ms: chunk.start_offset_ms,
+        status: chunk.status.clone(),
+        text: (!text.is_empty()).then_some(text),
+        transcript_segments: chunk_segments,
+    }
+}
+
+fn transcription_track_status(
+    chunks: &[RecordingTranscriptionChunkState],
+    missing_audio_source: bool,
+) -> (String, String) {
+    if missing_audio_source {
+        return ("no-audio".to_string(), "No audio source".to_string());
+    }
+    if chunks.is_empty() {
+        return ("ready".to_string(), "Ready to process".to_string());
+    }
+    if chunks
+        .iter()
+        .any(|chunk| matches!(chunk.result.as_str(), "queued" | "running"))
+    {
+        return (
+            "in-progress".to_string(),
+            "Transcription in progress".to_string(),
+        );
+    }
+    if chunks.iter().any(|chunk| chunk.result == "failed") {
+        return ("failed".to_string(), "Transcription failed".to_string());
+    }
+    if chunks.iter().any(|chunk| chunk.result == "cancelled") {
+        return (
+            "cancelled".to_string(),
+            "Transcription cancelled".to_string(),
+        );
+    }
+    if chunks.iter().any(|chunk| chunk.result == "text") {
+        return ("complete".to_string(), "Transcription complete".to_string());
+    }
+    ("no-speech".to_string(), "No speech detected".to_string())
+}
+
+fn transcription_track_label(source_role: &str) -> &str {
+    match source_role {
+        "desktop-audio" => "Desktop audio transcription",
+        "microphone" => "Microphone transcription",
+        _ => "Audio transcription",
+    }
+}
+
+fn transcription_track_description(source_role: &str, library_track_id: Option<&str>) -> String {
+    match library_track_id {
+        Some(track_id) => format!("{source_role} timeline track {track_id}"),
+        None => format!("{source_role} has no library audio track"),
+    }
 }
 
 fn transcript_from_rows(
@@ -3583,6 +4297,7 @@ fn processing_chunk_from_row(row: ProcessingChunkRow) -> ProcessingChunk {
         job_id: row.job_id,
         progress: row.progress,
         recording_id: row.recording_id,
+        result_code: row.result_code,
         segment_id: row.segment_id,
         source_kind: row.source_kind,
         start_offset_ms: row.start_offset_ms,
@@ -3933,6 +4648,10 @@ fn delete_file_if_exists(path: &Path) -> Result<(), AiError> {
     }
 }
 
+fn is_verified_model_file(path: &Path, catalog: &CatalogModel) -> Result<bool, AiError> {
+    Ok(path.is_file() && sha1_file(path)? == catalog.sha1)
+}
+
 fn sha1_file(path: &Path) -> Result<String, AiError> {
     let mut file = File::open(path).map_err(file_error)?;
     let mut hasher = Sha1::new();
@@ -4001,6 +4720,13 @@ fn settings_error(error: settings::AppSettingsError) -> AiError {
 }
 
 fn transcription_error(error: transcription::TranscriptionError) -> AiError {
+    AiError {
+        code: error.code,
+        message: error.message,
+    }
+}
+
+fn whisper_backend_error(error: whisper_backend::WhisperBackendError) -> AiError {
     AiError {
         code: error.code,
         message: error.message,
@@ -4101,6 +4827,217 @@ mod tests {
     }
 
     #[test]
+    fn transcript_segment_offsets_use_word_bounds_when_available() {
+        let segment = transcription::VerboseTranscriptionSegment {
+            end: 5.0,
+            id: 0,
+            start: 0.0,
+            text: " test test ".to_string(),
+        };
+        let words = vec![
+            transcription::VerboseTranscriptionWord {
+                end: 4.1,
+                probability: Some(0.9),
+                start: 3.8,
+                word: "test".to_string(),
+            },
+            transcription::VerboseTranscriptionWord {
+                end: 4.8,
+                probability: Some(0.8),
+                start: 4.2,
+                word: "test".to_string(),
+            },
+        ];
+        let segment_words = transcription_words_for_segment(&segment, &words);
+
+        assert_eq!(
+            transcript_segment_offsets_ms(1_000, &segment, &segment_words),
+            (4_800, 5_800)
+        );
+    }
+
+    #[test]
+    fn transcript_segment_offsets_fall_back_to_segment_without_words() {
+        let segment = transcription::VerboseTranscriptionSegment {
+            end: 2.5,
+            id: 0,
+            start: 0.5,
+            text: "fallback".to_string(),
+        };
+
+        assert_eq!(
+            transcript_segment_offsets_ms(1_000, &segment, &[]),
+            (1_500, 3_500)
+        );
+    }
+
+    #[test]
+    fn transcription_words_for_segment_ignores_invalid_or_empty_words() {
+        let segment = transcription::VerboseTranscriptionSegment {
+            end: 5.0,
+            id: 0,
+            start: 0.0,
+            text: "ok".to_string(),
+        };
+        let words = vec![
+            transcription::VerboseTranscriptionWord {
+                end: 1.2,
+                probability: None,
+                start: 1.0,
+                word: "ok".to_string(),
+            },
+            transcription::VerboseTranscriptionWord {
+                end: 2.0,
+                probability: None,
+                start: 2.0,
+                word: "zero".to_string(),
+            },
+            transcription::VerboseTranscriptionWord {
+                end: 3.5,
+                probability: None,
+                start: 3.0,
+                word: " ".to_string(),
+            },
+            transcription::VerboseTranscriptionWord {
+                end: 6.0,
+                probability: None,
+                start: 5.5,
+                word: "outside".to_string(),
+            },
+        ];
+
+        let segment_words = transcription_words_for_segment(&segment, &words);
+
+        assert_eq!(segment_words.len(), 1);
+        assert_eq!(segment_words[0].word, "ok");
+    }
+
+    #[test]
+    fn persist_transcriptions_for_chunk_commits_all_completed_ranges() {
+        let storage = storage::test_storage(PathBuf::new());
+
+        storage
+            .with_connection_mut(|connection| {
+                let (chunk, track) = test_transcription_chunk(connection);
+                let stats = persist_transcriptions_for_chunk(
+                    connection,
+                    &chunk,
+                    &track,
+                    "local-whisper-cpp",
+                    "small",
+                    chunk.segment_id.as_deref().expect("chunk segment id"),
+                    vec![
+                        PendingTranscription {
+                            base_offset_ms: 1_000,
+                            transcription: test_verbose_transcription(
+                                0.5,
+                                1.0,
+                                " first ",
+                                vec![test_transcription_word(0.6, 0.8, "first", Some(0.8))],
+                            ),
+                        },
+                        PendingTranscription {
+                            base_offset_ms: 5_000,
+                            transcription: test_verbose_transcription(
+                                0.25,
+                                0.75,
+                                "second",
+                                vec![test_transcription_word(0.3, 0.7, "second", Some(0.9))],
+                            ),
+                        },
+                    ],
+                )
+                .expect("persist completed ranges");
+
+                let segments = storage::list_transcript_segments(connection, &chunk.recording_id)?;
+                let words = segments
+                    .iter()
+                    .map(|segment| storage::list_transcript_words(connection, &segment.id))
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+
+                assert_eq!(stats.segment_count, 2);
+                assert_eq!(stats.word_count, 2);
+                assert_eq!(segments.len(), 2);
+                assert_eq!(segments[0].text, "first");
+                assert_eq!(segments[0].start_offset_ms, 1_600);
+                assert_eq!(segments[0].end_offset_ms, 1_800);
+                assert_eq!(segments[1].text, "second");
+                assert_eq!(segments[1].start_offset_ms, 5_300);
+                assert_eq!(segments[1].end_offset_ms, 5_700);
+                assert_eq!(words.len(), 2);
+
+                Ok(())
+            })
+            .expect("persist transcriptions");
+    }
+
+    #[test]
+    fn persist_transcriptions_for_chunk_rolls_back_failed_range_batch() {
+        let storage = storage::test_storage(PathBuf::new());
+
+        storage
+            .with_connection_mut(|connection| {
+                let (chunk, track) = test_transcription_chunk(connection);
+                let error = persist_transcriptions_for_chunk(
+                    connection,
+                    &chunk,
+                    &track,
+                    "local-whisper-cpp",
+                    "small",
+                    chunk.segment_id.as_deref().expect("chunk segment id"),
+                    vec![
+                        PendingTranscription {
+                            base_offset_ms: 1_000,
+                            transcription: test_verbose_transcription(
+                                0.0,
+                                1.0,
+                                "would otherwise persist",
+                                vec![],
+                            ),
+                        },
+                        PendingTranscription {
+                            base_offset_ms: 2_000,
+                            transcription: test_verbose_transcription(
+                                0.0,
+                                1.0,
+                                "invalid word probability",
+                                vec![test_transcription_word(0.1, 0.2, "bad", Some(2.0))],
+                            ),
+                        },
+                    ],
+                )
+                .expect_err("invalid word probability should fail");
+
+                assert!(matches!(error, rusqlite::Error::SqliteFailure(_, Some(_))));
+                let segment_count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM transcript_segments WHERE chunk_id = ?1",
+                    [&chunk.id],
+                    |row| row.get(0),
+                )?;
+                let word_count: i64 = connection.query_row(
+                    r#"
+                    SELECT COUNT(*)
+                    FROM transcript_words
+                    WHERE transcript_segment_id IN (
+                        SELECT id FROM transcript_segments WHERE chunk_id = ?1
+                    )
+                    "#,
+                    [&chunk.id],
+                    |row| row.get(0),
+                )?;
+
+                assert_eq!(segment_count, 0);
+                assert_eq!(word_count, 0);
+
+                Ok(())
+            })
+            .expect("rollback checked");
+    }
+
+    #[test]
     fn manager_queues_one_download_while_another_is_active() {
         let manager = AiModelManager::new();
 
@@ -4159,6 +5096,21 @@ mod tests {
                 status: "succeeded"
             }
         ));
+    }
+
+    #[test]
+    fn transcription_chunk_state_preserves_skipped_silence_result() {
+        let mut chunk = test_processing_chunk("succeeded");
+        chunk.result_code = Some(TRANSCRIPTION_RESULT_SKIPPED_SILENCE.to_string());
+
+        let state = transcription_chunk_state(&processing_chunk_from_row(chunk), &[]);
+
+        assert_eq!(state.result, TRANSCRIPTION_RESULT_SKIPPED_SILENCE);
+        assert_eq!(
+            state.result_code.as_deref(),
+            Some(TRANSCRIPTION_RESULT_SKIPPED_SILENCE)
+        );
+        assert_eq!(state.text, None);
     }
 
     #[test]
@@ -4280,7 +5232,7 @@ mod tests {
                 )?;
 
                 let notification =
-                    save_cancel_download_result(connection, catalog, None, false, 20)?;
+                    save_cancel_download_result(connection, catalog, None, false, None, 20)?;
 
                 assert_eq!(notification.status, "warning");
                 assert_eq!(notification.title, "Model download not running");
@@ -4294,6 +5246,46 @@ mod tests {
                 Ok(())
             })
             .expect("save stale cancel");
+    }
+
+    #[test]
+    fn cancel_persisted_download_records_partial_bytes() {
+        let storage = storage::test_storage(PathBuf::new());
+        let catalog = &LOCAL_WHISPER_CATALOG[2];
+
+        storage
+            .with_connection(|connection| {
+                save_catalog_model(
+                    connection,
+                    catalog,
+                    ModelAssetPatch {
+                        download_status: "downloading".into(),
+                        downloaded_bytes: 10,
+                        total_bytes: Some(catalog.size_bytes),
+                        verification_status: "pending".into(),
+                        ..ModelAssetPatch::missing()
+                    },
+                    10,
+                )?;
+
+                let notification =
+                    save_cancel_download_result(connection, catalog, None, true, Some(42), 20)?;
+
+                assert_eq!(notification.status, "cancelled");
+                assert_eq!(notification.title, "Model download cancelled");
+
+                let model = storage::get_ai_model_asset(connection, catalog.id)?
+                    .expect("model asset remains saved");
+                assert_eq!(model.download_status, "cancelled");
+                assert_eq!(model.downloaded_bytes, 42);
+                assert_eq!(
+                    model.error_code.as_deref(),
+                    Some("ai_model_download_cancelled")
+                );
+
+                Ok(())
+            })
+            .expect("cancel persisted download");
     }
 
     #[test]
@@ -4336,6 +5328,75 @@ mod tests {
             PartialDownloadResume::Resume(0)
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn recovery_uses_verified_final_model_file() {
+        let dir = test_temp_path("recovery-final");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let final_path = dir.join("model.bin");
+        let partial_path = dir.join("model.part");
+        let bytes = b"complete model bytes";
+        fs::write(&final_path, bytes).expect("write final");
+        let sha1 = Box::leak(test_sha1(bytes).into_boxed_str());
+        let catalog = CatalogModel {
+            id: "test",
+            label: "Test model",
+            sha1,
+            size_bytes: bytes.len() as i64,
+        };
+
+        assert_eq!(
+            recover_model_files(&catalog, &partial_path, &final_path).expect("recover files"),
+            RecoveredModelFiles::VerifiedFinal
+        );
+
+        delete_file_if_exists(&final_path).expect("delete final");
+    }
+
+    #[test]
+    fn recovery_deletes_corrupt_final_and_resumes_partial() {
+        let dir = test_temp_path("recovery-corrupt-final");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let final_path = dir.join("model.bin");
+        let partial_path = dir.join("model.part");
+        fs::write(&final_path, b"corrupt").expect("write final");
+        fs::write(&partial_path, b"partial").expect("write partial");
+        let sha1 = Box::leak(test_sha1(b"expected").into_boxed_str());
+        let catalog = CatalogModel {
+            id: "test",
+            label: "Test model",
+            sha1,
+            size_bytes: 100,
+        };
+
+        assert_eq!(
+            recover_model_files(&catalog, &partial_path, &final_path).expect("recover files"),
+            RecoveredModelFiles::Partial(7)
+        );
+        assert!(!final_path.exists());
+
+        delete_file_if_exists(&partial_path).expect("delete partial");
+    }
+
+    #[test]
+    fn recovery_reports_no_files_when_partial_is_missing() {
+        let dir = test_temp_path("recovery-missing");
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let final_path = dir.join("model.bin");
+        let partial_path = dir.join("model.part");
+        let sha1 = Box::leak(test_sha1(b"expected").into_boxed_str());
+        let catalog = CatalogModel {
+            id: "test",
+            label: "Test model",
+            sha1,
+            size_bytes: 100,
+        };
+
+        assert_eq!(
+            recover_model_files(&catalog, &partial_path, &final_path).expect("recover files"),
+            RecoveredModelFiles::None
+        );
     }
 
     #[test]
@@ -4576,6 +5637,127 @@ mod tests {
         hex::encode(hasher.finalize())
     }
 
+    fn test_transcription_chunk(
+        connection: &rusqlite::Connection,
+    ) -> (ProcessingChunkRow, RecordingTrackRow) {
+        let recording_id = Uuid::now_v7().to_string();
+        let segment_id = Uuid::now_v7().to_string();
+        let track_id = Uuid::now_v7().to_string();
+        let job_id = Uuid::now_v7().to_string();
+        let chunk_id = Uuid::now_v7().to_string();
+
+        storage::create_recording(
+            connection,
+            &storage::CreateRecordingInput {
+                active_scene_id: None,
+                created_at_ms: 1,
+                default_fps: 1.0,
+                id: recording_id.clone(),
+                notes: None,
+                output_root: None,
+                quality_label: "balanced-ocr".to_string(),
+                storage_dir: "/tmp/daydream-test".to_string(),
+            },
+        )
+        .expect("create recording");
+        storage::create_recording_segment(
+            connection,
+            &storage::CreateRecordingSegmentInput {
+                file_path: "/tmp/daydream-test/segments/0001.mkv".to_string(),
+                id: segment_id.clone(),
+                recording_id: recording_id.clone(),
+                segment_index: 1,
+                started_at_ms: 1,
+            },
+        )
+        .expect("create segment");
+        let track = storage::upsert_recording_track(
+            connection,
+            &UpsertRecordingTrackInput {
+                codec: Some("pcm_s16le".to_string()),
+                created_at_ms: 1,
+                id: track_id.clone(),
+                kind: "microphone".to_string(),
+                label: "Microphone".to_string(),
+                path: None,
+                recording_id: recording_id.clone(),
+                source_id: None,
+            },
+        )
+        .expect("create track");
+        storage::create_processing_job(
+            connection,
+            &CreateProcessingJobInput {
+                created_at_ms: 1,
+                error: None,
+                id: job_id.clone(),
+                kind: AI_PROCESSING_JOB_KIND.to_string(),
+                recording_id: recording_id.clone(),
+                status: "running".to_string(),
+                updated_at_ms: 1,
+            },
+        )
+        .expect("create job");
+        let chunk = storage::create_processing_chunk(
+            connection,
+            &CreateProcessingChunkInput {
+                attempt_count: 1,
+                created_at_ms: 1,
+                end_offset_ms: Some(10_000),
+                error_code: None,
+                id: chunk_id,
+                job_id,
+                progress: 0.0,
+                recording_id,
+                result_code: None,
+                segment_id: Some(segment_id),
+                source_kind: "audio".to_string(),
+                start_offset_ms: Some(0),
+                status: "running".to_string(),
+                track_id: Some(track_id),
+                updated_at_ms: 1,
+            },
+        )
+        .expect("create chunk");
+
+        (chunk, track)
+    }
+
+    fn test_verbose_transcription(
+        start: f64,
+        end: f64,
+        text: &str,
+        words: Vec<transcription::VerboseTranscriptionWord>,
+    ) -> transcription::VerboseTranscription {
+        transcription::VerboseTranscription {
+            duration: Some(end),
+            language: Some("en".to_string()),
+            segments: vec![transcription::VerboseTranscriptionSegment {
+                end,
+                id: 0,
+                start,
+                text: text.to_string(),
+            }],
+            task: Some("transcribe".to_string()),
+            text: text.to_string(),
+            words,
+        }
+    }
+
+    fn test_transcription_word(
+        start: f64,
+        end: f64,
+        word: &str,
+        probability: Option<f64>,
+    ) -> transcription::VerboseTranscriptionWord {
+        transcription::VerboseTranscriptionWord {
+            end,
+            probability,
+            start,
+            word: word.to_string(),
+        }
+    }
+
     fn test_temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("daydream-ai-{name}-{}", Uuid::now_v7()))
     }
@@ -4590,6 +5772,7 @@ mod tests {
             job_id: Uuid::now_v7().to_string(),
             progress: if status == "succeeded" { 1.0 } else { 0.0 },
             recording_id: Uuid::now_v7().to_string(),
+            result_code: None,
             segment_id: None,
             source_kind: "audio".to_string(),
             start_offset_ms: Some(0),

@@ -97,6 +97,7 @@ pub struct CreateProcessingChunkInput {
     pub job_id: String,
     pub progress: f64,
     pub recording_id: String,
+    pub result_code: Option<String>,
     pub segment_id: Option<String>,
     pub source_kind: String,
     pub start_offset_ms: Option<i64>,
@@ -115,6 +116,7 @@ pub struct ProcessingChunkRow {
     pub job_id: String,
     pub progress: f64,
     pub recording_id: String,
+    pub result_code: Option<String>,
     pub segment_id: Option<String>,
     pub source_kind: String,
     pub start_offset_ms: Option<i64>,
@@ -734,10 +736,11 @@ pub fn create_processing_chunk(
             attempt_count,
             progress,
             error_code,
+            result_code,
             track_id,
             created_at_ms,
             updated_at_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         "#,
         params![
             input.id,
@@ -751,6 +754,7 @@ pub fn create_processing_chunk(
             input.attempt_count,
             input.progress,
             input.error_code,
+            input.result_code,
             input.track_id,
             input.created_at_ms,
             input.updated_at_ms,
@@ -851,6 +855,7 @@ pub fn get_processing_chunk(
                 attempt_count,
                 progress,
                 error_code,
+                result_code,
                 track_id,
                 created_at_ms,
                 updated_at_ms
@@ -881,6 +886,7 @@ pub fn list_processing_chunks(
             attempt_count,
             progress,
             error_code,
+            result_code,
             track_id,
             created_at_ms,
             updated_at_ms
@@ -924,6 +930,7 @@ pub fn list_processing_chunks_by_status(
             attempt_count,
             progress,
             error_code,
+            result_code,
             track_id,
             created_at_ms,
             updated_at_ms
@@ -968,6 +975,7 @@ pub fn claim_next_queued_processing_chunk(
         SET status = 'running',
             progress = ?2,
             error_code = NULL,
+            result_code = NULL,
             attempt_count = attempt_count + 1,
             updated_at_ms = ?3
         WHERE id = ?1
@@ -996,11 +1004,31 @@ pub fn update_processing_chunk_status(
         SET status = ?2,
             progress = ?3,
             error_code = ?4,
+            result_code = NULL,
             attempt_count = CASE WHEN ?2 = 'running' THEN attempt_count + 1 ELSE attempt_count END,
             updated_at_ms = ?5
         WHERE id = ?1
         "#,
         params![id, status, progress, error_code, timestamp_ms],
+    )?;
+
+    get_processing_chunk(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
+pub fn update_processing_chunk_result_code(
+    connection: &Connection,
+    id: &str,
+    result_code: Option<&str>,
+    timestamp_ms: i64,
+) -> rusqlite::Result<ProcessingChunkRow> {
+    connection.execute(
+        r#"
+        UPDATE processing_chunks
+        SET result_code = ?2,
+            updated_at_ms = ?3
+        WHERE id = ?1
+        "#,
+        params![id, result_code, timestamp_ms],
     )?;
 
     get_processing_chunk(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
@@ -1025,6 +1053,7 @@ pub fn requeue_processing_chunks(
         SET status = 'queued',
             progress = 0,
             error_code = NULL,
+            result_code = NULL,
             updated_at_ms = ?2
         WHERE job_id = ?1
             AND status IN ({placeholders})
@@ -1541,9 +1570,10 @@ fn processing_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProcessingC
         attempt_count: row.get(8)?,
         progress: row.get(9)?,
         error_code: row.get(10)?,
-        track_id: row.get(11)?,
-        created_at_ms: row.get(12)?,
-        updated_at_ms: row.get(13)?,
+        result_code: row.get(11)?,
+        track_id: row.get(12)?,
+        created_at_ms: row.get(13)?,
+        updated_at_ms: row.get(14)?,
     })
 }
 

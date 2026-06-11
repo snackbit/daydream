@@ -88,12 +88,18 @@ const defaultAiSettings = {
     periodicFullFrameIntervalMs: 300_000,
   },
   transcription: {
+    language: 'auto',
     localBackend: 'cpu',
     localModelId: 'small',
+    maxInitialTimestampSeconds: 3,
+    mergeGapMs: 700,
+    minSpeechMs: 250,
     provider: 'local-whisper-cpp',
     remoteApiKeyRef: null,
     remoteBaseUrl: null,
     remoteModel: null,
+    silenceGateEnabled: true,
+    silenceThresholdDb: -45,
     wordTimestampsEnabled: true,
   },
   vision: {
@@ -107,6 +113,12 @@ const defaultAiSettings = {
 const defaultSettingsState = {
   defaults: {
     ai: defaultAiSettings,
+    debug: {
+      enabled: false,
+    },
+    expert: {
+      enabled: false,
+    },
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
@@ -132,6 +144,16 @@ const defaultSettingsState = {
         periodicFullFrameIntervalMsMax: 3_600_000,
         periodicFullFrameIntervalMsMin: 30_000,
       },
+      transcription: {
+        maxInitialTimestampSecondsMax: 10,
+        maxInitialTimestampSecondsMin: 1,
+        mergeGapMsMax: 5_000,
+        mergeGapMsMin: 0,
+        minSpeechMsMax: 2_000,
+        minSpeechMsMin: 50,
+        silenceThresholdDbMax: -20,
+        silenceThresholdDbMin: -80,
+      },
     },
     record: {
       fpsMax: 5,
@@ -148,6 +170,12 @@ const defaultSettingsState = {
   },
   settings: {
     ai: defaultAiSettings,
+    debug: {
+      enabled: false,
+    },
+    expert: {
+      enabled: false,
+    },
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
@@ -195,13 +223,8 @@ const aiModels = [
 
 async function openAiSettingsTab() {
   await screen.findByRole('tablist', { name: 'Settings sections' });
-  const recordTab = screen.getByRole('tab', { name: 'Record' });
   const aiTab = screen.getByRole('tab', { name: 'AI/LLM' });
-  recordTab.focus();
-  fireEvent.keyDown(recordTab, { key: 'ArrowRight' });
-  fireEvent.keyDown(screen.getByRole('tab', { name: 'Storage/Library' }), {
-    key: 'ArrowRight',
-  });
+  fireEvent.click(aiTab);
   await waitFor(() => expect(aiTab.getAttribute('aria-selected')).toBe('true'));
   await screen.findByText('Transcription');
 }
@@ -235,6 +258,10 @@ beforeEach(() => {
   aiClient.listenToAiModelsChanged.mockResolvedValue(vi.fn());
   aiClient.getAiProviderStatus.mockResolvedValue({
     localTranscription: {
+      availableLanguages: [
+        { id: 'en', label: 'English' },
+        { id: 'de', label: 'German' },
+      ],
       availableBackends: [
         { available: true, id: 'cpu', reason: null },
         {
@@ -475,6 +502,7 @@ test('SettingsScreen toggles checkbox fields from their description text', async
   render(<SettingsScreen />);
 
   await openAiSettingsTab();
+  await selectOption('Language', 'German');
   fireEvent.click(
     screen.getByText(
       'Providers may omit word timestamps; Daydream keeps segment timestamps either way.',
@@ -489,12 +517,40 @@ test('SettingsScreen toggles checkbox fields from their description text', async
           ...defaultAiSettings,
           transcription: {
             ...defaultAiSettings.transcription,
+            language: 'de',
             wordTimestampsEnabled: false,
           },
         },
         record: defaultSettingsState.settings.record,
         storage: defaultSettingsState.settings.storage,
       },
+    }),
+  );
+});
+
+test('SettingsScreen reveals expert transcription controls from General settings', async () => {
+  render(<SettingsScreen />);
+
+  await screen.findByRole('tablist', { name: 'Settings sections' });
+  expect(screen.queryByText('Silence threshold')).toBeNull();
+
+  fireEvent.click(screen.getByText('Enable expert mode'));
+  await openAiSettingsTab();
+
+  expect(screen.getByText('Silence threshold')).toBeTruthy();
+  expect(screen.getByText('Minimum speech')).toBeTruthy();
+  expect(screen.getByText('Merge close speech gaps')).toBeTruthy();
+  expect(screen.getByText('Whisper initial timestamp cap')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        expert: {
+          enabled: true,
+        },
+      }),
     }),
   );
 });

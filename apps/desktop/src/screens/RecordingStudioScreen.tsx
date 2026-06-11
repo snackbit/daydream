@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import type {
+  LibraryRecordingDebugData,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import {
   AlertTriangle,
+  Bug,
+  Clipboard,
   Loader2,
   Pencil,
   RefreshCw,
@@ -33,6 +36,7 @@ import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
   deleteLibraryRecording,
+  getLibraryRecordingDebug,
   getLibraryRecording,
   renameLibraryRecording,
 } from '@/features/library/library-client';
@@ -41,6 +45,7 @@ import {
   formatDuration,
   formatTimestamp,
 } from '@/features/library/library-format';
+import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 
 const RECORDING_TITLE_MAX_CHARS = 120;
 
@@ -64,6 +69,16 @@ export function RecordingStudioScreen() {
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [processingStartBusy, setProcessingStartBusy] = useState(false);
+  const [debugDialogOpen, setDebugDialogOpen] = useState(false);
+  const [debugData, setDebugData] = useState<LibraryRecordingDebugData | null>(
+    null,
+  );
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugCopyStatus, setDebugCopyStatus] = useState<
+    'copied' | 'failed' | 'idle'
+  >('idle');
+  const debugEnabled = useDebugEnabled();
   const aiProcessing = useRecordingAiProcessingState(recordingId);
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
@@ -172,6 +187,32 @@ export function RecordingStudioScreen() {
     }
   }
 
+  async function openDebugDialog() {
+    setDebugDialogOpen(true);
+    setDebugCopyStatus('idle');
+    setDebugError(null);
+    setDebugLoading(true);
+    try {
+      setDebugData(await getLibraryRecordingDebug({ recordingId }));
+    } catch (debugLoadError) {
+      setDebugError(errorMessage(debugLoadError));
+    } finally {
+      setDebugLoading(false);
+    }
+  }
+
+  async function copyDebugData() {
+    if (!debugData) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));
+      setDebugCopyStatus('copied');
+    } catch (_error) {
+      setDebugCopyStatus('failed');
+    }
+  }
+
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
@@ -256,6 +297,16 @@ export function RecordingStudioScreen() {
                 <Sparkles className="size-3.5" />
               )}
               {processAiLabel}
+            </Button>
+          ) : null}
+          {detail && debugEnabled ? (
+            <Button
+              className="gap-2"
+              variant="outline"
+              onClick={() => void openDebugDialog()}
+            >
+              <Bug className="size-3.5" />
+              Debug
             </Button>
           ) : null}
           {detail && isRecordingRenameable(detail) ? (
@@ -386,6 +437,53 @@ export function RecordingStudioScreen() {
               onClick={() => void confirmRename()}
             >
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={debugDialogOpen} onOpenChange={setDebugDialogOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Recording debug data</DialogTitle>
+            <DialogDescription>
+              Raw local state for this recording. Transcript text may be
+              included.
+            </DialogDescription>
+          </DialogHeader>
+          {debugLoading ? (
+            <div className="text-muted-foreground border p-4 text-sm">
+              Loading debug data.
+            </div>
+          ) : null}
+          {debugError ? (
+            <Alert variant="destructive">
+              <AlertTriangle />
+              <AlertTitle>Debug data failed</AlertTitle>
+              <AlertDescription>{debugError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <pre className="bg-muted max-h-[60vh] overflow-auto p-3 text-xs leading-5">
+            {JSON.stringify(debugData ?? { status: 'loading' }, null, 2)}
+          </pre>
+          <DialogFooter>
+            <p
+              aria-live="polite"
+              className="text-muted-foreground min-h-5 flex-1 text-xs"
+            >
+              {debugCopyStatus === 'copied' ? 'Debug JSON copied.' : null}
+              {debugCopyStatus === 'failed'
+                ? 'Unable to copy debug JSON.'
+                : null}
+            </p>
+            <Button
+              className="gap-2"
+              disabled={!debugData}
+              variant="outline"
+              onClick={() => void copyDebugData()}
+            >
+              <Clipboard className="size-3.5" />
+              Copy JSON
             </Button>
           </DialogFooter>
         </DialogContent>

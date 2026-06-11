@@ -9,8 +9,18 @@ export interface AppSettingsState {
 
 export interface AppSettings {
   ai: AiSettings;
+  debug?: DebugSettings;
+  expert?: ExpertSettings;
   record: RecordSettings;
   storage: StorageSettings;
+}
+
+export interface DebugSettings {
+  enabled: boolean;
+}
+
+export interface ExpertSettings {
+  enabled: boolean;
 }
 
 export interface RecordSettings {

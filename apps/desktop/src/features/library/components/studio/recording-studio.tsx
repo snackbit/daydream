@@ -84,7 +84,7 @@ export function RecordingStudio({
       </ResizablePanel>
       <ResizableHandle withHandle />
       <ResizablePanel defaultSize={26} minSize={18}>
-        <StudioSidebar detail={detail} />
+        <StudioSidebar aiProcessingState={aiProcessingState} detail={detail} />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

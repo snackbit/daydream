@@ -1,3 +1,4 @@
+import type { RecordingAiProcessingState } from './ai.js';
 import type { RecorderSegmentState } from './recorder.js';
 
 export type LibraryRecordingAvailability =
@@ -85,6 +86,17 @@ export interface DeleteLibraryRecordingsInput {
 export interface RenameLibraryRecordingInput {
   recordingId: string;
   title: string | null;
+}
+
+export interface LibraryRecordingDebugInput {
+  recordingId: string;
+}
+
+export interface LibraryRecordingDebugData {
+  detail: LibraryRecordingDetail;
+  processingState: RecordingAiProcessingState;
+  raw: unknown;
+  recordingId: string;
 }
 
 export interface LibraryWaveformRequest {

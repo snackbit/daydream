@@ -565,6 +565,7 @@ pub(super) fn migrations() -> Migrations<'static> {
             attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
             progress REAL NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 1),
             error_code TEXT,
+            result_code TEXT,
             created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
             FOREIGN KEY (job_id) REFERENCES processing_jobs(id) ON DELETE CASCADE,
@@ -798,5 +799,24 @@ pub(super) fn migrations() -> Migrations<'static> {
         CREATE INDEX idx_processing_chunks_track_status ON processing_chunks(track_id, status);
         "#,
         ),
+        M::up_with_hook("SELECT 1;", |transaction| {
+            let mut statement = transaction.prepare("PRAGMA table_info(processing_chunks)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            for column in columns {
+                if column? == "result_code" {
+                    return Ok(());
+                }
+            }
+
+            transaction.execute(
+                r#"
+                ALTER TABLE processing_chunks
+                    ADD COLUMN result_code TEXT;
+                "#,
+                [],
+            )?;
+
+            Ok(())
+        }),
     ])
 }

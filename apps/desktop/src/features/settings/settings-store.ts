@@ -174,6 +174,8 @@ function settingsEqual(left: AppSettings, right: AppSettings): boolean {
   return (
     left.record.fps === right.record.fps &&
     left.record.videoBitrateKbps === right.record.videoBitrateKbps &&
+    (left.debug?.enabled ?? false) === (right.debug?.enabled ?? false) &&
+    (left.expert?.enabled ?? false) === (right.expert?.enabled ?? false) &&
     left.storage.retentionDays === right.storage.retentionDays &&
     left.storage.sizeLimitBytes === right.storage.sizeLimitBytes &&
     JSON.stringify(left.ai) === JSON.stringify(right.ai)

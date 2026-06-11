@@ -463,6 +463,7 @@ mod tests {
                         job_id: job_id.clone(),
                         progress: 0.5,
                         recording_id: recording_id.clone(),
+                        result_code: None,
                         segment_id: None,
                         source_kind: "activity".to_string(),
                         start_offset_ms: Some(0),

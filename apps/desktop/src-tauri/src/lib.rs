@@ -62,6 +62,7 @@ pub fn run() {
             app.manage(recorder_manager);
             app.manage(playback_server);
             app.manage(startup_manager);
+            ai::recover_model_downloads(app.handle().clone());
             ai::start_processing_worker(app.handle().clone());
             startup::start_app_startup(app.handle().clone());
 
@@ -76,6 +77,7 @@ pub fn run() {
             diagnostics::get_debug_log_bundle,
             library::delete_library_recording,
             library::delete_library_recordings,
+            library::get_library_recording_debug,
             library::get_library_recording,
             ai::get_recording_activity,
             ai::get_recording_ai_processing_state,

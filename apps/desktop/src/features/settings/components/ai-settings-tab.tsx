@@ -65,6 +65,10 @@ export function AiSettingsTab({
   const remoteTranscription =
     draft.ai.transcription.provider === 'openai-compatible';
   const remoteVision = draft.ai.vision.provider === 'openai-compatible';
+  const transcriptionLanguages = [
+    { id: 'auto', label: 'Auto detect' },
+    ...(providerStatus?.localTranscription.availableLanguages ?? []),
+  ];
 
   return (
     <div className="grid gap-4">
@@ -205,6 +209,42 @@ export function AiSettingsTab({
               </FieldDescription>
             </Field>
 
+            <Field>
+              <FieldLabel htmlFor="ai-transcription-language">
+                Language
+              </FieldLabel>
+              <Select
+                onValueChange={(language) => {
+                  onUpdateDraft((current) => ({
+                    ...current,
+                    ai: {
+                      ...current.ai,
+                      transcription: {
+                        ...current.ai.transcription,
+                        language,
+                      },
+                    },
+                  }));
+                }}
+                value={draft.ai.transcription.language}
+              >
+                <SelectTrigger id="ai-transcription-language">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {transcriptionLanguages.map((language) => (
+                    <SelectItem key={language.id} value={language.id}>
+                      {language.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                Auto-detect is best for recordings that may switch languages.
+                Choose a language to force transcription in that language.
+              </FieldDescription>
+            </Field>
+
             <CheckboxField
               checked={draft.ai.transcription.wordTimestampsEnabled}
               description="Providers may omit word timestamps; Daydream keeps segment timestamps either way."
@@ -222,6 +262,105 @@ export function AiSettingsTab({
                 }));
               }}
             />
+
+            {draft.expert?.enabled ? (
+              <>
+                <CheckboxField
+                  checked={draft.ai.transcription.silenceGateEnabled}
+                  description="Skip transcription for WAV ranges below the configured RMS threshold."
+                  label="Enable silence gate"
+                  onCheckedChange={(checked) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          silenceGateEnabled: checked,
+                        },
+                      },
+                    }));
+                  }}
+                />
+                <SliderField
+                  label="Silence threshold"
+                  max={limits.ai.transcription.silenceThresholdDbMax}
+                  min={limits.ai.transcription.silenceThresholdDbMin}
+                  onChange={(silenceThresholdDb) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          silenceThresholdDb,
+                        },
+                      },
+                    }));
+                  }}
+                  suffix="dBFS"
+                  value={draft.ai.transcription.silenceThresholdDb}
+                />
+                <SliderField
+                  label="Minimum speech"
+                  max={limits.ai.transcription.minSpeechMsMax}
+                  min={limits.ai.transcription.minSpeechMsMin}
+                  onChange={(minSpeechMs) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          minSpeechMs,
+                        },
+                      },
+                    }));
+                  }}
+                  suffix="ms"
+                  value={draft.ai.transcription.minSpeechMs}
+                />
+                <SliderField
+                  label="Merge close speech gaps"
+                  max={limits.ai.transcription.mergeGapMsMax}
+                  min={limits.ai.transcription.mergeGapMsMin}
+                  onChange={(mergeGapMs) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          mergeGapMs,
+                        },
+                      },
+                    }));
+                  }}
+                  suffix="ms"
+                  value={draft.ai.transcription.mergeGapMs}
+                />
+                <SliderField
+                  label="Whisper initial timestamp cap"
+                  max={limits.ai.transcription.maxInitialTimestampSecondsMax}
+                  min={limits.ai.transcription.maxInitialTimestampSecondsMin}
+                  onChange={(maxInitialTimestampSeconds) => {
+                    onUpdateDraft((current) => ({
+                      ...current,
+                      ai: {
+                        ...current.ai,
+                        transcription: {
+                          ...current.ai.transcription,
+                          maxInitialTimestampSeconds,
+                        },
+                      },
+                    }));
+                  }}
+                  step={0.5}
+                  suffix="s"
+                  value={draft.ai.transcription.maxInitialTimestampSeconds}
+                />
+              </>
+            ) : null}
 
             {remoteTranscription ? (
               <>

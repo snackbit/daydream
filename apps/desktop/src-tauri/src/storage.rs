@@ -30,13 +30,13 @@ pub use ai::{
     list_processing_chunks_by_status, list_processing_jobs, list_processing_jobs_by_status,
     list_recording_tracks, list_transcript_segments, list_transcript_words,
     processing_job_chunk_progress, recording_has_redactions, requeue_processing_chunks,
-    retry_processing_job_chunks, save_ai_model_asset, update_processing_chunk_status,
-    update_processing_job_status, upsert_recording_track, ActivityIntervalRow, AiModelAssetRow,
-    CaptureEventRow, CreateActivityIntervalInput, CreateCaptureEventInput,
-    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateProcessingJobInput,
-    CreateTranscriptSegmentInput, CreateTranscriptWordInput, CreateVisualRegionInput,
-    ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow, SaveAiModelAssetInput,
-    TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
+    retry_processing_job_chunks, save_ai_model_asset, update_processing_chunk_result_code,
+    update_processing_chunk_status, update_processing_job_status, upsert_recording_track,
+    ActivityIntervalRow, AiModelAssetRow, CaptureEventRow, CreateActivityIntervalInput,
+    CreateCaptureEventInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
+    CreateProcessingJobInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+    CreateVisualRegionInput, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow,
+    SaveAiModelAssetInput, TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
 };
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use notifications::{

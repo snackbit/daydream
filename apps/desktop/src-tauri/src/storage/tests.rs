@@ -17,8 +17,8 @@ use super::{
     mark_portal_restore_token_used, mark_recording_completed, mark_recording_started, migrations,
     recover_interrupted_recordings, rename_recording, reset_app_settings,
     retry_processing_job_chunks, save_ai_model_asset, save_app_settings, save_notification,
-    save_recorder_scene, save_unseen_notification, update_recording_status,
-    upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
+    save_recorder_scene, save_unseen_notification, update_processing_chunk_result_code,
+    update_recording_status, upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
     CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
     CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
     CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
@@ -40,7 +40,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 13);
+    assert_eq!(schema_version, 14);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -587,6 +587,7 @@ fn processing_status_helpers_support_unbounded_queries_without_overflowing_limit
                 job_id: job_id.clone(),
                 progress: 0.0,
                 recording_id: recording_id.clone(),
+                result_code: None,
                 segment_id: None,
                 source_kind: "audio".to_string(),
                 start_offset_ms: Some(index * 1_000),
@@ -648,6 +649,7 @@ fn claim_next_queued_processing_chunk_marks_one_chunk_running() {
             job_id: job_id.clone(),
             progress: 0.0,
             recording_id,
+            result_code: None,
             segment_id: None,
             source_kind: "audio".to_string(),
             start_offset_ms: Some(0),
@@ -675,6 +677,64 @@ fn claim_next_queued_processing_chunk_marks_one_chunk_running() {
     assert!(claimed_again.is_none());
     assert_eq!(running_chunks.len(), 1);
     assert_eq!(queued_chunks.len(), 0);
+}
+
+#[test]
+fn processing_chunk_result_code_round_trips_and_clears_on_claim() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let job_id = Uuid::now_v7().to_string();
+    let chunk_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'ai-processing', 'running', 1, 1)
+            "#,
+            (&job_id, &recording_id),
+        )
+        .expect("insert processing job");
+    create_processing_chunk(
+        &connection,
+        &CreateProcessingChunkInput {
+            attempt_count: 0,
+            created_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            error_code: None,
+            id: chunk_id.clone(),
+            job_id: job_id.clone(),
+            progress: 0.0,
+            recording_id,
+            result_code: None,
+            segment_id: None,
+            source_kind: "audio".to_string(),
+            start_offset_ms: Some(0),
+            status: "queued".to_string(),
+            track_id: None,
+            updated_at_ms: 1,
+        },
+    )
+    .expect("insert queued processing chunk");
+
+    let updated =
+        update_processing_chunk_result_code(&connection, &chunk_id, Some("skipped-silence"), 2)
+            .expect("update result code");
+
+    assert_eq!(updated.result_code.as_deref(), Some("skipped-silence"));
+
+    let claimed = claim_next_queued_processing_chunk(&connection, &job_id, 0.05, 3)
+        .expect("claim queued chunk")
+        .expect("claimed chunk");
+
+    assert_eq!(claimed.id, chunk_id);
+    assert_eq!(claimed.result_code, None);
 }
 
 #[test]
@@ -750,6 +810,7 @@ fn retry_processing_job_requeues_terminal_chunks_and_clears_their_outputs() {
                 job_id: job_id.clone(),
                 progress: if status == "succeeded" { 1.0 } else { 0.5 },
                 recording_id: recording_id.clone(),
+                result_code: None,
                 segment_id: Some(segment_id.clone()),
                 source_kind: source_kind.to_string(),
                 start_offset_ms: Some(index * 1_000),
@@ -933,6 +994,7 @@ fn ai_storage_helpers_preserve_derived_output_provenance() {
             job_id: job_id.clone(),
             progress: 0.5,
             recording_id: recording_id.clone(),
+            result_code: None,
             segment_id: Some(segment_id.clone()),
             source_kind: "audio".to_string(),
             start_offset_ms: Some(0),
@@ -1172,7 +1234,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 13);
+    assert_eq!(schema_version, 14);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

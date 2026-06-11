@@ -9,9 +9,11 @@ import {
 } from '@/features/diagnostics/components/diagnostic-primitives';
 import { getDebugLogBundle } from '@/features/diagnostics/diagnostics-client';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
+import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 
 export function DiagnosticsScreen() {
+  const debugEnabled = useDebugEnabled();
   const runAsyncAction = useAsyncErrorBoundary();
   const diagnostics = useDiagnosticsStore((state) => state.diagnostics);
   const error = useDiagnosticsStore((state) => state.error);
@@ -25,10 +27,10 @@ export function DiagnosticsScreen() {
   >('idle');
 
   useEffect(() => {
-    if (status === 'idle') {
+    if (debugEnabled && status === 'idle') {
       runAsyncAction(load);
     }
-  }, [load, runAsyncAction, status]);
+  }, [debugEnabled, load, runAsyncAction, status]);
 
   async function copyRawDiagnosticsJson() {
     if (!diagnostics) {
@@ -51,6 +53,25 @@ export function DiagnosticsScreen() {
     } catch (_error) {
       setBundleCopyStatus('failed');
     }
+  }
+
+  if (!debugEnabled) {
+    return (
+      <PageLayout>
+        <PageHeader
+          title="Diagnostics"
+          description="Diagnostics are hidden until Debug is enabled."
+        />
+        <div className="grid gap-3 border p-4 text-sm">
+          <p className="text-muted-foreground">
+            Enable Debug in Settings to view runtime diagnostics.
+          </p>
+          <Button asChild className="w-fit" variant="outline">
+            <a href="/settings">Open Settings</a>
+          </Button>
+        </div>
+      </PageLayout>
+    );
   }
 
   return (

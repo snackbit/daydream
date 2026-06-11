@@ -17,7 +17,11 @@ import type {
 import { GripVertical, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { buildDerivedLane, DerivedAiLaneStrip } from './derived-ai-lane-strip';
+import {
+  buildDerivedLane,
+  SegmentTranscriptionLayer,
+  type DerivedAiLane,
+} from './derived-ai-lane-strip';
 import {
   studioClipId,
   studioColorById,
@@ -213,6 +217,7 @@ export function TrackLane({
             style={{ backgroundColor: color.strong }}
           />
           <span className="truncate">{derivedLane.label}</span>
+          <span className="truncate">{derivedLane.statusLabel}</span>
         </div>
       </div>
       <div
@@ -244,6 +249,7 @@ export function TrackLane({
               track={track}
               waveformTrack={waveformTrack}
               onSelectClip={onSelectClip}
+              derivedLane={derivedLane}
             >
               {track.kind === 'video' ? (
                 <VideoThumbnailStrip
@@ -274,12 +280,6 @@ export function TrackLane({
             totalDurationMs={totalDurationMs}
           />
         ))}
-        <DerivedAiLaneStrip
-          color={color.strong}
-          lane={derivedLane}
-          timelineWidthPx={timelineWidthPx}
-          totalDurationMs={totalDurationMs}
-        />
       </div>
     </>
   );
@@ -289,6 +289,7 @@ function TrackClip({
   children,
   clipId,
   color,
+  derivedLane,
   onSelectClip,
   segment,
   selected,
@@ -301,6 +302,7 @@ function TrackClip({
   children: ReactNode;
   clipId: string;
   color: ReturnType<typeof studioColorById>;
+  derivedLane: DerivedAiLane;
   onSelectClip: (clipId: string, additive: boolean) => void;
   segment: LibraryRecordingSegment;
   selected: boolean;
@@ -322,12 +324,11 @@ function TrackClip({
         selected && 'ring-ring ring-offset-background ring-2 ring-offset-1',
         !finalized && 'opacity-60',
       )}
-      data-library-action
       style={{
         backgroundColor: finalized ? color.fill : 'hsl(var(--muted))',
         borderColor: selected ? color.strong : color.border,
         left: (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
-        bottom: TRACK_DERIVED_LANE_HEIGHT_PX + 4,
+        bottom: 4,
         width: Math.max(
           4,
           ((segment.durationMs ?? 0) / totalDurationMs) * timelineWidthPx,
@@ -335,22 +336,34 @@ function TrackClip({
       }}
       title={`${track.label} ${title}`}
       type="button"
-      onClick={(event) =>
-        onSelectClip(clipId, event.shiftKey || event.metaKey || event.ctrlKey)
-      }
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelectClip(clipId, event.shiftKey || event.metaKey || event.ctrlKey);
+      }}
     >
       <div
         className="absolute inset-x-0 top-0 z-10 flex h-4 items-center truncate px-1 text-[0.625rem] font-medium text-white"
+        data-library-action
         style={{ backgroundColor: color.strong }}
       >
         <span className="truncate">{title}</span>
       </div>
-      <div className="bg-background/60 absolute inset-x-0 top-4 bottom-0 overflow-hidden">
+      <div
+        className="bg-background/60 absolute inset-x-0 top-4 overflow-hidden"
+        style={{ bottom: TRACK_DERIVED_LANE_HEIGHT_PX }}
+      >
         {children}
         {!waveformTrack && track.kind !== 'video' ? (
           <WaveformSilenceLine />
         ) : null}
       </div>
+      {track.kind !== 'video' ? (
+        <SegmentTranscriptionLayer
+          color={color.strong}
+          lane={derivedLane}
+          segment={segment}
+        />
+      ) : null}
     </button>
   );
 }

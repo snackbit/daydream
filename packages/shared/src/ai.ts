@@ -55,6 +55,25 @@ export type ProcessingChunkStatus =
   | 'running'
   | 'succeeded';
 
+export type RecordingTranscriptionChunkResult =
+  | 'cancelled'
+  | 'failed'
+  | 'no-speech'
+  | 'queued'
+  | 'running'
+  | 'skipped-silence'
+  | 'text'
+  | 'unknown';
+
+export type RecordingTranscriptionTrackStatus =
+  | 'cancelled'
+  | 'complete'
+  | 'failed'
+  | 'in-progress'
+  | 'no-audio'
+  | 'no-speech'
+  | 'ready';
+
 export type NotificationSource =
   | 'ai'
   | 'capture'
@@ -100,12 +119,18 @@ export interface AiSettings {
 }
 
 export interface AiTranscriptionProviderSettings {
+  language: string;
   localBackend: AiTranscriptionBackend;
   localModelId: string;
+  maxInitialTimestampSeconds: number;
+  mergeGapMs: number;
+  minSpeechMs: number;
   provider: AiProviderKind;
   remoteApiKeyRef: string | null;
   remoteBaseUrl: string | null;
   remoteModel: string | null;
+  silenceGateEnabled: boolean;
+  silenceThresholdDb: number;
   wordTimestampsEnabled: boolean;
 }
 
@@ -147,6 +172,18 @@ export interface AiActivityWindowSettings {
 export interface AiSettingsLimits {
   activity: AiActivityLimits;
   processing: AiProcessingLimits;
+  transcription: AiTranscriptionLimits;
+}
+
+export interface AiTranscriptionLimits {
+  maxInitialTimestampSecondsMax: number;
+  maxInitialTimestampSecondsMin: number;
+  mergeGapMsMax: number;
+  mergeGapMsMin: number;
+  minSpeechMsMax: number;
+  minSpeechMsMin: number;
+  silenceThresholdDbMax: number;
+  silenceThresholdDbMin: number;
 }
 
 export interface AiProcessingLimits {
@@ -195,7 +232,13 @@ export interface AiBackendStatus {
   reason: string | null;
 }
 
+export interface AiTranscriptionLanguageStatus {
+  id: string;
+  label: string;
+}
+
 export interface AiLocalTranscriptionStatus {
+  availableLanguages: AiTranscriptionLanguageStatus[];
   availableBackends: AiBackendStatus[];
   checksumStatus: AiModelVerificationStatus;
   localModelId: string;
@@ -231,6 +274,7 @@ export interface ProcessingChunk {
   jobId: string;
   progress: number;
   recordingId: string;
+  resultCode: string | null;
   segmentId: string | null;
   sourceKind: ProcessingChunkSourceKind;
   startOffsetMs: number | null;
@@ -268,6 +312,35 @@ export interface RecordingAiProcessingState {
   job: ProcessingJob | null;
   recordingId: string;
   transcript: RecordingTranscript;
+  transcriptionTracks?: RecordingTranscriptionTrackState[];
+}
+
+export interface RecordingTranscriptionTrackState {
+  chunks: RecordingTranscriptionChunkState[];
+  description: string;
+  label: string;
+  libraryTrackId: string | null;
+  sourceRole: TranscriptSourceRole;
+  status: RecordingTranscriptionTrackStatus;
+  statusLabel: string;
+  textSegmentCount: number;
+  trackId: string | null;
+  trackKey: string;
+}
+
+export interface RecordingTranscriptionChunkState {
+  attemptCount: number;
+  endOffsetMs: number | null;
+  errorCode: string | null;
+  id: string;
+  progress: number;
+  result: RecordingTranscriptionChunkResult;
+  resultCode: string | null;
+  segmentId: string | null;
+  startOffsetMs: number | null;
+  status: ProcessingChunkStatus;
+  text: string | null;
+  transcriptSegments: RecordingTranscriptSegment[];
 }
 
 export interface RecordingTranscript {
