@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    settings,
+    ai, settings,
     storage::{self, AppStorage, RecordingSegmentRow},
 };
 
@@ -431,7 +431,50 @@ fn spawn_lifecycle_completion<R: tauri::Runtime>(
         if let Ok(status) = status {
             let _ = app.emit(RECORDER_STATUS_CHANGED_EVENT, status);
         }
+        if matches!(completion, RecorderLifecycleCompletion::Stop) {
+            maybe_auto_start_ai_processing(&app, &storage, &recording_id);
+        }
     });
+}
+
+fn maybe_auto_start_ai_processing<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    storage: &AppStorage,
+    recording_id: &str,
+) {
+    let app_settings = match settings::load_app_settings(storage) {
+        Ok(app_settings) => app_settings,
+        Err(error) => {
+            warn!(
+                recording_id = %recording_id,
+                error_code = %error.code,
+                "ai_processing_auto_start_settings_failed"
+            );
+            return;
+        }
+    };
+    if !app_settings.ai.processing.auto_start_after_recording {
+        info!(
+            recording_id = %recording_id,
+            "ai_processing_auto_start_skipped_disabled"
+        );
+        return;
+    }
+
+    info!(recording_id = %recording_id, "ai_processing_auto_start_requested");
+    match ai::enqueue_recording_ai_processing(app, storage, recording_id) {
+        Ok(job) => info!(
+            recording_id = %recording_id,
+            job_id = %job.id,
+            job_status = %job.status,
+            "ai_processing_auto_start_enqueued"
+        ),
+        Err(error) => warn!(
+            recording_id = %recording_id,
+            error_code = %error.code,
+            "ai_processing_auto_start_failed"
+        ),
+    }
 }
 
 pub(crate) fn collect_recorder_recording_stats(

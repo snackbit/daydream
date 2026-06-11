@@ -104,8 +104,10 @@
   fake success.
 - Keyboard activity default window: 30 seconds.
 - Mouse activity default window: 5 seconds.
-- Redaction-before-processing is deferred in M2. Processing happens
-  immediately after stop, and later redaction must invalidate derived data.
+- Redaction-before-processing is not the product target. Processing happens
+  immediately after stop, future scheduler work should process eligible chunks
+  during active recording and catch up toward realtime, and later redaction must
+  invalidate derived data.
 
 ## User Intent Notes
 
@@ -127,8 +129,9 @@
 - User wants activity in Library playback alongside video and audio tracks.
 - User wants keyboard and mouse activity tracking to be configurable.
 - User wants processing to be resumable and backgrounded.
-- User explicitly chose to ignore redaction gating for M2 and process
-  immediately, with redaction after processing.
+- User explicitly chose post-processing redaction as the product direction:
+  process immediately, eventually process eligible chunks during active
+  recording, and invalidate derived data after cuts.
 - User wants transcript overlay in playback, source-colored by desktop versus
   microphone.
 - User wants a rolling transcript window in the right-side detail panel.
@@ -332,8 +335,9 @@
 
 - M2 is broad. It touches settings, backend jobs, model integration, REST,
   storage, activity monitoring, OCR, VLM, and playback UI.
-- Automatic processing before redaction is privacy-weaker than the original
-  repository direction.
+- Automatic processing before redaction is deliberate product behavior; privacy
+  depends on local-first defaults, explicit remote configuration, and complete
+  derived-data invalidation after cuts.
 - Remote endpoints may upload extremely sensitive media and derived text.
 - Hosted remote provider validation may be unavailable without credentials or a
   configured endpoint; this should block only live remote-success validation,
@@ -561,7 +565,7 @@
 
 ## Deferred Follow-Up Candidates
 
-- Full scissors/redaction UI before processing.
+- Full scissors/redaction UI after processing.
 - Daily digest generation.
 - Task/todo extraction.
 - Embeddings and vector search.

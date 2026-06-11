@@ -235,6 +235,7 @@ export interface ProcessingChunk {
   sourceKind: ProcessingChunkSourceKind;
   startOffsetMs: number | null;
   status: ProcessingChunkStatus;
+  trackId: string | null;
   updatedAtMs: number;
 }
 
@@ -256,6 +257,17 @@ export interface StartRecordingAiProcessingInput {
 
 export interface GetRecordingTranscriptInput {
   recordingId: string;
+}
+
+export interface GetRecordingAiProcessingStateInput {
+  recordingId: string;
+}
+
+export interface RecordingAiProcessingState {
+  chunks: ProcessingChunk[];
+  job: ProcessingJob | null;
+  recordingId: string;
+  transcript: RecordingTranscript;
 }
 
 export interface RecordingTranscript {

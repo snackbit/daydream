@@ -34,11 +34,14 @@ use crate::{
         SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow, TranscriptWordRow,
         UpsertRecordingTrackInput,
     },
-    transcription::{self, TranscriptionProviderManager, TranscriptionRequest},
+    transcription::{
+        self, LocalTranscriptionWarmup, TranscriptionProviderManager, TranscriptionRequest,
+    },
     whisper_backend,
 };
 
 pub const AI_MODELS_CHANGED_EVENT: &str = "ai-models-changed";
+pub const AI_PROCESSING_CHANGED_EVENT: &str = "ai-processing-changed";
 mod notification_helpers;
 use notification_helpers::{
     model_download_cancel_action, model_download_retry_action, notification_from_row,
@@ -186,6 +189,25 @@ pub struct ProcessingJobList {
     pub jobs: Vec<ProcessingJob>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingChunk {
+    pub attempt_count: i64,
+    pub created_at_ms: i64,
+    pub end_offset_ms: Option<i64>,
+    pub error_code: Option<String>,
+    pub id: String,
+    pub job_id: String,
+    pub progress: f64,
+    pub recording_id: String,
+    pub segment_id: Option<String>,
+    pub source_kind: String,
+    pub start_offset_ms: Option<i64>,
+    pub status: String,
+    pub track_id: Option<String>,
+    pub updated_at_ms: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProcessingJobsInput {
@@ -214,6 +236,15 @@ pub struct GetRecordingTranscriptInput {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiResultInput {
     pub recording_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingAiProcessingState {
+    pub chunks: Vec<ProcessingChunk>,
+    pub job: Option<ProcessingJob>,
+    pub recording_id: String,
+    pub transcript: RecordingTranscript,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -570,6 +601,7 @@ pub fn delete_ai_model(
 pub async fn self_test_ai_model(
     app: AppHandle,
     input: SelfTestAiModelInput,
+    provider: State<'_, TranscriptionProviderManager>,
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
     let catalog = ensure_catalog_model(&input.model_id)?;
@@ -598,13 +630,19 @@ pub async fn self_test_ai_model(
     emit_model_list(&app);
 
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-    let backend = whisper_backend::WhisperExecutionBackend::from_setting(
-        &app_settings.ai.transcription.local_backend,
-    )
-    .map_err(whisper_backend_error)?;
-    let path_for_load = path.clone();
+    let warmup = LocalTranscriptionWarmup {
+        local_backend: app_settings.ai.transcription.local_backend,
+        model_id: catalog.id.to_string(),
+        model_path: path.clone(),
+    };
+    let provider = provider.inner().clone();
     let load_result = tauri::async_runtime::spawn_blocking(move || {
-        whisper_backend::load_and_unload_model(&path_for_load, backend)
+        provider
+            .warm_local_model(warmup)
+            .map_err(|error| whisper_backend::WhisperBackendError {
+                code: error.code,
+                message: error.message,
+            })
     })
     .await
     .map_err(|error| AiError {
@@ -805,34 +843,50 @@ pub fn list_processing_jobs(
 
 #[tauri::command(rename = "pauseProcessingJob")]
 pub fn pause_processing_job(
+    app: AppHandle,
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
-    update_processing_job_for_action(&storage, &input.job_id, "paused")
+    tracing::info!(job_id = %input.job_id, action = "paused", "ai_processing_action_requested");
+    let job = update_processing_job_for_action(&storage, &input.job_id, "paused")?;
+    emit_processing_state(&app, &job.recording_id);
+    Ok(job)
 }
 
 #[tauri::command(rename = "resumeProcessingJob")]
 pub fn resume_processing_job(
+    app: AppHandle,
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
-    update_processing_job_for_action(&storage, &input.job_id, "queued")
+    tracing::info!(job_id = %input.job_id, action = "queued", "ai_processing_action_requested");
+    let job = update_processing_job_for_action(&storage, &input.job_id, "queued")?;
+    emit_processing_state(&app, &job.recording_id);
+    Ok(job)
 }
 
 #[tauri::command(rename = "cancelProcessingJob")]
 pub fn cancel_processing_job(
+    app: AppHandle,
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
-    update_processing_job_for_action(&storage, &input.job_id, "cancelled")
+    tracing::info!(job_id = %input.job_id, action = "cancelled", "ai_processing_action_requested");
+    let job = update_processing_job_for_action(&storage, &input.job_id, "cancelled")?;
+    emit_processing_state(&app, &job.recording_id);
+    Ok(job)
 }
 
 #[tauri::command(rename = "retryProcessingJob")]
 pub fn retry_processing_job(
+    app: AppHandle,
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
-    retry_processing_job_for_action(&storage, &input.job_id)
+    tracing::info!(job_id = %input.job_id, action = "retry", "ai_processing_action_requested");
+    let job = retry_processing_job_for_action(&storage, &input.job_id)?;
+    emit_processing_state(&app, &job.recording_id);
+    Ok(job)
 }
 
 #[tauri::command(rename = "startRecordingAiProcessing")]
@@ -843,6 +897,14 @@ pub fn start_recording_ai_processing(
 ) -> Result<ProcessingJob, AiError> {
     let job = enqueue_recording_ai_processing(&app, &storage, &input.recording_id)?;
     Ok(processing_job_from_row_with_storage(&storage, job))
+}
+
+#[tauri::command(rename = "getRecordingAiProcessingState")]
+pub fn get_recording_ai_processing_state(
+    input: RecordingAiResultInput,
+    storage: State<'_, AppStorage>,
+) -> Result<RecordingAiProcessingState, AiError> {
+    processing_state_for_recording(&storage, &input.recording_id)
 }
 
 #[tauri::command(rename = "getRecordingTranscript")]
@@ -925,6 +987,11 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
         .max_parallel_jobs
         .saturating_sub(running.len() as u32) as usize;
     if available == 0 {
+        tracing::debug!(
+            running_job_count = running.len(),
+            max_parallel_jobs = app_settings.ai.processing.max_parallel_jobs,
+            "ai_processing_worker_capacity_full"
+        );
         return Ok(());
     }
     let queued = storage
@@ -937,6 +1004,12 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
             )
         })
         .map_err(storage_error)?;
+    tracing::debug!(
+        running_job_count = running.len(),
+        queued_job_count = queued.len(),
+        available_job_slots = available,
+        "ai_processing_worker_tick"
+    );
 
     for job in queued {
         let claimed = storage
@@ -957,6 +1030,12 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
             })
             .map_err(storage_error)?;
         if let Some(claimed) = claimed {
+            tracing::info!(
+                recording_id = %claimed.recording_id,
+                job_id = %claimed.id,
+                "ai_processing_job_claimed"
+            );
+            emit_processing_state(&app, &claimed.recording_id);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = process_recording_ai_job(app.clone(), claimed.id.clone()).await
@@ -984,6 +1063,7 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
                         )
                         .map(|_row| ())
                     });
+                    emit_processing_state(&app, &claimed.recording_id);
                 }
             });
         }
@@ -992,16 +1072,22 @@ async fn run_processing_worker_tick(app: &AppHandle) -> Result<(), AiError> {
     Ok(())
 }
 
-fn enqueue_recording_ai_processing(
-    app: &AppHandle,
+pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<ProcessingJobRow, AiError> {
+    tracing::info!(recording_id = %recording_id, "ai_processing_start_requested");
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, recording_id))
         .map_err(storage_error)?;
     if recording.status != "completed" {
+        tracing::warn!(
+            recording_id = %recording_id,
+            recording_status = %recording.status,
+            "ai_processing_start_blocked_recording_not_completed"
+        );
         return Err(save_readiness_failure(
             storage,
             recording_id,
@@ -1016,6 +1102,10 @@ fn enqueue_recording_ai_processing(
         .with_connection(|connection| storage::recording_has_redactions(connection, recording_id))
         .map_err(storage_error)?
     {
+        tracing::warn!(
+            recording_id = %recording_id,
+            "ai_processing_start_blocked_redactions"
+        );
         return Err(save_readiness_failure(
             storage,
             recording_id,
@@ -1025,8 +1115,26 @@ fn enqueue_recording_ai_processing(
     }
     let audio_plans = audio_chunk_plans(&segments);
     let activity_plans = activity_chunk_plans(&segments, &app_settings);
+    let audio_chunk_count = audio_plans.len();
+    let activity_chunk_count = activity_plans.len();
+    tracing::info!(
+        recording_id = %recording_id,
+        segment_count = segments.len(),
+        audio_chunk_count,
+        activity_chunk_count,
+        transcription_provider = %app_settings.ai.transcription.provider,
+        transcription_model = %app_settings.ai.transcription.local_model_id,
+        transcription_backend = %app_settings.ai.transcription.local_backend,
+        word_timestamps = app_settings.ai.transcription.word_timestamps_enabled,
+        "ai_processing_plan_built"
+    );
     if !audio_plans.is_empty() {
         if let Err(error) = check_transcription_readiness(app, storage, &app_settings) {
+            tracing::warn!(
+                recording_id = %recording_id,
+                error_code = %error.code,
+                "ai_processing_start_blocked_transcription_readiness"
+            );
             return Err(save_readiness_failure(
                 storage,
                 recording_id,
@@ -1037,6 +1145,10 @@ fn enqueue_recording_ai_processing(
     }
 
     if audio_plans.is_empty() && activity_plans.is_empty() {
+        tracing::warn!(
+            recording_id = %recording_id,
+            "ai_processing_start_blocked_no_enabled_sources"
+        );
         return Err(save_readiness_failure(
             storage,
             recording_id,
@@ -1045,13 +1157,19 @@ fn enqueue_recording_ai_processing(
         ));
     }
 
-    storage
+    let job = storage
         .with_connection(|connection| {
             if let Some(existing) = storage::get_latest_processing_job_for_recording(
                 connection,
                 recording_id,
                 AI_PROCESSING_JOB_KIND,
             )? {
+                tracing::info!(
+                    recording_id = %recording_id,
+                    job_id = %existing.id,
+                    job_status = %existing.status,
+                    "ai_processing_existing_job_found"
+                );
                 match existing.status.as_str() {
                     "queued" | "running" | "paused" | "succeeded" => return Ok(existing),
                     "failed" | "cancelled" => {
@@ -1152,9 +1270,18 @@ fn enqueue_recording_ai_processing(
                     title: "AI processing queued",
                 },
             )?;
+            tracing::info!(
+                recording_id = %recording_id,
+                job_id = %job_id,
+                audio_chunk_count,
+                activity_chunk_count,
+                "ai_processing_job_created"
+            );
             Ok(job)
         })
-        .map_err(storage_error)
+        .map_err(storage_error)?;
+    emit_processing_state(app, recording_id);
+    Ok(job)
 }
 
 #[derive(Clone, Debug)]
@@ -1369,6 +1496,7 @@ async fn process_recording_ai_job(app: AppHandle, job_id: String) -> Result<(), 
                         .map(|_row| ())
                     })
                     .map_err(storage_error)?;
+                emit_processing_state(&app, &current.recording_id);
                 return Ok(());
             }
             "cancelled" => {
@@ -1395,6 +1523,7 @@ async fn process_recording_ai_job(app: AppHandle, job_id: String) -> Result<(), 
                         .map(|_row| ())
                     })
                     .map_err(storage_error)?;
+                emit_processing_state(&app, &current.recording_id);
                 return Ok(());
             }
             "running" => {}
@@ -1403,22 +1532,32 @@ async fn process_recording_ai_job(app: AppHandle, job_id: String) -> Result<(), 
 
         let next_chunk = storage
             .with_connection(|connection| {
-                storage::list_processing_chunks_by_status(connection, &job_id, &["queued"], Some(1))
+                storage::claim_next_queued_processing_chunk(connection, &job_id, 0.05, now_ms())
             })
-            .map_err(storage_error)?
-            .into_iter()
-            .next();
+            .map_err(storage_error)?;
         let Some(chunk) = next_chunk else {
-            finish_processing_job(&storage, &job_id)?;
+            finish_processing_job(&app, &storage, &job_id)?;
             return Ok(());
         };
+        tracing::info!(
+            recording_id = %chunk.recording_id,
+            job_id = %job_id,
+            chunk_id = %chunk.id,
+            source_kind = %chunk.source_kind,
+            track_id = chunk.track_id.as_deref().unwrap_or(""),
+            segment_id = chunk.segment_id.as_deref().unwrap_or(""),
+            start_offset_ms = ?chunk.start_offset_ms,
+            end_offset_ms = ?chunk.end_offset_ms,
+            attempt_count = chunk.attempt_count,
+            "ai_processing_chunk_claimed"
+        );
 
         match process_processing_chunk(&app, &job_id, chunk).await {
             Ok(()) => {}
             Err(error) if error.code == "ai_processing_paused" => return Ok(()),
             Err(error) if error.code == "ai_processing_cancelled" => return Ok(()),
             Err(error) => {
-                fail_processing_job(&storage, &job_id, &error.code)?;
+                fail_processing_job(&app, &storage, &job_id, &error.code)?;
                 return Err(error);
             }
         }
@@ -1446,21 +1585,21 @@ async fn process_audio_chunk(
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
     let storage = app.state::<AppStorage>();
-    let started_chunk = storage
-        .with_connection(|connection| {
-            storage::update_processing_chunk_status(
-                connection,
-                &chunk.id,
-                "running",
-                0.05,
-                None,
-                now_ms(),
-            )
-        })
-        .map_err(storage_error)?;
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %job_id,
+        chunk_id = %chunk.id,
+        track_id = chunk.track_id.as_deref().unwrap_or(""),
+        segment_id = chunk.segment_id.as_deref().unwrap_or(""),
+        start_offset_ms = ?chunk.start_offset_ms,
+        end_offset_ms = ?chunk.end_offset_ms,
+        attempt_count = chunk.attempt_count,
+        "ai_processing_audio_chunk_started"
+    );
+    emit_processing_state(app, &chunk.recording_id);
     let cancel = Arc::new(AtomicBool::new(false));
     let monitor = spawn_job_cancel_monitor(app.clone(), job_id.to_string(), cancel.clone());
-    let result = process_audio_chunk_inner(app, &started_chunk, cancel.clone()).await;
+    let result = process_audio_chunk_inner(app, &chunk, cancel.clone()).await;
     monitor.abort();
 
     match result {
@@ -1479,6 +1618,14 @@ async fn process_audio_chunk(
                 })
                 .map_err(storage_error)?;
             save_job_progress_notification(&storage, job_id)?;
+            tracing::info!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                track_id = chunk.track_id.as_deref().unwrap_or(""),
+                "ai_processing_audio_chunk_succeeded"
+            );
+            emit_processing_state(app, &chunk.recording_id);
             Ok(())
         }
         Err(error) if error.code == "ai_transcription_cancelled" => {
@@ -1503,6 +1650,14 @@ async fn process_audio_chunk(
                             .map(|_row| ())
                         })
                         .map_err(storage_error)?;
+                    tracing::info!(
+                        recording_id = %chunk.recording_id,
+                        job_id = %job_id,
+                        chunk_id = %chunk.id,
+                        track_id = chunk.track_id.as_deref().unwrap_or(""),
+                        "ai_processing_audio_chunk_requeued_paused"
+                    );
+                    emit_processing_state(app, &chunk.recording_id);
                     Err(ai_error(
                         "ai_processing_paused",
                         "AI processing was paused.",
@@ -1522,6 +1677,14 @@ async fn process_audio_chunk(
                             .map(|_row| ())
                         })
                         .map_err(storage_error)?;
+                    tracing::info!(
+                        recording_id = %chunk.recording_id,
+                        job_id = %job_id,
+                        chunk_id = %chunk.id,
+                        track_id = chunk.track_id.as_deref().unwrap_or(""),
+                        "ai_processing_audio_chunk_cancelled"
+                    );
+                    emit_processing_state(app, &chunk.recording_id);
                     Err(ai_error(
                         "ai_processing_cancelled",
                         "AI processing was cancelled.",
@@ -1541,6 +1704,16 @@ async fn process_audio_chunk(
                             .map(|_row| ())
                         })
                         .map_err(storage_error)?;
+                    tracing::warn!(
+                        recording_id = %chunk.recording_id,
+                        job_id = %job_id,
+                        chunk_id = %chunk.id,
+                        track_id = chunk.track_id.as_deref().unwrap_or(""),
+                        error_code = %error.code,
+                        job_status = %job.status,
+                        "ai_processing_audio_chunk_failed_after_cancel_signal"
+                    );
+                    emit_processing_state(app, &chunk.recording_id);
                     Err(error)
                 }
             }
@@ -1559,6 +1732,15 @@ async fn process_audio_chunk(
                     .map(|_row| ())
                 })
                 .map_err(storage_error)?;
+            tracing::warn!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                track_id = chunk.track_id.as_deref().unwrap_or(""),
+                error_code = %error.code,
+                "ai_processing_audio_chunk_failed"
+            );
+            emit_processing_state(app, &chunk.recording_id);
             Err(error)
         }
     }
@@ -1570,21 +1752,20 @@ async fn process_activity_chunk(
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
     let storage = app.state::<AppStorage>();
-    let started_chunk = storage
-        .with_connection(|connection| {
-            storage::update_processing_chunk_status(
-                connection,
-                &chunk.id,
-                "running",
-                0.05,
-                None,
-                now_ms(),
-            )
-        })
-        .map_err(storage_error)?;
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %job_id,
+        chunk_id = %chunk.id,
+        segment_id = chunk.segment_id.as_deref().unwrap_or(""),
+        start_offset_ms = ?chunk.start_offset_ms,
+        end_offset_ms = ?chunk.end_offset_ms,
+        attempt_count = chunk.attempt_count,
+        "ai_processing_activity_chunk_started"
+    );
+    emit_processing_state(app, &chunk.recording_id);
     let cancel = Arc::new(AtomicBool::new(false));
     let monitor = spawn_job_cancel_monitor(app.clone(), job_id.to_string(), cancel.clone());
-    let result = process_activity_chunk_inner(app, &started_chunk, cancel.clone()).await;
+    let result = process_activity_chunk_inner(app, &chunk, cancel.clone()).await;
     monitor.abort();
 
     match result {
@@ -1603,6 +1784,13 @@ async fn process_activity_chunk(
                 })
                 .map_err(storage_error)?;
             save_job_progress_notification(&storage, job_id)?;
+            tracing::info!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                "ai_processing_activity_chunk_succeeded"
+            );
+            emit_processing_state(app, &chunk.recording_id);
             Ok(())
         }
         Err(error) if error.code == "ai_processing_cancelled" => {
@@ -1627,6 +1815,13 @@ async fn process_activity_chunk(
                             .map(|_row| ())
                         })
                         .map_err(storage_error)?;
+                    tracing::info!(
+                        recording_id = %chunk.recording_id,
+                        job_id = %job_id,
+                        chunk_id = %chunk.id,
+                        "ai_processing_activity_chunk_requeued_paused"
+                    );
+                    emit_processing_state(app, &chunk.recording_id);
                     Err(ai_error(
                         "ai_processing_paused",
                         "AI processing was paused.",
@@ -1646,6 +1841,13 @@ async fn process_activity_chunk(
                             .map(|_row| ())
                         })
                         .map_err(storage_error)?;
+                    tracing::info!(
+                        recording_id = %chunk.recording_id,
+                        job_id = %job_id,
+                        chunk_id = %chunk.id,
+                        "ai_processing_activity_chunk_cancelled"
+                    );
+                    emit_processing_state(app, &chunk.recording_id);
                     Err(error)
                 }
                 _ => Err(error),
@@ -1665,6 +1867,14 @@ async fn process_activity_chunk(
                     .map(|_row| ())
                 })
                 .map_err(storage_error)?;
+            tracing::warn!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                error_code = %error.code,
+                "ai_processing_activity_chunk_failed"
+            );
+            emit_processing_state(app, &chunk.recording_id);
             Err(error)
         }
     }
@@ -1742,6 +1952,17 @@ async fn process_audio_chunk_inner(
             )
         })?;
     let temp_audio = TempAudioFile::new(processing_temp_audio_path(app, &chunk.job_id, &chunk.id)?);
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        track_id = %track.id,
+        source_role = %track.kind,
+        stream_index,
+        slice_start_ms,
+        slice_duration_ms,
+        "ai_processing_audio_extract_started"
+    );
     extract_audio_stream(
         &segment.file_path,
         stream_index,
@@ -1750,6 +1971,21 @@ async fn process_audio_chunk_inner(
         temp_audio.path(),
         &cancel,
     )?;
+    let temp_audio_bytes = fs::metadata(temp_audio.path())
+        .ok()
+        .map(|metadata| metadata.len())
+        .unwrap_or_default();
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        track_id = %track.id,
+        source_role = %track.kind,
+        stream_index,
+        slice_duration_ms,
+        temp_audio_bytes,
+        "ai_processing_audio_extract_completed"
+    );
     let model = selected_transcription_model(&app_settings)?;
     let provider = app.state::<TranscriptionProviderManager>();
     tracing::info!(
@@ -1777,6 +2013,13 @@ async fn process_audio_chunk_inner(
     tracing::info!(
         chunk_id = %chunk.id,
         job_id = %chunk.job_id,
+        segment_count = transcription.segments.len(),
+        word_count = transcription.words.len(),
+        text_char_count = transcription
+            .segments
+            .iter()
+            .map(|segment| segment.text.trim().chars().count())
+            .sum::<usize>(),
         "AI transcription completed."
     );
     check_atomic_cancel(&cancel)?;
@@ -2371,6 +2614,14 @@ fn persist_transcription(
     transcription: transcription::VerboseTranscription,
 ) -> Result<(), AiError> {
     if transcription.segments.is_empty() {
+        tracing::info!(
+            recording_id = %chunk.recording_id,
+            job_id = %chunk.job_id,
+            chunk_id = %chunk.id,
+            track_id = chunk.track_id.as_deref().unwrap_or(""),
+            source_role = %track.kind,
+            "ai_processing_transcript_persist_skipped_empty"
+        );
         return Ok(());
     }
     let storage = app.state::<AppStorage>();
@@ -2381,6 +2632,13 @@ fn persist_transcription(
             "Processing segment is missing.",
         )
     })?;
+    let segment_count = transcription.segments.len();
+    let word_count = transcription.words.len();
+    let text_char_count = transcription
+        .segments
+        .iter()
+        .map(|segment| segment.text.trim().chars().count())
+        .sum::<usize>();
     storage
         .with_connection(|connection| {
             storage::delete_transcript_output_for_chunks(
@@ -2434,27 +2692,52 @@ fn persist_transcription(
             }
             Ok(())
         })
-        .map_err(storage_error)
+        .map_err(storage_error)?;
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        track_id = %track.id,
+        source_role = %track.kind,
+        segment_count,
+        word_count,
+        text_char_count,
+        "ai_processing_transcript_persisted"
+    );
+    Ok(())
 }
 
-fn finish_processing_job(storage: &AppStorage, job_id: &str) -> Result<(), AiError> {
+fn finish_processing_job(
+    app: &AppHandle,
+    storage: &AppStorage,
+    job_id: &str,
+) -> Result<(), AiError> {
+    let mut recording_id = None;
     storage
         .with_connection(|connection| {
             let chunks = storage::list_processing_chunks(connection, job_id)?;
-            let failed = chunks.iter().find(|chunk| chunk.status == "failed");
-            let cancelled = chunks.iter().find(|chunk| chunk.status == "cancelled");
-            let status = if failed.is_some() {
-                "failed"
-            } else if cancelled.is_some() {
-                "cancelled"
-            } else {
-                "succeeded"
+            let chunk_status_counts = processing_chunk_status_counts(&chunks);
+            let ProcessingCompletion::Terminal { error, status } =
+                summarize_processing_completion(&chunks)
+            else {
+                tracing::info!(
+                    job_id = %job_id,
+                    chunk_status_counts = %chunk_status_counts,
+                    "ai_processing_job_completion_deferred_active_chunks"
+                );
+                return Ok(());
             };
-            let error = failed
-                .and_then(|chunk| chunk.error_code.as_deref())
-                .or_else(|| cancelled.and_then(|chunk| chunk.error_code.as_deref()));
             let job =
                 storage::update_processing_job_status(connection, job_id, status, error, now_ms())?;
+            tracing::info!(
+                recording_id = %job.recording_id,
+                job_id = %job_id,
+                job_status = %status,
+                error_code = error.unwrap_or(""),
+                chunk_status_counts = %chunk_status_counts,
+                "ai_processing_job_completion_decided"
+            );
+            recording_id = Some(job.recording_id.clone());
             let (notification_status, title, message, actions) = match status {
                 "succeeded" => (
                     "succeeded",
@@ -2489,18 +2772,61 @@ fn finish_processing_job(storage: &AppStorage, job_id: &str) -> Result<(), AiErr
             )
             .map(|_row| ())
         })
-        .map_err(storage_error)
+        .map_err(storage_error)?;
+    if let Some(recording_id) = recording_id {
+        emit_processing_state(app, &recording_id);
+    }
+    Ok(())
+}
+
+enum ProcessingCompletion<'a> {
+    Active,
+    Terminal {
+        error: Option<&'a str>,
+        status: &'static str,
+    },
+}
+
+fn summarize_processing_completion(chunks: &[ProcessingChunkRow]) -> ProcessingCompletion<'_> {
+    if chunks
+        .iter()
+        .any(|chunk| matches!(chunk.status.as_str(), "queued" | "running"))
+    {
+        return ProcessingCompletion::Active;
+    }
+
+    if let Some(chunk) = chunks.iter().find(|chunk| chunk.status == "failed") {
+        return ProcessingCompletion::Terminal {
+            error: chunk.error_code.as_deref(),
+            status: "failed",
+        };
+    }
+
+    if let Some(chunk) = chunks.iter().find(|chunk| chunk.status == "cancelled") {
+        return ProcessingCompletion::Terminal {
+            error: chunk.error_code.as_deref(),
+            status: "cancelled",
+        };
+    }
+
+    ProcessingCompletion::Terminal {
+        error: None,
+        status: "succeeded",
+    }
 }
 
 fn fail_processing_job(
+    app: &AppHandle,
     storage: &AppStorage,
     job_id: &str,
     error_code: &str,
 ) -> Result<(), AiError> {
+    let mut recording_id = None;
     storage
         .with_connection(|connection| {
             let job = storage::get_processing_job(connection, job_id)?
                 .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            recording_id = Some(job.recording_id.clone());
             storage::cancel_processing_chunks(
                 connection,
                 job_id,
@@ -2528,7 +2854,11 @@ fn fail_processing_job(
             )
             .map(|_row| ())
         })
-        .map_err(storage_error)
+        .map_err(storage_error)?;
+    if let Some(recording_id) = recording_id {
+        emit_processing_state(app, &recording_id);
+    }
+    Ok(())
 }
 
 fn spawn_model_download(app: AppHandle, model_id: String) {
@@ -2779,21 +3109,20 @@ async fn finalize_model_download(
         return Ok(());
     }
     let local_path = final_path.to_string_lossy().to_string();
-    let load_path = final_path.to_path_buf();
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-    let backend = whisper_backend::WhisperExecutionBackend::from_setting(
-        &app_settings.ai.transcription.local_backend,
-    )
-    .map_err(whisper_backend_error)?;
-    let self_test_error = match tauri::async_runtime::spawn_blocking(move || {
-        whisper_backend::load_and_unload_model(&load_path, backend)
-    })
-    .await
-    {
-        Ok(Ok(())) => None,
-        Ok(Err(error)) => Some(error.code),
-        Err(_error) => Some("ai_model_self_test_failed".to_string()),
+    let warmup = LocalTranscriptionWarmup {
+        local_backend: app_settings.ai.transcription.local_backend,
+        model_id: catalog.id.to_string(),
+        model_path: final_path.to_path_buf(),
     };
+    let provider = app.state::<TranscriptionProviderManager>().inner().clone();
+    let self_test_error =
+        match tauri::async_runtime::spawn_blocking(move || provider.warm_local_model(warmup)).await
+        {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error.code),
+            Err(_error) => Some("ai_model_self_test_failed".to_string()),
+        };
     if manager.is_cancelled(catalog.id) {
         save_cancelled_finalized_download(app, catalog, partial_path, final_path)?;
         return Ok(());
@@ -3167,6 +3496,39 @@ fn transcript_for_recording(
     ))
 }
 
+fn processing_state_for_recording(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<RecordingAiProcessingState, AiError> {
+    let job_row = storage
+        .with_connection(|connection| {
+            storage::get_latest_processing_job_for_recording(
+                connection,
+                recording_id,
+                AI_PROCESSING_JOB_KIND,
+            )
+        })
+        .map_err(storage_error)?;
+    let chunks = if let Some(job) = &job_row {
+        storage
+            .with_connection(|connection| storage::list_processing_chunks(connection, &job.id))
+            .map_err(storage_error)?
+            .into_iter()
+            .map(processing_chunk_from_row)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let transcript = transcript_for_recording(storage, recording_id)?;
+
+    Ok(RecordingAiProcessingState {
+        chunks,
+        job: job_row.map(|job| processing_job_from_row_with_storage(storage, job)),
+        recording_id: recording_id.to_string(),
+        transcript,
+    })
+}
+
 fn transcript_from_rows(
     recording_id: &str,
     segments: Vec<TranscriptSegmentRow>,
@@ -3208,6 +3570,25 @@ fn transcript_from_rows(
                 },
             )
             .collect(),
+    }
+}
+
+fn processing_chunk_from_row(row: ProcessingChunkRow) -> ProcessingChunk {
+    ProcessingChunk {
+        attempt_count: row.attempt_count,
+        created_at_ms: row.created_at_ms,
+        end_offset_ms: row.end_offset_ms,
+        error_code: row.error_code,
+        id: row.id,
+        job_id: row.job_id,
+        progress: row.progress,
+        recording_id: row.recording_id,
+        segment_id: row.segment_id,
+        source_kind: row.source_kind,
+        start_offset_ms: row.start_offset_ms,
+        status: row.status,
+        track_id: row.track_id,
+        updated_at_ms: row.updated_at_ms,
     }
 }
 
@@ -3305,19 +3686,21 @@ fn update_processing_job_for_action(
     job_id: &str,
     status: &str,
 ) -> Result<ProcessingJob, AiError> {
+    if status == "queued" {
+        ensure_no_running_processing_chunks(
+            storage,
+            job_id,
+            "ai_processing_resume_pending",
+            "AI processing cannot resume until the active chunk has paused.",
+        )?;
+    }
+
     storage
         .with_connection(|connection| {
             match status {
-                "paused" => {
-                    storage::requeue_processing_chunks(connection, job_id, &["running"], now_ms())?;
-                }
+                "paused" => {}
                 "cancelled" => {
-                    storage::cancel_processing_chunks(
-                        connection,
-                        job_id,
-                        &["queued", "running"],
-                        now_ms(),
-                    )?;
+                    storage::cancel_processing_chunks(connection, job_id, &["queued"], now_ms())?;
                 }
                 "queued" => {
                     storage::requeue_processing_chunks(
@@ -3339,6 +3722,13 @@ fn retry_processing_job_for_action(
     storage: &AppStorage,
     job_id: &str,
 ) -> Result<ProcessingJob, AiError> {
+    ensure_no_running_processing_chunks(
+        storage,
+        job_id,
+        "ai_processing_retry_pending",
+        "AI processing cannot retry until active chunks have stopped.",
+    )?;
+
     storage
         .with_connection(|connection| {
             storage::retry_processing_job_chunks(connection, job_id, now_ms())
@@ -3347,8 +3737,26 @@ fn retry_processing_job_for_action(
         .map(|row| processing_job_from_row_with_storage(storage, row))
 }
 
-fn check_transcription_readiness(
-    app: &AppHandle,
+fn ensure_no_running_processing_chunks(
+    storage: &AppStorage,
+    job_id: &str,
+    code: &str,
+    message: &str,
+) -> Result<(), AiError> {
+    let running = storage
+        .with_connection(|connection| {
+            storage::list_processing_chunks_by_status(connection, job_id, &["running"], Some(1))
+        })
+        .map_err(storage_error)?;
+    if running.is_empty() {
+        Ok(())
+    } else {
+        Err(ai_error(code, message))
+    }
+}
+
+fn check_transcription_readiness<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     storage: &AppStorage,
     app_settings: &settings::AppSettings,
 ) -> Result<(), AiError> {
@@ -3547,6 +3955,37 @@ fn emit_model_list(app: &AppHandle) {
     }
 }
 
+fn emit_processing_state<R: tauri::Runtime>(app: &AppHandle<R>, recording_id: &str) {
+    let storage = app.state::<AppStorage>();
+    if let Ok(state) = processing_state_for_recording(&storage, recording_id) {
+        tracing::info!(
+            recording_id = %recording_id,
+            job_id = state.job.as_ref().map(|job| job.id.as_str()).unwrap_or(""),
+            job_status = state.job.as_ref().map(|job| job.status.as_str()).unwrap_or("none"),
+            chunk_status_counts = %processing_state_chunk_status_counts(&state.chunks),
+            transcript_track_count = state.transcript.tracks.len(),
+            "ai_processing_state_emitted"
+        );
+        let _ = app.emit(AI_PROCESSING_CHANGED_EVENT, state);
+    }
+}
+
+fn processing_chunk_status_counts(chunks: &[ProcessingChunkRow]) -> String {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for chunk in chunks {
+        *counts.entry(chunk.status.clone()).or_default() += 1;
+    }
+    serde_json::to_string(&counts).unwrap_or_else(|_error| "{}".to_string())
+}
+
+fn processing_state_chunk_status_counts(chunks: &[ProcessingChunk]) -> String {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for chunk in chunks {
+        *counts.entry(chunk.status.clone()).or_default() += 1;
+    }
+    serde_json::to_string(&counts).unwrap_or_else(|_error| "{}".to_string())
+}
+
 fn storage_error(error: rusqlite::Error) -> AiError {
     AiError {
         code: "ai_storage_failed".to_string(),
@@ -3562,13 +4001,6 @@ fn settings_error(error: settings::AppSettingsError) -> AiError {
 }
 
 fn transcription_error(error: transcription::TranscriptionError) -> AiError {
-    AiError {
-        code: error.code,
-        message: error.message,
-    }
-}
-
-fn whisper_backend_error(error: whisper_backend::WhisperBackendError) -> AiError {
     AiError {
         code: error.code,
         message: error.message,
@@ -3699,6 +4131,34 @@ mod tests {
             DownloadRequestState::AlreadyRunning
         );
         assert!(!manager.is_cancelled("tiny"));
+    }
+
+    #[test]
+    fn processing_completion_stays_active_until_chunks_are_terminal() {
+        for active_status in ["queued", "running"] {
+            let chunks = vec![test_processing_chunk(active_status)];
+
+            assert!(matches!(
+                summarize_processing_completion(&chunks),
+                ProcessingCompletion::Active
+            ));
+        }
+    }
+
+    #[test]
+    fn processing_completion_succeeds_only_after_all_chunks_succeed() {
+        let chunks = vec![
+            test_processing_chunk("succeeded"),
+            test_processing_chunk("succeeded"),
+        ];
+
+        assert!(matches!(
+            summarize_processing_completion(&chunks),
+            ProcessingCompletion::Terminal {
+                error: None,
+                status: "succeeded"
+            }
+        ));
     }
 
     #[test]
@@ -4118,6 +4578,25 @@ mod tests {
 
     fn test_temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("daydream-ai-{name}-{}", Uuid::now_v7()))
+    }
+
+    fn test_processing_chunk(status: &str) -> ProcessingChunkRow {
+        ProcessingChunkRow {
+            attempt_count: 0,
+            created_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            error_code: None,
+            id: Uuid::now_v7().to_string(),
+            job_id: Uuid::now_v7().to_string(),
+            progress: if status == "succeeded" { 1.0 } else { 0.0 },
+            recording_id: Uuid::now_v7().to_string(),
+            segment_id: None,
+            source_kind: "audio".to_string(),
+            start_offset_ms: Some(0),
+            status: status.to_string(),
+            track_id: None,
+            updated_at_ms: 1,
+        }
     }
 
     struct TestSegmentInput<'a> {

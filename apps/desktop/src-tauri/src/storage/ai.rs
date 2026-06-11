@@ -108,6 +108,7 @@ pub struct CreateProcessingChunkInput {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProcessingChunkRow {
     pub attempt_count: i64,
+    pub created_at_ms: i64,
     pub end_offset_ms: Option<i64>,
     pub error_code: Option<String>,
     pub id: String,
@@ -851,6 +852,7 @@ pub fn get_processing_chunk(
                 progress,
                 error_code,
                 track_id,
+                created_at_ms,
                 updated_at_ms
             FROM processing_chunks
             WHERE id = ?1
@@ -880,6 +882,7 @@ pub fn list_processing_chunks(
             progress,
             error_code,
             track_id,
+            created_at_ms,
             updated_at_ms
         FROM processing_chunks
         WHERE job_id = ?1
@@ -922,6 +925,7 @@ pub fn list_processing_chunks_by_status(
             progress,
             error_code,
             track_id,
+            created_at_ms,
             updated_at_ms
         FROM processing_chunks
         WHERE job_id = ?1
@@ -943,6 +947,39 @@ pub fn list_processing_chunks_by_status(
     let rows = statement.query_map(params.as_slice(), processing_chunk_row)?;
 
     rows.collect()
+}
+
+pub fn claim_next_queued_processing_chunk(
+    connection: &Connection,
+    job_id: &str,
+    progress: f64,
+    timestamp_ms: i64,
+) -> rusqlite::Result<Option<ProcessingChunkRow>> {
+    let chunk = list_processing_chunks_by_status(connection, job_id, &["queued"], Some(1))?
+        .into_iter()
+        .next();
+    let Some(chunk) = chunk else {
+        return Ok(None);
+    };
+
+    let updated = connection.execute(
+        r#"
+        UPDATE processing_chunks
+        SET status = 'running',
+            progress = ?2,
+            error_code = NULL,
+            attempt_count = attempt_count + 1,
+            updated_at_ms = ?3
+        WHERE id = ?1
+            AND status = 'queued'
+        "#,
+        params![&chunk.id, progress, timestamp_ms],
+    )?;
+    if updated == 0 {
+        return Ok(None);
+    }
+
+    get_processing_chunk(connection, &chunk.id)
 }
 
 pub fn update_processing_chunk_status(
@@ -1505,7 +1542,8 @@ fn processing_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProcessingC
         progress: row.get(9)?,
         error_code: row.get(10)?,
         track_id: row.get(11)?,
-        updated_at_ms: row.get(12)?,
+        created_at_ms: row.get(12)?,
+        updated_at_ms: row.get(13)?,
     })
 }
 

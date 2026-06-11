@@ -60,6 +60,7 @@ pub fn backend_status() -> WhisperBackendStatus {
     }
 }
 
+#[allow(dead_code)]
 pub fn load_and_unload_model(
     path: &Path,
     backend: WhisperExecutionBackend,
@@ -107,6 +108,9 @@ impl LoadedWhisperModel {
         let wav = read_mono_pcm16_wav(audio_path)?;
         if cancel.load(Ordering::SeqCst) {
             return Err(cancelled_error());
+        }
+        if wav.samples.is_empty() {
+            return Ok(empty_transcription(Some(0.0)));
         }
 
         run_whisper_full(self.context, &wav.samples, word_timestamps, &cancel).map(
@@ -374,6 +378,17 @@ fn cancelled_error() -> WhisperBackendError {
     }
 }
 
+fn empty_transcription(duration: Option<f64>) -> VerboseTranscription {
+    VerboseTranscription {
+        duration,
+        language: None,
+        segments: Vec::new(),
+        task: Some("transcribe".to_string()),
+        text: String::new(),
+        words: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +446,22 @@ mod tests {
     }
 
     #[test]
+    fn wav_reader_accepts_empty_pcm_for_silent_transcription() {
+        let path = temp_wav_path();
+        std::fs::write(&path, test_wav_bytes_with_samples(&[])).expect("write wav");
+
+        let wav = read_mono_pcm16_wav(&path).expect("read wav");
+        let transcription = empty_transcription(Some(0.0));
+
+        assert!(wav.samples.is_empty());
+        assert_eq!(transcription.duration, Some(0.0));
+        assert_eq!(transcription.text, "");
+        assert!(transcription.segments.is_empty());
+        assert!(transcription.words.is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn wav_reader_rejects_non_wav_data() {
         let path = temp_wav_path();
         std::fs::write(&path, b"not wav").expect("write invalid");
@@ -446,7 +477,10 @@ mod tests {
     }
 
     fn test_wav_bytes() -> Vec<u8> {
-        let samples = [0_i16, i16::MAX];
+        test_wav_bytes_with_samples(&[0_i16, i16::MAX])
+    }
+
+    fn test_wav_bytes_with_samples(samples: &[i16]) -> Vec<u8> {
         let data_len = samples.len() * 2;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");

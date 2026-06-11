@@ -4,10 +4,11 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-    acknowledge_notifications, apply_migrations, collect_database_diagnostics_from_connection,
-    create_activity_interval, create_frame_similarity_entry, create_ocr_region,
-    create_processing_chunk, create_recording, create_recording_segment, create_transcript_segment,
-    create_transcript_word, create_vlm_observation, delete_all_notifications, delete_notifications,
+    acknowledge_notifications, apply_migrations, claim_next_queued_processing_chunk,
+    collect_database_diagnostics_from_connection, create_activity_interval,
+    create_frame_similarity_entry, create_ocr_region, create_processing_chunk, create_recording,
+    create_recording_segment, create_transcript_segment, create_transcript_word,
+    create_vlm_observation, delete_all_notifications, delete_notifications,
     delete_notifications_older_than, delete_portal_restore_token, delete_recording,
     dismiss_notification, enable_connection_pragmas, fail_recording_segment,
     finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
@@ -612,6 +613,68 @@ fn processing_status_helpers_support_unbounded_queries_without_overflowing_limit
     assert_eq!(chunks.len(), 3);
     assert_eq!(limited_jobs.len(), 2);
     assert_eq!(huge_limit_chunks.len(), 3);
+}
+
+#[test]
+fn claim_next_queued_processing_chunk_marks_one_chunk_running() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let job_id = Uuid::now_v7().to_string();
+    let chunk_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'ai-processing', 'running', 1, 1)
+            "#,
+            (&job_id, &recording_id),
+        )
+        .expect("insert processing job");
+    create_processing_chunk(
+        &connection,
+        &CreateProcessingChunkInput {
+            attempt_count: 0,
+            created_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            error_code: None,
+            id: chunk_id.clone(),
+            job_id: job_id.clone(),
+            progress: 0.0,
+            recording_id,
+            segment_id: None,
+            source_kind: "audio".to_string(),
+            start_offset_ms: Some(0),
+            status: "queued".to_string(),
+            track_id: None,
+            updated_at_ms: 1,
+        },
+    )
+    .expect("insert queued processing chunk");
+
+    let claimed = claim_next_queued_processing_chunk(&connection, &job_id, 0.05, 10)
+        .expect("claim queued chunk")
+        .expect("claimed chunk");
+    let claimed_again = claim_next_queued_processing_chunk(&connection, &job_id, 0.05, 11)
+        .expect("claim no queued chunk");
+    let running_chunks = list_processing_chunks_by_status(&connection, &job_id, &["running"], None)
+        .expect("list running chunks");
+    let queued_chunks = list_processing_chunks_by_status(&connection, &job_id, &["queued"], None)
+        .expect("list queued chunks");
+
+    assert_eq!(claimed.id, chunk_id);
+    assert_eq!(claimed.status, "running");
+    assert_eq!(claimed.progress, 0.05);
+    assert_eq!(claimed.attempt_count, 1);
+    assert!(claimed_again.is_none());
+    assert_eq!(running_chunks.len(), 1);
+    assert_eq!(queued_chunks.len(), 0);
 }
 
 #[test]

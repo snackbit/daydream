@@ -12,10 +12,12 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTileTrack,
   LibraryWaveformTiles,
+  RecordingAiProcessingState,
 } from '@daydream/shared';
 import { GripVertical, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { buildDerivedLane, DerivedAiLaneStrip } from './derived-ai-lane-strip';
 import {
   studioClipId,
   studioColorById,
@@ -24,11 +26,13 @@ import {
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
 import {
+  TRACK_DERIVED_LANE_HEIGHT_PX,
   TRACK_LANE_HEIGHT_PX,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
 } from './track-timeline-math';
 
 export interface TrackLaneProps {
+  aiProcessingState: RecordingAiProcessingState | null;
   clipDrafts: Record<string, StudioClipDraft>;
   detail: LibraryRecordingDetail;
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
@@ -49,6 +53,7 @@ export interface TrackLaneProps {
 }
 
 export function TrackLane({
+  aiProcessingState,
   clipDrafts,
   detail,
   dragHandleProps,
@@ -74,6 +79,10 @@ export function TrackLane({
   const audioTrack = track.kind !== 'video';
   const muted = mutedTrackIds.has(track.id);
   const color = studioColorById(lane.colorId);
+  const derivedLane = buildDerivedLane({
+    aiProcessingState,
+    track,
+  });
   const laneContentClickRef = useRef<{
     moved: boolean;
     x: number;
@@ -131,67 +140,80 @@ export function TrackLane({
     <>
       <div
         className={cn(
-          'bg-background group-hover/lane:bg-muted/70 sticky left-0 z-10 flex min-w-0 items-center gap-1 border-r border-b p-2 transition-colors',
+          'bg-background group-hover/lane:bg-muted/70 sticky left-0 z-10 flex min-w-0 flex-col border-r border-b transition-colors',
           selectedLane && 'bg-accent text-accent-foreground',
         )}
         data-track-id={track.id}
         style={{ height: TRACK_LANE_HEIGHT_PX }}
       >
-        <Button
-          aria-label={`Reorder ${lane.label}`}
-          className="cursor-grab active:cursor-grabbing"
-          data-library-action
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-          {...dragHandleProps}
-        >
-          <GripVertical className="size-3" />
-        </Button>
-        {audioTrack ? (
+        <div className="flex min-h-0 flex-1 items-center gap-1 p-2">
           <Button
-            aria-label={muted ? `Unmute ${lane.label}` : `Mute ${lane.label}`}
+            aria-label={`Reorder ${lane.label}`}
+            className="cursor-grab active:cursor-grabbing"
             data-library-action
-            size="icon"
-            variant={muted ? 'outline' : 'ghost'}
-            onClick={() => onToggleTrackMuted(track.id)}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+            {...dragHandleProps}
           >
-            {muted ? (
-              <VolumeX className="size-3.5" />
-            ) : (
-              <Volume2 className="size-3.5" />
-            )}
+            <GripVertical className="size-3" />
           </Button>
-        ) : null}
-        <button
-          aria-label={`Select ${lane.label}`}
-          aria-pressed={selectedLane}
-          className="hover:bg-muted focus-visible:ring-ring/30 min-w-0 flex-1 rounded-sm px-1 py-0.5 text-left transition-colors outline-none focus-visible:ring-2"
-          data-library-action
-          type="button"
-          onClick={(event) =>
-            onSelectLane(
-              track.id,
-              event.shiftKey || event.metaKey || event.ctrlKey,
-            )
-          }
-        >
-          <span className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: color.strong }}
-            />
-            <span className="min-w-0">
-              <span className="block truncate text-xs font-medium">
-                {lane.label}
-              </span>
-              <span className="text-muted-foreground block truncate text-xs">
-                {lane.description}
+          {audioTrack ? (
+            <Button
+              aria-label={muted ? `Unmute ${lane.label}` : `Mute ${lane.label}`}
+              data-library-action
+              size="icon"
+              variant={muted ? 'outline' : 'ghost'}
+              onClick={() => onToggleTrackMuted(track.id)}
+            >
+              {muted ? (
+                <VolumeX className="size-3.5" />
+              ) : (
+                <Volume2 className="size-3.5" />
+              )}
+            </Button>
+          ) : null}
+          <button
+            aria-label={`Select ${lane.label}`}
+            aria-pressed={selectedLane}
+            className="hover:bg-muted focus-visible:ring-ring/30 min-w-0 flex-1 rounded-sm px-1 py-0.5 text-left transition-colors outline-none focus-visible:ring-2"
+            data-library-action
+            type="button"
+            onClick={(event) =>
+              onSelectLane(
+                track.id,
+                event.shiftKey || event.metaKey || event.ctrlKey,
+              )
+            }
+          >
+            <span className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: color.strong }}
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-medium">
+                  {lane.label}
+                </span>
+                <span className="text-muted-foreground block truncate text-xs">
+                  {lane.description}
+                </span>
               </span>
             </span>
-          </span>
-        </button>
+          </button>
+        </div>
+        <div
+          className="text-muted-foreground flex h-6 items-center gap-2 border-t px-2 text-[0.625rem]"
+          title={derivedLane.description}
+        >
+          <span
+            aria-hidden="true"
+            className="size-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: color.strong }}
+          />
+          <span className="truncate">{derivedLane.label}</span>
+        </div>
       </div>
       <div
         className={cn(
@@ -252,6 +274,12 @@ export function TrackLane({
             totalDurationMs={totalDurationMs}
           />
         ))}
+        <DerivedAiLaneStrip
+          color={color.strong}
+          lane={derivedLane}
+          timelineWidthPx={timelineWidthPx}
+          totalDurationMs={totalDurationMs}
+        />
       </div>
     </>
   );
@@ -289,7 +317,7 @@ function TrackClip({
       aria-label={`${track.label} ${title}`}
       aria-pressed={selected}
       className={cn(
-        'absolute top-1 bottom-1 overflow-hidden rounded-sm border text-left shadow-xs transition-[border-color,box-shadow,transform] outline-none',
+        'absolute top-1 overflow-hidden rounded-sm border text-left shadow-xs transition-[border-color,box-shadow,transform] outline-none',
         'focus-visible:ring-ring/40 focus-visible:ring-2',
         selected && 'ring-ring ring-offset-background ring-2 ring-offset-1',
         !finalized && 'opacity-60',
@@ -299,6 +327,7 @@ function TrackClip({
         backgroundColor: finalized ? color.fill : 'hsl(var(--muted))',
         borderColor: selected ? color.strong : color.border,
         left: (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
+        bottom: TRACK_DERIVED_LANE_HEIGHT_PX + 4,
         width: Math.max(
           4,
           ((segment.durationMs ?? 0) / totalDurationMs) * timelineWidthPx,

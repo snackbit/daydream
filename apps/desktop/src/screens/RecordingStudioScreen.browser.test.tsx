@@ -2,6 +2,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   LibraryWaveformTiles,
+  RecordingAiProcessingState,
 } from '@daydream/shared';
 import {
   cleanup,
@@ -24,6 +25,8 @@ const client = vi.hoisted(() => ({
 }));
 
 const aiClient = vi.hoisted(() => ({
+  getRecordingAiProcessingState: vi.fn(),
+  listenToAiProcessingChanged: vi.fn(),
   startRecordingAiProcessing: vi.fn(),
 }));
 
@@ -242,6 +245,13 @@ beforeEach(() => {
   );
   client.getRecordingWaveformTiles.mockResolvedValue(waveformTiles);
   client.createLibraryPlaybackSession.mockResolvedValue(playbackAssets);
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [],
+    job: null,
+    recordingId: 'recording-1',
+    transcript: { recordingId: 'recording-1', tracks: [] },
+  });
+  aiClient.listenToAiProcessingChanged.mockResolvedValue(() => undefined);
   aiClient.startRecordingAiProcessing.mockResolvedValue({
     createdAtMs: 1,
     errorCode: null,
@@ -485,6 +495,298 @@ test('RecordingStudioScreen starts AI processing from the detail header', async 
       recordingId: 'recording-1',
     }),
   );
+});
+
+test('RecordingStudioScreen shows processed AI state without a spinner', async () => {
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
+        errorCode: null,
+        id: 'chunk-1',
+        jobId: 'job-1',
+        progress: 1,
+        recordingId: 'recording-1',
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'succeeded',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 2,
+      },
+    ],
+    job: {
+      createdAtMs: 1,
+      errorCode: null,
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 1,
+      recordingId: 'recording-1',
+      status: 'succeeded',
+      updatedAtMs: 2,
+    },
+    recordingId: 'recording-1',
+    transcript: {
+      recordingId: 'recording-1',
+      tracks: [],
+    },
+  });
+
+  render(<RecordingStudioScreen />);
+
+  const processedButton = await screen.findByRole('button', {
+    name: /processed/i,
+  });
+  expect((processedButton as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText('Transcription')).toBeTruthy();
+  expect(screen.getByText('No speech detected')).toBeTruthy();
+  expect(screen.getByText('OCR + VLM')).toBeTruthy();
+});
+
+test('RecordingStudioScreen clears stale AI state after route changes', async () => {
+  const nextDetail = {
+    ...detail,
+    id: 'recording-2',
+    segments: [
+      {
+        ...detail.segments[0]!,
+        filePath: '/tmp/daydream/recordings/recording-2/segments/0001.mkv',
+        id: 'segment-3',
+        pauseAfterMs: 0,
+      },
+    ],
+    storageDir: '/tmp/daydream/recordings/recording-2',
+  } satisfies LibraryRecordingDetail;
+  aiClient.getRecordingAiProcessingState.mockImplementation(
+    ({ recordingId }: { recordingId: string }) =>
+      recordingId === 'recording-2'
+        ? Promise.reject(new Error('AI state unavailable'))
+        : Promise.resolve({
+            chunks: [],
+            job: {
+              createdAtMs: 1,
+              errorCode: null,
+              id: 'job-1',
+              kind: 'ai-processing',
+              progress: 1,
+              recordingId: 'recording-1',
+              status: 'succeeded',
+              updatedAtMs: 2,
+            },
+            recordingId: 'recording-1',
+            transcript: {
+              recordingId: 'recording-1',
+              tracks: [],
+            },
+          }),
+  );
+  client.getLibraryRecording.mockImplementation((recordingId: string) =>
+    Promise.resolve(recordingId === 'recording-2' ? nextDetail : detail),
+  );
+
+  const { rerender } = render(<RecordingStudioScreen />);
+
+  const processedButton = await screen.findByRole('button', {
+    name: /processed/i,
+  });
+  expect((processedButton as HTMLButtonElement).disabled).toBe(true);
+
+  routeState.recordingId = 'recording-2';
+  rerender(<RecordingStudioScreen />);
+
+  await waitFor(() =>
+    expect(screen.getAllByText('recording-2').length).toBeGreaterThan(0),
+  );
+
+  const processButton = screen.getByRole('button', { name: /process ai/i });
+  expect((processButton as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
+});
+
+test('RecordingStudioScreen treats active chunks as processing even when the job is succeeded', async () => {
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
+        errorCode: null,
+        id: 'chunk-1',
+        jobId: 'job-1',
+        progress: 0.5,
+        recordingId: 'recording-1',
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'running',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 2,
+      },
+    ],
+    job: {
+      createdAtMs: 1,
+      errorCode: null,
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 1,
+      recordingId: 'recording-1',
+      status: 'succeeded',
+      updatedAtMs: 2,
+    },
+    recordingId: 'recording-1',
+    transcript: {
+      recordingId: 'recording-1',
+      tracks: [],
+    },
+  });
+
+  render(<RecordingStudioScreen />);
+
+  const processingButton = await screen.findByRole('button', {
+    name: /processing/i,
+  });
+
+  expect((processingButton as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
+  expect(screen.getByText('Transcription in progress')).toBeTruthy();
+  expect(screen.getByLabelText('AI processing in progress')).toBeTruthy();
+});
+
+test('RecordingStudioScreen updates AI lanes from processing events', async () => {
+  let processingHandler = (_state: RecordingAiProcessingState) => {
+    throw new Error('processing handler was not registered');
+  };
+  aiClient.listenToAiProcessingChanged.mockImplementation((handler) => {
+    processingHandler = handler;
+    return Promise.resolve(() => undefined);
+  });
+
+  render(<RecordingStudioScreen />);
+
+  expect(await screen.findByText('Transcription')).toBeTruthy();
+  expect(screen.getByText('OCR + VLM')).toBeTruthy();
+
+  processingHandler({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
+        errorCode: null,
+        id: 'chunk-1',
+        jobId: 'job-1',
+        progress: 0.05,
+        recordingId: 'recording-1',
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'running',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 2,
+      },
+    ],
+    job: {
+      createdAtMs: 1,
+      errorCode: null,
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 0.05,
+      recordingId: 'recording-1',
+      status: 'running',
+      updatedAtMs: 2,
+    },
+    recordingId: 'recording-1',
+    transcript: { recordingId: 'recording-1', tracks: [] },
+  });
+
+  expect(
+    await screen.findByLabelText('AI processing in progress'),
+  ).toBeTruthy();
+  expect(screen.getByText('Transcription in progress')).toBeTruthy();
+  expect(
+    (screen.getByRole('button', { name: /processing/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+
+  processingHandler({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
+        errorCode: null,
+        id: 'chunk-1',
+        jobId: 'job-1',
+        progress: 1,
+        recordingId: 'recording-1',
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'succeeded',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 3,
+      },
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 7_000,
+        errorCode: 'ai_processing_audio_extract_failed',
+        id: 'chunk-2',
+        jobId: 'job-1',
+        progress: 0,
+        recordingId: 'recording-1',
+        segmentId: 'segment-2',
+        sourceKind: 'audio',
+        startOffsetMs: 5_000,
+        status: 'failed',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 3,
+      },
+    ],
+    job: {
+      createdAtMs: 1,
+      errorCode: 'ai_processing_audio_extract_failed',
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 0.5,
+      recordingId: 'recording-1',
+      status: 'failed',
+      updatedAtMs: 3,
+    },
+    recordingId: 'recording-1',
+    transcript: {
+      recordingId: 'recording-1',
+      tracks: [
+        {
+          segments: [
+            {
+              confidence: null,
+              endOffsetMs: 1_200,
+              id: 'transcript-1',
+              model: 'small',
+              provider: 'local-whisper-cpp',
+              segmentId: 'segment-1',
+              startOffsetMs: 500,
+              text: 'Standup notes',
+              words: [],
+            },
+          ],
+          sourceRole: 'desktop-audio',
+          trackId: 'desktop-audio-1',
+        },
+      ],
+    },
+  });
+
+  expect(await screen.findByText('Standup notes')).toBeTruthy();
+  expect(screen.getByText('Transcription failed')).toBeTruthy();
+  expect(screen.getByLabelText('AI processing failed')).toBeTruthy();
+  expect(
+    (screen.getByRole('button', { name: /retry ai/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
 });
 
 test('RecordingStudioScreen renames the recording from the detail header', async () => {

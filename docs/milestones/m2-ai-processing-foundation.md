@@ -22,10 +22,10 @@ in Library playback.
 - OCR and VLM are dual inputs: Tesseract provides the required local structured
   OCR baseline, while a configured OpenAI-compatible vision endpoint may produce
   visual observations and may help interpret OCR output.
-- M2 intentionally defers redaction-before-processing. Processing starts after
-  recording stop. This is a user-approved exception to the repository's normal
-  redaction-before-processing direction. Later redaction work must invalidate
-  derived data for removed spans.
+- M2 intentionally defers redaction until after processing. Processing starts
+  after recording stop, and future scheduler work should detect eligible chunks
+  during active recording and catch up toward realtime when local capacity
+  permits. Later redaction work must invalidate derived data for removed spans.
 
 ## Inputs
 
@@ -57,8 +57,9 @@ in Library playback.
 - M2 ships a full AI slice: transcription, activity detection, OCR, guarded VLM
   observation paths, settings, jobs, and playback integration.
 - Processing starts automatically after a recording stops.
-- Automatic processing after stop is a user-approved M2 exception to the
-  repository's normal redaction-before-processing target.
+- Automatic processing after stop matches the current product direction:
+  redaction is post-processing, with derived-data invalidation for removed
+  spans.
 - Processing is chunked and resumable so app shutdown and restart can continue
   unfinished work.
 - Background processing jobs support pause, cancel, retry, and restart
@@ -151,10 +152,10 @@ in Library playback.
 - Default mouse activity window is 5 seconds.
 - Library playback gains an activity gauge or lane similar to video and audio
   tracks.
-- M2 explicitly overrides the repo's earlier pre-processing redaction ideal:
-  redaction-before-processing is deferred. The required M2 privacy behavior is
-  clear labeling, local-first defaults, no private-content logs, and derived
-  data invalidation support for later redaction.
+- M2 replaces the repo's earlier pre-processing redaction ideal:
+  redaction-before-processing is not the target. The required M2 privacy
+  behavior is clear labeling, local-first defaults, no private-content logs, and
+  derived data invalidation support for later redaction.
 
 ## Success Criteria
 
@@ -432,8 +433,8 @@ Settings storage format:
 ## Privacy and Deletion Contract
 
 - M2 processes private media immediately after recording stop.
-- This is a user-approved M2 exception to the original
-  redaction-before-processing target.
+- This matches the current product direction: redaction happens after
+  processing, with derived-data invalidation for removed spans.
 - M2 must still store enough provenance to support later redaction invalidation.
 - Derived records must be deletable or invalidatable by recording ID and time
   range.
@@ -932,8 +933,8 @@ Exit Criteria:
   frame-perfect highlighting.
 - Visual similarity can miss subtle text changes if implemented with only
   coarse whole-frame similarity.
-- Automatic processing before redaction is a deliberate privacy tradeoff and
-  must not be hidden.
+- Automatic processing before redaction is deliberate product behavior and must
+  not be hidden.
 - Full cross-platform keyboard/mouse activity monitoring is out of scope for
   implementation in M2 despite cross-platform interfaces.
 

@@ -6,6 +6,7 @@ import type {
 } from '@daydream/shared';
 import {
   AlertTriangle,
+  Loader2,
   Pencil,
   RefreshCw,
   Sparkles,
@@ -26,6 +27,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
+import { useRecordingAiProcessingState } from '@/features/ai/use-recording-ai-processing-state';
 import { RecordingStudio } from '@/features/library/components/studio/recording-studio';
 import {
   closeLibraryPlaybackSession,
@@ -62,6 +64,7 @@ export function RecordingStudioScreen() {
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [processingStartBusy, setProcessingStartBusy] = useState(false);
+  const aiProcessing = useRecordingAiProcessingState(recordingId);
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
 
@@ -161,6 +164,7 @@ export function RecordingStudioScreen() {
     setProcessingStartBusy(true);
     try {
       await startRecordingAiProcessing({ recordingId: detail.id });
+      await aiProcessing.reload();
     } catch (processingError) {
       setError(errorMessage(processingError));
     } finally {
@@ -183,6 +187,31 @@ export function RecordingStudioScreen() {
     },
     [],
   );
+
+  const processingJob = aiProcessing.state?.job ?? null;
+  const hasActiveProcessingChunks =
+    aiProcessing.state?.chunks.some(
+      (chunk) => chunk.status === 'queued' || chunk.status === 'running',
+    ) ?? false;
+  const processingActive =
+    processingJob?.status === 'queued' ||
+    processingJob?.status === 'running' ||
+    hasActiveProcessingChunks;
+  const processingSucceeded =
+    processingJob?.status === 'succeeded' && !hasActiveProcessingChunks;
+  const processingRetryable =
+    !hasActiveProcessingChunks &&
+    (processingJob?.status === 'cancelled' ||
+      processingJob?.status === 'failed');
+  const processAiLabel = processingStartBusy
+    ? 'Starting...'
+    : processingActive
+      ? 'Processing...'
+      : processingSucceeded
+        ? 'Processed'
+        : processingRetryable
+          ? 'Retry AI'
+          : 'Process AI';
 
   return (
     <FullHeightLayout>
@@ -212,12 +241,21 @@ export function RecordingStudioScreen() {
           {detail ? (
             <Button
               className="gap-2"
-              disabled={!isAiProcessingStartable(detail) || processingStartBusy}
+              disabled={
+                !isAiProcessingStartable(detail) ||
+                processingStartBusy ||
+                processingActive ||
+                processingSucceeded
+              }
               variant="outline"
               onClick={() => void startAiProcessing()}
             >
-              <Sparkles className="size-3.5" />
-              Process AI
+              {processingStartBusy || processingActive ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              {processAiLabel}
             </Button>
           ) : null}
           {detail && isRecordingRenameable(detail) ? (
@@ -272,6 +310,7 @@ export function RecordingStudioScreen() {
 
       {detail ? (
         <RecordingStudio
+          aiProcessingState={aiProcessing.state}
           detail={detail}
           playbackAssets={playbackAssets}
           thumbnailStatus={thumbnailStatus}

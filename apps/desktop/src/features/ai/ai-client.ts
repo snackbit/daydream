@@ -7,11 +7,13 @@ import type {
   DeleteAiModelInput,
   DeleteAiProviderSecretInput,
   DownloadAiModelInput,
+  GetRecordingAiProcessingStateInput,
   ListProcessingJobsInput,
   Notification,
   ProcessingJob,
   ProcessingJobActionInput,
   ProcessingJobList,
+  RecordingAiProcessingState,
   RecordingActivity,
   RecordingAiResultInput,
   RecordingTranscript,
@@ -23,6 +25,7 @@ import type {
 } from '@daydream/shared';
 
 export const aiModelsChangedEvent = 'ai-models-changed';
+export const aiProcessingChangedEvent = 'ai-processing-changed';
 
 export async function listAiModels(): Promise<AiModelAssetList> {
   return invoke<AiModelAssetList>('listAiModels');
@@ -104,6 +107,14 @@ export async function startRecordingAiProcessing(
   return invoke<ProcessingJob>('startRecordingAiProcessing', { input });
 }
 
+export async function getRecordingAiProcessingState(
+  input: GetRecordingAiProcessingStateInput,
+): Promise<RecordingAiProcessingState> {
+  return invoke<RecordingAiProcessingState>('getRecordingAiProcessingState', {
+    input,
+  });
+}
+
 export async function getRecordingTranscript(
   input: GetRecordingTranscriptInput,
 ): Promise<RecordingTranscript> {
@@ -122,4 +133,15 @@ export async function listenToAiModelsChanged(
   return listen<AiModelAssetList>(aiModelsChangedEvent, (event) => {
     handler(event.payload);
   });
+}
+
+export async function listenToAiProcessingChanged(
+  handler: (state: RecordingAiProcessingState) => void,
+): Promise<() => void> {
+  return listen<RecordingAiProcessingState>(
+    aiProcessingChangedEvent,
+    (event) => {
+      handler(event.payload);
+    },
+  );
 }

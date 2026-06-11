@@ -1,14 +1,17 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
   aiModelsChangedEvent,
+  aiProcessingChangedEvent,
   cancelAiModelDownload,
   cancelProcessingJob,
   deleteAiModel,
   deleteAiProviderSecret,
   downloadAiModel,
   getAiProviderStatus,
+  getRecordingAiProcessingState,
   getRecordingActivity,
   getRecordingTranscript,
+  listenToAiProcessingChanged,
   listenToAiModelsChanged,
   listAiModels,
   listProcessingJobs,
@@ -54,6 +57,7 @@ test('ai client uses typed camelCase command names', async () => {
   await cancelProcessingJob({ jobId: 'job-1' });
   await retryProcessingJob({ jobId: 'job-1' });
   await startRecordingAiProcessing({ recordingId: 'recording-1' });
+  await getRecordingAiProcessingState({ recordingId: 'recording-1' });
   await getRecordingTranscript({ recordingId: 'recording-1' });
   await getRecordingActivity({ recordingId: 'recording-1' });
 
@@ -95,10 +99,17 @@ test('ai client uses typed camelCase command names', async () => {
   expect(invokeMock).toHaveBeenNthCalledWith(14, 'startRecordingAiProcessing', {
     input: { recordingId: 'recording-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(15, 'getRecordingTranscript', {
+  expect(invokeMock).toHaveBeenNthCalledWith(
+    15,
+    'getRecordingAiProcessingState',
+    {
+      input: { recordingId: 'recording-1' },
+    },
+  );
+  expect(invokeMock).toHaveBeenNthCalledWith(16, 'getRecordingTranscript', {
     input: { recordingId: 'recording-1' },
   });
-  expect(invokeMock).toHaveBeenNthCalledWith(16, 'getRecordingActivity', {
+  expect(invokeMock).toHaveBeenNthCalledWith(17, 'getRecordingActivity', {
     input: { recordingId: 'recording-1' },
   });
 });
@@ -118,4 +129,33 @@ test('ai client listens for full model list updates', async () => {
     expect.any(Function),
   );
   expect(handler).toHaveBeenCalledWith({ models: [] });
+});
+
+test('ai client listens for processing state updates', async () => {
+  const unlisten = vi.fn();
+  const handler = vi.fn();
+  listenMock.mockImplementation((_eventName, listener) => {
+    listener({
+      payload: {
+        chunks: [],
+        job: null,
+        recordingId: 'recording-1',
+        transcript: { recordingId: 'recording-1', tracks: [] },
+      },
+    });
+    return Promise.resolve(unlisten);
+  });
+
+  await expect(listenToAiProcessingChanged(handler)).resolves.toBe(unlisten);
+
+  expect(listenMock).toHaveBeenCalledWith(
+    aiProcessingChangedEvent,
+    expect.any(Function),
+  );
+  expect(handler).toHaveBeenCalledWith({
+    chunks: [],
+    job: null,
+    recordingId: 'recording-1',
+    transcript: { recordingId: 'recording-1', tracks: [] },
+  });
 });

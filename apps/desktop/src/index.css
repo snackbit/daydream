@@ -131,3 +131,24 @@
     @apply font-sans;
   }
 }
+
+@keyframes ai-processing-construction-scroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+
+.ai-processing-construction {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklch, var(--color-amber-400), transparent 10%) 0,
+    color-mix(in oklch, var(--color-amber-400), transparent 10%) 8px,
+    color-mix(in oklch, var(--color-amber-700), transparent 10%) 8px,
+    color-mix(in oklch, var(--color-amber-700), transparent 10%) 16px
+  );
+  background-size: 24px 24px;
+  animation: ai-processing-construction-scroll 900ms linear infinite;
+}

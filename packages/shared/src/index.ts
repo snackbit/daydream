@@ -1,4 +1,11 @@
 import type {
+  AiProviderKind,
+  AiTranscriptionBackend,
+  ProcessingChunkSourceKind,
+  ProcessingChunkStatus,
+  ProcessingJobStatus,
+} from './ai.js';
+import type {
   CaptureTimingDiagnostics,
   RecorderBackendHealth,
   RecorderMediaWriterCapabilities,
@@ -26,6 +33,61 @@ export interface MediaWriterDiagnostics {
   error: string | null;
   version: string | null;
   writer: string | null;
+}
+
+export interface AiProcessingDiagnostics {
+  chunkCount: number;
+  chunkStatusCounts: Record<string, number>;
+  chunks: AiProcessingChunkDiagnostics[];
+  error: string | null;
+  latestJob: AiProcessingJobDiagnostics | null;
+  recordingId: string | null;
+  settings: AiProcessingSettingsDiagnostics | null;
+  transcriptTracks: AiTranscriptTrackDiagnostics[];
+}
+
+export interface AiProcessingSettingsDiagnostics {
+  autoStartAfterRecording: boolean;
+  maxParallelChunksPerJob: number;
+  maxParallelJobs: number;
+  transcriptionBackend: AiTranscriptionBackend;
+  transcriptionModel: string;
+  transcriptionProvider: AiProviderKind;
+  wordTimestampsEnabled: boolean;
+}
+
+export interface AiProcessingJobDiagnostics {
+  createdAtMs: number;
+  error: string | null;
+  id: string;
+  kind: string;
+  status: ProcessingJobStatus;
+  updatedAtMs: number;
+}
+
+export interface AiProcessingChunkDiagnostics {
+  attemptCount: number;
+  endOffsetMs: number | null;
+  errorCode: string | null;
+  id: string;
+  progress: number;
+  segmentId: string | null;
+  sourceKind: ProcessingChunkSourceKind;
+  startOffsetMs: number | null;
+  status: ProcessingChunkStatus;
+  trackId: string | null;
+  trackKind: string | null;
+  trackLabel: string | null;
+  updatedAtMs: number;
+}
+
+export interface AiTranscriptTrackDiagnostics {
+  firstStartOffsetMs: number | null;
+  lastEndOffsetMs: number | null;
+  segmentCount: number;
+  sourceRole: string;
+  textCharCount: number;
+  trackId: string;
 }
 
 export type SegmentProbeMetadata = Record<string, unknown>;
@@ -69,6 +131,7 @@ export interface SystemDiagnostics {
 }
 
 export interface DaydreamDiagnostics {
+  aiProcessing: AiProcessingDiagnostics;
   app: AppDiagnostics;
   database: DatabaseDiagnostics;
   debugLogging: DebugLoggingDiagnostics;

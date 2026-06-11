@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  RecordingAiProcessingState,
 } from '@daydream/shared';
 import {
   ResizableHandle,
@@ -15,12 +16,14 @@ import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
 
 export interface RecordingStudioProps {
+  aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
 }
 
 export function RecordingStudio({
+  aiProcessingState,
   detail,
   playbackAssets,
   thumbnailStatus,
@@ -68,6 +71,7 @@ export function RecordingStudio({
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={32} minSize={18}>
             <TrackTimeline
+              aiProcessingState={aiProcessingState}
               detail={detail}
               mutedTrackIds={mutedTrackIds}
               playback={playback}

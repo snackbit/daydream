@@ -23,16 +23,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             telemetry::initialize(app.handle())?;
-            let recorder_manager = recorder::RecorderManager::new(app.path().app_data_dir()?);
+            let app_data_dir = app.path().app_data_dir()?;
+            let recorder_manager = recorder::RecorderManager::new(app_data_dir.clone());
             let ai_model_manager = ai::AiModelManager::new();
-            let transcription_provider_manager = transcription::TranscriptionProviderManager::new();
+            let transcription_provider_manager = transcription::TranscriptionProviderManager::new(
+                app_data_dir.clone(),
+            )
+            .map_err(|error| {
+                std::io::Error::other(format!(
+                    "transcription provider initialization failed: {}: {}",
+                    error.code, error.message
+                ))
+            })?;
             let startup_manager = startup::AppStartupManager::new();
             let storage = storage::initialize(app.handle())?;
             match settings::load_app_settings(&storage) {
                 Ok(app_settings) => {
                     let cleanup = storage_limits::enforce_storage_cleanup(
                         &storage,
-                        &app.path().app_data_dir()?.join("recordings"),
+                        &app_data_dir.join("recordings"),
                         &app_settings.storage,
                     );
                     if cleanup.failed_recording_count > 0 {
@@ -69,6 +78,7 @@ pub fn run() {
             library::delete_library_recordings,
             library::get_library_recording,
             ai::get_recording_activity,
+            ai::get_recording_ai_processing_state,
             ai::get_recording_transcript,
             library::get_recording_waveform_tiles,
             library::get_recording_waveforms,
@@ -117,4 +127,8 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+pub fn run_whisper_worker_process(app_data_dir: std::path::PathBuf) -> i32 {
+    transcription::run_whisper_worker_process(app_data_dir)
 }

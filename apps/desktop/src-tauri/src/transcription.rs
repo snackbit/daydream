@@ -4,9 +4,10 @@ use std::{
     collections::BTreeMap,
     fs,
     future::Future,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc, Mutex,
@@ -27,9 +28,12 @@ use crate::{
 };
 
 const TRANSCRIPTION_PATH: &str = "/v1/audio/transcriptions";
+const LOCAL_WARMUP_PATH: &str = "/internal/local-transcription/warm";
 const MAX_TRANSCRIPTION_UPLOAD_BYTES: u64 = 128 * 1024 * 1024;
 const HTTP_HEADER_LIMIT_BYTES: usize = 32 * 1024;
 const LOCAL_BACKEND_FORM_FIELD: &str = "daydream_local_backend";
+const LOCAL_WORKER_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const LOCAL_WORKER_WARMUP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub struct TranscriptionProviderManager {
@@ -142,6 +146,40 @@ struct CachedWhisperModel {
     model_path: PathBuf,
 }
 
+struct WhisperProcessTranscriptionRunner {
+    app_data_dir: PathBuf,
+    state: Mutex<Option<WhisperWorkerProcess>>,
+    worker_executable: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct WhisperWorkerEndpoint {
+    token: String,
+    transcription_url: String,
+    warmup_url: String,
+}
+
+struct WhisperWorkerProcess {
+    child: Child,
+    endpoint: WhisperWorkerEndpoint,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhisperWorkerReady {
+    token: String,
+    transcription_url: String,
+    warmup_url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalWarmupRequest {
+    #[serde(rename = "daydreamLocalBackend")]
+    local_backend: String,
+    model: String,
+}
+
 impl WhisperCppTranscriptionRunner {
     fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
@@ -209,6 +247,185 @@ impl LocalTranscriptionRunner for WhisperCppTranscriptionRunner {
         input: LocalTranscriptionInput,
     ) -> Result<VerboseTranscription, TranscriptionError> {
         self.send_command(|response| WhisperWorkerCommand::Transcribe { input, response })
+    }
+}
+
+impl WhisperProcessTranscriptionRunner {
+    fn new(app_data_dir: PathBuf) -> Result<Self, TranscriptionError> {
+        let worker_executable = std::env::current_exe().map_err(worker_spawn_error)?;
+
+        Ok(Self {
+            app_data_dir,
+            state: Mutex::new(None),
+            worker_executable,
+        })
+    }
+
+    #[cfg(test)]
+    fn with_worker_executable(app_data_dir: PathBuf, worker_executable: PathBuf) -> Self {
+        Self {
+            app_data_dir,
+            state: Mutex::new(None),
+            worker_executable,
+        }
+    }
+
+    fn endpoint(&self) -> Result<WhisperWorkerEndpoint, TranscriptionError> {
+        let mut state = self.state.lock().expect("whisper worker process state");
+        let needs_start = match state.as_mut() {
+            Some(worker) => match worker.child.try_wait().map_err(worker_spawn_error)? {
+                Some(_status) => true,
+                None => false,
+            },
+            None => true,
+        };
+        if needs_start {
+            *state = Some(self.spawn_worker()?);
+        }
+
+        state
+            .as_ref()
+            .map(|worker| worker.endpoint.clone())
+            .ok_or_else(worker_unavailable_error)
+    }
+
+    fn spawn_worker(&self) -> Result<WhisperWorkerProcess, TranscriptionError> {
+        let mut child = Command::new(&self.worker_executable)
+            .arg("--daydream-whisper-worker")
+            .arg(&self.app_data_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(worker_spawn_error)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            transcription_error(
+                "ai_transcription_local_worker_unavailable",
+                "Local transcription worker stdout is unavailable.",
+            )
+        })?;
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        let _reader = thread::Builder::new()
+            .name("daydream-whisper-worker-ready".to_string())
+            .spawn(move || {
+                let mut line = String::new();
+                let result = BufReader::new(stdout)
+                    .read_line(&mut line)
+                    .map(|read| (read, line));
+                let _ = ready_sender.send(result);
+            })
+            .map_err(worker_spawn_error)?;
+
+        let ready_line = match ready_receiver.recv_timeout(LOCAL_WORKER_STARTUP_TIMEOUT) {
+            Ok(Ok((read, line))) if read > 0 => line,
+            Ok(Ok((_read, _line))) => {
+                let _ = child.kill();
+                return Err(worker_unavailable_error());
+            }
+            Ok(Err(error)) => {
+                let _ = child.kill();
+                return Err(worker_spawn_error(error));
+            }
+            Err(_error) => {
+                let _ = child.kill();
+                return Err(transcription_error(
+                    "ai_transcription_local_worker_timeout",
+                    "Local transcription worker did not become ready.",
+                ));
+            }
+        };
+        let ready: WhisperWorkerReady =
+            serde_json::from_str(ready_line.trim()).map_err(|_error| {
+                let _ = child.kill();
+                transcription_error(
+                    "ai_transcription_local_worker_unavailable",
+                    "Local transcription worker returned an invalid ready message.",
+                )
+            })?;
+
+        Ok(WhisperWorkerProcess {
+            child,
+            endpoint: WhisperWorkerEndpoint {
+                token: ready.token,
+                transcription_url: ready.transcription_url,
+                warmup_url: ready.warmup_url,
+            },
+        })
+    }
+
+    fn note_request_result<T>(
+        &self,
+        result: Result<T, TranscriptionError>,
+    ) -> Result<T, TranscriptionError> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                let mut state = self.state.lock().expect("whisper worker process state");
+                if let Some(worker) = state.as_mut() {
+                    let mut status = worker.child.try_wait();
+                    if matches!(status, Ok(None)) {
+                        thread::sleep(Duration::from_millis(50));
+                        status = worker.child.try_wait();
+                    }
+                    match status {
+                        Ok(Some(_status)) => {
+                            *state = None;
+                            return Err(transcription_error(
+                                "ai_transcription_local_worker_crashed",
+                                "Local transcription worker exited before returning a result.",
+                            ));
+                        }
+                        Ok(None) | Err(_) => {}
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Drop for WhisperProcessTranscriptionRunner {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(mut worker) = state.take() {
+                let _ = worker.child.kill();
+                let _ = worker.child.wait();
+            }
+        }
+    }
+}
+
+impl LocalTranscriptionRunner for WhisperProcessTranscriptionRunner {
+    fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
+        let endpoint = self.endpoint()?;
+        let result = tauri::async_runtime::block_on(warm_local_via_rest(
+            &endpoint.warmup_url,
+            &endpoint.token,
+            &input,
+            LOCAL_WORKER_WARMUP_TIMEOUT,
+        ));
+
+        self.note_request_result(result)
+    }
+
+    fn transcribe(
+        &self,
+        input: LocalTranscriptionInput,
+    ) -> Result<VerboseTranscription, TranscriptionError> {
+        let endpoint = self.endpoint()?;
+        let result =
+            tauri::async_runtime::block_on(transcribe_via_rest(RestTranscriptionRequest {
+                audio_path: &input.audio_path,
+                bearer_token: Some(&endpoint.token),
+                cancel: Some(input.cancel),
+                endpoint: &endpoint.transcription_url,
+                local_backend: Some(&input.local_backend),
+                model: &input.model_id,
+                timeout: LOCAL_WORKER_WARMUP_TIMEOUT,
+                word_timestamps: input.word_timestamps,
+            }));
+
+        self.note_request_result(result)
     }
 }
 
@@ -281,8 +498,10 @@ fn ensure_cached_model<'a>(
 }
 
 impl TranscriptionProviderManager {
-    pub fn new() -> Self {
-        Self::with_local_runner(Arc::new(WhisperCppTranscriptionRunner::new()))
+    pub fn new(app_data_dir: PathBuf) -> Result<Self, TranscriptionError> {
+        Ok(Self::with_local_runner(Arc::new(
+            WhisperProcessTranscriptionRunner::new(app_data_dir)?,
+        )))
     }
 
     pub fn with_local_runner(local_runner: Arc<dyn LocalTranscriptionRunner>) -> Self {
@@ -399,6 +618,13 @@ impl TranscriptionProviderManager {
         Ok(Some(warmup))
     }
 
+    pub fn warm_local_model(
+        &self,
+        input: LocalTranscriptionWarmup,
+    ) -> Result<(), TranscriptionError> {
+        self.local_runner.warm_model(input)
+    }
+
     fn local_endpoint(
         &self,
         app: &AppHandle,
@@ -451,7 +677,7 @@ fn selected_transcription_provider(
 
 impl Default for TranscriptionProviderManager {
     fn default() -> Self {
-        Self::new()
+        Self::with_local_runner(Arc::new(WhisperCppTranscriptionRunner::new()))
     }
 }
 
@@ -460,6 +686,7 @@ pub struct LocalTranscriptionEndpoint {
     pub address: SocketAddr,
     pub token: String,
     pub url: String,
+    pub warmup_url: String,
 }
 
 #[derive(Debug)]
@@ -518,6 +745,7 @@ impl LocalTranscriptionServer {
             address: self.address,
             token: self.token.clone(),
             url: format!("http://{}{}", self.address, TRANSCRIPTION_PATH),
+            warmup_url: format!("http://{}{}", self.address, LOCAL_WARMUP_PATH),
         }
     }
 }
@@ -530,6 +758,49 @@ impl Drop for LocalTranscriptionServer {
             let _ = thread.join();
         }
     }
+}
+
+pub fn run_whisper_worker_process(app_data_dir: PathBuf) -> i32 {
+    match run_whisper_worker_process_inner(app_data_dir) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!(
+                "daydream whisper worker failed: {}: {}",
+                error.code, error.message
+            );
+            1
+        }
+    }
+}
+
+fn run_whisper_worker_process_inner(app_data_dir: PathBuf) -> Result<(), TranscriptionError> {
+    let runner = Arc::new(WhisperCppTranscriptionRunner::new());
+    let server = LocalTranscriptionServer::start(app_data_dir, runner)?;
+    let endpoint = server.endpoint();
+    let ready = WhisperWorkerReady {
+        token: endpoint.token,
+        transcription_url: endpoint.url,
+        warmup_url: endpoint.warmup_url,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&ready).map_err(request_build_error)?
+    );
+    std::io::stdout().flush().map_err(network_io_error)?;
+
+    let mut stdin = std::io::stdin();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match stdin.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(_read) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(network_io_error(error)),
+        }
+    }
+
+    drop(server);
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -557,7 +828,9 @@ fn handle_local_transcription_request(
     context: LocalTranscriptionContext,
     disconnect_stream: TcpStream,
 ) -> Result<VerboseTranscription, TranscriptionError> {
-    if request.method != "POST" || request.path != TRANSCRIPTION_PATH {
+    if request.method != "POST"
+        || (request.path != TRANSCRIPTION_PATH && request.path != LOCAL_WARMUP_PATH)
+    {
         return Err(transcription_error(
             "ai_transcription_route_not_found",
             "Local transcription route is not available.",
@@ -574,6 +847,17 @@ fn handle_local_transcription_request(
             "ai_transcription_token_invalid",
             "Local transcription bearer token is invalid.",
         ));
+    }
+    if request.path == LOCAL_WARMUP_PATH {
+        handle_local_warmup_request(request, context)?;
+        return Ok(VerboseTranscription {
+            duration: None,
+            language: None,
+            segments: Vec::new(),
+            task: None,
+            text: String::new(),
+            words: Vec::new(),
+        });
     }
     let content_type = request.headers.get("content-type").ok_or_else(|| {
         transcription_error(
@@ -622,6 +906,31 @@ fn handle_local_transcription_request(
     let _ = fs::remove_file(audio_path);
 
     result
+}
+
+fn handle_local_warmup_request(
+    request: HttpRequest,
+    context: LocalTranscriptionContext,
+) -> Result<(), TranscriptionError> {
+    let warmup: LocalWarmupRequest = serde_json::from_slice(&request.body).map_err(|_error| {
+        transcription_error(
+            "ai_transcription_request_invalid",
+            "Local transcription warmup request is invalid.",
+        )
+    })?;
+    let model_path = local_whisper_model_path(&context.app_data_dir, &warmup.model);
+    if !model_path.is_file() {
+        return Err(transcription_error(
+            "ai_transcription_local_model_unavailable",
+            "Local transcription model is not available.",
+        ));
+    }
+
+    context.runner.warm_model(LocalTranscriptionWarmup {
+        local_backend: warmup.local_backend,
+        model_id: warmup.model,
+        model_path,
+    })
 }
 
 struct LocalTranscriptionCancelMonitor {
@@ -699,6 +1008,50 @@ pub async fn transcribe_remote(
         word_timestamps,
     })
     .await
+}
+
+async fn warm_local_via_rest(
+    endpoint: &str,
+    bearer_token: &str,
+    input: &LocalTranscriptionWarmup,
+    timeout: Duration,
+) -> Result<(), TranscriptionError> {
+    let request = LocalWarmupRequest {
+        local_backend: input.local_backend.clone(),
+        model: input.model_id.clone(),
+    };
+    let body = serde_json::to_vec(&request).map_err(request_build_error)?;
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(request_build_error)?;
+    let response = client
+        .post(endpoint)
+        .bearer_auth(bearer_token)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(network_error)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(transcription_error(
+            "ai_transcription_remote_auth_failed",
+            &format!("Transcription provider rejected authentication with status {status}."),
+        ));
+    }
+    if !status.is_success() {
+        let body = response.text().await.map_err(network_error)?;
+        if let Some(error) = parse_typed_transcription_error(&body) {
+            return Err(error);
+        }
+        return Err(transcription_error(
+            "ai_transcription_provider_failed",
+            &format!("Transcription provider failed with status {status}."),
+        ));
+    }
+
+    Ok(())
 }
 
 struct RestTranscriptionRequest<'a> {
@@ -1272,6 +1625,20 @@ fn network_error(error: reqwest::Error) -> TranscriptionError {
     )
 }
 
+fn worker_spawn_error(error: impl std::fmt::Display) -> TranscriptionError {
+    transcription_error(
+        "ai_transcription_local_worker_unavailable",
+        &format!("Local transcription worker could not start: {error}"),
+    )
+}
+
+fn worker_unavailable_error() -> TranscriptionError {
+    transcription_error(
+        "ai_transcription_local_worker_unavailable",
+        "Local transcription worker is unavailable.",
+    )
+}
+
 fn request_build_error(error: impl std::fmt::Display) -> TranscriptionError {
     transcription_error(
         "ai_transcription_request_invalid",
@@ -1301,9 +1668,15 @@ mod tests {
     #[derive(Default)]
     struct MockRunner {
         calls: StdMutex<Vec<LocalTranscriptionInput>>,
+        warm_calls: StdMutex<Vec<LocalTranscriptionWarmup>>,
     }
 
     impl LocalTranscriptionRunner for MockRunner {
+        fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
+            self.warm_calls.lock().expect("mock warm calls").push(input);
+            Ok(())
+        }
+
         fn transcribe(
             &self,
             input: LocalTranscriptionInput,
@@ -1446,6 +1819,50 @@ mod tests {
     }
 
     #[test]
+    fn local_server_warmup_route_uses_bearer_token() {
+        tauri::async_runtime::block_on(async {
+            let temp_dir = temp_test_dir();
+            create_model_file(&temp_dir, "tiny");
+            let runner = Arc::new(MockRunner::default());
+            let server =
+                LocalTranscriptionServer::start(temp_dir.clone(), runner.clone()).expect("server");
+            let endpoint = server.endpoint();
+            let warmup = LocalTranscriptionWarmup {
+                local_backend: "cpu".to_string(),
+                model_id: "tiny".to_string(),
+                model_path: temp_dir.join("models/whisper.cpp/ggml-tiny.bin"),
+            };
+
+            let wrong_token = warm_local_via_rest(
+                &endpoint.warmup_url,
+                "wrong",
+                &warmup,
+                Duration::from_secs(5),
+            )
+            .await
+            .expect_err("wrong token should fail");
+            assert_eq!(wrong_token.code, "ai_transcription_remote_auth_failed");
+
+            warm_local_via_rest(
+                &endpoint.warmup_url,
+                &endpoint.token,
+                &warmup,
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("warmup succeeds");
+            let calls = runner.warm_calls.lock().expect("warm calls");
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].model_id, "tiny");
+            assert_eq!(calls[0].local_backend, "cpu");
+            assert!(calls[0].model_path.is_file());
+
+            drop(server);
+            let _ = fs::remove_dir_all(temp_dir);
+        });
+    }
+
+    #[test]
     fn local_server_preserves_missing_model_error_code() {
         tauri::async_runtime::block_on(async {
             let temp_dir = temp_test_dir();
@@ -1540,6 +1957,25 @@ mod tests {
 
         assert_eq!(error.code, "ai_transcription_cancelled");
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_runner_reports_worker_that_exits_before_ready() {
+        let runner = WhisperProcessTranscriptionRunner::with_worker_executable(
+            temp_test_dir(),
+            PathBuf::from("/bin/false"),
+        );
+
+        let error = runner
+            .warm_model(LocalTranscriptionWarmup {
+                local_backend: "cpu".to_string(),
+                model_id: "tiny".to_string(),
+                model_path: PathBuf::from("/missing-model.bin"),
+            })
+            .expect_err("worker exits before ready");
+
+        assert_eq!(error.code, "ai_transcription_local_worker_unavailable");
     }
 
     #[test]

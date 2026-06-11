@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  RecordingAiProcessingState,
 } from '@daydream/shared';
 import {
   DndContext,
@@ -47,6 +48,7 @@ import { useTrackTimelineSelection } from './use-track-timeline-selection';
 import { useWaveformTileQueue } from './use-waveform-tile-queue';
 
 export function TrackTimeline({
+  aiProcessingState,
   detail,
   mutedTrackIds,
   onToggleTrackMuted,
@@ -54,6 +56,7 @@ export function TrackTimeline({
   playbackAssets,
   thumbnailStatus,
 }: {
+  aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
   onToggleTrackMuted: (trackId: string) => void;
@@ -478,6 +481,7 @@ export function TrackTimeline({
                     detail={detail}
                     key={track.id}
                     lane={lane}
+                    aiProcessingState={aiProcessingState}
                     mutedTrackIds={mutedTrackIds}
                     playbackAssets={playbackAssets}
                     selectedClipIds={selectedClipIds}

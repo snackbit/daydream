@@ -13,9 +13,10 @@ answer "what did I do today?" from private screen, audio, activity, and window
 context recorded on hardware the user controls.
 
 The intended product is an on-demand Tauri or Electron desktop app that can
-record a full working day, let the user cut or hide sensitive spans before
-processing, then extract searchable timeline annotations, task/todo candidates,
-conversation summaries, and a daily digest.
+record a full working day, process eligible local chunks automatically, extract
+searchable timeline annotations, task/todo candidates, conversation summaries,
+and a daily digest, then let the user cut or hide sensitive spans with derived
+data invalidated for those spans.
 
 ## RFC 2119 Language
 
@@ -67,7 +68,7 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - Storage: local video/audio/object store with explicit retention and deletion
   semantics.
 - UI: timeline playback, searchable annotations, source-linked digest entries,
-  and manual scissors/redaction before processing.
+  and manual scissors/redaction after processing.
 
 ## Privacy & Security
 
@@ -97,11 +98,14 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   infer whether the user was actively using the computer.
 - The app SHOULD capture focused window identity, focused window title, and open
   window inventory where the OS permits it.
-- The app MUST provide a pre-processing scissors/redaction workflow so users can
-  remove sensitive spans before OCR, transcription, VLM, embeddings, or LLM
-  summarization run.
-- Capture and processing SHOULD be decoupled so a full day can be recorded first
-  and processed later.
+- The app MUST provide a scissors/redaction workflow so users can remove
+  sensitive spans after capture and AI processing; OCR, transcripts, VLM output,
+  embeddings, summaries, and search data for removed spans MUST be deleted or
+  invalidated.
+- Capture and processing SHOULD be decoupled. A full day can be recorded first
+  and processed later, but future processing SHOULD also detect eligible chunks
+  during active recording and catch up toward realtime when local capacity
+  permits.
 
 ## Processing Pipeline Expectations
 
@@ -133,8 +137,9 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - LanceDB or Qdrant SHOULD own vector search data behind a narrow adapter.
 - Local files SHOULD be content-addressed or otherwise stable enough that
   processing jobs can resume without losing provenance.
-- Redaction state MUST be part of processing eligibility. Do not process spans
-  that the user has cut or hidden.
+- Redaction state MUST be part of processing and reprocessing eligibility. Do
+  not process spans that the user has already cut or hidden, and invalidate
+  derived data when a span is cut or hidden after processing.
 - Search results and digest items SHOULD link back to timestamps, source type,
   and confidence where available.
 

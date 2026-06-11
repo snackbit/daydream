@@ -86,6 +86,7 @@ export function TrackTimelineToolbar({
 }
 
 export function SortableTrackLane({
+  aiProcessingState,
   clipDrafts,
   detail,
   lane,
@@ -121,6 +122,7 @@ export function SortableTrackLane({
       }}
     >
       <TrackLane
+        aiProcessingState={aiProcessingState}
         clipDrafts={clipDrafts}
         detail={detail}
         dragHandleProps={{

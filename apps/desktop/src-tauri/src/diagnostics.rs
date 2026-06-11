@@ -1,4 +1,4 @@
-use std::{env, path::Path};
+use std::{collections::BTreeMap, env, path::Path};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -8,9 +8,12 @@ use crate::recorder::{
     self, media_writer, CaptureTimingDiagnostics, RecorderBackendHealth, RecorderManager,
     RecorderMediaWriterCapabilities, RecorderPreviewStatus,
 };
+use crate::settings;
 use crate::storage::{
-    collect_database_diagnostics, get_latest_recording_id, get_portal_restore_token,
-    list_recording_segments, AppStorage, DatabaseDiagnostics, RecordingSegmentRow,
+    collect_database_diagnostics, get_latest_processing_job_for_recording, get_latest_recording_id,
+    get_portal_restore_token, list_processing_chunks, list_recording_segments,
+    list_recording_tracks, list_transcript_segments, AppStorage, DatabaseDiagnostics,
+    ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, TranscriptSegmentRow,
     LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
 };
 use crate::telemetry::{self, DebugLoggingDiagnostics};
@@ -27,6 +30,7 @@ pub struct AppDiagnostics {
 #[serde(rename_all = "camelCase")]
 pub struct DaydreamDiagnostics {
     app: AppDiagnostics,
+    ai_processing: AiProcessingDiagnostics,
     database: DatabaseDiagnostics,
     debug_logging: DebugLoggingDiagnostics,
     latest_recording: LatestRecordingDiagnostics,
@@ -52,6 +56,71 @@ pub struct MediaWriterDiagnostics {
     error: Option<String>,
     version: Option<String>,
     writer: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingDiagnostics {
+    chunk_count: usize,
+    chunk_status_counts: BTreeMap<String, usize>,
+    chunks: Vec<AiProcessingChunkDiagnostics>,
+    error: Option<String>,
+    latest_job: Option<AiProcessingJobDiagnostics>,
+    recording_id: Option<String>,
+    settings: Option<AiProcessingSettingsDiagnostics>,
+    transcript_tracks: Vec<AiTranscriptTrackDiagnostics>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingSettingsDiagnostics {
+    auto_start_after_recording: bool,
+    max_parallel_chunks_per_job: u32,
+    max_parallel_jobs: u32,
+    transcription_backend: String,
+    transcription_model: String,
+    transcription_provider: String,
+    word_timestamps_enabled: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingJobDiagnostics {
+    created_at_ms: i64,
+    error: Option<String>,
+    id: String,
+    kind: String,
+    status: String,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProcessingChunkDiagnostics {
+    attempt_count: i64,
+    end_offset_ms: Option<i64>,
+    error_code: Option<String>,
+    id: String,
+    progress: f64,
+    segment_id: Option<String>,
+    source_kind: String,
+    start_offset_ms: Option<i64>,
+    status: String,
+    track_id: Option<String>,
+    track_kind: Option<String>,
+    track_label: Option<String>,
+    updated_at_ms: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTranscriptTrackDiagnostics {
+    first_start_offset_ms: Option<i64>,
+    last_end_offset_ms: Option<i64>,
+    segment_count: usize,
+    source_role: String,
+    text_char_count: usize,
+    track_id: String,
 }
 
 #[derive(Serialize)]
@@ -139,15 +208,20 @@ async fn collect_diagnostics(
     storage: &AppStorage,
     manager: &RecorderManager,
 ) -> Result<DaydreamDiagnostics, String> {
+    let latest_recording = collect_latest_recording_diagnostics(storage, manager);
     Ok(DaydreamDiagnostics {
         app: AppDiagnostics {
             identifier: app.config().identifier.to_string(),
             name: "Daydream".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
+        ai_processing: collect_ai_processing_diagnostics(
+            storage,
+            latest_recording.recording_id.as_deref(),
+        ),
         database: collect_database_diagnostics(storage),
         debug_logging: telemetry::diagnostics(),
-        latest_recording: collect_latest_recording_diagnostics(storage, manager),
+        latest_recording,
         media_writer: collect_media_writer_diagnostics(),
         portal_restore_token: collect_portal_restore_token_diagnostics(storage),
         recorder: recorder::collect_backend_health().await,
@@ -176,6 +250,155 @@ fn collect_media_writer_diagnostics() -> MediaWriterDiagnostics {
         version: health.version,
         writer: health.writer,
     }
+}
+
+fn collect_ai_processing_diagnostics(
+    storage: &AppStorage,
+    recording_id: Option<&str>,
+) -> AiProcessingDiagnostics {
+    let settings =
+        settings::load_app_settings(storage)
+            .ok()
+            .map(|settings| AiProcessingSettingsDiagnostics {
+                auto_start_after_recording: settings.ai.processing.auto_start_after_recording,
+                max_parallel_chunks_per_job: settings.ai.processing.max_parallel_chunks_per_job,
+                max_parallel_jobs: settings.ai.processing.max_parallel_jobs,
+                transcription_backend: settings.ai.transcription.local_backend,
+                transcription_model: settings.ai.transcription.local_model_id,
+                transcription_provider: settings.ai.transcription.provider,
+                word_timestamps_enabled: settings.ai.transcription.word_timestamps_enabled,
+            });
+
+    let Some(recording_id) = recording_id else {
+        return AiProcessingDiagnostics {
+            chunk_count: 0,
+            chunk_status_counts: BTreeMap::new(),
+            chunks: Vec::new(),
+            error: None,
+            latest_job: None,
+            recording_id: None,
+            settings,
+            transcript_tracks: Vec::new(),
+        };
+    };
+
+    let result = storage.with_connection(|connection| {
+        let tracks = list_recording_tracks(connection, recording_id)?;
+        let tracks_by_id = tracks
+            .into_iter()
+            .map(|track| (track.id.clone(), (track.kind, track.label)))
+            .collect::<BTreeMap<_, _>>();
+        let latest_job =
+            get_latest_processing_job_for_recording(connection, recording_id, "ai-processing")?;
+        let chunks = match &latest_job {
+            Some(job) => list_processing_chunks(connection, &job.id)?,
+            None => Vec::new(),
+        };
+        let transcripts = list_transcript_segments(connection, recording_id)?;
+        Ok((tracks_by_id, latest_job, chunks, transcripts))
+    });
+
+    let Ok((tracks_by_id, latest_job, chunks, transcripts)) = result else {
+        return AiProcessingDiagnostics {
+            chunk_count: 0,
+            chunk_status_counts: BTreeMap::new(),
+            chunks: Vec::new(),
+            error: result.err().map(|error| error.to_string()),
+            latest_job: None,
+            recording_id: Some(recording_id.to_string()),
+            settings,
+            transcript_tracks: Vec::new(),
+        };
+    };
+
+    let chunk_status_counts = chunk_status_counts(&chunks);
+    AiProcessingDiagnostics {
+        chunk_count: chunks.len(),
+        chunk_status_counts,
+        chunks: chunks
+            .into_iter()
+            .map(|chunk| chunk_diagnostics(chunk, &tracks_by_id))
+            .collect(),
+        error: None,
+        latest_job: latest_job.map(job_diagnostics),
+        recording_id: Some(recording_id.to_string()),
+        settings,
+        transcript_tracks: transcript_track_diagnostics(transcripts),
+    }
+}
+
+fn job_diagnostics(job: ProcessingJobRow) -> AiProcessingJobDiagnostics {
+    AiProcessingJobDiagnostics {
+        created_at_ms: job.created_at_ms,
+        error: job.error,
+        id: job.id,
+        kind: job.kind,
+        status: job.status,
+        updated_at_ms: job.updated_at_ms,
+    }
+}
+
+fn chunk_diagnostics(
+    chunk: ProcessingChunkRow,
+    tracks_by_id: &BTreeMap<String, (String, String)>,
+) -> AiProcessingChunkDiagnostics {
+    let track = chunk
+        .track_id
+        .as_ref()
+        .and_then(|track_id| tracks_by_id.get(track_id));
+
+    AiProcessingChunkDiagnostics {
+        attempt_count: chunk.attempt_count,
+        end_offset_ms: chunk.end_offset_ms,
+        error_code: chunk.error_code,
+        id: chunk.id,
+        progress: chunk.progress,
+        segment_id: chunk.segment_id,
+        source_kind: chunk.source_kind,
+        start_offset_ms: chunk.start_offset_ms,
+        status: chunk.status,
+        track_id: chunk.track_id,
+        track_kind: track.map(|(kind, _label)| kind.clone()),
+        track_label: track.map(|(_kind, label)| label.clone()),
+        updated_at_ms: chunk.updated_at_ms,
+    }
+}
+
+fn chunk_status_counts(chunks: &[ProcessingChunkRow]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for chunk in chunks {
+        *counts.entry(chunk.status.clone()).or_default() += 1;
+    }
+    counts
+}
+
+fn transcript_track_diagnostics(
+    transcripts: Vec<TranscriptSegmentRow>,
+) -> Vec<AiTranscriptTrackDiagnostics> {
+    let mut grouped = BTreeMap::<(String, String), Vec<TranscriptSegmentRow>>::new();
+    for segment in transcripts {
+        grouped
+            .entry((segment.track_id.clone(), segment.source_role.clone()))
+            .or_default()
+            .push(segment);
+    }
+
+    grouped
+        .into_iter()
+        .map(
+            |((track_id, source_role), segments)| AiTranscriptTrackDiagnostics {
+                first_start_offset_ms: segments.iter().map(|segment| segment.start_offset_ms).min(),
+                last_end_offset_ms: segments.iter().map(|segment| segment.end_offset_ms).max(),
+                segment_count: segments.len(),
+                source_role,
+                text_char_count: segments
+                    .iter()
+                    .map(|segment| segment.text.chars().count())
+                    .sum(),
+                track_id,
+            },
+        )
+        .collect()
 }
 
 fn collect_latest_recording_diagnostics(
@@ -319,9 +542,9 @@ fn path_to_string(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::RecordingSegmentRow;
+    use crate::storage::{RecordingSegmentRow, TranscriptSegmentRow};
 
-    use super::latest_segment_diagnostics;
+    use super::{latest_segment_diagnostics, transcript_track_diagnostics};
 
     #[test]
     fn parses_latest_segment_probe_metadata() {
@@ -374,5 +597,31 @@ mod tests {
             Some(1200)
         );
         assert_eq!(diagnostics.writer_exit_code, Some(0));
+    }
+
+    #[test]
+    fn transcript_track_diagnostics_omit_private_text() {
+        let diagnostics = transcript_track_diagnostics(vec![TranscriptSegmentRow {
+            chunk_id: "chunk-1".to_string(),
+            confidence: Some(0.9),
+            created_at_ms: 1,
+            end_offset_ms: 900,
+            id: "transcript-1".to_string(),
+            job_id: "job-1".to_string(),
+            model: Some("large-v3-turbo".to_string()),
+            provider: "local-whisper-cpp".to_string(),
+            recording_id: "recording-1".to_string(),
+            segment_id: "segment-1".to_string(),
+            source_role: "microphone".to_string(),
+            start_offset_ms: 100,
+            text: "private transcript text".to_string(),
+            track_id: "track-1".to_string(),
+        }]);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].segment_count, 1);
+        assert_eq!(diagnostics[0].text_char_count, 23);
+        assert_eq!(diagnostics[0].first_start_offset_ms, Some(100));
+        assert_eq!(diagnostics[0].last_end_offset_ms, Some(900));
     }
 }
