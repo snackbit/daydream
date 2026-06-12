@@ -44,12 +44,37 @@ export function validateDraftSettings(
     return 'Max parallel AI chunks must be between 1 and 8.';
   }
   if (
+    !Number.isFinite(draft.ai.processing.frameRecognitionFps) ||
+    draft.ai.processing.frameRecognitionFps <
+      limits.ai.processing.frameRecognitionFpsMin ||
+    draft.ai.processing.frameRecognitionFps >
+      limits.ai.processing.frameRecognitionFpsMax
+  ) {
+    return 'Frame recognition cadence must be between one frame every 60 seconds and 5 fps.';
+  }
+  if (
     draft.ai.processing.periodicFullFrameIntervalMs <
       limits.ai.processing.periodicFullFrameIntervalMsMin ||
     draft.ai.processing.periodicFullFrameIntervalMs >
       limits.ai.processing.periodicFullFrameIntervalMsMax
   ) {
-    return 'Full-frame interval must be between 30 seconds and 1 hour.';
+    return 'Full-frame interval must be between 5 seconds and 10 minutes.';
+  }
+  if (
+    draft.ai.processing.maxFullFrameCheckpointsPerMinute <
+      limits.ai.processing.maxFullFrameCheckpointsPerMinuteMin ||
+    draft.ai.processing.maxFullFrameCheckpointsPerMinute >
+      limits.ai.processing.maxFullFrameCheckpointsPerMinuteMax
+  ) {
+    return 'Max full-frame checkpoints must be between 1 and 60 per minute.';
+  }
+  if (
+    draft.ai.processing.visualDeltaTileSizePx <
+      limits.ai.processing.visualDeltaTileSizePxMin ||
+    draft.ai.processing.visualDeltaTileSizePx >
+      limits.ai.processing.visualDeltaTileSizePxMax
+  ) {
+    return 'Visual delta tile size must be between 32 and 256 px.';
   }
   if (
     draft.ai.activity.keyboard.windowMs <

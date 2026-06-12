@@ -148,10 +148,14 @@ export interface AiOcrSettings {
 
 export interface AiProcessingSettings {
   autoStartAfterRecording: boolean;
+  frameRecognitionFps: number;
+  frameRecognitionSyncWithRecording: boolean;
   frameSimilarityEnabled: boolean;
+  maxFullFrameCheckpointsPerMinute: number;
   maxParallelChunksPerJob: number;
   maxParallelJobs: number;
   periodicFullFrameIntervalMs: number;
+  visualDeltaTileSizePx: number;
 }
 
 export interface AiActivitySettings {
@@ -187,12 +191,18 @@ export interface AiTranscriptionLimits {
 }
 
 export interface AiProcessingLimits {
+  frameRecognitionFpsMax: number;
+  frameRecognitionFpsMin: number;
+  maxFullFrameCheckpointsPerMinuteMax: number;
+  maxFullFrameCheckpointsPerMinuteMin: number;
   maxParallelChunksPerJobMax: number;
   maxParallelChunksPerJobMin: number;
   maxParallelJobsMax: number;
   maxParallelJobsMin: number;
   periodicFullFrameIntervalMsMax: number;
   periodicFullFrameIntervalMsMin: number;
+  visualDeltaTileSizePxMax: number;
+  visualDeltaTileSizePxMin: number;
 }
 
 export interface AiActivityLimits {
@@ -521,6 +531,7 @@ export interface VlmObservation {
   id: string;
   jobId: string;
   model: string | null;
+  observationKind: 'corrected-ocr' | 'screen-observation';
   promptVersion: string;
   provider: AiVisionProviderKind;
   recordingId: string;
@@ -529,8 +540,32 @@ export interface VlmObservation {
   text: string;
 }
 
+export type VlmProviderStatus =
+  | 'configured'
+  | 'disabled'
+  | 'missing-base-url'
+  | 'missing-key'
+  | 'missing-model';
+
+export type VlmStateStatus =
+  | 'disabled'
+  | 'empty'
+  | 'failed'
+  | 'not-planned'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'unconfigured';
+
+export interface VlmState {
+  errorCode: string | null;
+  providerStatus: VlmProviderStatus;
+  status: VlmStateStatus;
+}
+
 export interface RecordingVisualObservations {
   ocrRegions: OcrRegion[];
   recordingId: string;
+  vlmState: VlmState;
   vlmObservations: VlmObservation[];
 }

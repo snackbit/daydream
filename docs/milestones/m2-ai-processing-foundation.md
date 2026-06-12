@@ -787,24 +787,24 @@ Exit Criteria:
 
 ## Gate G: Visual Delta, OCR, and Guarded VLM Processing
 
-- [ ] Implement frame sampling and source frame references for visual
+- [x] Implement frame sampling and source frame references for visual
   processing.
-- [ ] Implement conservative delta-region planning with changed regions,
+- [x] Implement conservative delta-region planning with changed regions,
   similarity entries, periodic full-frame checkpoints, and abrupt before/after
   context.
-- [ ] Add protections against suppressing subtle text changes due only to high
+- [x] Add protections against suppressing subtle text changes due only to high
   whole-frame similarity.
-- [ ] Integrate Tesseract for required local structured OCR on selected
+- [x] Integrate Tesseract for required local structured OCR on selected
   regions.
-- [ ] Add OpenAI-compatible VLM provider settings, adapter, guarded request
+- [x] Add OpenAI-compatible VLM provider settings, adapter, guarded request
   path, disabled/unavailable states, timeout handling, and privacy-safe errors.
-- [ ] Runtime-validate VLM responses before persistence so only source-linked
+- [x] Runtime-validate VLM responses before persistence so only source-linked
   observations with valid timestamps, region provenance, provider/model
   metadata, source frame references, job IDs, and chunk IDs are stored.
-- [ ] Persist OCR regions with timestamps, region boxes, provider/model
+- [x] Persist OCR regions with timestamps, region boxes, provider/model
   metadata, source frame references, job IDs, and chunk IDs.
-- [ ] Add retry-safe partial failure handling for OCR and VLM chunks.
-- [ ] Add tests for unchanged frames, subtle text changes, abrupt transitions,
+- [x] Add retry-safe partial failure handling for OCR and VLM chunks.
+- [x] Add tests for unchanged frames, subtle text changes, abrupt transitions,
   periodic full-frame checkpoints, Tesseract failure, VLM disabled state, VLM
   invalid response shape, remote timeout, and privacy-safe prompts/errors.
 

@@ -11,6 +11,7 @@ import {
   getRecordingAiProcessingState,
   getRecordingActivity,
   getRecordingTranscript,
+  getRecordingVisualObservations,
   listenToAiProcessingChanged,
   listenToAiModelsChanged,
   listAiModels,
@@ -60,6 +61,7 @@ test('ai client uses typed camelCase command names', async () => {
   await getRecordingAiProcessingState({ recordingId: 'recording-1' });
   await getRecordingTranscript({ recordingId: 'recording-1' });
   await getRecordingActivity({ recordingId: 'recording-1' });
+  await getRecordingVisualObservations({ recordingId: 'recording-1' });
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'listAiModels');
   expect(invokeMock).toHaveBeenNthCalledWith(2, 'downloadAiModel', {
@@ -112,6 +114,13 @@ test('ai client uses typed camelCase command names', async () => {
   expect(invokeMock).toHaveBeenNthCalledWith(17, 'getRecordingActivity', {
     input: { recordingId: 'recording-1' },
   });
+  expect(invokeMock).toHaveBeenNthCalledWith(
+    18,
+    'getRecordingVisualObservations',
+    {
+      input: { recordingId: 'recording-1' },
+    },
+  );
 });
 
 test('ai client listens for full model list updates', async () => {

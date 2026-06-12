@@ -655,6 +655,8 @@ pub(super) fn migrations() -> Migrations<'static> {
             provider TEXT NOT NULL,
             model TEXT,
             prompt_version TEXT NOT NULL,
+            observation_kind TEXT NOT NULL DEFAULT 'screen-observation'
+                CHECK (observation_kind IN ('corrected-ocr', 'screen-observation')),
             job_id TEXT NOT NULL CHECK (length(job_id) = 36),
             chunk_id TEXT NOT NULL CHECK (length(chunk_id) = 36),
             FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE,
@@ -832,6 +834,26 @@ pub(super) fn migrations() -> Migrations<'static> {
                 ALTER TABLE redactions
                     ADD COLUMN track_ids_json TEXT NOT NULL DEFAULT '[]'
                     CHECK (json_valid(track_ids_json));
+                "#,
+                [],
+            )?;
+
+            Ok(())
+        }),
+        M::up_with_hook("SELECT 1;", |transaction| {
+            let mut statement = transaction.prepare("PRAGMA table_info(vlm_observations)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            for column in columns {
+                if column? == "observation_kind" {
+                    return Ok(());
+                }
+            }
+
+            transaction.execute(
+                r#"
+                ALTER TABLE vlm_observations
+                    ADD COLUMN observation_kind TEXT NOT NULL DEFAULT 'screen-observation'
+                    CHECK (observation_kind IN ('corrected-ocr', 'screen-observation'));
                 "#,
                 [],
             )?;

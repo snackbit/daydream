@@ -41,7 +41,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 15);
+    assert_eq!(schema_version, 16);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -865,6 +865,70 @@ fn retry_processing_job_requeues_terminal_chunks_and_clears_their_outputs() {
         .expect("insert activity interval");
     }
 
+    for chunk_id in [&failed_chunk_id, &succeeded_chunk_id] {
+        create_ocr_region(
+            &connection,
+            &CreateVisualRegionInput {
+                chunk_id: chunk_id.clone(),
+                confidence: Some(0.9),
+                frame_timestamp_ms: 500,
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                model: Some("tesseract".to_string()),
+                observation_kind: None,
+                prompt_version: None,
+                provider: "tesseract".to_string(),
+                recording_id: recording_id.clone(),
+                region_height: 20,
+                region_width: 30,
+                region_x: 1,
+                region_y: 2,
+                source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+                text: "Daydream".to_string(),
+            },
+        )
+        .expect("insert OCR region");
+        create_vlm_observation(
+            &connection,
+            &CreateVisualRegionInput {
+                chunk_id: chunk_id.clone(),
+                confidence: Some(0.8),
+                frame_timestamp_ms: 500,
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                model: Some("vision".to_string()),
+                observation_kind: Some("corrected-ocr".to_string()),
+                prompt_version: Some("m2-test".to_string()),
+                provider: "openai-compatible".to_string(),
+                recording_id: recording_id.clone(),
+                region_height: 20,
+                region_width: 30,
+                region_x: 1,
+                region_y: 2,
+                source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+                text: "Daydream corrected".to_string(),
+            },
+        )
+        .expect("insert VLM observation");
+        create_frame_similarity_entry(
+            &connection,
+            &CreateFrameSimilarityEntryInput {
+                chunk_id: Some(chunk_id.clone()),
+                id: Uuid::now_v7().to_string(),
+                job_id: job_id.clone(),
+                last_processed_timestamp_ms: 500,
+                recording_id: recording_id.clone(),
+                region_height: 20,
+                region_width: 30,
+                region_x: 1,
+                region_y: 2,
+                signature: format!("signature-{chunk_id}"),
+                source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+            },
+        )
+        .expect("insert frame similarity entry");
+    }
+
     let retried =
         retry_processing_job_chunks(&connection, &job_id, 99).expect("retry processing job");
 
@@ -905,6 +969,18 @@ fn retry_processing_job_requeues_terminal_chunks_and_clears_their_outputs() {
     );
     assert_eq!(
         count_by_chunk("frame_activity_intervals", &succeeded_chunk_id),
+        1
+    );
+    assert_eq!(count_by_chunk("ocr_regions", &failed_chunk_id), 0);
+    assert_eq!(count_by_chunk("ocr_regions", &succeeded_chunk_id), 1);
+    assert_eq!(count_by_chunk("vlm_observations", &failed_chunk_id), 0);
+    assert_eq!(count_by_chunk("vlm_observations", &succeeded_chunk_id), 1);
+    assert_eq!(
+        count_by_chunk("frame_similarity_entries", &failed_chunk_id),
+        0
+    );
+    assert_eq!(
+        count_by_chunk("frame_similarity_entries", &succeeded_chunk_id),
         1
     );
 }
@@ -1062,6 +1138,7 @@ fn ai_storage_helpers_preserve_derived_output_provenance() {
             id: Uuid::now_v7().to_string(),
             job_id: job_id.clone(),
             model: Some("tesseract".to_string()),
+            observation_kind: None,
             prompt_version: None,
             provider: "tesseract".to_string(),
             recording_id: recording_id.clone(),
@@ -1083,6 +1160,7 @@ fn ai_storage_helpers_preserve_derived_output_provenance() {
             id: Uuid::now_v7().to_string(),
             job_id: job_id.clone(),
             model: Some("vision".to_string()),
+            observation_kind: Some("screen-observation".to_string()),
             prompt_version: Some("m2-test".to_string()),
             provider: "openai-compatible".to_string(),
             recording_id: recording_id.clone(),
@@ -1333,7 +1411,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 15);
+    assert_eq!(schema_version, 16);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

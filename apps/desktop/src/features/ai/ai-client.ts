@@ -17,6 +17,7 @@ import type {
   RecordingActivity,
   RecordingAiResultInput,
   RecordingTranscript,
+  RecordingVisualObservations,
   SaveAiProviderSecretInput,
   SaveAiProviderSecretResult,
   SelfTestAiModelInput,
@@ -125,6 +126,14 @@ export async function getRecordingActivity(
   input: RecordingAiResultInput,
 ): Promise<RecordingActivity> {
   return invoke<RecordingActivity>('getRecordingActivity', { input });
+}
+
+export async function getRecordingVisualObservations(
+  input: RecordingAiResultInput,
+): Promise<RecordingVisualObservations> {
+  return invoke<RecordingVisualObservations>('getRecordingVisualObservations', {
+    input,
+  });
 }
 
 export async function listenToAiModelsChanged(

@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -12,9 +12,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::StreamExt;
 use reqwest::{
-    header::{CONTENT_LENGTH, ETAG, IF_RANGE, RANGE},
+    header::{AUTHORIZATION, CONTENT_LENGTH, ETAG, IF_RANGE, RANGE},
     StatusCode,
 };
 use serde::{Deserialize, Serialize};
@@ -28,11 +29,12 @@ use crate::{
     secret_crypto, settings,
     storage::{
         self, ActivityIntervalRow, AiModelAssetRow, AppStorage, CaptureEventRow,
-        CreateActivityIntervalInput, CreateProcessingChunkInput, CreateProcessingJobInput,
-        CreateTranscriptSegmentInput, CreateTranscriptWordInput, NotificationRow,
-        ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow, RedactionRow,
+        CreateActivityIntervalInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
+        CreateProcessingJobInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+        CreateVisualRegionInput, NotificationRow, OcrRegionRow, ProcessingChunkRow,
+        ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow, RedactionRow,
         SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow, TranscriptWordRow,
-        UpsertRecordingTrackInput,
+        UpsertRecordingTrackInput, VlmObservationRow,
     },
     transcription::{
         self, LocalTranscriptionWarmup, TranscriptionProviderManager, TranscriptionRequest,
@@ -57,10 +59,16 @@ const AI_PROCESSING_JOB_KIND: &str = "ai-processing";
 const MAX_TRANSCRIPTION_CHUNK_DURATION_MS: i64 = 15 * 60 * 1_000;
 const PROCESSING_WORKER_INTERVAL: Duration = Duration::from_millis(500);
 const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const VLM_TIMEOUT: Duration = Duration::from_secs(120);
 const FRAME_DELTA_SAMPLE_INTERVAL_MS: i64 = 1_000;
 const FRAME_DELTA_WIDTH: usize = 64;
 const FRAME_DELTA_HEIGHT: usize = 36;
 const FRAME_DELTA_THRESHOLD: f64 = 0.005;
+const VISUAL_DELTA_PIXEL_DIFF_THRESHOLD: u32 = 30;
+const VISUAL_DELTA_MIN_CHANGED_PIXELS_PER_TILE: usize = 8;
+const VISUAL_DELTA_TILE_CHANGE_RATIO: f64 = 0.0005;
+const VISUAL_ABRUPT_TRANSITION_RATIO: f64 = 0.25;
+const VLM_PROMPT_VERSION: &str = "m2-visual-observation-v1";
 const TRANSCRIPTION_RESULT_SKIPPED_SILENCE: &str = "skipped-silence";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -347,6 +355,66 @@ pub struct ActivityInterval {
     pub source_kind: String,
     pub start_offset_ms: i64,
     pub state: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualRegion {
+    pub height: i64,
+    pub width: i64,
+    pub x: i64,
+    pub y: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrRegion {
+    pub chunk_id: String,
+    pub confidence: Option<f64>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub model: Option<String>,
+    pub provider: String,
+    pub recording_id: String,
+    pub region: VisualRegion,
+    pub source_frame_ref: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VlmObservation {
+    pub chunk_id: String,
+    pub confidence: Option<f64>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub model: Option<String>,
+    pub observation_kind: String,
+    pub prompt_version: String,
+    pub provider: String,
+    pub recording_id: String,
+    pub region: VisualRegion,
+    pub source_frame_ref: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VlmState {
+    pub error_code: Option<String>,
+    pub provider_status: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingVisualObservations {
+    pub ocr_regions: Vec<OcrRegion>,
+    pub recording_id: String,
+    pub vlm_state: VlmState,
+    pub vlm_observations: Vec<VlmObservation>,
 }
 
 pub struct AiModelManager {
@@ -1214,6 +1282,14 @@ pub fn get_recording_activity(
     activity_for_recording(&storage, &input.recording_id)
 }
 
+#[tauri::command(rename = "getRecordingVisualObservations")]
+pub fn get_recording_visual_observations(
+    input: RecordingAiResultInput,
+    storage: State<'_, AppStorage>,
+) -> Result<RecordingVisualObservations, AiError> {
+    visual_observations_for_recording(&storage, &input.recording_id)
+}
+
 pub fn start_processing_worker(app: AppHandle) {
     let storage = app.state::<AppStorage>();
     if let Err(error) = recover_stale_processing(&storage) {
@@ -1406,13 +1482,19 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
     }
     let audio_plans = audio_chunk_plans(&segments);
     let activity_plans = activity_chunk_plans(&segments, &app_settings);
+    let ocr_plans = visual_chunk_plans(&segments, &app_settings, "ocr");
+    let vlm_plans = visual_chunk_plans(&segments, &app_settings, "vlm");
     let audio_chunk_count = audio_plans.len();
     let activity_chunk_count = activity_plans.len();
+    let ocr_chunk_count = ocr_plans.len();
+    let vlm_chunk_count = vlm_plans.len();
     tracing::info!(
         recording_id = %recording_id,
         segment_count = segments.len(),
         audio_chunk_count,
         activity_chunk_count,
+        ocr_chunk_count,
+        vlm_chunk_count,
         transcription_provider = %app_settings.ai.transcription.provider,
         transcription_model = %app_settings.ai.transcription.local_model_id,
         transcription_backend = %app_settings.ai.transcription.local_backend,
@@ -1435,7 +1517,11 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
         }
     }
 
-    if audio_plans.is_empty() && activity_plans.is_empty() {
+    if audio_plans.is_empty()
+        && activity_plans.is_empty()
+        && ocr_plans.is_empty()
+        && vlm_plans.is_empty()
+    {
         tracing::warn!(
             recording_id = %recording_id,
             "ai_processing_start_blocked_no_enabled_sources"
@@ -1551,6 +1637,30 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                     },
                 )?;
             }
+            for (source_kind, plans) in [("ocr", ocr_plans), ("vlm", vlm_plans)] {
+                for plan in plans {
+                    storage::create_processing_chunk(
+                        connection,
+                        &CreateProcessingChunkInput {
+                            attempt_count: 0,
+                            created_at_ms: timestamp_ms,
+                            end_offset_ms: Some(plan.end_offset_ms),
+                            error_code: None,
+                            id: Uuid::now_v7().to_string(),
+                            job_id: job_id.clone(),
+                            progress: 0.0,
+                            recording_id: recording_id.to_string(),
+                            result_code: None,
+                            segment_id: Some(plan.segment_id),
+                            source_kind: source_kind.to_string(),
+                            start_offset_ms: Some(plan.start_offset_ms),
+                            status: "queued".to_string(),
+                            track_id: None,
+                            updated_at_ms: timestamp_ms,
+                        },
+                    )?;
+                }
+            }
             save_processing_notification(
                 connection,
                 ProcessingNotificationInput {
@@ -1568,6 +1678,8 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                 job_id = %job_id,
                 audio_chunk_count,
                 activity_chunk_count,
+                ocr_chunk_count,
+                vlm_chunk_count,
                 "ai_processing_job_created"
             );
             Ok(job)
@@ -1587,6 +1699,13 @@ struct AudioChunkPlan {
 
 #[derive(Clone, Debug)]
 struct ActivityChunkPlan {
+    end_offset_ms: i64,
+    segment_id: String,
+    start_offset_ms: i64,
+}
+
+#[derive(Clone, Debug)]
+struct VisualChunkPlan {
     end_offset_ms: i64,
     segment_id: String,
     start_offset_ms: i64,
@@ -1666,6 +1785,59 @@ fn activity_chunk_plans(
                 segment_id: segment.id.clone(),
                 start_offset_ms: playback_offset_ms,
             });
+            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
+        }
+    }
+
+    plans
+}
+
+fn visual_chunk_plans(
+    segments: &[RecordingSegmentRow],
+    app_settings: &settings::AppSettings,
+    source_kind: &str,
+) -> Vec<VisualChunkPlan> {
+    let enabled = match source_kind {
+        "ocr" => app_settings.ai.ocr.enabled,
+        "vlm" => {
+            app_settings.ai.ocr.enabled
+                && app_settings.ai.vision.provider == "openai-compatible"
+                && app_settings.ai.vision.base_url.is_some()
+                && app_settings.ai.vision.api_key_ref.is_some()
+                && app_settings.ai.vision.model.is_some()
+        }
+        _ => false,
+    };
+    if !enabled {
+        return Vec::new();
+    }
+
+    let mut playback_offset_ms = 0;
+    let mut plans = Vec::new();
+    for (index, segment) in segments.iter().enumerate() {
+        let duration_ms = segment.duration_ms.unwrap_or_else(|| {
+            segment
+                .ended_at_ms
+                .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
+                .unwrap_or(0)
+        });
+        let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
+        let pause_after_ms = segment
+            .ended_at_ms
+            .zip(next_started_at_ms)
+            .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
+            .unwrap_or(0);
+        if segment.state == "finalized"
+            && segment.video_stream_index.is_some()
+            && Path::new(&segment.file_path).is_file()
+        {
+            plans.push(VisualChunkPlan {
+                end_offset_ms: playback_offset_ms + duration_ms.max(0),
+                segment_id: segment.id.clone(),
+                start_offset_ms: playback_offset_ms,
+            });
+        }
+        if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
             playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
     }
@@ -1865,6 +2037,7 @@ async fn process_processing_chunk(
     match chunk.source_kind.as_str() {
         "audio" => process_audio_chunk(app, job_id, chunk).await,
         "activity" => process_activity_chunk(app, job_id, chunk).await,
+        "ocr" | "vlm" => process_visual_chunk(app, job_id, chunk).await,
         _ => Err(ai_error(
             "ai_processing_chunk_source_unsupported",
             "Processing chunk source is not supported.",
@@ -2174,6 +2347,131 @@ async fn process_activity_chunk(
                 chunk_id = %chunk.id,
                 error_code = %error.code,
                 "ai_processing_activity_chunk_failed"
+            );
+            emit_processing_state(app, &chunk.recording_id);
+            Err(error)
+        }
+    }
+}
+
+async fn process_visual_chunk(
+    app: &AppHandle,
+    job_id: &str,
+    chunk: ProcessingChunkRow,
+) -> Result<(), AiError> {
+    let storage = app.state::<AppStorage>();
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %job_id,
+        chunk_id = %chunk.id,
+        source_kind = %chunk.source_kind,
+        segment_id = chunk.segment_id.as_deref().unwrap_or(""),
+        start_offset_ms = ?chunk.start_offset_ms,
+        end_offset_ms = ?chunk.end_offset_ms,
+        attempt_count = chunk.attempt_count,
+        "ai_processing_visual_chunk_started"
+    );
+    emit_processing_state(app, &chunk.recording_id);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let monitor = spawn_job_cancel_monitor(app.clone(), job_id.to_string(), cancel.clone());
+    let result = process_visual_chunk_inner(app, &chunk, cancel.clone()).await;
+    monitor.abort();
+
+    match result {
+        Ok(()) => {
+            storage
+                .with_connection(|connection| {
+                    storage::update_processing_chunk_status(
+                        connection,
+                        &chunk.id,
+                        "succeeded",
+                        1.0,
+                        None,
+                        now_ms(),
+                    )
+                    .map(|_row| ())
+                })
+                .map_err(storage_error)?;
+            save_job_progress_notification(&storage, job_id)?;
+            tracing::info!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                source_kind = %chunk.source_kind,
+                "ai_processing_visual_chunk_succeeded"
+            );
+            emit_processing_state(app, &chunk.recording_id);
+            Ok(())
+        }
+        Err(error) if error.code == "ai_processing_cancelled" => {
+            let job = storage
+                .with_connection(|connection| storage::get_processing_job(connection, job_id))
+                .map_err(storage_error)?
+                .ok_or_else(|| {
+                    ai_error("ai_processing_job_missing", "Processing job is missing.")
+                })?;
+            match job.status.as_str() {
+                "paused" => {
+                    storage
+                        .with_connection(|connection| {
+                            storage::update_processing_chunk_status(
+                                connection,
+                                &chunk.id,
+                                "queued",
+                                0.0,
+                                None,
+                                now_ms(),
+                            )
+                            .map(|_row| ())
+                        })
+                        .map_err(storage_error)?;
+                    emit_processing_state(app, &chunk.recording_id);
+                    Err(ai_error(
+                        "ai_processing_paused",
+                        "AI processing was paused.",
+                    ))
+                }
+                "cancelled" => {
+                    storage
+                        .with_connection(|connection| {
+                            storage::update_processing_chunk_status(
+                                connection,
+                                &chunk.id,
+                                "cancelled",
+                                0.0,
+                                Some("ai_processing_cancelled"),
+                                now_ms(),
+                            )
+                            .map(|_row| ())
+                        })
+                        .map_err(storage_error)?;
+                    emit_processing_state(app, &chunk.recording_id);
+                    Err(error)
+                }
+                _ => Err(error),
+            }
+        }
+        Err(error) => {
+            storage
+                .with_connection(|connection| {
+                    storage::update_processing_chunk_status(
+                        connection,
+                        &chunk.id,
+                        "failed",
+                        0.0,
+                        Some(&error.code),
+                        now_ms(),
+                    )
+                    .map(|_row| ())
+                })
+                .map_err(storage_error)?;
+            tracing::warn!(
+                recording_id = %chunk.recording_id,
+                job_id = %job_id,
+                chunk_id = %chunk.id,
+                source_kind = %chunk.source_kind,
+                error_code = %error.code,
+                "ai_processing_visual_chunk_failed"
             );
             emit_processing_state(app, &chunk.recording_id);
             Err(error)
@@ -2544,6 +2842,1288 @@ async fn process_activity_chunk_inner(
         .map_err(storage_error)?;
 
     Ok(())
+}
+
+async fn process_visual_chunk_inner(
+    app: &AppHandle,
+    chunk: &ProcessingChunkRow,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), AiError> {
+    let storage = app.state::<AppStorage>();
+    let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
+    let is_vlm_chunk = chunk.source_kind == "vlm";
+    if chunk.source_kind == "ocr" && !app_settings.ai.ocr.enabled {
+        return Ok(());
+    }
+    if is_vlm_chunk && !vision_provider_ready(&app_settings) {
+        return Ok(());
+    }
+
+    let chunk_start = chunk.start_offset_ms.ok_or_else(|| {
+        ai_error(
+            "ai_processing_chunk_offset_missing",
+            "Processing chunk start offset is missing.",
+        )
+    })?;
+    let chunk_end = chunk.end_offset_ms.ok_or_else(|| {
+        ai_error(
+            "ai_processing_chunk_offset_missing",
+            "Processing chunk end offset is missing.",
+        )
+    })?;
+    if chunk_end <= chunk_start {
+        return Err(ai_error(
+            "ai_processing_chunk_duration_invalid",
+            "Processing chunk duration is invalid.",
+        ));
+    }
+
+    check_processing_cancel(&cancel)?;
+    let (segment, segment_playback_offset_ms, recording_fps) = storage
+        .with_connection(|connection| {
+            let segment_id = chunk
+                .segment_id
+                .as_deref()
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            let recording = storage::get_recording(connection, &chunk.recording_id)?;
+            let segments = storage::list_recording_segments(connection, &chunk.recording_id)?;
+            let segment_playback_offset_ms = playback_offset_for_segment(&segments, segment_id)
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            let segment = segments
+                .into_iter()
+                .find(|candidate| candidate.id == segment_id)
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            Ok((segment, segment_playback_offset_ms, recording.default_fps))
+        })
+        .map_err(storage_error)?;
+
+    let frame_set = extract_visual_frames(
+        app,
+        &segment,
+        segment_playback_offset_ms,
+        chunk,
+        recording_fps,
+        &app_settings,
+        &cancel,
+    )?;
+
+    let vision_config = if is_vlm_chunk {
+        Some(vision_request_config(&storage, &app_settings)?)
+    } else {
+        None
+    };
+    let mut pending_output = PendingVisualOutput::default();
+
+    for frame in frame_set.frames {
+        check_processing_cancel(&cancel)?;
+        let ocr_regions = run_tesseract_ocr(frame.path(), &frame)?;
+        if is_vlm_chunk {
+            let config = vision_config.as_ref().ok_or_else(|| {
+                ai_error(
+                    "ai_vision_remote_unconfigured",
+                    "Vision provider is not configured.",
+                )
+            })?;
+            let observations = request_vlm_observations(config, &frame, &ocr_regions).await?;
+            pending_output
+                .vlm_observations
+                .extend(vlm_observation_inputs(chunk, config, observations));
+        } else {
+            pending_output
+                .ocr_regions
+                .extend(ocr_region_inputs(chunk, &frame, &ocr_regions));
+            pending_output
+                .frame_similarity_entries
+                .push(frame_similarity_input(chunk, &frame));
+        }
+    }
+
+    persist_visual_output(&storage, chunk, pending_output)?;
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VisualContextFrame {
+    frame_timestamp_ms: i64,
+    path: PathBuf,
+    source_frame_ref: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExtractedVisualFrame {
+    abrupt_transition: bool,
+    after_context: Option<VisualContextFrame>,
+    before_context: Option<VisualContextFrame>,
+    frame_timestamp_ms: i64,
+    full_checkpoint: bool,
+    height: i64,
+    path: PathBuf,
+    region: VisualRegion,
+    signature: String,
+    source_frame_ref: String,
+    width: i64,
+}
+
+struct ExtractedVisualFrameSet {
+    frames: Vec<ExtractedVisualFrame>,
+    _temp_dir: TempProcessingDirectory,
+}
+
+impl ExtractedVisualFrame {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VisualImage {
+    height: usize,
+    pixels: Vec<u8>,
+    width: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct OcrCandidate {
+    confidence: Option<f64>,
+    region: VisualRegion,
+    text: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingVlmObservation {
+    confidence: Option<f64>,
+    frame_timestamp_ms: i64,
+    observation_kind: String,
+    region: VisualRegion,
+    source_frame_ref: String,
+    text: String,
+}
+
+#[derive(Clone, Debug)]
+struct VisionRequestConfig {
+    api_key: String,
+    base_url: String,
+    model: String,
+    provider: String,
+}
+
+fn vision_provider_ready(app_settings: &settings::AppSettings) -> bool {
+    app_settings.ai.vision.provider == "openai-compatible"
+        && app_settings.ai.vision.base_url.is_some()
+        && app_settings.ai.vision.api_key_ref.is_some()
+        && app_settings.ai.vision.model.is_some()
+        && app_settings.ai.ocr.enabled
+}
+
+fn vision_request_config(
+    storage: &AppStorage,
+    app_settings: &settings::AppSettings,
+) -> Result<VisionRequestConfig, AiError> {
+    let base_url = app_settings
+        .ai
+        .vision
+        .base_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ai_error(
+                "ai_vision_remote_unconfigured",
+                "Vision base URL is not configured.",
+            )
+        })?
+        .trim()
+        .to_string();
+    let model = app_settings
+        .ai
+        .vision
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ai_error(
+                "ai_vision_remote_unconfigured",
+                "Vision model is not configured.",
+            )
+        })?
+        .trim()
+        .to_string();
+    let secret_ref = app_settings
+        .ai
+        .vision
+        .api_key_ref
+        .as_deref()
+        .ok_or_else(|| {
+            ai_error(
+                "ai_vision_remote_unconfigured",
+                "Vision API key is not configured.",
+            )
+        })?;
+    let envelope = storage
+        .with_connection(|connection| storage::get_app_setting(connection, secret_ref))
+        .map_err(storage_error)?
+        .ok_or_else(|| {
+            ai_error(
+                "ai_vision_remote_unconfigured",
+                "Vision API key is not configured.",
+            )
+        })?
+        .value_json;
+    let api_key = secret_crypto::decrypt_sensitive_setting_with_platform_key(&envelope)
+        .map_err(secret_error)?;
+
+    Ok(VisionRequestConfig {
+        api_key,
+        base_url,
+        model,
+        provider: "openai-compatible".to_string(),
+    })
+}
+
+fn extract_visual_frames(
+    app: &AppHandle,
+    segment: &RecordingSegmentRow,
+    segment_playback_offset_ms: i64,
+    chunk: &ProcessingChunkRow,
+    recording_fps: f64,
+    app_settings: &settings::AppSettings,
+    cancel: &AtomicBool,
+) -> Result<ExtractedVisualFrameSet, AiError> {
+    let video_stream_index = segment.video_stream_index.ok_or_else(|| {
+        ai_error(
+            "ai_processing_video_stream_missing",
+            "Video stream is missing.",
+        )
+    })?;
+    let chunk_start = chunk.start_offset_ms.ok_or_else(|| {
+        ai_error(
+            "ai_processing_chunk_offset_missing",
+            "Processing chunk start offset is missing.",
+        )
+    })?;
+    let chunk_end = chunk.end_offset_ms.ok_or_else(|| {
+        ai_error(
+            "ai_processing_chunk_offset_missing",
+            "Processing chunk end offset is missing.",
+        )
+    })?;
+    let slice_start_ms = chunk_start
+        .checked_sub(segment_playback_offset_ms)
+        .ok_or_else(|| {
+            ai_error(
+                "ai_processing_chunk_offset_invalid",
+                "Processing chunk offset is outside its segment.",
+            )
+        })?;
+    let slice_duration_ms = chunk_end.saturating_sub(chunk_start);
+    let temp_dir = TempProcessingDirectory::new(processing_temp_visual_directory(
+        app,
+        &chunk.job_id,
+        &chunk.id,
+    )?);
+    let fps = effective_frame_recognition_fps(app_settings, recording_fps);
+    let output_pattern = temp_dir.path().join("frame-%06d.png");
+    let output = Command::new(ffmpeg::binary_path())
+        .args([
+            "-hide_banner",
+            "-v",
+            "error",
+            "-ss",
+            &format_seconds(slice_start_ms),
+            "-t",
+            &format_seconds(slice_duration_ms),
+            "-i",
+            &segment.file_path,
+            "-map",
+            &format!("0:{video_stream_index}"),
+            "-vf",
+            &format!("fps={fps:.6}"),
+            "-vsync",
+            "0",
+        ])
+        .arg(&output_pattern)
+        .output()
+        .map_err(file_error)?;
+    check_processing_cancel(cancel)?;
+    if !output.status.success() {
+        return Err(ai_error(
+            "ai_processing_visual_extract_failed",
+            "Visual frame extraction failed.",
+        ));
+    }
+
+    let mut paths = fs::read_dir(temp_dir.path())
+        .map_err(file_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(file_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    let sample_interval_ms = frame_sample_interval_ms(fps);
+    let tile_size = app_settings.ai.processing.visual_delta_tile_size_px.clamp(
+        settings::MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
+        settings::MAX_AI_VISUAL_DELTA_TILE_SIZE_PX,
+    ) as usize;
+    let segment_id = segment.id.clone();
+    let context_for = |path: &PathBuf, index: usize| -> VisualContextFrame {
+        let timestamp = (chunk_start + (index as i64 * sample_interval_ms)).min(chunk_end);
+        VisualContextFrame {
+            frame_timestamp_ms: timestamp,
+            path: path.clone(),
+            source_frame_ref: format!(
+                "segment:{}:offset:{}:frame:{}",
+                segment_id, timestamp, index
+            ),
+        }
+    };
+    let mut previous_signature = None::<String>;
+    let mut previous_image = None::<VisualImage>;
+    let mut frames = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        check_processing_cancel(cancel)?;
+        let timestamp = (chunk_start + (index as i64 * sample_interval_ms)).min(chunk_end);
+        let full_checkpoint = full_checkpoint_for_frame(
+            timestamp,
+            chunk_start,
+            app_settings
+                .ai
+                .processing
+                .periodic_full_frame_interval_ms
+                .into(),
+            app_settings
+                .ai
+                .processing
+                .max_full_frame_checkpoints_per_minute,
+        );
+        let signature = file_sha1(&path)?;
+        if app_settings.ai.processing.frame_similarity_enabled
+            && previous_signature.as_deref() == Some(signature.as_str())
+            && !full_checkpoint
+        {
+            previous_signature = Some(signature);
+            continue;
+        }
+        let image = decode_png_rgba(path)?;
+        let width = image.width as i64;
+        let height = image.height as i64;
+        let full_region = VisualRegion {
+            height,
+            width,
+            x: 0,
+            y: 0,
+        };
+        let regions = if full_checkpoint {
+            vec![full_region]
+        } else if let Some(previous) = previous_image.as_ref() {
+            visual_delta_regions(previous, &image, tile_size)
+        } else {
+            vec![full_region]
+        };
+        if regions.is_empty() {
+            previous_signature = Some(signature);
+            previous_image = Some(image);
+            continue;
+        }
+        let abrupt_transition = previous_image.as_ref().is_some_and(|previous| {
+            visual_changed_pixel_ratio(previous, &image) >= VISUAL_ABRUPT_TRANSITION_RATIO
+        });
+        let before_context = abrupt_transition
+            .then(|| {
+                index
+                    .checked_sub(1)
+                    .map(|previous_index| context_for(&paths[previous_index], previous_index))
+            })
+            .flatten();
+        let after_context = abrupt_transition
+            .then(|| {
+                paths
+                    .get(index + 1)
+                    .map(|next_path| context_for(next_path, index + 1))
+            })
+            .flatten();
+        for (region_index, region) in regions.into_iter().enumerate() {
+            let is_full_region = region == full_region;
+            let crop_path = if is_full_region {
+                path.clone()
+            } else {
+                let crop_path = temp_dir
+                    .path()
+                    .join(format!("frame-{index:06}-region-{region_index:03}.png"));
+                write_visual_crop_png(&image, &region, &crop_path)?;
+                crop_path
+            };
+            let region_signature = if is_full_region {
+                signature.clone()
+            } else {
+                file_sha1(&crop_path)?
+            };
+            let source_frame_ref =
+                source_frame_ref_for_region(&segment.id, timestamp, index, &region);
+            frames.push(ExtractedVisualFrame {
+                abrupt_transition,
+                after_context: after_context.clone(),
+                before_context: before_context.clone(),
+                frame_timestamp_ms: timestamp,
+                full_checkpoint,
+                height,
+                path: crop_path,
+                region,
+                signature: region_signature,
+                source_frame_ref,
+                width,
+            });
+        }
+        previous_signature = Some(signature);
+        previous_image = Some(image);
+    }
+
+    Ok(ExtractedVisualFrameSet {
+        frames,
+        _temp_dir: temp_dir,
+    })
+}
+
+fn effective_frame_recognition_fps(
+    app_settings: &settings::AppSettings,
+    recording_fps: f64,
+) -> f64 {
+    let fps = if app_settings
+        .ai
+        .processing
+        .frame_recognition_sync_with_recording
+    {
+        recording_fps
+    } else {
+        app_settings.ai.processing.frame_recognition_fps
+    };
+    fps.clamp(
+        settings::MIN_AI_FRAME_RECOGNITION_FPS,
+        settings::MAX_AI_FRAME_RECOGNITION_FPS,
+    )
+}
+
+fn frame_sample_interval_ms(fps: f64) -> i64 {
+    ((1_000.0 / fps).round() as i64).max(1)
+}
+
+fn full_checkpoint_for_frame(
+    timestamp_ms: i64,
+    chunk_start_ms: i64,
+    interval_ms: i64,
+    max_per_minute: u32,
+) -> bool {
+    if timestamp_ms <= chunk_start_ms {
+        return true;
+    }
+    if interval_ms <= 0 || timestamp_ms.saturating_sub(chunk_start_ms) % interval_ms != 0 {
+        return false;
+    }
+    let minute_index = timestamp_ms.saturating_sub(chunk_start_ms) / 60_000;
+    let minute_start = chunk_start_ms + (minute_index * 60_000);
+    let checkpoints_before = ((timestamp_ms - minute_start) / interval_ms).max(0) as u32;
+    checkpoints_before < max_per_minute
+}
+
+fn file_sha1(path: &Path) -> Result<String, AiError> {
+    let bytes = fs::read(path).map_err(file_error)?;
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn decode_png_rgba(path: &Path) -> Result<VisualImage, AiError> {
+    let bytes = fs::read(path).map_err(file_error)?;
+    let decoder = png::Decoder::new(Cursor::new(bytes));
+    let mut reader = decoder.read_info().map_err(|_error| {
+        ai_error(
+            "ai_processing_visual_frame_invalid",
+            "Extracted visual frame PNG metadata is invalid.",
+        )
+    })?;
+    let buffer_size = reader.output_buffer_size().ok_or_else(|| {
+        ai_error(
+            "ai_processing_visual_frame_invalid",
+            "Extracted visual frame PNG buffer size is invalid.",
+        )
+    })?;
+    let mut buffer = vec![0; buffer_size];
+    let info = reader.next_frame(&mut buffer).map_err(|_error| {
+        ai_error(
+            "ai_processing_visual_frame_invalid",
+            "Extracted visual frame PNG pixels are invalid.",
+        )
+    })?;
+    let color = reader.output_color_type();
+    if color.1 != png::BitDepth::Eight {
+        return Err(ai_error(
+            "ai_processing_visual_frame_invalid",
+            "Extracted visual frame PNG bit depth is unsupported.",
+        ));
+    }
+    let source = &buffer[..info.buffer_size()];
+    let pixels = match color.0 {
+        png::ColorType::Rgba => source.to_vec(),
+        png::ColorType::Rgb => source
+            .chunks_exact(3)
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect(),
+        png::ColorType::Grayscale => source
+            .iter()
+            .flat_map(|value| [*value, *value, *value, 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => source
+            .chunks_exact(2)
+            .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
+            .collect(),
+        png::ColorType::Indexed => {
+            return Err(ai_error(
+                "ai_processing_visual_frame_invalid",
+                "Extracted visual frame PNG color type is unsupported.",
+            ));
+        }
+    };
+    let width = info.width as usize;
+    let height = info.height as usize;
+    if width == 0 || height == 0 || pixels.len() != width * height * 4 {
+        return Err(ai_error(
+            "ai_processing_visual_frame_invalid",
+            "Extracted visual frame PNG dimensions are invalid.",
+        ));
+    }
+
+    Ok(VisualImage {
+        height,
+        pixels,
+        width,
+    })
+}
+
+fn write_visual_crop_png(
+    image: &VisualImage,
+    region: &VisualRegion,
+    path: &Path,
+) -> Result<(), AiError> {
+    let region = clamp_visual_region(region, image.width as i64, image.height as i64)?;
+    let x = region.x as usize;
+    let y = region.y as usize;
+    let width = region.width as usize;
+    let height = region.height as usize;
+    let mut pixels = Vec::with_capacity(width * height * 4);
+    for row in y..(y + height) {
+        let start = ((row * image.width) + x) * 4;
+        let end = start + (width * 4);
+        pixels.extend_from_slice(&image.pixels[start..end]);
+    }
+    let file = File::create(path).map_err(file_error)?;
+    let mut encoder = png::Encoder::new(file, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|_error| {
+        ai_error(
+            "ai_processing_visual_crop_failed",
+            "Visual crop PNG metadata could not be written.",
+        )
+    })?;
+    writer.write_image_data(&pixels).map_err(|_error| {
+        ai_error(
+            "ai_processing_visual_crop_failed",
+            "Visual crop PNG pixels could not be written.",
+        )
+    })
+}
+
+fn visual_delta_regions(
+    previous: &VisualImage,
+    current: &VisualImage,
+    tile_size: usize,
+) -> Vec<VisualRegion> {
+    if previous.width != current.width || previous.height != current.height {
+        return vec![VisualRegion {
+            height: current.height as i64,
+            width: current.width as i64,
+            x: 0,
+            y: 0,
+        }];
+    }
+    let tile_size = tile_size.max(1);
+    let tiles_x = current.width.div_ceil(tile_size);
+    let tiles_y = current.height.div_ceil(tile_size);
+    let mut changed_tiles = HashSet::<(usize, usize)>::new();
+    for tile_y in 0..tiles_y {
+        for tile_x in 0..tiles_x {
+            let x_start = tile_x * tile_size;
+            let y_start = tile_y * tile_size;
+            let x_end = (x_start + tile_size).min(current.width);
+            let y_end = (y_start + tile_size).min(current.height);
+            let mut changed = 0usize;
+            let mut total = 0usize;
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    total += 1;
+                    if visual_pixel_changed(previous, current, x, y) {
+                        changed += 1;
+                    }
+                }
+            }
+            let changed_ratio = if total == 0 {
+                0.0
+            } else {
+                changed as f64 / total as f64
+            };
+            if changed_ratio >= VISUAL_DELTA_TILE_CHANGE_RATIO
+                || changed >= VISUAL_DELTA_MIN_CHANGED_PIXELS_PER_TILE.min(total)
+            {
+                changed_tiles.insert((tile_x, tile_y));
+            }
+        }
+    }
+
+    merge_changed_tiles(
+        changed_tiles,
+        tiles_x,
+        tiles_y,
+        tile_size,
+        current.width,
+        current.height,
+    )
+}
+
+fn merge_changed_tiles(
+    mut changed_tiles: HashSet<(usize, usize)>,
+    tiles_x: usize,
+    tiles_y: usize,
+    tile_size: usize,
+    image_width: usize,
+    image_height: usize,
+) -> Vec<VisualRegion> {
+    let mut regions = Vec::new();
+    while let Some(&start) = changed_tiles.iter().next() {
+        changed_tiles.remove(&start);
+        let mut stack = vec![start];
+        let mut min_x = start.0;
+        let mut max_x = start.0;
+        let mut min_y = start.1;
+        let mut max_y = start.1;
+        while let Some((tile_x, tile_y)) = stack.pop() {
+            min_x = min_x.min(tile_x);
+            max_x = max_x.max(tile_x);
+            min_y = min_y.min(tile_y);
+            max_y = max_y.max(tile_y);
+            for neighbor in tile_neighbors(tile_x, tile_y, tiles_x, tiles_y) {
+                if changed_tiles.remove(&neighbor) {
+                    stack.push(neighbor);
+                }
+            }
+        }
+        let x = min_x.saturating_sub(1) * tile_size;
+        let y = min_y.saturating_sub(1) * tile_size;
+        let right = ((max_x + 2).min(tiles_x) * tile_size).min(image_width);
+        let bottom = ((max_y + 2).min(tiles_y) * tile_size).min(image_height);
+        if right > x && bottom > y {
+            regions.push(VisualRegion {
+                height: (bottom - y) as i64,
+                width: (right - x) as i64,
+                x: x as i64,
+                y: y as i64,
+            });
+        }
+    }
+    regions.sort_by_key(|region| (region.y, region.x));
+    regions
+}
+
+fn tile_neighbors(
+    tile_x: usize,
+    tile_y: usize,
+    tiles_x: usize,
+    tiles_y: usize,
+) -> Vec<(usize, usize)> {
+    let mut neighbors = Vec::with_capacity(4);
+    if tile_x > 0 {
+        neighbors.push((tile_x - 1, tile_y));
+    }
+    if tile_y > 0 {
+        neighbors.push((tile_x, tile_y - 1));
+    }
+    if tile_x + 1 < tiles_x {
+        neighbors.push((tile_x + 1, tile_y));
+    }
+    if tile_y + 1 < tiles_y {
+        neighbors.push((tile_x, tile_y + 1));
+    }
+    neighbors
+}
+
+fn visual_changed_pixel_ratio(previous: &VisualImage, current: &VisualImage) -> f64 {
+    if previous.width != current.width || previous.height != current.height {
+        return 1.0;
+    }
+    let total = current.width * current.height;
+    if total == 0 {
+        return 0.0;
+    }
+    let mut changed = 0usize;
+    for y in 0..current.height {
+        for x in 0..current.width {
+            if visual_pixel_changed(previous, current, x, y) {
+                changed += 1;
+            }
+        }
+    }
+    changed as f64 / total as f64
+}
+
+fn visual_pixel_changed(previous: &VisualImage, current: &VisualImage, x: usize, y: usize) -> bool {
+    let index = ((y * current.width) + x) * 4;
+    let previous_pixel = &previous.pixels[index..index + 3];
+    let current_pixel = &current.pixels[index..index + 3];
+    previous_pixel
+        .iter()
+        .zip(current_pixel)
+        .map(|(left, right)| (*left as i32 - *right as i32).unsigned_abs())
+        .sum::<u32>()
+        >= VISUAL_DELTA_PIXEL_DIFF_THRESHOLD
+}
+
+fn clamp_visual_region(
+    region: &VisualRegion,
+    frame_width: i64,
+    frame_height: i64,
+) -> Result<VisualRegion, AiError> {
+    if region.width <= 0 || region.height <= 0 || frame_width <= 0 || frame_height <= 0 {
+        return Err(ai_error(
+            "ai_processing_visual_region_invalid",
+            "Visual processing region is invalid.",
+        ));
+    }
+    let x = region.x.clamp(0, frame_width.saturating_sub(1));
+    let y = region.y.clamp(0, frame_height.saturating_sub(1));
+    let right = (region.x + region.width).clamp(x + 1, frame_width);
+    let bottom = (region.y + region.height).clamp(y + 1, frame_height);
+    Ok(VisualRegion {
+        height: bottom - y,
+        width: right - x,
+        x,
+        y,
+    })
+}
+
+fn source_frame_ref_for_region(
+    segment_id: &str,
+    timestamp_ms: i64,
+    frame_index: usize,
+    region: &VisualRegion,
+) -> String {
+    format!(
+        "segment:{segment_id}:offset:{timestamp_ms}:frame:{frame_index}:region:{},{},{},{}",
+        region.x, region.y, region.width, region.height
+    )
+}
+
+fn run_tesseract_ocr(
+    path: &Path,
+    frame: &ExtractedVisualFrame,
+) -> Result<Vec<OcrCandidate>, AiError> {
+    run_tesseract_ocr_with_binary("tesseract", path, frame)
+}
+
+fn run_tesseract_ocr_with_binary(
+    binary: &str,
+    path: &Path,
+    frame: &ExtractedVisualFrame,
+) -> Result<Vec<OcrCandidate>, AiError> {
+    let output = Command::new(binary)
+        .arg(path)
+        .args(["stdout", "tsv"])
+        .output()
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ai_error(
+                    "ai_ocr_tesseract_unavailable",
+                    "Tesseract OCR is not available on this system.",
+                )
+            } else {
+                file_error(error)
+            }
+        })?;
+    if !output.status.success() {
+        return Err(ai_error(
+            "ai_ocr_tesseract_failed",
+            "Tesseract OCR failed for the selected frame.",
+        ));
+    }
+    let tsv = String::from_utf8(output.stdout).map_err(|error| {
+        ai_error(
+            "ai_ocr_tesseract_output_invalid",
+            &format!("Tesseract OCR output was not valid UTF-8: {error}"),
+        )
+    })?;
+    parse_tesseract_tsv(&tsv, frame)
+}
+
+fn parse_tesseract_tsv(
+    tsv: &str,
+    frame: &ExtractedVisualFrame,
+) -> Result<Vec<OcrCandidate>, AiError> {
+    let mut lines = tsv.lines();
+    let header = lines.next().ok_or_else(|| {
+        ai_error(
+            "ai_ocr_tesseract_output_invalid",
+            "Tesseract OCR output was empty.",
+        )
+    })?;
+    let columns = header
+        .split('\t')
+        .enumerate()
+        .map(|(index, column)| (column, index))
+        .collect::<BTreeMap<_, _>>();
+    let index_for = |name: &str| -> Result<usize, AiError> {
+        columns.get(name).copied().ok_or_else(|| {
+            ai_error(
+                "ai_ocr_tesseract_output_invalid",
+                "Tesseract OCR output did not include required TSV columns.",
+            )
+        })
+    };
+    let left_index = index_for("left")?;
+    let top_index = index_for("top")?;
+    let width_index = index_for("width")?;
+    let height_index = index_for("height")?;
+    let confidence_index = index_for("conf")?;
+    let text_index = index_for("text")?;
+    let mut candidates = Vec::new();
+
+    for line in lines {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() <= text_index {
+            continue;
+        }
+        let text = fields[text_index].trim();
+        if text.is_empty() {
+            continue;
+        }
+        let left = parse_i64_field(fields.get(left_index), 0);
+        let top = parse_i64_field(fields.get(top_index), 0);
+        let width = parse_i64_field(fields.get(width_index), frame.region.width);
+        let height = parse_i64_field(fields.get(height_index), frame.region.height);
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        let confidence = fields
+            .get(confidence_index)
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value >= 0.0)
+            .map(|value| (value / 100.0).clamp(0.0, 1.0));
+        candidates.push(OcrCandidate {
+            confidence,
+            region: ocr_candidate_region(frame, left, top, width, height),
+            text: text.to_string(),
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn ocr_candidate_region(
+    frame: &ExtractedVisualFrame,
+    left: i64,
+    top: i64,
+    width: i64,
+    height: i64,
+) -> VisualRegion {
+    let crop_x = left.max(0).min(frame.region.width.saturating_sub(1));
+    let crop_y = top.max(0).min(frame.region.height.saturating_sub(1));
+    let x = frame.region.x + crop_x;
+    let y = frame.region.y + crop_y;
+    let max_width = frame.region.x + frame.region.width - x;
+    let max_height = frame.region.y + frame.region.height - y;
+
+    VisualRegion {
+        height: height.min(max_height).min(frame.height - y),
+        width: width.min(max_width).min(frame.width - x),
+        x,
+        y,
+    }
+}
+
+fn parse_i64_field(value: Option<&&str>, fallback: i64) -> i64 {
+    value
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(fallback)
+}
+
+#[derive(Default)]
+struct PendingVisualOutput {
+    frame_similarity_entries: Vec<CreateFrameSimilarityEntryInput>,
+    ocr_regions: Vec<CreateVisualRegionInput>,
+    vlm_observations: Vec<CreateVisualRegionInput>,
+}
+
+fn ocr_region_inputs(
+    chunk: &ProcessingChunkRow,
+    frame: &ExtractedVisualFrame,
+    regions: &[OcrCandidate],
+) -> Vec<CreateVisualRegionInput> {
+    regions
+        .iter()
+        .map(|region| CreateVisualRegionInput {
+            chunk_id: chunk.id.clone(),
+            confidence: region.confidence,
+            frame_timestamp_ms: frame.frame_timestamp_ms,
+            id: Uuid::now_v7().to_string(),
+            job_id: chunk.job_id.clone(),
+            model: Some("tesseract".to_string()),
+            observation_kind: None,
+            prompt_version: None,
+            provider: "tesseract".to_string(),
+            recording_id: chunk.recording_id.clone(),
+            region_height: region.region.height,
+            region_width: region.region.width,
+            region_x: region.region.x,
+            region_y: region.region.y,
+            source_frame_ref: frame.source_frame_ref.clone(),
+            text: region.text.clone(),
+        })
+        .collect()
+}
+
+fn frame_similarity_input(
+    chunk: &ProcessingChunkRow,
+    frame: &ExtractedVisualFrame,
+) -> CreateFrameSimilarityEntryInput {
+    CreateFrameSimilarityEntryInput {
+        chunk_id: Some(chunk.id.clone()),
+        id: Uuid::now_v7().to_string(),
+        job_id: chunk.job_id.clone(),
+        last_processed_timestamp_ms: frame.frame_timestamp_ms,
+        recording_id: chunk.recording_id.clone(),
+        region_height: frame.region.height,
+        region_width: frame.region.width,
+        region_x: frame.region.x,
+        region_y: frame.region.y,
+        signature: frame.signature.clone(),
+        source_frame_ref: frame.source_frame_ref.clone(),
+    }
+}
+
+fn vlm_observation_inputs(
+    chunk: &ProcessingChunkRow,
+    config: &VisionRequestConfig,
+    observations: Vec<PendingVlmObservation>,
+) -> Vec<CreateVisualRegionInput> {
+    observations
+        .into_iter()
+        .map(|observation| CreateVisualRegionInput {
+            chunk_id: chunk.id.clone(),
+            confidence: observation.confidence,
+            frame_timestamp_ms: observation.frame_timestamp_ms,
+            id: Uuid::now_v7().to_string(),
+            job_id: chunk.job_id.clone(),
+            model: Some(config.model.clone()),
+            observation_kind: Some(observation.observation_kind),
+            prompt_version: Some(VLM_PROMPT_VERSION.to_string()),
+            provider: config.provider.clone(),
+            recording_id: chunk.recording_id.clone(),
+            region_height: observation.region.height,
+            region_width: observation.region.width,
+            region_x: observation.region.x,
+            region_y: observation.region.y,
+            source_frame_ref: observation.source_frame_ref,
+            text: observation.text,
+        })
+        .collect()
+}
+
+fn persist_visual_output(
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    output: PendingVisualOutput,
+) -> Result<(), AiError> {
+    storage
+        .with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            storage::delete_visual_output_for_chunks(
+                &transaction,
+                std::slice::from_ref(&chunk.id),
+            )?;
+            for region in output.ocr_regions {
+                storage::create_ocr_region(&transaction, &region)?;
+            }
+            for observation in output.vlm_observations {
+                storage::create_vlm_observation(&transaction, &observation)?;
+            }
+            for entry in output.frame_similarity_entries {
+                storage::create_frame_similarity_entry(&transaction, &entry)?;
+            }
+            transaction.commit()?;
+            Ok(())
+        })
+        .map_err(storage_error)
+}
+
+async fn request_vlm_observations(
+    config: &VisionRequestConfig,
+    frame: &ExtractedVisualFrame,
+    ocr_regions: &[OcrCandidate],
+) -> Result<Vec<PendingVlmObservation>, AiError> {
+    let image_url = png_data_url(frame.path())?;
+    let before_context = frame
+        .before_context
+        .as_ref()
+        .map(|context| {
+            Ok::<_, AiError>(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": png_data_url(&context.path)? }
+            }))
+        })
+        .transpose()?;
+    let after_context = frame
+        .after_context
+        .as_ref()
+        .map(|context| {
+            Ok::<_, AiError>(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": png_data_url(&context.path)? }
+            }))
+        })
+        .transpose()?;
+    let ocr_text = ocr_regions
+        .iter()
+        .map(|region| {
+            format!(
+                "[x={}, y={}, w={}, h={}, conf={}] {}",
+                region.region.x,
+                region.region.y,
+                region.region.width,
+                region.region.height,
+                region
+                    .confidence
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "unknown".to_string()),
+                region.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut user_content = vec![serde_json::json!({
+        "type": "text",
+        "text": format!(
+            "Frame timestamp: {} ms\nSource frame: {}\nImage region in full-frame coordinates: x={}, y={}, width={}, height={}\nFull-frame dimensions: width={}, height={}\nFull-frame checkpoint: {}\nAbrupt transition: {}\nBefore context: {}\nAfter context: {}\nTesseract OCR candidates:\n{}",
+            frame.frame_timestamp_ms,
+            frame.source_frame_ref,
+            frame.region.x,
+            frame.region.y,
+            frame.region.width,
+            frame.region.height,
+            frame.width,
+            frame.height,
+            frame.full_checkpoint,
+            frame.abrupt_transition,
+            frame
+                .before_context
+                .as_ref()
+                .map(|context| format!("{} at {} ms", context.source_frame_ref, context.frame_timestamp_ms))
+                .unwrap_or_else(|| "none".to_string()),
+            frame
+                .after_context
+                .as_ref()
+                .map(|context| format!("{} at {} ms", context.source_frame_ref, context.frame_timestamp_ms))
+                .unwrap_or_else(|| "none".to_string()),
+            if ocr_text.is_empty() { "(none)" } else { &ocr_text }
+        )
+    })];
+    if let Some(context) = before_context {
+        user_content.push(context);
+    }
+    user_content.push(serde_json::json!({
+        "type": "image_url",
+        "image_url": { "url": image_url }
+    }));
+    if let Some(context) = after_context {
+        user_content.push(context);
+    }
+    let endpoint = vision_chat_completions_url(&config.base_url);
+    let body = serde_json::json!({
+        "model": config.model.as_str(),
+        "response_format": { "type": "json_object" },
+        "messages": [
+            {
+                "role": "system",
+                "content": "Return only strict JSON. Schema: {\"observations\":[{\"kind\":\"corrected-ocr\"|\"screen-observation\",\"text\":\"...\",\"frameTimestampMs\":number,\"region\":{\"x\":number,\"y\":number,\"width\":number,\"height\":number},\"confidence\":number|null}]}. Use corrected-ocr for OCR corrections and screen-observation for visible activity or work context. Every item must use the provided primary frame timestamp and full-frame coordinates contained inside the provided image region."
+            },
+            {
+                "role": "user",
+                "content": user_content
+            }
+        ]
+    });
+
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .timeout(VLM_TIMEOUT)
+        .header(AUTHORIZATION, format!("Bearer {}", config.api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| {
+            if error.is_timeout() {
+                ai_error("ai_vision_remote_timeout", "Vision provider timed out.")
+            } else {
+                ai_error(
+                    "ai_vision_remote_request_failed",
+                    "Vision provider request failed.",
+                )
+            }
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AiError {
+            code: "ai_vision_remote_status_failed".to_string(),
+            message: format!("Vision provider failed with HTTP status {status}."),
+        });
+    }
+    let response_body: VlmChatResponse = response.json().await.map_err(|_error| {
+        ai_error(
+            "ai_vision_remote_response_invalid",
+            "Vision provider response was not valid JSON.",
+        )
+    })?;
+    let content = response_body
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.as_deref())
+        .ok_or_else(|| {
+            ai_error(
+                "ai_vision_remote_response_invalid",
+                "Vision provider response did not include message content.",
+            )
+        })?;
+    let payload: VlmObservationPayload = serde_json::from_str(content).map_err(|_error| {
+        ai_error(
+            "ai_vision_observation_invalid",
+            "Vision provider content did not match the required observation JSON schema.",
+        )
+    })?;
+    validate_vlm_observations(payload, frame)
+}
+
+fn png_data_url(path: &Path) -> Result<String, AiError> {
+    let image_bytes = fs::read(path).map_err(file_error)?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        BASE64_STANDARD.encode(image_bytes)
+    ))
+}
+
+fn vision_chat_completions_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else if trimmed.ends_with("/v1") {
+        format!("{trimmed}/chat/completions")
+    } else {
+        format!("{trimmed}/v1/chat/completions")
+    }
+}
+
+fn validate_vlm_observations(
+    payload: VlmObservationPayload,
+    frame: &ExtractedVisualFrame,
+) -> Result<Vec<PendingVlmObservation>, AiError> {
+    let mut observations = Vec::new();
+    for observation in payload.observations {
+        if !matches!(
+            observation.kind.as_str(),
+            "corrected-ocr" | "screen-observation"
+        ) {
+            return Err(ai_error(
+                "ai_vision_observation_invalid",
+                "Vision observation kind is invalid.",
+            ));
+        }
+        let text = observation.text.trim();
+        if text.is_empty() {
+            return Err(ai_error(
+                "ai_vision_observation_invalid",
+                "Vision observation text is empty.",
+            ));
+        }
+        if observation.frame_timestamp_ms != frame.frame_timestamp_ms {
+            return Err(ai_error(
+                "ai_vision_observation_invalid",
+                "Vision observation timestamp does not match the source frame.",
+            ));
+        }
+        if observation.region.width <= 0
+            || observation.region.height <= 0
+            || observation.region.x < 0
+            || observation.region.y < 0
+            || observation.region.x >= frame.width
+            || observation.region.y >= frame.height
+            || observation.region.x < frame.region.x
+            || observation.region.y < frame.region.y
+            || observation.region.x + observation.region.width > frame.region.x + frame.region.width
+            || observation.region.y + observation.region.height
+                > frame.region.y + frame.region.height
+        {
+            return Err(ai_error(
+                "ai_vision_observation_invalid",
+                "Vision observation region is invalid.",
+            ));
+        }
+        observations.push(PendingVlmObservation {
+            confidence: observation.confidence.map(|value| value.clamp(0.0, 1.0)),
+            frame_timestamp_ms: observation.frame_timestamp_ms,
+            observation_kind: observation.kind,
+            region: VisualRegion {
+                height: observation.region.height.min(frame.height),
+                width: observation.region.width.min(frame.width),
+                x: observation.region.x,
+                y: observation.region.y,
+            },
+            source_frame_ref: frame.source_frame_ref.clone(),
+            text: text.to_string(),
+        });
+    }
+
+    Ok(observations)
+}
+
+#[derive(Debug, Deserialize)]
+struct VlmChatResponse {
+    choices: Vec<VlmChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VlmChatChoice {
+    message: VlmChatMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct VlmChatMessage {
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VlmObservationPayload {
+    observations: Vec<VlmObservationCandidate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VlmObservationCandidate {
+    confidence: Option<f64>,
+    frame_timestamp_ms: i64,
+    kind: String,
+    region: VlmObservationRegion,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct VlmObservationRegion {
+    height: i64,
+    width: i64,
+    x: i64,
+    y: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2940,6 +4520,31 @@ fn processing_temp_audio_directory(app: &AppHandle, job_id: &str) -> Result<Path
     Ok(directory)
 }
 
+fn processing_temp_visual_directory(
+    app: &AppHandle,
+    job_id: &str,
+    chunk_id: &str,
+) -> Result<PathBuf, AiError> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| {
+            ai_error(
+                "ai_processing_app_data_unavailable",
+                &format!("App data directory is unavailable: {error}"),
+            )
+        })?
+        .join("processing")
+        .join("visual")
+        .join(job_id)
+        .join(chunk_id);
+    if directory.exists() {
+        fs::remove_dir_all(&directory).map_err(file_error)?;
+    }
+    fs::create_dir_all(&directory).map_err(file_error)?;
+    Ok(directory)
+}
+
 struct TempAudioFile {
     path: PathBuf,
 }
@@ -2957,6 +4562,26 @@ impl TempAudioFile {
 impl Drop for TempAudioFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+struct TempProcessingDirectory {
+    path: PathBuf,
+}
+
+impl TempProcessingDirectory {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempProcessingDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
@@ -4383,6 +6008,329 @@ fn activity_interval_from_row(row: ActivityIntervalRow) -> ActivityInterval {
     }
 }
 
+fn visual_observations_for_recording(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<RecordingVisualObservations, AiError> {
+    let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
+    let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions) = storage
+        .with_connection(|connection| {
+            Ok((
+                storage::list_ocr_regions(connection, recording_id)?,
+                storage::list_vlm_observations(connection, recording_id)?,
+                list_visual_chunks_for_recording(connection, recording_id)?,
+                storage::list_recording_tracks(connection, recording_id)?,
+                storage::list_redactions(connection, recording_id)?,
+            ))
+        })
+        .map_err(storage_error)?;
+    let visible_ocr_regions =
+        filter_visible_ocr_regions(ocr_regions, &visual_chunks, &recording_tracks, &redactions);
+    let visible_vlm_observations = filter_visible_vlm_observations(
+        vlm_observations,
+        &visual_chunks,
+        &recording_tracks,
+        &redactions,
+    );
+    let vlm_chunks = visual_chunks
+        .iter()
+        .filter(|chunk| chunk.source_kind == "vlm")
+        .cloned()
+        .collect::<Vec<_>>();
+    let vlm_state =
+        vlm_state_for_recording(&app_settings, &vlm_chunks, visible_vlm_observations.len());
+
+    Ok(RecordingVisualObservations {
+        ocr_regions: visible_ocr_regions
+            .into_iter()
+            .map(ocr_region_from_row)
+            .collect(),
+        recording_id: recording_id.to_string(),
+        vlm_state,
+        vlm_observations: visible_vlm_observations
+            .into_iter()
+            .map(vlm_observation_from_row)
+            .collect(),
+    })
+}
+
+fn list_visual_chunks_for_recording(
+    connection: &rusqlite::Connection,
+    recording_id: &str,
+) -> rusqlite::Result<Vec<ProcessingChunkRow>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT
+            id,
+            job_id,
+            recording_id,
+            source_kind,
+            segment_id,
+            start_offset_ms,
+            end_offset_ms,
+            status,
+            attempt_count,
+            progress,
+            error_code,
+            result_code,
+            track_id,
+            created_at_ms,
+            updated_at_ms
+        FROM processing_chunks
+        WHERE recording_id = ?1
+            AND source_kind IN ('ocr', 'vlm')
+        ORDER BY source_kind ASC, start_offset_ms ASC, id ASC
+        "#,
+    )?;
+    let rows = statement.query_map([recording_id], |row| {
+        Ok(ProcessingChunkRow {
+            id: row.get(0)?,
+            job_id: row.get(1)?,
+            recording_id: row.get(2)?,
+            source_kind: row.get(3)?,
+            segment_id: row.get(4)?,
+            start_offset_ms: row.get(5)?,
+            end_offset_ms: row.get(6)?,
+            status: row.get(7)?,
+            attempt_count: row.get(8)?,
+            progress: row.get(9)?,
+            error_code: row.get(10)?,
+            result_code: row.get(11)?,
+            track_id: row.get(12)?,
+            created_at_ms: row.get(13)?,
+            updated_at_ms: row.get(14)?,
+        })
+    })?;
+
+    rows.collect()
+}
+
+fn filter_visible_ocr_regions(
+    regions: Vec<OcrRegionRow>,
+    visual_chunks: &[ProcessingChunkRow],
+    recording_tracks: &[RecordingTrackRow],
+    redactions: &[RedactionRow],
+) -> Vec<OcrRegionRow> {
+    let visible = VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions);
+
+    regions
+        .into_iter()
+        .filter(|region| visible.is_visible(&region.chunk_id, region.frame_timestamp_ms))
+        .collect()
+}
+
+fn filter_visible_vlm_observations(
+    observations: Vec<VlmObservationRow>,
+    visual_chunks: &[ProcessingChunkRow],
+    recording_tracks: &[RecordingTrackRow],
+    redactions: &[RedactionRow],
+) -> Vec<VlmObservationRow> {
+    let visible = VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions);
+
+    observations
+        .into_iter()
+        .filter(|observation| {
+            visible.is_visible(&observation.chunk_id, observation.frame_timestamp_ms)
+        })
+        .collect()
+}
+
+struct VisualObservationVisibility<'a> {
+    redactions: &'a [RedactionRow],
+    succeeded_chunk_ids: HashSet<&'a str>,
+    video_track_ids: BTreeSet<&'a str>,
+}
+
+impl<'a> VisualObservationVisibility<'a> {
+    fn new(
+        visual_chunks: &'a [ProcessingChunkRow],
+        recording_tracks: &'a [RecordingTrackRow],
+        redactions: &'a [RedactionRow],
+    ) -> Self {
+        Self {
+            redactions,
+            succeeded_chunk_ids: visual_chunks
+                .iter()
+                .filter(|chunk| chunk.status == "succeeded")
+                .map(|chunk| chunk.id.as_str())
+                .collect(),
+            video_track_ids: recording_tracks
+                .iter()
+                .filter(|track| matches!(track.kind.as_str(), "screen" | "video"))
+                .map(|track| track.id.as_str())
+                .collect(),
+        }
+    }
+
+    fn is_visible(&self, chunk_id: &str, frame_timestamp_ms: i64) -> bool {
+        self.succeeded_chunk_ids.contains(chunk_id)
+            && !self.redactions.iter().any(|redaction| {
+                self.redaction_hides_visual_timestamp(redaction, frame_timestamp_ms)
+            })
+    }
+
+    fn redaction_hides_visual_timestamp(
+        &self,
+        redaction: &RedactionRow,
+        frame_timestamp_ms: i64,
+    ) -> bool {
+        if frame_timestamp_ms < redaction.start_offset_ms
+            || frame_timestamp_ms >= redaction.end_offset_ms
+        {
+            return false;
+        }
+
+        let redacted_track_ids = redaction_track_ids(redaction);
+        if redacted_track_ids.is_empty() {
+            return true;
+        }
+
+        redacted_track_ids
+            .iter()
+            .any(|track_id| self.video_track_ids.contains(track_id.as_str()))
+    }
+}
+
+fn redaction_track_ids(redaction: &RedactionRow) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(&redaction.track_ids_json).unwrap_or_default()
+}
+
+fn vlm_state_for_recording(
+    app_settings: &settings::AppSettings,
+    chunks: &[ProcessingChunkRow],
+    observation_count: usize,
+) -> VlmState {
+    let provider_status = vlm_provider_status(app_settings);
+    if provider_status == "disabled" {
+        return VlmState {
+            error_code: None,
+            provider_status,
+            status: "disabled".to_string(),
+        };
+    }
+    if provider_status != "configured" {
+        return VlmState {
+            error_code: None,
+            provider_status,
+            status: "unconfigured".to_string(),
+        };
+    }
+    if chunks.is_empty() {
+        return VlmState {
+            error_code: None,
+            provider_status,
+            status: "not-planned".to_string(),
+        };
+    }
+    if chunks.iter().any(|chunk| chunk.status == "running") {
+        return VlmState {
+            error_code: None,
+            provider_status,
+            status: "running".to_string(),
+        };
+    }
+    if chunks.iter().any(|chunk| chunk.status == "queued") {
+        return VlmState {
+            error_code: None,
+            provider_status,
+            status: "queued".to_string(),
+        };
+    }
+    if let Some(chunk) = chunks
+        .iter()
+        .find(|chunk| matches!(chunk.status.as_str(), "failed" | "cancelled"))
+    {
+        return VlmState {
+            error_code: chunk
+                .error_code
+                .clone()
+                .or_else(|| chunk.result_code.clone()),
+            provider_status,
+            status: "failed".to_string(),
+        };
+    }
+    let status = if observation_count > 0 {
+        "succeeded"
+    } else if chunks.iter().all(|chunk| chunk.status == "succeeded") {
+        "empty"
+    } else {
+        "not-planned"
+    };
+
+    VlmState {
+        error_code: None,
+        provider_status,
+        status: status.to_string(),
+    }
+}
+
+fn vlm_provider_status(app_settings: &settings::AppSettings) -> String {
+    if app_settings.ai.vision.provider == "disabled" {
+        "disabled".to_string()
+    } else if app_settings.ai.vision.base_url.is_none() {
+        "missing-base-url".to_string()
+    } else if app_settings.ai.vision.api_key_ref.is_none() {
+        "missing-key".to_string()
+    } else if app_settings.ai.vision.model.is_none() {
+        "missing-model".to_string()
+    } else {
+        "configured".to_string()
+    }
+}
+
+fn visual_region_from_parts(x: i64, y: i64, width: i64, height: i64) -> VisualRegion {
+    VisualRegion {
+        height,
+        width,
+        x,
+        y,
+    }
+}
+
+fn ocr_region_from_row(row: OcrRegionRow) -> OcrRegion {
+    OcrRegion {
+        chunk_id: row.chunk_id,
+        confidence: row.confidence,
+        frame_timestamp_ms: row.frame_timestamp_ms,
+        id: row.id,
+        job_id: row.job_id,
+        model: row.model,
+        provider: row.provider,
+        recording_id: row.recording_id,
+        region: visual_region_from_parts(
+            row.region_x,
+            row.region_y,
+            row.region_width,
+            row.region_height,
+        ),
+        source_frame_ref: row.source_frame_ref,
+        text: row.text,
+    }
+}
+
+fn vlm_observation_from_row(row: VlmObservationRow) -> VlmObservation {
+    VlmObservation {
+        chunk_id: row.chunk_id,
+        confidence: row.confidence,
+        frame_timestamp_ms: row.frame_timestamp_ms,
+        id: row.id,
+        job_id: row.job_id,
+        model: row.model,
+        observation_kind: row.observation_kind,
+        prompt_version: row.prompt_version,
+        provider: row.provider,
+        recording_id: row.recording_id,
+        region: visual_region_from_parts(
+            row.region_x,
+            row.region_y,
+            row.region_width,
+            row.region_height,
+        ),
+        source_frame_ref: row.source_frame_ref,
+        text: row.text,
+    }
+}
+
 fn processing_job_list_from_rows(rows: Vec<ProcessingJobRow>) -> ProcessingJobList {
     ProcessingJobList {
         jobs: rows.into_iter().map(processing_job_from_row).collect(),
@@ -4864,6 +6812,318 @@ mod tests {
     }
 
     #[test]
+    fn visual_sampling_uses_recording_fps_when_synced() {
+        let mut app_settings = settings::default_settings();
+        app_settings
+            .ai
+            .processing
+            .frame_recognition_sync_with_recording = true;
+        app_settings.ai.processing.frame_recognition_fps = 5.0;
+
+        assert_eq!(effective_frame_recognition_fps(&app_settings, 0.2), 0.2);
+        assert_eq!(frame_sample_interval_ms(0.2), 5_000);
+    }
+
+    #[test]
+    fn full_frame_checkpoints_respect_interval_and_minute_cap() {
+        assert!(full_checkpoint_for_frame(0, 0, 10_000, 2));
+        assert!(full_checkpoint_for_frame(10_000, 0, 10_000, 2));
+        assert!(!full_checkpoint_for_frame(20_000, 0, 10_000, 2));
+        assert!(full_checkpoint_for_frame(60_000, 0, 10_000, 2));
+    }
+
+    #[test]
+    fn visual_delta_regions_skip_unchanged_frames() {
+        let previous = test_visual_image(256, 256, &[]);
+        let current = test_visual_image(256, 256, &[]);
+
+        assert!(visual_delta_regions(&previous, &current, 64).is_empty());
+    }
+
+    #[test]
+    fn visual_delta_regions_keep_subtle_text_sized_changes() {
+        let previous = test_visual_image(256, 256, &[]);
+        let current = test_visual_image(256, 256, &[(130, 130), (131, 130), (132, 130)]);
+        let regions = visual_delta_regions(&previous, &current, 64);
+
+        assert_eq!(
+            regions,
+            vec![VisualRegion {
+                height: 192,
+                width: 192,
+                x: 64,
+                y: 64,
+            }]
+        );
+    }
+
+    #[test]
+    fn visual_delta_regions_merge_adjacent_changed_tiles() {
+        let previous = test_visual_image(320, 256, &[]);
+        let current = test_visual_image(
+            320,
+            256,
+            &[
+                (130, 130),
+                (131, 130),
+                (132, 130),
+                (194, 130),
+                (195, 130),
+                (196, 130),
+            ],
+        );
+        let regions = visual_delta_regions(&previous, &current, 64);
+
+        assert_eq!(
+            regions,
+            vec![VisualRegion {
+                height: 192,
+                width: 256,
+                x: 64,
+                y: 64,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_tesseract_tsv_returns_text_regions() {
+        let frame = ExtractedVisualFrame {
+            abrupt_transition: false,
+            after_context: None,
+            before_context: None,
+            frame_timestamp_ms: 500,
+            full_checkpoint: true,
+            height: 1080,
+            path: PathBuf::from("/tmp/frame.png"),
+            region: VisualRegion {
+                height: 1080,
+                width: 1920,
+                x: 0,
+                y: 0,
+            },
+            signature: "sig".to_string(),
+            source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+            width: 1920,
+        };
+        let regions = parse_tesseract_tsv(
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t1\t1\t1\t1\t10\t20\t30\t40\t88.5\tDaydream\n5\t1\t1\t1\t1\t2\t10\t20\t0\t40\t90\tignored",
+            &frame,
+        )
+        .expect("parse TSV");
+
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].text, "Daydream");
+        assert_eq!(regions[0].confidence, Some(0.885));
+        assert_eq!(regions[0].region.x, 10);
+    }
+
+    #[test]
+    fn parse_tesseract_tsv_translates_crop_regions_to_full_frame() {
+        let frame = ExtractedVisualFrame {
+            abrupt_transition: false,
+            after_context: None,
+            before_context: None,
+            frame_timestamp_ms: 500,
+            full_checkpoint: false,
+            height: 1080,
+            path: PathBuf::from("/tmp/crop.png"),
+            region: VisualRegion {
+                height: 200,
+                width: 300,
+                x: 100,
+                y: 200,
+            },
+            signature: "sig".to_string(),
+            source_frame_ref: "segment:one:offset:500:frame:0:region:100,200,300,200".to_string(),
+            width: 1920,
+        };
+        let regions = parse_tesseract_tsv(
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t1\t1\t1\t1\t10\t20\t30\t40\t88.5\tDaydream",
+            &frame,
+        )
+        .expect("parse TSV");
+
+        assert_eq!(regions[0].region.x, 110);
+        assert_eq!(regions[0].region.y, 220);
+        assert_eq!(regions[0].region.width, 30);
+        assert_eq!(regions[0].region.height, 40);
+    }
+
+    #[test]
+    fn tesseract_missing_binary_returns_privacy_safe_error() {
+        let frame = ExtractedVisualFrame {
+            abrupt_transition: false,
+            after_context: None,
+            before_context: None,
+            frame_timestamp_ms: 500,
+            full_checkpoint: false,
+            height: 1080,
+            path: PathBuf::from("/tmp/crop.png"),
+            region: VisualRegion {
+                height: 200,
+                width: 300,
+                x: 100,
+                y: 200,
+            },
+            signature: "sig".to_string(),
+            source_frame_ref: "segment:one:offset:500:frame:0:region:100,200,300,200".to_string(),
+            width: 1920,
+        };
+        let error = run_tesseract_ocr_with_binary(
+            "daydream-missing-tesseract-binary-for-test",
+            frame.path(),
+            &frame,
+        )
+        .expect_err("missing binary should fail");
+
+        assert_eq!(error.code, "ai_ocr_tesseract_unavailable");
+        assert!(!error.message.contains("Daydream"));
+        assert!(!error.message.contains("segment:one"));
+    }
+
+    #[test]
+    fn vlm_observation_validation_requires_typed_source_links() {
+        let frame = ExtractedVisualFrame {
+            abrupt_transition: false,
+            after_context: None,
+            before_context: None,
+            frame_timestamp_ms: 500,
+            full_checkpoint: true,
+            height: 100,
+            path: PathBuf::from("/tmp/frame.png"),
+            region: VisualRegion {
+                height: 100,
+                width: 200,
+                x: 0,
+                y: 0,
+            },
+            signature: "sig".to_string(),
+            source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+            width: 200,
+        };
+        let observations = validate_vlm_observations(
+            VlmObservationPayload {
+                observations: vec![VlmObservationCandidate {
+                    confidence: Some(1.2),
+                    frame_timestamp_ms: 500,
+                    kind: "corrected-ocr".to_string(),
+                    region: VlmObservationRegion {
+                        height: 25,
+                        width: 50,
+                        x: 0,
+                        y: 0,
+                    },
+                    text: "Corrected text".to_string(),
+                }],
+            },
+            &frame,
+        )
+        .expect("validate observations");
+
+        assert_eq!(observations[0].observation_kind, "corrected-ocr");
+        assert_eq!(observations[0].confidence, Some(1.0));
+        assert_eq!(
+            observations[0].source_frame_ref,
+            "segment:one:offset:500:frame:0"
+        );
+
+        let error = validate_vlm_observations(
+            VlmObservationPayload {
+                observations: vec![VlmObservationCandidate {
+                    confidence: None,
+                    frame_timestamp_ms: 501,
+                    kind: "screen-observation".to_string(),
+                    region: VlmObservationRegion {
+                        height: 25,
+                        width: 50,
+                        x: 0,
+                        y: 0,
+                    },
+                    text: "Mismatch".to_string(),
+                }],
+            },
+            &frame,
+        )
+        .expect_err("timestamp mismatch should fail");
+
+        assert_eq!(error.code, "ai_vision_observation_invalid");
+    }
+
+    #[test]
+    fn vlm_state_reports_provider_and_chunk_states() {
+        let disabled = settings::default_settings();
+        assert_eq!(
+            vlm_state_for_recording(&disabled, &[], 0),
+            VlmState {
+                error_code: None,
+                provider_status: "disabled".to_string(),
+                status: "disabled".to_string(),
+            }
+        );
+
+        let mut configured = settings::default_settings();
+        configured.ai.vision.provider = "openai-compatible".to_string();
+        configured.ai.vision.base_url = Some("http://localhost:11434/v1".to_string());
+        configured.ai.vision.api_key_ref = Some("ai.secret.vision.test".to_string());
+        configured.ai.vision.model = Some("llava".to_string());
+
+        assert_eq!(
+            vlm_state_for_recording(&configured, &[], 0).status,
+            "not-planned"
+        );
+        assert_eq!(
+            vlm_state_for_recording(&configured, &[test_vlm_chunk("queued", None, None)], 0).status,
+            "queued"
+        );
+        assert_eq!(
+            vlm_state_for_recording(&configured, &[test_vlm_chunk("running", None, None)], 0)
+                .status,
+            "running"
+        );
+        assert_eq!(
+            vlm_state_for_recording(
+                &configured,
+                &[test_vlm_chunk(
+                    "failed",
+                    Some("ai_vision_remote_timeout"),
+                    None
+                )],
+                0,
+            ),
+            VlmState {
+                error_code: Some("ai_vision_remote_timeout".to_string()),
+                provider_status: "configured".to_string(),
+                status: "failed".to_string(),
+            }
+        );
+        assert_eq!(
+            vlm_state_for_recording(&configured, &[test_vlm_chunk("succeeded", None, None)], 0)
+                .status,
+            "empty"
+        );
+        assert_eq!(
+            vlm_state_for_recording(&configured, &[test_vlm_chunk("succeeded", None, None)], 1)
+                .status,
+            "succeeded"
+        );
+    }
+
+    #[test]
+    fn vlm_state_reports_unconfigured_provider_reasons() {
+        let mut missing_base_url = settings::default_settings();
+        missing_base_url.ai.vision.provider = "openai-compatible".to_string();
+
+        assert_eq!(
+            vlm_state_for_recording(&missing_base_url, &[], 0),
+            VlmState {
+                error_code: None,
+                provider_status: "missing-base-url".to_string(),
+                status: "unconfigured".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn transcript_segment_offsets_use_word_bounds_when_available() {
         let segment = transcription::VerboseTranscriptionSegment {
             end: 5.0,
@@ -5154,6 +7414,220 @@ mod tests {
             .flat_map(|track| track.segments.iter())
             .flat_map(|segment| segment.words.iter())
             .all(|word| word.text != "hidden"));
+    }
+
+    #[test]
+    fn visual_observation_queries_hide_redacted_video_overlaps_without_deleting_rows() {
+        let storage = storage::test_storage(PathBuf::new());
+        let recording_id = storage
+            .with_connection_mut(|connection| {
+                let fixture = test_visual_recording(connection);
+                storage::create_redaction(
+                    connection,
+                    &storage::CreateRedactionInput {
+                        created_at_ms: 20,
+                        end_offset_ms: 2_000,
+                        id: Uuid::now_v7().to_string(),
+                        reason: None,
+                        recording_id: fixture.recording_id.clone(),
+                        start_offset_ms: 1_000,
+                        track_ids_json: serde_json::to_string(&vec![fixture
+                            .video_track_id
+                            .clone()])
+                        .expect("serialize video redaction tracks"),
+                    },
+                )?;
+                storage::create_redaction(
+                    connection,
+                    &storage::CreateRedactionInput {
+                        created_at_ms: 21,
+                        end_offset_ms: 4_000,
+                        id: Uuid::now_v7().to_string(),
+                        reason: None,
+                        recording_id: fixture.recording_id.clone(),
+                        start_offset_ms: 3_000,
+                        track_ids_json: serde_json::to_string(&vec![fixture
+                            .audio_track_id
+                            .clone()])
+                        .expect("serialize audio redaction tracks"),
+                    },
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    1_500,
+                    "hidden video text",
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    2_500,
+                    "visible text",
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    3_500,
+                    "visible during audio redaction",
+                )?;
+                create_test_vlm_observation(
+                    connection,
+                    &fixture,
+                    &fixture.vlm_chunk_id,
+                    1_500,
+                    "hidden video observation",
+                )?;
+                create_test_vlm_observation(
+                    connection,
+                    &fixture,
+                    &fixture.vlm_chunk_id,
+                    2_500,
+                    "visible observation",
+                )?;
+
+                Ok(fixture.recording_id)
+            })
+            .expect("seed visual observations and redactions");
+
+        let observations = visual_observations_for_recording(&storage, &recording_id)
+            .expect("visual observations");
+        let stored_counts = storage
+            .with_connection(|connection| {
+                Ok((
+                    storage::list_ocr_regions(connection, &recording_id)?.len(),
+                    storage::list_vlm_observations(connection, &recording_id)?.len(),
+                ))
+            })
+            .expect("stored visual counts");
+
+        assert_eq!(stored_counts, (3, 2));
+        let ocr_text = observations
+            .ocr_regions
+            .iter()
+            .map(|region| region.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ocr_text.len(), 2);
+        assert!(ocr_text.contains(&"visible text"));
+        assert!(ocr_text.contains(&"visible during audio redaction"));
+        assert!(!ocr_text.contains(&"hidden video text"));
+
+        let vlm_text = observations
+            .vlm_observations
+            .iter()
+            .map(|observation| observation.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(vlm_text, vec!["visible observation"]);
+    }
+
+    #[test]
+    fn visual_observation_queries_hide_all_track_redactions() {
+        let storage = storage::test_storage(PathBuf::new());
+        let recording_id = storage
+            .with_connection_mut(|connection| {
+                let fixture = test_visual_recording(connection);
+                storage::create_redaction(
+                    connection,
+                    &storage::CreateRedactionInput {
+                        created_at_ms: 20,
+                        end_offset_ms: 2_000,
+                        id: Uuid::now_v7().to_string(),
+                        reason: None,
+                        recording_id: fixture.recording_id.clone(),
+                        start_offset_ms: 1_000,
+                        track_ids_json: "[]".to_string(),
+                    },
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    1_500,
+                    "hidden by all tracks",
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    2_500,
+                    "visible after all tracks",
+                )?;
+
+                Ok(fixture.recording_id)
+            })
+            .expect("seed all-track visual redaction");
+
+        let observations = visual_observations_for_recording(&storage, &recording_id)
+            .expect("visual observations");
+        let ocr_text = observations
+            .ocr_regions
+            .iter()
+            .map(|region| region.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ocr_text, vec!["visible after all tracks"]);
+    }
+
+    #[test]
+    fn visual_observation_queries_hide_non_succeeded_chunk_rows() {
+        let storage = storage::test_storage(PathBuf::new());
+        let recording_id = storage
+            .with_connection_mut(|connection| {
+                let fixture = test_visual_recording(connection);
+                let failed_ocr_chunk_id =
+                    create_test_visual_chunk(connection, &fixture, "ocr", "failed")?;
+                let running_vlm_chunk_id =
+                    create_test_visual_chunk(connection, &fixture, "vlm", "running")?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &fixture.ocr_chunk_id,
+                    500,
+                    "visible completed text",
+                )?;
+                create_test_ocr_region(
+                    connection,
+                    &fixture,
+                    &failed_ocr_chunk_id,
+                    500,
+                    "hidden failed text",
+                )?;
+                create_test_vlm_observation(
+                    connection,
+                    &fixture,
+                    &fixture.vlm_chunk_id,
+                    500,
+                    "visible completed observation",
+                )?;
+                create_test_vlm_observation(
+                    connection,
+                    &fixture,
+                    &running_vlm_chunk_id,
+                    500,
+                    "hidden running observation",
+                )?;
+
+                Ok(fixture.recording_id)
+            })
+            .expect("seed non-succeeded visual rows");
+
+        let observations = visual_observations_for_recording(&storage, &recording_id)
+            .expect("visual observations");
+        let ocr_text = observations
+            .ocr_regions
+            .iter()
+            .map(|region| region.text.as_str())
+            .collect::<Vec<_>>();
+        let vlm_text = observations
+            .vlm_observations
+            .iter()
+            .map(|observation| observation.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ocr_text, vec!["visible completed text"]);
+        assert_eq!(vlm_text, vec!["visible completed observation"]);
     }
 
     #[test]
@@ -5817,6 +8291,244 @@ mod tests {
         let mut hasher = Sha1::new();
         hasher.update(bytes);
         hex::encode(hasher.finalize())
+    }
+
+    fn test_visual_image(
+        width: usize,
+        height: usize,
+        white_pixels: &[(usize, usize)],
+    ) -> VisualImage {
+        let mut pixels = vec![0; width * height * 4];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        for (x, y) in white_pixels {
+            let index = ((y * width) + x) * 4;
+            pixels[index] = 255;
+            pixels[index + 1] = 255;
+            pixels[index + 2] = 255;
+        }
+
+        VisualImage {
+            height,
+            pixels,
+            width,
+        }
+    }
+
+    fn test_vlm_chunk(
+        status: &str,
+        error_code: Option<&str>,
+        result_code: Option<&str>,
+    ) -> ProcessingChunkRow {
+        ProcessingChunkRow {
+            attempt_count: 0,
+            created_at_ms: 0,
+            end_offset_ms: Some(1_000),
+            error_code: error_code.map(str::to_string),
+            id: Uuid::now_v7().to_string(),
+            job_id: Uuid::now_v7().to_string(),
+            progress: if status == "succeeded" { 1.0 } else { 0.0 },
+            recording_id: Uuid::now_v7().to_string(),
+            result_code: result_code.map(str::to_string),
+            segment_id: Some(Uuid::now_v7().to_string()),
+            source_kind: "vlm".to_string(),
+            start_offset_ms: Some(0),
+            status: status.to_string(),
+            track_id: None,
+            updated_at_ms: 0,
+        }
+    }
+
+    struct TestVisualRecording {
+        audio_track_id: String,
+        job_id: String,
+        ocr_chunk_id: String,
+        recording_id: String,
+        segment_id: String,
+        video_track_id: String,
+        vlm_chunk_id: String,
+    }
+
+    fn test_visual_recording(connection: &rusqlite::Connection) -> TestVisualRecording {
+        let recording_id = Uuid::now_v7().to_string();
+        let segment_id = Uuid::now_v7().to_string();
+        let video_track_id = Uuid::now_v7().to_string();
+        let audio_track_id = Uuid::now_v7().to_string();
+        let job_id = Uuid::now_v7().to_string();
+
+        storage::create_recording(
+            connection,
+            &storage::CreateRecordingInput {
+                active_scene_id: None,
+                created_at_ms: 1,
+                default_fps: 1.0,
+                id: recording_id.clone(),
+                notes: None,
+                output_root: None,
+                quality_label: "balanced-ocr".to_string(),
+                storage_dir: "/tmp/daydream-test".to_string(),
+            },
+        )
+        .expect("create visual recording");
+        storage::create_recording_segment(
+            connection,
+            &storage::CreateRecordingSegmentInput {
+                file_path: "/tmp/daydream-test/segments/0001.mkv".to_string(),
+                id: segment_id.clone(),
+                recording_id: recording_id.clone(),
+                segment_index: 1,
+                started_at_ms: 1,
+            },
+        )
+        .expect("create visual segment");
+        storage::upsert_recording_track(
+            connection,
+            &UpsertRecordingTrackInput {
+                codec: Some("h264".to_string()),
+                created_at_ms: 1,
+                id: video_track_id.clone(),
+                kind: "screen".to_string(),
+                label: "Display".to_string(),
+                path: None,
+                recording_id: recording_id.clone(),
+                source_id: None,
+            },
+        )
+        .expect("create video track");
+        storage::upsert_recording_track(
+            connection,
+            &UpsertRecordingTrackInput {
+                codec: Some("pcm_s16le".to_string()),
+                created_at_ms: 1,
+                id: audio_track_id.clone(),
+                kind: "microphone".to_string(),
+                label: "Microphone".to_string(),
+                path: None,
+                recording_id: recording_id.clone(),
+                source_id: None,
+            },
+        )
+        .expect("create audio track");
+        storage::create_processing_job(
+            connection,
+            &CreateProcessingJobInput {
+                created_at_ms: 1,
+                error: None,
+                id: job_id.clone(),
+                kind: AI_PROCESSING_JOB_KIND.to_string(),
+                recording_id: recording_id.clone(),
+                status: "running".to_string(),
+                updated_at_ms: 1,
+            },
+        )
+        .expect("create visual job");
+
+        let mut fixture = TestVisualRecording {
+            audio_track_id,
+            job_id,
+            ocr_chunk_id: String::new(),
+            recording_id,
+            segment_id,
+            video_track_id,
+            vlm_chunk_id: String::new(),
+        };
+        fixture.ocr_chunk_id = create_test_visual_chunk(connection, &fixture, "ocr", "succeeded")
+            .expect("create ocr chunk");
+        fixture.vlm_chunk_id = create_test_visual_chunk(connection, &fixture, "vlm", "succeeded")
+            .expect("create vlm chunk");
+
+        fixture
+    }
+
+    fn create_test_visual_chunk(
+        connection: &rusqlite::Connection,
+        fixture: &TestVisualRecording,
+        source_kind: &str,
+        status: &str,
+    ) -> rusqlite::Result<String> {
+        let chunk = storage::create_processing_chunk(
+            connection,
+            &CreateProcessingChunkInput {
+                attempt_count: 1,
+                created_at_ms: 1,
+                end_offset_ms: Some(10_000),
+                error_code: None,
+                id: Uuid::now_v7().to_string(),
+                job_id: fixture.job_id.clone(),
+                progress: if status == "succeeded" { 1.0 } else { 0.0 },
+                recording_id: fixture.recording_id.clone(),
+                result_code: None,
+                segment_id: Some(fixture.segment_id.clone()),
+                source_kind: source_kind.to_string(),
+                start_offset_ms: Some(0),
+                status: status.to_string(),
+                track_id: None,
+                updated_at_ms: 1,
+            },
+        )?;
+
+        Ok(chunk.id)
+    }
+
+    fn create_test_ocr_region(
+        connection: &rusqlite::Connection,
+        fixture: &TestVisualRecording,
+        chunk_id: &str,
+        frame_timestamp_ms: i64,
+        text: &str,
+    ) -> rusqlite::Result<()> {
+        storage::create_ocr_region(
+            connection,
+            &CreateVisualRegionInput {
+                chunk_id: chunk_id.to_string(),
+                confidence: Some(0.9),
+                frame_timestamp_ms,
+                id: Uuid::now_v7().to_string(),
+                job_id: fixture.job_id.clone(),
+                model: Some("tesseract".to_string()),
+                observation_kind: None,
+                prompt_version: None,
+                provider: "tesseract".to_string(),
+                recording_id: fixture.recording_id.clone(),
+                region_height: 20,
+                region_width: 30,
+                region_x: 1,
+                region_y: 2,
+                source_frame_ref: format!("segment:test:offset:{frame_timestamp_ms}:frame:0"),
+                text: text.to_string(),
+            },
+        )
+    }
+
+    fn create_test_vlm_observation(
+        connection: &rusqlite::Connection,
+        fixture: &TestVisualRecording,
+        chunk_id: &str,
+        frame_timestamp_ms: i64,
+        text: &str,
+    ) -> rusqlite::Result<()> {
+        storage::create_vlm_observation(
+            connection,
+            &CreateVisualRegionInput {
+                chunk_id: chunk_id.to_string(),
+                confidence: Some(0.8),
+                frame_timestamp_ms,
+                id: Uuid::now_v7().to_string(),
+                job_id: fixture.job_id.clone(),
+                model: Some("vision".to_string()),
+                observation_kind: Some("screen-observation".to_string()),
+                prompt_version: Some("m2-test".to_string()),
+                provider: "openai-compatible".to_string(),
+                recording_id: fixture.recording_id.clone(),
+                region_height: 20,
+                region_width: 30,
+                region_x: 1,
+                region_y: 2,
+                source_frame_ref: format!("segment:test:offset:{frame_timestamp_ms}:frame:0"),
+                text: text.to_string(),
+            },
+        )
     }
 
     fn test_transcription_chunk(

@@ -29,10 +29,14 @@ const settings = {
     },
     processing: {
       autoStartAfterRecording: true,
+      frameRecognitionFps: 0.2,
+      frameRecognitionSyncWithRecording: true,
       frameSimilarityEnabled: true,
+      maxFullFrameCheckpointsPerMinute: 2,
       maxParallelChunksPerJob: 1,
       maxParallelJobs: 1,
-      periodicFullFrameIntervalMs: 300_000,
+      periodicFullFrameIntervalMs: 60_000,
+      visualDeltaTileSizePx: 64,
     },
     transcription: {
       language: 'auto',

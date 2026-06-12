@@ -390,6 +390,11 @@ test('ai contracts support local baseline results and guarded vlm states', () =>
       },
     ],
     recordingId: 'recording-1',
+    vlmState: {
+      errorCode: null,
+      providerStatus: 'disabled',
+      status: 'disabled',
+    },
     vlmObservations: [],
   } satisfies RecordingVisualObservations;
 

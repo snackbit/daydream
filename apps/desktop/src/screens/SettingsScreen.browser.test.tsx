@@ -82,10 +82,14 @@ const defaultAiSettings = {
   },
   processing: {
     autoStartAfterRecording: true,
+    frameRecognitionFps: 0.2,
+    frameRecognitionSyncWithRecording: true,
     frameSimilarityEnabled: true,
+    maxFullFrameCheckpointsPerMinute: 2,
     maxParallelChunksPerJob: 1,
     maxParallelJobs: 1,
-    periodicFullFrameIntervalMs: 300_000,
+    periodicFullFrameIntervalMs: 60_000,
+    visualDeltaTileSizePx: 64,
   },
   transcription: {
     language: 'auto',
@@ -137,12 +141,18 @@ const defaultSettingsState = {
         mouseWindowMsMin: 1_000,
       },
       processing: {
+        frameRecognitionFpsMax: 5,
+        frameRecognitionFpsMin: 1 / 60,
+        maxFullFrameCheckpointsPerMinuteMax: 60,
+        maxFullFrameCheckpointsPerMinuteMin: 1,
         maxParallelChunksPerJobMax: 8,
         maxParallelChunksPerJobMin: 1,
         maxParallelJobsMax: 4,
         maxParallelJobsMin: 1,
-        periodicFullFrameIntervalMsMax: 3_600_000,
-        periodicFullFrameIntervalMsMin: 30_000,
+        periodicFullFrameIntervalMsMax: 600_000,
+        periodicFullFrameIntervalMsMin: 5_000,
+        visualDeltaTileSizePxMax: 256,
+        visualDeltaTileSizePxMin: 32,
       },
       transcription: {
         maxInitialTimestampSecondsMax: 10,
@@ -224,9 +234,23 @@ const aiModels = [
 async function openAiSettingsTab() {
   await screen.findByRole('tablist', { name: 'Settings sections' });
   const aiTab = screen.getByRole('tab', { name: 'AI/LLM' });
+  fireEvent.mouseDown(aiTab, { button: 0, ctrlKey: false });
+  fireEvent.mouseUp(aiTab);
   fireEvent.click(aiTab);
   await waitFor(() => expect(aiTab.getAttribute('aria-selected')).toBe('true'));
   await screen.findByText('Transcription');
+}
+
+async function openRecordSettingsTab() {
+  await screen.findByRole('tablist', { name: 'Settings sections' });
+  const recordTab = screen.getByRole('tab', { name: 'Record' });
+  fireEvent.mouseDown(recordTab, { button: 0, ctrlKey: false });
+  fireEvent.mouseUp(recordTab);
+  fireEvent.click(recordTab);
+  await waitFor(() =>
+    expect(recordTab.getAttribute('aria-selected')).toBe('true'),
+  );
+  await screen.findByText('Frame cadence');
 }
 
 async function selectOption(label: string, option: string) {
@@ -317,7 +341,8 @@ afterEach(() => {
 test('SettingsScreen edits record and storage settings then resets them', async () => {
   render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   expect(screen.getByText('2560 x 1440')).toBeTruthy();
   expect(screen.getByText('712.39 MiB')).toBeTruthy();
   expect(
@@ -362,6 +387,8 @@ test('SettingsScreen edits record and storage settings then resets them', async 
     ).toHaveBeenCalledWith({
       settings: {
         ai: defaultAiSettings,
+        debug: defaultSettingsState.settings.debug,
+        expert: defaultSettingsState.settings.expert,
         record: {
           fps: 2,
           videoBitrateKbps: 2_000,
@@ -377,6 +404,8 @@ test('SettingsScreen edits record and storage settings then resets them', async 
     expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
       settings: {
         ai: defaultAiSettings,
+        debug: defaultSettingsState.settings.debug,
+        expert: defaultSettingsState.settings.expert,
         record: {
           fps: 2,
           videoBitrateKbps: 2_000,
@@ -413,7 +442,8 @@ test('SettingsScreen confirms cleanup before saving deletion-causing storage set
   });
   render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });
@@ -490,6 +520,8 @@ test('SettingsScreen saves remote transcription settings through encrypted key r
             remoteBaseUrl: 'https://localhost:11434/v1',
           },
         },
+        debug: defaultSettingsState.settings.debug,
+        expert: defaultSettingsState.settings.expert,
         record: defaultSettingsState.settings.record,
         storage: defaultSettingsState.settings.storage,
       },
@@ -521,6 +553,8 @@ test('SettingsScreen toggles checkbox fields from their description text', async
             wordTimestampsEnabled: false,
           },
         },
+        debug: defaultSettingsState.settings.debug,
+        expert: defaultSettingsState.settings.expert,
         record: defaultSettingsState.settings.record,
         storage: defaultSettingsState.settings.storage,
       },
@@ -558,11 +592,16 @@ test('SettingsScreen reveals expert transcription controls from General settings
 test('SettingsScreen saves AI slider values', async () => {
   render(<SettingsScreen />);
 
+  await screen.findByRole('tablist', { name: 'Settings sections' });
+  fireEvent.click(screen.getByText('Enable expert mode'));
   await openAiSettingsTab();
   const parallelJobs = screen.getByRole('slider', { name: 'Parallel jobs' });
   const chunksPerJob = screen.getByRole('slider', { name: 'Chunks per job' });
   const fullFrameInterval = screen.getByRole('slider', {
     name: 'Full-frame interval',
+  });
+  const deltaTileSize = screen.getByRole('slider', {
+    name: 'Delta tile size',
   });
   const keyboardActivityWindow = screen.getByRole('slider', {
     name: 'Keyboard activity window',
@@ -571,9 +610,20 @@ test('SettingsScreen saves AI slider values', async () => {
     name: 'Mouse activity window',
   });
 
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
+  expect(
+    screen.getByText(
+      'Range: 1 frame every 60 seconds to 5 frames per second. Step: 0.05 fps.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText('1 minute')).toBeTruthy();
+  expect(
+    screen.getByText('Range: 5 seconds to 10 minutes. Step: 0.5 seconds.'),
+  ).toBeTruthy();
   expect(parallelJobs.getAttribute('aria-valuenow')).toBe('1');
   expect(chunksPerJob.getAttribute('aria-valuenow')).toBe('1');
-  expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('300000');
+  expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('60000');
+  expect(deltaTileSize.getAttribute('aria-valuenow')).toBe('64');
   expect(keyboardActivityWindow.getAttribute('aria-valuenow')).toBe('30000');
   expect(mouseActivityWindow.getAttribute('aria-valuenow')).toBe('5000');
 
@@ -583,14 +633,17 @@ test('SettingsScreen saves AI slider values', async () => {
   fireEvent.keyDown(chunksPerJob, { key: 'ArrowRight' });
   fullFrameInterval.focus();
   fireEvent.keyDown(fullFrameInterval, { key: 'ArrowRight' });
+  deltaTileSize.focus();
+  fireEvent.keyDown(deltaTileSize, { key: 'ArrowRight' });
   keyboardActivityWindow.focus();
   fireEvent.keyDown(keyboardActivityWindow, { key: 'ArrowRight' });
   mouseActivityWindow.focus();
   fireEvent.keyDown(mouseActivityWindow, { key: 'ArrowRight' });
 
   await waitFor(() =>
-    expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('300500'),
+    expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('60500'),
   );
+  expect(deltaTileSize.getAttribute('aria-valuenow')).toBe('80');
   expect(keyboardActivityWindow.getAttribute('aria-valuenow')).toBe('31000');
   expect(mouseActivityWindow.getAttribute('aria-valuenow')).toBe('6000');
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
@@ -615,8 +668,13 @@ test('SettingsScreen saves AI slider values', async () => {
             ...defaultAiSettings.processing,
             maxParallelChunksPerJob: 2,
             maxParallelJobs: 2,
-            periodicFullFrameIntervalMs: 300_500,
+            periodicFullFrameIntervalMs: 60_500,
+            visualDeltaTileSizePx: 80,
           },
+        },
+        debug: defaultSettingsState.settings.debug,
+        expert: {
+          enabled: true,
         },
         record: defaultSettingsState.settings.record,
         storage: defaultSettingsState.settings.storage,
@@ -678,7 +736,8 @@ test('SettingsScreen surfaces platform-not-implemented secret errors without sav
 test('SettingsScreen blocks dirty leave and lets the user stay', async () => {
   const view = render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });
@@ -714,7 +773,8 @@ test('SettingsScreen blocks dirty leave and lets the user stay', async () => {
 test('SettingsScreen discards dirty settings before leaving', async () => {
   const view = render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });
@@ -737,7 +797,8 @@ test('SettingsScreen discards dirty settings before leaving', async () => {
 test('SettingsScreen saves dirty settings before leaving', async () => {
   const view = render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });
@@ -753,6 +814,8 @@ test('SettingsScreen saves dirty settings before leaving', async () => {
     expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
       settings: {
         ai: defaultAiSettings,
+        debug: defaultSettingsState.settings.debug,
+        expert: defaultSettingsState.settings.expert,
         record: {
           fps: 0.2,
           videoBitrateKbps: 2_000,
@@ -771,7 +834,8 @@ test('SettingsScreen waits for cleanup confirmation before leaving after save', 
   });
   const view = render(<SettingsScreen />);
 
-  expect(await screen.findByText('1 frame every 5 seconds')).toBeTruthy();
+  await openRecordSettingsTab();
+  expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   fireEvent.change(screen.getByLabelText('Video bitrate'), {
     target: { value: '2000' },
   });

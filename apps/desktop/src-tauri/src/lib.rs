@@ -84,6 +84,7 @@ pub fn run() {
             ai::get_recording_activity,
             ai::get_recording_ai_processing_state,
             ai::get_recording_transcript,
+            ai::get_recording_visual_observations,
             library::get_recording_waveform_tiles,
             library::get_recording_waveforms,
             library::list_library_recordings,

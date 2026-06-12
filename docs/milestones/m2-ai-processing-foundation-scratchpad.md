@@ -563,6 +563,63 @@
     the two known unrelated `CaptureScreen.browser.test.tsx` failures around
     canvas preset and audio picker behavior.
 
+## Gate G Implementation Notes
+
+- Gate G now has backend visual chunk planning for OCR and configured VLM work
+  on recording video segments. Visual chunks share the `ai-processing` job and
+  use source frame references shaped as `segment:<id>:offset:<ms>:frame:<n>`.
+- Visual sampling defaults are cheap: frame recognition syncs to recording FPS
+  by default, manual recognition FPS is bounded from one frame per 60 seconds
+  to 5 fps, full-frame checkpoints default to every 60 seconds, and checkpoint
+  frequency is capped at 2 per minute by default.
+- Tesseract TSV output is parsed into structured OCR regions with timestamp,
+  region, confidence, provider/model, source frame reference, job ID, and chunk
+  ID. Missing or failing Tesseract returns privacy-safe error codes without OCR
+  content in logs or errors.
+- Configured OpenAI-compatible VLM calls send selected frame images plus
+  Tesseract OCR text and require JSON observations. Responses are persisted
+  only after runtime validation of kind, timestamp, region, source frame
+  reference, provider/model, job ID, and chunk ID. Raw model response bodies are
+  not surfaced in errors.
+- Raw Tesseract OCR and VLM outputs are distinguishable. VLM rows now include
+  `observation_kind`, with `corrected-ocr` and `screen-observation` as the
+  accepted values.
+- Retry cleanup now removes failed chunk visual outputs from OCR regions, VLM
+  observations, and frame similarity entries before requeueing.
+- Settings UI now exposes frame-recognition sync, manual recognition FPS,
+  full-frame interval, full-frame cap, and an expert-only delta tile size
+  control. The default tile size is 64 px, bounded to 32-256 px.
+- Changed visual frames now use tile-based delta regions instead of whole-frame
+  OCR/VLM work. Non-checkpoint frames are cropped into tight PNG regions during
+  processing, OCR TSV boxes are translated back to full-frame coordinates, and
+  frame similarity entries store the processed region.
+- Source frame references now include region provenance:
+  `segment:<id>:offset:<ms>:frame:<n>:region:<x>,<y>,<w>,<h>`.
+- Abrupt visual changes attach sampled before/after full-frame context images
+  to the guarded VLM request so the model can interpret scene changes without
+  losing surrounding context.
+- Recording visual queries now expose `vlmState` with provider status, result
+  status, and privacy-safe error code so the UI can distinguish disabled,
+  unconfigured, not-planned, queued, running, failed, empty, and succeeded
+  states without inspecting private content.
+- Current Gate G validation:
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint:fix` passed.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn lint` passed.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn typecheck` passed.
+  - `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check`
+    passed.
+  - Focused Rust AI tests passed: 41 tests.
+  - Focused Rust settings tests passed: 5 tests.
+  - Elevated focused desktop Vitest passed: 5 files, 23 tests.
+  - `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/shared test`
+    passed: 1 file, 9 tests.
+  - Elevated `COREPACK_HOME=/tmp/corepack corepack yarn test` passed: 30 files,
+    273 tests.
+  - Elevated `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
+    passed: 274 Rust tests. Elevation was required because sandboxed loopback
+    socket binding fails with `EPERM` in transcription tests.
+  - `git diff --check` passed.
+
 ## Deferred Follow-Up Candidates
 
 - Full scissors/redaction UI after processing.

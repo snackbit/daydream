@@ -237,7 +237,46 @@ pub struct CreateVisualRegionInput {
     pub id: String,
     pub job_id: String,
     pub model: Option<String>,
+    pub observation_kind: Option<String>,
     pub prompt_version: Option<String>,
+    pub provider: String,
+    pub recording_id: String,
+    pub region_height: i64,
+    pub region_width: i64,
+    pub region_x: i64,
+    pub region_y: i64,
+    pub source_frame_ref: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrRegionRow {
+    pub chunk_id: String,
+    pub confidence: Option<f64>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub model: Option<String>,
+    pub provider: String,
+    pub recording_id: String,
+    pub region_height: i64,
+    pub region_width: i64,
+    pub region_x: i64,
+    pub region_y: i64,
+    pub source_frame_ref: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VlmObservationRow {
+    pub chunk_id: String,
+    pub confidence: Option<f64>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub model: Option<String>,
+    pub observation_kind: String,
+    pub prompt_version: String,
     pub provider: String,
     pub recording_id: String,
     pub region_height: i64,
@@ -1142,6 +1181,32 @@ pub fn delete_activity_output_for_chunks(
     connection.execute(&sql, params.as_slice())
 }
 
+pub fn delete_visual_output_for_chunks(
+    connection: &Connection,
+    chunk_ids: &[String],
+) -> rusqlite::Result<usize> {
+    if chunk_ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = (0..chunk_ids.len())
+        .map(|index| format!("?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let params = chunk_ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::ToSql)
+        .collect::<Vec<_>>();
+    let ocr_sql = format!("DELETE FROM ocr_regions WHERE chunk_id IN ({placeholders})");
+    let vlm_sql = format!("DELETE FROM vlm_observations WHERE chunk_id IN ({placeholders})");
+    let similarity_sql =
+        format!("DELETE FROM frame_similarity_entries WHERE chunk_id IN ({placeholders})");
+    let deleted = connection.execute(&ocr_sql, params.as_slice())?
+        + connection.execute(&vlm_sql, params.as_slice())?
+        + connection.execute(&similarity_sql, params.as_slice())?;
+
+    Ok(deleted)
+}
+
 pub fn retry_processing_job_chunks(
     connection: &Connection,
     job_id: &str,
@@ -1155,6 +1220,7 @@ pub fn retry_processing_job_chunks(
         .collect::<Vec<_>>();
     delete_transcript_output_for_chunks(connection, &chunk_ids)?;
     delete_activity_output_for_chunks(connection, &chunk_ids)?;
+    delete_visual_output_for_chunks(connection, &chunk_ids)?;
     requeue_processing_chunks(connection, job_id, &["failed", "cancelled"], timestamp_ms)?;
     update_processing_job_status(connection, job_id, "queued", None, timestamp_ms)
 }
@@ -1443,9 +1509,10 @@ pub fn create_vlm_observation(
             provider,
             model,
             prompt_version,
+            observation_kind,
             job_id,
             chunk_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         "#,
         params![
             input.id,
@@ -1464,6 +1531,10 @@ pub fn create_vlm_observation(
                 .prompt_version
                 .as_deref()
                 .unwrap_or("m2-visual-observation-v1"),
+            input
+                .observation_kind
+                .as_deref()
+                .unwrap_or("screen-observation"),
             input.job_id,
             input.chunk_id,
         ],
@@ -1510,6 +1581,70 @@ pub fn create_frame_similarity_entry(
     Ok(())
 }
 
+pub fn list_ocr_regions(
+    connection: &Connection,
+    recording_id: &str,
+) -> rusqlite::Result<Vec<OcrRegionRow>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT
+            id,
+            recording_id,
+            frame_timestamp_ms,
+            source_frame_ref,
+            region_x,
+            region_y,
+            region_width,
+            region_height,
+            text,
+            confidence,
+            provider,
+            model,
+            job_id,
+            chunk_id
+        FROM ocr_regions
+        WHERE recording_id = ?1
+        ORDER BY frame_timestamp_ms ASC, region_y ASC, region_x ASC, id ASC
+        "#,
+    )?;
+    let rows = statement.query_map([recording_id], ocr_region_row)?;
+
+    rows.collect()
+}
+
+pub fn list_vlm_observations(
+    connection: &Connection,
+    recording_id: &str,
+) -> rusqlite::Result<Vec<VlmObservationRow>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT
+            id,
+            recording_id,
+            frame_timestamp_ms,
+            source_frame_ref,
+            region_x,
+            region_y,
+            region_width,
+            region_height,
+            text,
+            confidence,
+            provider,
+            model,
+            prompt_version,
+            observation_kind,
+            job_id,
+            chunk_id
+        FROM vlm_observations
+        WHERE recording_id = ?1
+        ORDER BY frame_timestamp_ms ASC, observation_kind ASC, id ASC
+        "#,
+    )?;
+    let rows = statement.query_map([recording_id], vlm_observation_row)?;
+
+    rows.collect()
+}
+
 fn ai_model_asset_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModelAssetRow> {
     Ok(AiModelAssetRow {
         id: row.get(0)?,
@@ -1529,6 +1664,46 @@ fn ai_model_asset_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModelAssetR
         self_test_status: row.get(14)?,
         created_at_ms: row.get(15)?,
         updated_at_ms: row.get(16)?,
+    })
+}
+
+fn ocr_region_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OcrRegionRow> {
+    Ok(OcrRegionRow {
+        id: row.get(0)?,
+        recording_id: row.get(1)?,
+        frame_timestamp_ms: row.get(2)?,
+        source_frame_ref: row.get(3)?,
+        region_x: row.get(4)?,
+        region_y: row.get(5)?,
+        region_width: row.get(6)?,
+        region_height: row.get(7)?,
+        text: row.get(8)?,
+        confidence: row.get(9)?,
+        provider: row.get(10)?,
+        model: row.get(11)?,
+        job_id: row.get(12)?,
+        chunk_id: row.get(13)?,
+    })
+}
+
+fn vlm_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VlmObservationRow> {
+    Ok(VlmObservationRow {
+        id: row.get(0)?,
+        recording_id: row.get(1)?,
+        frame_timestamp_ms: row.get(2)?,
+        source_frame_ref: row.get(3)?,
+        region_x: row.get(4)?,
+        region_y: row.get(5)?,
+        region_width: row.get(6)?,
+        region_height: row.get(7)?,
+        text: row.get(8)?,
+        confidence: row.get(9)?,
+        provider: row.get(10)?,
+        model: row.get(11)?,
+        prompt_version: row.get(12)?,
+        observation_kind: row.get(13)?,
+        job_id: row.get(14)?,
+        chunk_id: row.get(15)?,
     })
 }
 

@@ -36,9 +36,18 @@ pub const MAX_AI_MAX_PARALLEL_JOBS: u32 = 4;
 pub const DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
 pub const MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
 pub const MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 8;
-pub const DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 300_000;
-pub const MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 30_000;
-pub const MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 3_600_000;
+pub const DEFAULT_AI_FRAME_RECOGNITION_FPS: f64 = DEFAULT_RECORD_FPS;
+pub const MIN_AI_FRAME_RECOGNITION_FPS: f64 = MIN_RECORD_FPS;
+pub const MAX_AI_FRAME_RECOGNITION_FPS: f64 = MAX_RECORD_FPS;
+pub const DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 60_000;
+pub const MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 5_000;
+pub const MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS: u32 = 600_000;
+pub const DEFAULT_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE: u32 = 2;
+pub const MIN_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE: u32 = 1;
+pub const MAX_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE: u32 = 60;
+pub const DEFAULT_AI_VISUAL_DELTA_TILE_SIZE_PX: u32 = 64;
+pub const MIN_AI_VISUAL_DELTA_TILE_SIZE_PX: u32 = 32;
+pub const MAX_AI_VISUAL_DELTA_TILE_SIZE_PX: u32 = 256;
 pub const DEFAULT_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -45.0;
 pub const MIN_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -80.0;
 pub const MAX_AI_TRANSCRIPTION_SILENCE_THRESHOLD_DB: f64 = -20.0;
@@ -128,14 +137,18 @@ pub struct AiOcrSettings {
     pub engine: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProcessingSettings {
     pub auto_start_after_recording: bool,
+    pub frame_recognition_fps: f64,
+    pub frame_recognition_sync_with_recording: bool,
     pub frame_similarity_enabled: bool,
+    pub max_full_frame_checkpoints_per_minute: u32,
     pub max_parallel_chunks_per_job: u32,
     pub max_parallel_jobs: u32,
     pub periodic_full_frame_interval_ms: u32,
+    pub visual_delta_tile_size_px: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,15 +215,21 @@ pub struct AiTranscriptionLimits {
     pub silence_threshold_db_max: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProcessingLimits {
+    pub frame_recognition_fps_min: f64,
+    pub frame_recognition_fps_max: f64,
+    pub max_full_frame_checkpoints_per_minute_min: u32,
+    pub max_full_frame_checkpoints_per_minute_max: u32,
     pub max_parallel_chunks_per_job_min: u32,
     pub max_parallel_chunks_per_job_max: u32,
     pub max_parallel_jobs_min: u32,
     pub max_parallel_jobs_max: u32,
     pub periodic_full_frame_interval_ms_min: u32,
     pub periodic_full_frame_interval_ms_max: u32,
+    pub visual_delta_tile_size_px_min: u32,
+    pub visual_delta_tile_size_px_max: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -358,10 +377,14 @@ pub fn default_ai_settings() -> AiSettings {
         },
         processing: AiProcessingSettings {
             auto_start_after_recording: true,
+            frame_recognition_fps: DEFAULT_AI_FRAME_RECOGNITION_FPS,
+            frame_recognition_sync_with_recording: true,
             frame_similarity_enabled: true,
+            max_full_frame_checkpoints_per_minute: DEFAULT_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
             max_parallel_chunks_per_job: DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
             max_parallel_jobs: DEFAULT_AI_MAX_PARALLEL_JOBS,
             periodic_full_frame_interval_ms: DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+            visual_delta_tile_size_px: DEFAULT_AI_VISUAL_DELTA_TILE_SIZE_PX,
         },
         transcription: AiTranscriptionProviderSettings {
             language: DEFAULT_AI_TRANSCRIPTION_LANGUAGE.to_string(),
@@ -397,12 +420,20 @@ pub fn settings_limits() -> AppSettingsLimits {
                 mouse_window_ms_max: MAX_AI_ACTIVITY_WINDOW_MS,
             },
             processing: AiProcessingLimits {
+                frame_recognition_fps_min: MIN_AI_FRAME_RECOGNITION_FPS,
+                frame_recognition_fps_max: MAX_AI_FRAME_RECOGNITION_FPS,
+                max_full_frame_checkpoints_per_minute_min:
+                    MIN_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
+                max_full_frame_checkpoints_per_minute_max:
+                    MAX_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
                 max_parallel_chunks_per_job_min: MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
                 max_parallel_chunks_per_job_max: MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
                 max_parallel_jobs_min: MIN_AI_MAX_PARALLEL_JOBS,
                 max_parallel_jobs_max: MAX_AI_MAX_PARALLEL_JOBS,
                 periodic_full_frame_interval_ms_min: MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
                 periodic_full_frame_interval_ms_max: MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
+                visual_delta_tile_size_px_min: MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
+                visual_delta_tile_size_px_max: MAX_AI_VISUAL_DELTA_TILE_SIZE_PX,
             },
             transcription: AiTranscriptionLimits {
                 max_initial_timestamp_seconds_min:
@@ -538,11 +569,23 @@ fn apply_setting_row(
         "ai.processing.maxParallelChunksPerJob" => {
             settings.ai.processing.max_parallel_chunks_per_job = setting_value(row)?;
         }
+        "ai.processing.frameRecognitionFps" => {
+            settings.ai.processing.frame_recognition_fps = setting_value(row)?;
+        }
+        "ai.processing.frameRecognitionSyncWithRecording" => {
+            settings.ai.processing.frame_recognition_sync_with_recording = setting_value(row)?;
+        }
         "ai.processing.periodicFullFrameIntervalMs" => {
             settings.ai.processing.periodic_full_frame_interval_ms = setting_value(row)?;
         }
         "ai.processing.frameSimilarityEnabled" => {
             settings.ai.processing.frame_similarity_enabled = setting_value(row)?;
+        }
+        "ai.processing.maxFullFrameCheckpointsPerMinute" => {
+            settings.ai.processing.max_full_frame_checkpoints_per_minute = setting_value(row)?;
+        }
+        "ai.processing.visualDeltaTileSizePx" => {
+            settings.ai.processing.visual_delta_tile_size_px = setting_value(row)?;
         }
         "ai.activity.keyboard.enabled" => {
             settings.ai.activity.keyboard.enabled = setting_value(row)?
@@ -740,6 +783,18 @@ fn settings_to_storage_inputs(
             timestamp_ms,
         )?,
         setting_input(
+            "ai.processing.frameRecognitionFps",
+            &settings.ai.processing.frame_recognition_fps,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.frameRecognitionSyncWithRecording",
+            &settings.ai.processing.frame_recognition_sync_with_recording,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
             "ai.processing.periodicFullFrameIntervalMs",
             &settings.ai.processing.periodic_full_frame_interval_ms,
             false,
@@ -748,6 +803,18 @@ fn settings_to_storage_inputs(
         setting_input(
             "ai.processing.frameSimilarityEnabled",
             &settings.ai.processing.frame_similarity_enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.maxFullFrameCheckpointsPerMinute",
+            &settings.ai.processing.max_full_frame_checkpoints_per_minute,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.visualDeltaTileSizePx",
+            &settings.ai.processing.visual_delta_tile_size_px,
             false,
             timestamp_ms,
         )?,
@@ -921,12 +988,33 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
         "Max parallel chunks per job must be between 1 and 8.",
     )?;
+    validate_f64_range(
+        "ai.processing.frameRecognitionFps",
+        settings.processing.frame_recognition_fps,
+        MIN_AI_FRAME_RECOGNITION_FPS,
+        MAX_AI_FRAME_RECOGNITION_FPS,
+        "Frame recognition FPS must be between 1/60 and 5.",
+    )?;
     validate_u32_range(
         "ai.processing.periodicFullFrameIntervalMs",
         settings.processing.periodic_full_frame_interval_ms,
         MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
         MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
-        "Periodic full-frame interval must be between 30 seconds and 1 hour.",
+        "Periodic full-frame interval must be between 5 seconds and 10 minutes.",
+    )?;
+    validate_u32_range(
+        "ai.processing.maxFullFrameCheckpointsPerMinute",
+        settings.processing.max_full_frame_checkpoints_per_minute,
+        MIN_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
+        MAX_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
+        "Max full-frame checkpoints must be between 1 and 60 per minute.",
+    )?;
+    validate_u32_range(
+        "ai.processing.visualDeltaTileSizePx",
+        settings.processing.visual_delta_tile_size_px,
+        MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
+        MAX_AI_VISUAL_DELTA_TILE_SIZE_PX,
+        "Visual delta tile size must be between 32 and 256 px.",
     )?;
     validate_u32_range(
         "ai.activity.keyboard.windowMs",
@@ -1385,6 +1473,60 @@ mod tests {
                     ..default_settings()
                 },
                 "ai.processing.maxParallelJobs",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        processing: AiProcessingSettings {
+                            frame_recognition_fps: MIN_AI_FRAME_RECOGNITION_FPS / 2.0,
+                            ..default_settings().ai.processing
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.processing.frameRecognitionFps",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        processing: AiProcessingSettings {
+                            periodic_full_frame_interval_ms: MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS
+                                - 1,
+                            ..default_settings().ai.processing
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.processing.periodicFullFrameIntervalMs",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        processing: AiProcessingSettings {
+                            max_full_frame_checkpoints_per_minute:
+                                MAX_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE + 1,
+                            ..default_settings().ai.processing
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.processing.maxFullFrameCheckpointsPerMinute",
+            ),
+            (
+                AppSettings {
+                    ai: AiSettings {
+                        processing: AiProcessingSettings {
+                            visual_delta_tile_size_px: MIN_AI_VISUAL_DELTA_TILE_SIZE_PX - 1,
+                            ..default_settings().ai.processing
+                        },
+                        ..default_settings().ai
+                    },
+                    ..default_settings()
+                },
+                "ai.processing.visualDeltaTileSizePx",
             ),
         ] {
             let error = validate_settings(settings)

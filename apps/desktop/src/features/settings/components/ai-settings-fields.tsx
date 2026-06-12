@@ -138,23 +138,35 @@ export function NumberField({
 }
 
 export function SliderField({
+  formatValue,
   label,
   max,
   min,
   onChange,
+  rangeLabel,
   step = 1,
+  stepLabel,
   suffix,
   value,
 }: {
+  formatValue?: (value: number) => string;
   label: string;
   max: number;
   min: number;
   onChange: (value: number) => void;
+  rangeLabel?: string;
   step?: number;
+  stepLabel?: string;
   suffix?: string;
   value: number;
 }) {
-  const displayValue = suffix ? `${value} ${suffix}` : value.toString();
+  const displayValue = formatValue
+    ? formatValue(value)
+    : formatNumberWithSuffix(value, suffix);
+  const rangeDescription =
+    rangeLabel ??
+    `${formatNumberWithSuffix(min, suffix)} to ${formatNumberWithSuffix(max, suffix)}`;
+  const stepDescription = stepLabel ?? formatNumberWithSuffix(step, suffix);
 
   return (
     <Field>
@@ -179,12 +191,18 @@ export function SliderField({
         value={[value]}
       />
       <FieldDescription>
-        Range: {min}-{max}
-        {suffix ? ` ${suffix}` : ''}. Step: {step}
-        {suffix ? ` ${suffix}` : ''}.
+        Range: {rangeDescription}. Step: {stepDescription}.
       </FieldDescription>
     </Field>
   );
+}
+
+function formatNumberWithSuffix(value: number, suffix: string | undefined) {
+  const formatted = Number.isInteger(value)
+    ? value.toString()
+    : value.toFixed(2).replace(/\.?0+$/, '');
+
+  return suffix ? `${formatted} ${suffix}` : formatted;
 }
 
 export function modelStatusLabel(model: AiModelAsset | undefined): string {
