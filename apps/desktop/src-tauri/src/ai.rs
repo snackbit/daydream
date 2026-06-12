@@ -30,7 +30,7 @@ use crate::{
         self, ActivityIntervalRow, AiModelAssetRow, AppStorage, CaptureEventRow,
         CreateActivityIntervalInput, CreateProcessingChunkInput, CreateProcessingJobInput,
         CreateTranscriptSegmentInput, CreateTranscriptWordInput, NotificationRow,
-        ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow,
+        ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow, RedactionRow,
         SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow, TranscriptWordRow,
         UpsertRecordingTrackInput,
     },
@@ -3979,9 +3979,7 @@ fn transcript_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingTranscript, AiError> {
-    let segments = storage
-        .with_connection(|connection| storage::list_transcript_segments(connection, recording_id))
-        .map_err(storage_error)?;
+    let segments = visible_transcript_segments_for_recording(storage, recording_id)?;
     let mut words_by_segment = BTreeMap::new();
     for segment in &segments {
         let words = storage
@@ -3994,6 +3992,45 @@ fn transcript_for_recording(
         segments,
         words_by_segment,
     ))
+}
+
+pub(crate) fn visible_transcript_segments_for_recording(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<Vec<TranscriptSegmentRow>, AiError> {
+    let (segments, redactions) = storage
+        .with_connection(|connection| {
+            Ok((
+                storage::list_transcript_segments(connection, recording_id)?,
+                storage::list_redactions(connection, recording_id)?,
+            ))
+        })
+        .map_err(storage_error)?;
+
+    Ok(filter_visible_transcript_segments(segments, &redactions))
+}
+
+fn filter_visible_transcript_segments(
+    segments: Vec<TranscriptSegmentRow>,
+    redactions: &[RedactionRow],
+) -> Vec<TranscriptSegmentRow> {
+    if redactions.is_empty() {
+        return segments;
+    }
+
+    segments
+        .into_iter()
+        .filter(|segment| {
+            !redactions.iter().any(|redaction| {
+                storage::redaction_applies_to_track_range(
+                    redaction,
+                    &segment.track_id,
+                    segment.start_offset_ms,
+                    segment.end_offset_ms,
+                )
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn processing_state_for_recording(
@@ -4972,6 +5009,151 @@ mod tests {
                 Ok(())
             })
             .expect("persist transcriptions");
+    }
+
+    #[test]
+    fn transcript_queries_hide_redacted_track_overlaps_without_deleting_rows() {
+        let storage = storage::test_storage(PathBuf::new());
+        let (recording_id, redacted_segment_id) = storage
+            .with_connection_mut(|connection| {
+                let (chunk, track) = test_transcription_chunk(connection);
+                let other_track_id = Uuid::now_v7().to_string();
+                storage::upsert_recording_track(
+                    connection,
+                    &UpsertRecordingTrackInput {
+                        codec: Some("pcm_s16le".to_string()),
+                        created_at_ms: 1,
+                        id: other_track_id.clone(),
+                        kind: "desktop-audio".to_string(),
+                        label: "Desktop audio".to_string(),
+                        path: None,
+                        recording_id: chunk.recording_id.clone(),
+                        source_id: None,
+                    },
+                )?;
+                storage::create_redaction(
+                    connection,
+                    &storage::CreateRedactionInput {
+                        created_at_ms: 20,
+                        end_offset_ms: 2_000,
+                        id: Uuid::now_v7().to_string(),
+                        reason: None,
+                        recording_id: chunk.recording_id.clone(),
+                        start_offset_ms: 1_000,
+                        track_ids_json: serde_json::to_string(&vec![track.id.clone()])
+                            .expect("serialize track ids"),
+                    },
+                )?;
+
+                let redacted_segment = storage::create_transcript_segment(
+                    connection,
+                    &CreateTranscriptSegmentInput {
+                        chunk_id: chunk.id.clone(),
+                        confidence: Some(0.9),
+                        created_at_ms: 30,
+                        end_offset_ms: 1_500,
+                        id: Uuid::now_v7().to_string(),
+                        job_id: chunk.job_id.clone(),
+                        model: Some("small".to_string()),
+                        provider: "local-whisper-cpp".to_string(),
+                        recording_id: chunk.recording_id.clone(),
+                        segment_id: chunk.segment_id.clone().expect("segment id"),
+                        source_role: "microphone".to_string(),
+                        start_offset_ms: 500,
+                        text: "hidden words".to_string(),
+                        track_id: track.id.clone(),
+                    },
+                )?;
+                storage::create_transcript_word(
+                    connection,
+                    &CreateTranscriptWordInput {
+                        end_offset_ms: 800,
+                        id: Uuid::now_v7().to_string(),
+                        probability: Some(0.8),
+                        start_offset_ms: 700,
+                        text: "hidden".to_string(),
+                        transcript_segment_id: redacted_segment.id.clone(),
+                    },
+                )?;
+                storage::create_transcript_segment(
+                    connection,
+                    &CreateTranscriptSegmentInput {
+                        chunk_id: chunk.id.clone(),
+                        confidence: Some(0.8),
+                        created_at_ms: 31,
+                        end_offset_ms: 1_500,
+                        id: Uuid::now_v7().to_string(),
+                        job_id: chunk.job_id.clone(),
+                        model: Some("small".to_string()),
+                        provider: "local-whisper-cpp".to_string(),
+                        recording_id: chunk.recording_id.clone(),
+                        segment_id: chunk.segment_id.clone().expect("segment id"),
+                        source_role: "desktop-audio".to_string(),
+                        start_offset_ms: 500,
+                        text: "visible other track".to_string(),
+                        track_id: other_track_id,
+                    },
+                )?;
+                storage::create_transcript_segment(
+                    connection,
+                    &CreateTranscriptSegmentInput {
+                        chunk_id: chunk.id.clone(),
+                        confidence: Some(0.7),
+                        created_at_ms: 32,
+                        end_offset_ms: 3_000,
+                        id: Uuid::now_v7().to_string(),
+                        job_id: chunk.job_id,
+                        model: Some("small".to_string()),
+                        provider: "local-whisper-cpp".to_string(),
+                        recording_id: chunk.recording_id.clone(),
+                        segment_id: chunk.segment_id.expect("segment id"),
+                        source_role: "microphone".to_string(),
+                        start_offset_ms: 2_000,
+                        text: "visible after redaction".to_string(),
+                        track_id: track.id,
+                    },
+                )?;
+
+                Ok((chunk.recording_id, redacted_segment.id))
+            })
+            .expect("seed transcript and redaction");
+
+        let visible_segments = visible_transcript_segments_for_recording(&storage, &recording_id)
+            .expect("visible transcript segments");
+        let transcript = transcript_for_recording(&storage, &recording_id).expect("transcript");
+        let stored_segments = storage
+            .with_connection(|connection| {
+                storage::list_transcript_segments(connection, &recording_id)
+            })
+            .expect("stored transcript segments");
+
+        assert_eq!(stored_segments.len(), 3);
+        assert!(stored_segments
+            .iter()
+            .any(|segment| segment.id == redacted_segment_id));
+        let visible_text = visible_segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(visible_text.len(), 2);
+        assert!(visible_text.contains(&"visible other track"));
+        assert!(visible_text.contains(&"visible after redaction"));
+
+        let transcript_text = transcript
+            .tracks
+            .iter()
+            .flat_map(|track| track.segments.iter())
+            .map(|segment| segment.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(transcript_text.len(), 2);
+        assert!(transcript_text.contains(&"visible other track"));
+        assert!(transcript_text.contains(&"visible after redaction"));
+        assert!(transcript
+            .tracks
+            .iter()
+            .flat_map(|track| track.segments.iter())
+            .flat_map(|segment| segment.words.iter())
+            .all(|word| word.text != "hidden"));
     }
 
     #[test]

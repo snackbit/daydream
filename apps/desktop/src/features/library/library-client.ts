@@ -1,8 +1,10 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type {
   CloseLibraryPlaybackSessionRequest,
+  CreateLibraryRedactionsInput,
   DeleteLibraryRecordingInput,
   DeleteLibraryRecordingsInput,
+  DeleteLibraryRedactionInput,
   LibraryRecordingDebugData,
   LibraryRecordingDebugInput,
   LibraryPlaybackAssetRequest,
@@ -16,6 +18,7 @@ import type {
   LibraryWaveformRequest,
   LibraryWaveforms,
   RenameLibraryRecordingInput,
+  UnredactLibraryRedactionsInput,
 } from '@daydream/shared';
 
 export async function listLibraryRecordings(): Promise<
@@ -48,6 +51,26 @@ export async function renameLibraryRecording(
   input: RenameLibraryRecordingInput,
 ): Promise<LibraryRecordingDetail> {
   return invoke<LibraryRecordingDetail>('renameLibraryRecording', { input });
+}
+
+export async function createLibraryRedactions(
+  input: CreateLibraryRedactionsInput,
+): Promise<LibraryRecordingDetail> {
+  return invoke<LibraryRecordingDetail>('createLibraryRedactions', { input });
+}
+
+export async function deleteLibraryRedaction(
+  input: DeleteLibraryRedactionInput,
+): Promise<LibraryRecordingDetail> {
+  return invoke<LibraryRecordingDetail>('deleteLibraryRedaction', { input });
+}
+
+export async function unredactLibraryRedactions(
+  input: UnredactLibraryRedactionsInput,
+): Promise<LibraryRecordingDetail> {
+  return invoke<LibraryRecordingDetail>('unredactLibraryRedactions', {
+    input,
+  });
 }
 
 export async function getLibraryRecordingDebug(

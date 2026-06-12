@@ -4,6 +4,13 @@ import type {
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { segmentForTimeline, timelineDurationMs } from '../../library-timeline';
+import {
+  nextRedactionBoundaryDelayMs,
+  nextUnredactedVideoTimelineMsForRedaction,
+  REDACTION_START_GUARD_MS,
+  redactedTracksAtTimelineMs,
+  setsEqual,
+} from './recording-playback-redactions';
 
 export interface RecordingPlaybackSnapshot {
   displayedTimelineMs: number;
@@ -26,7 +33,9 @@ export function useRecordingPlaybackController({
   playbackAssets: LibraryPlaybackAssets | null;
 }) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const fullscreenElementRef = useRef<HTMLElement | null>(null);
   const playbackIntentRef = useRef(false);
+  const redactionBoundaryTimerRef = useRef<number | null>(null);
   const resumeTimerRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playableSegments = useMemo(
@@ -60,6 +69,35 @@ export function useRecordingPlaybackController({
     ? currentSegment.playbackOffsetMs + currentTime * 1000
     : 0;
   const displayedTimelineMs = scrubTimelineMs ?? currentTimelineMs;
+  const [redactedTrackIds, setRedactedTrackIds] = useState<Set<string>>(() =>
+    redactedTracksAtTimelineMs(
+      detail,
+      currentTimelineMs,
+      REDACTION_START_GUARD_MS,
+    ),
+  );
+  const redactedTrackIdsRef = useRef(redactedTrackIds);
+  const videoTrackIds = useMemo(
+    () =>
+      detail.tracks
+        .filter((track) => track.kind === 'video')
+        .map((track) => track.id),
+    [detail.tracks],
+  );
+  const redactedVideoActive = videoTrackIds.some((trackId) =>
+    redactedTrackIds.has(trackId),
+  );
+  const [nextUnredactedVideoTimelineMs, setNextUnredactedVideoTimelineMs] =
+    useState<number | null>(() =>
+      redactedVideoActive
+        ? nextUnredactedVideoTimelineMsForRedaction(
+            detail,
+            currentTimelineMs,
+            videoTrackIds,
+            totalDurationMs,
+          )
+        : null,
+    );
   const streamStartSeconds = streamStartMs / 1000;
   const snapshot: RecordingPlaybackSnapshot = {
     displayedTimelineMs,
@@ -68,13 +106,77 @@ export function useRecordingPlaybackController({
     totalDurationMs,
   };
 
-  const updateMediaSettings = useCallback(
-    (media: HTMLMediaElement, trackId?: string) => {
+  const applyMediaSettings = useCallback(
+    (
+      media: HTMLMediaElement,
+      trackId: string | undefined,
+      activeRedactedTrackIds: Set<string>,
+    ) => {
       media.volume = volume;
-      media.muted = isMuted || (trackId ? mutedTrackIds.has(trackId) : false);
+      media.muted =
+        isMuted ||
+        (trackId
+          ? mutedTrackIds.has(trackId) || activeRedactedTrackIds.has(trackId)
+          : false);
     },
     [isMuted, mutedTrackIds, volume],
   );
+
+  const updateMediaSettings = useCallback(
+    (media: HTMLMediaElement, trackId?: string) => {
+      applyMediaSettings(media, trackId, redactedTrackIdsRef.current);
+    },
+    [applyMediaSettings],
+  );
+
+  const updateRedactionStateForTimeline = useCallback(
+    (timelineMs: number) => {
+      const nextRedactedTrackIds = redactedTracksAtTimelineMs(
+        detail,
+        timelineMs,
+        REDACTION_START_GUARD_MS,
+      );
+      if (!setsEqual(redactedTrackIdsRef.current, nextRedactedTrackIds)) {
+        redactedTrackIdsRef.current = nextRedactedTrackIds;
+        setRedactedTrackIds(nextRedactedTrackIds);
+      }
+      const nextRedactedVideoActive = videoTrackIds.some((trackId) =>
+        nextRedactedTrackIds.has(trackId),
+      );
+      const nextSkipTarget = nextRedactedVideoActive
+        ? nextUnredactedVideoTimelineMsForRedaction(
+            detail,
+            timelineMs,
+            videoTrackIds,
+            totalDurationMs,
+          )
+        : null;
+      setNextUnredactedVideoTimelineMs((currentTarget) =>
+        currentTarget === nextSkipTarget ? currentTarget : nextSkipTarget,
+      );
+      for (const [trackId, audio] of audioRefs.current) {
+        applyMediaSettings(audio, trackId, nextRedactedTrackIds);
+      }
+    },
+    [applyMediaSettings, detail, totalDurationMs, videoTrackIds],
+  );
+
+  const videoTimelineMs = useCallback(
+    (video: HTMLVideoElement) =>
+      currentSegment
+        ? currentSegment.playbackOffsetMs +
+          streamStartMs +
+          video.currentTime * 1000
+        : 0,
+    [currentSegment, streamStartMs],
+  );
+
+  const updateRedactionStateFromVideo = useCallback(() => {
+    const video = videoRef.current;
+    if (video) {
+      updateRedactionStateForTimeline(videoTimelineMs(video));
+    }
+  }, [updateRedactionStateForTimeline, videoTimelineMs]);
 
   function setMediaCurrentTime(media: HTMLMediaElement, seconds: number) {
     if (media.readyState === HTMLMediaElement.HAVE_NOTHING) {
@@ -110,6 +212,13 @@ export function useRecordingPlaybackController({
     if (resumeTimerRef.current !== null) {
       window.clearInterval(resumeTimerRef.current);
       resumeTimerRef.current = null;
+    }
+  }, []);
+
+  const clearRedactionBoundaryTimer = useCallback(() => {
+    if (redactionBoundaryTimerRef.current !== null) {
+      window.clearTimeout(redactionBoundaryTimerRef.current);
+      redactionBoundaryTimerRef.current = null;
     }
   }, []);
 
@@ -158,11 +267,14 @@ export function useRecordingPlaybackController({
       setPendingAutoplay(shouldPlay);
       setResumeProgress(null);
       setStreamStartMs(0);
+      updateRedactionStateForTimeline(
+        playableSegments[nextIndex]?.playbackOffsetMs ?? 0,
+      );
       setStreamRevision((revision) => revision + 1);
       setSeekRevision((revision) => revision + 1);
       setIsPlaying(shouldPlay);
     },
-    [clearResumeTimer],
+    [clearResumeTimer, playableSegments, updateRedactionStateForTimeline],
   );
 
   const seekTimeline = useCallback(
@@ -184,6 +296,7 @@ export function useRecordingPlaybackController({
         setPlaybackError(null);
         setResumeProgress(null);
         setStreamStartMs(lastSegment.durationMs ?? 0);
+        updateRedactionStateForTimeline(totalDurationMs);
         setStreamRevision((revision) => revision + 1);
         setSeekRevision((revision) => revision + 1);
         return;
@@ -205,10 +318,17 @@ export function useRecordingPlaybackController({
       setPlaybackError(null);
       setResumeProgress(null);
       setStreamStartMs(target.offsetMs);
+      updateRedactionStateForTimeline(nextTimelineMs);
       setStreamRevision((revision) => revision + 1);
       setSeekRevision((revision) => revision + 1);
     },
-    [clearResumeTimer, pauseMediaElements, playableSegments, totalDurationMs],
+    [
+      clearResumeTimer,
+      pauseMediaElements,
+      playableSegments,
+      totalDurationMs,
+      updateRedactionStateForTimeline,
+    ],
   );
 
   async function togglePlayback() {
@@ -243,6 +363,13 @@ export function useRecordingPlaybackController({
   function commitTimelineInput(nextTimelineMs: number) {
     setScrubTimelineMs(null);
     seekTimeline(nextTimelineMs);
+  }
+
+  function skipToNextUnredactedVideo() {
+    if (nextUnredactedVideoTimelineMs === null) {
+      return;
+    }
+    seekTimeline(nextUnredactedVideoTimelineMs);
   }
 
   const handleEnded = useCallback(() => {
@@ -304,17 +431,25 @@ export function useRecordingPlaybackController({
   ) {
     if (element) {
       audioRefs.current.set(trackId, element);
+      applyMediaSettings(element, trackId, redactedTrackIdsRef.current);
     } else {
       audioRefs.current.delete(trackId);
     }
   }
 
+  function setFullscreenElement(element: HTMLElement | null) {
+    fullscreenElementRef.current = element;
+  }
+
   function setVideoElement(element: HTMLVideoElement | null) {
     videoRef.current = element;
+    if (element) {
+      updateRedactionStateForTimeline(videoTimelineMs(element));
+    }
   }
 
   function requestFullscreen() {
-    return videoRef.current?.requestFullscreen?.();
+    return fullscreenElementRef.current?.requestFullscreen?.();
   }
 
   function handleVideoPlay() {
@@ -322,6 +457,7 @@ export function useRecordingPlaybackController({
     setIsPlaying(true);
     setPendingAutoplay(false);
     setPlaybackEndedAtEnd(false);
+    updateRedactionStateFromVideo();
   }
 
   function handleVideoPause() {
@@ -330,10 +466,12 @@ export function useRecordingPlaybackController({
 
   function handleVideoTimeUpdate(video: HTMLVideoElement) {
     setCurrentTime(streamStartSeconds + video.currentTime);
+    updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime);
   }
 
   function handleVideoCanPlay() {
+    updateRedactionStateFromVideo();
     if (!pendingAutoplay || resumeProgress !== null) {
       return;
     }
@@ -361,7 +499,61 @@ export function useRecordingPlaybackController({
     }
   }, [updateMediaSettings]);
 
+  useEffect(() => {
+    updateRedactionStateForTimeline(currentTimelineMs);
+  }, [currentTimelineMs, updateRedactionStateForTimeline]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      return;
+    }
+
+    let animationFrameId = window.requestAnimationFrame(function tick() {
+      updateRedactionStateFromVideo();
+      animationFrameId = window.requestAnimationFrame(tick);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [isPlaying, updateRedactionStateFromVideo]);
+
+  useEffect(() => {
+    clearRedactionBoundaryTimer();
+    if (!isPlaying) {
+      return;
+    }
+
+    const scheduleNextBoundary = () => {
+      updateRedactionStateFromVideo();
+      const video = videoRef.current;
+      if (!video) {
+        return;
+      }
+      const delayMs = nextRedactionBoundaryDelayMs(
+        detail,
+        videoTimelineMs(video),
+      );
+      if (delayMs === null) {
+        return;
+      }
+      redactionBoundaryTimerRef.current = window.setTimeout(
+        scheduleNextBoundary,
+        delayMs,
+      );
+    };
+
+    scheduleNextBoundary();
+
+    return clearRedactionBoundaryTimer;
+  }, [
+    clearRedactionBoundaryTimer,
+    detail,
+    isPlaying,
+    updateRedactionStateFromVideo,
+    videoTimelineMs,
+  ]);
+
   useEffect(() => clearResumeTimer, [clearResumeTimer]);
+  useEffect(() => clearRedactionBoundaryTimer, [clearRedactionBoundaryTimer]);
 
   return {
     actions: {
@@ -377,9 +569,11 @@ export function useRecordingPlaybackController({
       registerAudioElement,
       requestFullscreen,
       seekTimeline,
+      setFullscreenElement,
       setIsMuted,
       setVideoElement,
       setVolume,
+      skipToNextUnredactedVideo,
       togglePlayback,
     },
     state: {
@@ -388,8 +582,10 @@ export function useRecordingPlaybackController({
       displayedTimelineMs,
       isMuted,
       isPlaying,
+      nextUnredactedVideoTimelineMs,
       playableSegments,
       playbackError,
+      redactedVideoActive,
       resumeProgress,
       snapshot,
       streamRevision,

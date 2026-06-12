@@ -1,7 +1,7 @@
 import type { LibraryRecordingTrack } from '@daydream/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Minus, Plus, Scissors, ShieldX } from 'lucide-react';
+import { Minus, Plus, ShieldOff, ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDuration } from '../../library-format';
 import type { StudioTimeRangeSelection } from './studio-timeline-store';
@@ -17,16 +17,22 @@ export function TrackTimelineToolbar({
   canZoomIn,
   canZoomOut,
   hasTimeRangeSelection,
+  onRedactSelection,
+  onUnredactSelection,
   onZoomIn,
   onZoomOut,
+  selectedRangeRedactionCount,
   statusText,
   zoomPercent,
 }: {
   canZoomIn: boolean;
   canZoomOut: boolean;
   hasTimeRangeSelection: boolean;
+  onRedactSelection: () => void;
+  onUnredactSelection: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  selectedRangeRedactionCount: number;
   statusText: string;
   zoomPercent: number;
 }) {
@@ -36,14 +42,26 @@ export function TrackTimelineToolbar({
       <div className="flex min-w-0 items-center gap-2">
         {hasTimeRangeSelection ? (
           <div className="flex shrink-0 items-center gap-1">
-            <Button size="sm" type="button" variant="outline">
+            <Button
+              size="sm"
+              type="button"
+              variant="outline"
+              onClick={onRedactSelection}
+            >
               <ShieldX data-icon="inline-start" />
               Redact
             </Button>
-            <Button size="sm" type="button" variant="outline">
-              <Scissors data-icon="inline-start" />
-              Cut
-            </Button>
+            {selectedRangeRedactionCount > 0 ? (
+              <Button
+                size="sm"
+                type="button"
+                variant="outline"
+                onClick={onUnredactSelection}
+              >
+                <ShieldOff data-icon="inline-start" />
+                Unredact
+              </Button>
+            ) : null}
           </div>
         ) : null}
         <div className="text-muted-foreground truncate text-xs">
@@ -93,10 +111,12 @@ export function SortableTrackLane({
   mutedTrackIds,
   onSelectClip,
   onSelectLane,
+  onSelectRedaction,
   onToggleTrackMuted,
   playbackAssets,
   selectedClipIds,
   selectedLane,
+  selectedRedactionIds,
   thumbnailStatus,
   timelineWidthPx,
   timeRanges,
@@ -134,6 +154,7 @@ export function SortableTrackLane({
         playbackAssets={playbackAssets}
         selectedClipIds={selectedClipIds}
         selectedLane={selectedLane}
+        selectedRedactionIds={selectedRedactionIds}
         thumbnailStatus={thumbnailStatus}
         timelineWidthPx={timelineWidthPx}
         timeRanges={timeRanges}
@@ -142,6 +163,7 @@ export function SortableTrackLane({
         waveformTiles={waveformTiles}
         onSelectClip={onSelectClip}
         onSelectLane={onSelectLane}
+        onSelectRedaction={onSelectRedaction}
         onToggleTrackMuted={onToggleTrackMuted}
       />
     </div>

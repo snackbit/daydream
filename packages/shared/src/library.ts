@@ -58,6 +58,16 @@ export interface LibraryRecordingTrack {
   streamIndex: number | null;
 }
 
+export interface LibraryRecordingRedaction {
+  createdAtMs: number;
+  endOffsetMs: number;
+  id: string;
+  reason: string | null;
+  recordingId: string;
+  startOffsetMs: number;
+  trackIds: string[];
+}
+
 export interface LibraryRecordingDetail {
   availability: LibraryRecordingAvailability;
   durationMs: number | null;
@@ -65,6 +75,7 @@ export interface LibraryRecordingDetail {
   id: string;
   missingReasons: string[];
   playableSegmentCount: number;
+  redactions: LibraryRecordingRedaction[];
   segments: LibraryRecordingSegment[];
   sizeBytes: number;
   startedAtMs: number | null;
@@ -86,6 +97,28 @@ export interface DeleteLibraryRecordingsInput {
 export interface RenameLibraryRecordingInput {
   recordingId: string;
   title: string | null;
+}
+
+export interface CreateLibraryRedactionRangeInput {
+  endOffsetMs: number;
+  reason?: string | null;
+  startOffsetMs: number;
+  trackIds: string[];
+}
+
+export interface CreateLibraryRedactionsInput {
+  ranges: CreateLibraryRedactionRangeInput[];
+  recordingId: string;
+}
+
+export interface DeleteLibraryRedactionInput {
+  recordingId: string;
+  redactionId: string;
+}
+
+export interface UnredactLibraryRedactionsInput {
+  ranges: CreateLibraryRedactionRangeInput[];
+  recordingId: string;
 }
 
 export interface LibraryRecordingDebugInput {

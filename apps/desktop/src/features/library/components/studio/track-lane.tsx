@@ -8,6 +8,7 @@ import {
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  LibraryRecordingRedaction,
   LibraryRecordingSegment,
   LibraryRecordingTrack,
   LibraryWaveformTileTrack,
@@ -43,10 +44,12 @@ export interface TrackLaneProps {
   mutedTrackIds: Set<string>;
   onSelectClip: (clipId: string, additive: boolean) => void;
   onSelectLane: (trackId: string, additive: boolean) => void;
+  onSelectRedaction: (redactionId: string, additive: boolean) => void;
   onToggleTrackMuted: (trackId: string) => void;
   playbackAssets: LibraryPlaybackAssets | null;
   selectedClipIds: Set<string>;
   selectedLane: boolean;
+  selectedRedactionIds: Set<string>;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   timelineWidthPx: number;
   timeRanges: StudioTimeRangeSelection[];
@@ -64,10 +67,12 @@ export function TrackLane({
   mutedTrackIds,
   onSelectClip,
   onSelectLane,
+  onSelectRedaction,
   onToggleTrackMuted,
   playbackAssets,
   selectedClipIds,
   selectedLane,
+  selectedRedactionIds,
   thumbnailStatus,
   timelineWidthPx,
   timeRanges,
@@ -82,6 +87,9 @@ export function TrackLane({
   );
   const audioTrack = track.kind !== 'video';
   const muted = mutedTrackIds.has(track.id);
+  const redactions = detail.redactions.filter((redaction) =>
+    redaction.trackIds.includes(track.id),
+  );
   const color = studioColorById(lane.colorId);
   const derivedLane = buildDerivedLane({
     aiProcessingState,
@@ -207,18 +215,6 @@ export function TrackLane({
             </span>
           </button>
         </div>
-        <div
-          className="text-muted-foreground flex h-6 items-center gap-2 border-t px-2 text-[0.625rem]"
-          title={derivedLane.description}
-        >
-          <span
-            aria-hidden="true"
-            className="size-1.5 shrink-0 rounded-full"
-            style={{ backgroundColor: color.strong }}
-          />
-          <span className="truncate">{derivedLane.label}</span>
-          <span className="truncate">{derivedLane.statusLabel}</span>
-        </div>
       </div>
       <div
         className={cn(
@@ -280,6 +276,17 @@ export function TrackLane({
             totalDurationMs={totalDurationMs}
           />
         ))}
+        {redactions.map((redaction) => (
+          <RedactionOverlay
+            key={redaction.id}
+            redaction={redaction}
+            selected={selectedRedactionIds.has(redaction.id)}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            track={track}
+            onSelectRedaction={onSelectRedaction}
+          />
+        ))}
       </div>
     </>
   );
@@ -313,6 +320,7 @@ function TrackClip({
   waveformTrack: LibraryWaveformTileTrack | undefined;
 }) {
   const finalized = segment.fileExists && segment.state === 'finalized';
+  const hasTranscriptionLayer = track.kind !== 'video';
 
   return (
     <button
@@ -350,14 +358,16 @@ function TrackClip({
       </div>
       <div
         className="bg-background/60 absolute inset-x-0 top-4 overflow-hidden"
-        style={{ bottom: TRACK_DERIVED_LANE_HEIGHT_PX }}
+        style={{
+          bottom: hasTranscriptionLayer ? TRACK_DERIVED_LANE_HEIGHT_PX : 0,
+        }}
       >
         {children}
         {!waveformTrack && track.kind !== 'video' ? (
           <WaveformSilenceLine />
         ) : null}
       </div>
-      {track.kind !== 'video' ? (
+      {hasTranscriptionLayer ? (
         <SegmentTranscriptionLayer
           color={color.strong}
           lane={derivedLane}
@@ -387,6 +397,60 @@ function TimeRangeOverlay({
       className="pointer-events-none absolute inset-y-1 z-20 rounded-sm border border-red-500 bg-red-500/12"
       style={{ left, width }}
     />
+  );
+}
+
+function RedactionOverlay({
+  onSelectRedaction,
+  redaction,
+  selected,
+  timelineWidthPx,
+  totalDurationMs,
+  track,
+}: {
+  onSelectRedaction: (redactionId: string, additive: boolean) => void;
+  redaction: LibraryRecordingRedaction;
+  selected: boolean;
+  timelineWidthPx: number;
+  totalDurationMs: number;
+  track: LibraryRecordingTrack;
+}) {
+  const left = (redaction.startOffsetMs / totalDurationMs) * timelineWidthPx;
+  const width =
+    ((redaction.endOffsetMs - redaction.startOffsetMs) / totalDurationMs) *
+    timelineWidthPx;
+
+  return (
+    <button
+      aria-label={`${track.label} redacted range`}
+      aria-pressed={selected}
+      className={cn(
+        'absolute inset-y-1 z-30 overflow-hidden rounded-sm border border-neutral-900 bg-neutral-700 text-left text-[0.625rem] font-medium text-white shadow-inner outline-none',
+        'focus-visible:ring-ring/40 focus-visible:ring-2',
+        selected && 'ring-ring ring-offset-background ring-2 ring-offset-1',
+      )}
+      data-library-action
+      style={{
+        left,
+        width: Math.max(4, width),
+      }}
+      title={`${track.label} redacted`}
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelectRedaction(
+          redaction.id,
+          event.shiftKey || event.metaKey || event.ctrlKey,
+        );
+      }}
+    >
+      <span className="absolute inset-x-0 top-0 flex h-4 items-center bg-neutral-950 px-1 text-white">
+        <span className="truncate">Redacted</span>
+      </span>
+      <span className="sr-only">
+        {redaction.startOffsetMs} to {redaction.endOffsetMs} ms
+      </span>
+    </button>
   );
 }
 

@@ -441,6 +441,7 @@ test('library contracts support missing recordings and playable details', () => 
     ...missing,
     availability: 'available',
     missingReasons: [],
+    redactions: [],
     segments: [
       {
         desktopAudioStreamIndex: 1,

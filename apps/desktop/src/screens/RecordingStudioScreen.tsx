@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import type {
+  CreateLibraryRedactionRangeInput,
   LibraryRecordingDebugData,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -35,10 +36,13 @@ import { RecordingStudio } from '@/features/library/components/studio/recording-
 import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
+  createLibraryRedactions,
   deleteLibraryRecording,
+  deleteLibraryRedaction,
   getLibraryRecordingDebug,
   getLibraryRecording,
   renameLibraryRecording,
+  unredactLibraryRedactions,
 } from '@/features/library/library-client';
 import {
   availabilityLabel,
@@ -168,6 +172,63 @@ export function RecordingStudioScreen() {
       setError(errorMessage(renameError));
     } finally {
       setRenameSaving(false);
+    }
+  }
+
+  async function createRedactions(ranges: CreateLibraryRedactionRangeInput[]) {
+    if (!detail) {
+      return;
+    }
+    setError(null);
+    try {
+      setDetail(
+        await createLibraryRedactions({
+          ranges,
+          recordingId: detail.id,
+        }),
+      );
+    } catch (redactionError) {
+      const message = errorMessage(redactionError);
+      setError(message);
+      throw new Error(message);
+    }
+  }
+
+  async function removeRedaction(redactionId: string) {
+    if (!detail) {
+      return;
+    }
+    setError(null);
+    try {
+      setDetail(
+        await deleteLibraryRedaction({
+          recordingId: detail.id,
+          redactionId,
+        }),
+      );
+    } catch (redactionError) {
+      const message = errorMessage(redactionError);
+      setError(message);
+      throw new Error(message);
+    }
+  }
+
+  async function unredactRanges(ranges: CreateLibraryRedactionRangeInput[]) {
+    if (!detail) {
+      return;
+    }
+    setError(null);
+    try {
+      setDetail(
+        await unredactLibraryRedactions({
+          ranges,
+          recordingId: detail.id,
+        }),
+      );
+    } catch (redactionError) {
+      const message = errorMessage(redactionError);
+      setError(message);
+      throw new Error(message);
     }
   }
 
@@ -363,6 +424,9 @@ export function RecordingStudioScreen() {
         <RecordingStudio
           aiProcessingState={aiProcessing.state}
           detail={detail}
+          onCreateRedactions={createRedactions}
+          onDeleteRedaction={removeRedaction}
+          onUnredactRanges={unredactRanges}
           playbackAssets={playbackAssets}
           thumbnailStatus={thumbnailStatus}
         />

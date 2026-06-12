@@ -190,6 +190,7 @@ export function useTrackTimelineSelection({
       setSelection({
         clipIds: [],
         laneIds: [],
+        redactionIds: [],
         ranges: subtractTimeRangeSelection(
           drag.baseSelection.ranges,
           nextRange,
@@ -203,11 +204,13 @@ export function useTrackTimelineSelection({
         ? {
             clipIds: [],
             laneIds: [],
+            redactionIds: [],
             ranges: [...drag.baseSelection.ranges, nextRange],
           }
         : {
             clipIds: [],
             laneIds: [],
+            redactionIds: [],
             ranges: [nextRange],
           },
     );
@@ -253,6 +256,7 @@ function cloneSelection(selection: StudioSelection): StudioSelection {
   return {
     clipIds: [...selection.clipIds],
     laneIds: [...selection.laneIds],
+    redactionIds: [...selection.redactionIds],
     ranges: selection.ranges.map((range) => ({
       ...range,
       laneIds: [...range.laneIds],

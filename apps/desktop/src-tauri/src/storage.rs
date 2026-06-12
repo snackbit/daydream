@@ -13,6 +13,7 @@ mod diagnostics;
 mod notifications;
 mod portal_tokens;
 mod recordings;
+mod redactions;
 mod scenes;
 mod schema;
 mod segments;
@@ -53,6 +54,10 @@ pub use recordings::{
     is_active_recording_status, is_deletable_recording_status, list_recordings,
     mark_recording_completed, mark_recording_started, recover_interrupted_recordings,
     rename_recording, update_recording_status, CreateRecordingInput, RecordingRow,
+};
+pub use redactions::{
+    create_redaction, delete_redaction, delete_redactions_for_recording, get_redaction,
+    list_redactions, redaction_applies_to_track_range, CreateRedactionInput, RedactionRow,
 };
 pub use scenes::{
     get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, RecorderSceneRow,

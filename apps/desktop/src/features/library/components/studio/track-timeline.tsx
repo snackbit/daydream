@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+  CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   RecordingAiProcessingState,
@@ -20,6 +21,7 @@ import {
 } from '@dnd-kit/sortable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
+import { redactionsIntersectingRanges } from './studio-redactions';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import {
   buildRulerTicks,
@@ -51,6 +53,8 @@ export function TrackTimeline({
   aiProcessingState,
   detail,
   mutedTrackIds,
+  onCreateRedactions,
+  onUnredactRanges,
   onToggleTrackMuted,
   playback,
   playbackAssets,
@@ -59,6 +63,12 @@ export function TrackTimeline({
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
+  onCreateRedactions: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
+  onUnredactRanges: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
   onToggleTrackMuted: (trackId: string) => void;
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
@@ -74,6 +84,9 @@ export function TrackTimeline({
   const moveLane = useStudioTimelineStore((store) => store.moveLane);
   const selectClip = useStudioTimelineStore((store) => store.selectClip);
   const selectLane = useStudioTimelineStore((store) => store.selectLane);
+  const selectRedaction = useStudioTimelineStore(
+    (store) => store.selectRedaction,
+  );
   const selection = useStudioTimelineStore((store) => store.selection);
   const setSelection = useStudioTimelineStore((store) => store.setSelection);
   const totalDurationMs = Math.max(1, timelineDurationMs(detail.segments));
@@ -123,7 +136,15 @@ export function TrackTimeline({
     () => new Set(selection.laneIds),
     [selection.laneIds],
   );
+  const selectedRedactionIds = useMemo(
+    () => new Set(selection.redactionIds),
+    [selection.redactionIds],
+  );
   const hasTimeRangeSelection = selection.ranges.length > 0;
+  const selectedRangeRedactions = useMemo(
+    () => redactionsIntersectingRanges(detail.redactions, selection.ranges),
+    [detail.redactions, selection.ranges],
+  );
   const rulerTicks = useMemo(
     () =>
       buildRulerTicks({
@@ -404,12 +425,41 @@ export function TrackTimeline({
     moveLane(String(event.active.id), String(event.over.id));
   }
 
+  async function redactSelection() {
+    if (selection.ranges.length === 0) {
+      return;
+    }
+    await onCreateRedactions(
+      selection.ranges.map((range) => ({
+        endOffsetMs: Math.round(range.endMs),
+        startOffsetMs: Math.round(range.startMs),
+        trackIds: range.laneIds,
+      })),
+    );
+    clearSelection();
+  }
+
+  async function unredactSelection() {
+    if (selectedRangeRedactions.length === 0) {
+      return;
+    }
+    await onUnredactRanges(
+      selection.ranges.map((range) => ({
+        endOffsetMs: Math.round(range.endMs),
+        startOffsetMs: Math.round(range.startMs),
+        trackIds: range.laneIds,
+      })),
+    );
+    clearSelection();
+  }
+
   return (
     <div className="bg-background flex h-full flex-col">
       <TrackTimelineToolbar
         canZoomIn={canZoomIn}
         canZoomOut={canZoomOut}
         hasTimeRangeSelection={hasTimeRangeSelection}
+        selectedRangeRedactionCount={selectedRangeRedactions.length}
         statusText={
           waveformTiles?.error ??
           (waveformStatus === 'loading'
@@ -419,6 +469,8 @@ export function TrackTimeline({
         zoomPercent={zoomPercent}
         onZoomIn={() => zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)}
         onZoomOut={() => zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)}
+        onRedactSelection={() => void redactSelection()}
+        onUnredactSelection={() => void unredactSelection()}
       />
       <ScrollArea
         className="min-h-0 flex-1"
@@ -486,6 +538,7 @@ export function TrackTimeline({
                     playbackAssets={playbackAssets}
                     selectedClipIds={selectedClipIds}
                     selectedLane={selectedLaneIds.has(track.id)}
+                    selectedRedactionIds={selectedRedactionIds}
                     thumbnailStatus={thumbnailStatus}
                     timelineWidthPx={timelineWidthPx}
                     timeRanges={selection.ranges.filter((range) =>
@@ -494,6 +547,7 @@ export function TrackTimeline({
                     totalDurationMs={totalDurationMs}
                     track={track}
                     waveformTiles={waveformTiles}
+                    onSelectRedaction={selectRedaction}
                     onSelectClip={selectClip}
                     onSelectLane={selectLane}
                     onToggleTrackMuted={onToggleTrackMuted}

@@ -7,20 +7,21 @@ use super::{
     acknowledge_notifications, apply_migrations, claim_next_queued_processing_chunk,
     collect_database_diagnostics_from_connection, create_activity_interval,
     create_frame_similarity_entry, create_ocr_region, create_processing_chunk, create_recording,
-    create_recording_segment, create_transcript_segment, create_transcript_word,
+    create_recording_segment, create_redaction, create_transcript_segment, create_transcript_word,
     create_vlm_observation, delete_all_notifications, delete_notifications,
     delete_notifications_older_than, delete_portal_restore_token, delete_recording,
-    dismiss_notification, enable_connection_pragmas, fail_recording_segment,
+    delete_redaction, dismiss_notification, enable_connection_pragmas, fail_recording_segment,
     finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
     get_recorder_scene, get_recording, list_app_settings, list_notifications,
     list_processing_chunks_by_status, list_processing_jobs_by_status, list_recording_segments,
-    mark_portal_restore_token_used, mark_recording_completed, mark_recording_started, migrations,
-    recover_interrupted_recordings, rename_recording, reset_app_settings,
-    retry_processing_job_chunks, save_ai_model_asset, save_app_settings, save_notification,
-    save_recorder_scene, save_unseen_notification, update_processing_chunk_result_code,
-    update_recording_status, upsert_portal_restore_token, AppStorage, CreateActivityIntervalInput,
-    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
-    CreateRecordingSegmentInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
+    list_redactions, mark_portal_restore_token_used, mark_recording_completed,
+    mark_recording_started, migrations, recover_interrupted_recordings, rename_recording,
+    reset_app_settings, retry_processing_job_chunks, save_ai_model_asset, save_app_settings,
+    save_notification, save_recorder_scene, save_unseen_notification,
+    update_processing_chunk_result_code, update_recording_status, upsert_portal_restore_token,
+    AppStorage, CreateActivityIntervalInput, CreateFrameSimilarityEntryInput,
+    CreateProcessingChunkInput, CreateRecordingInput, CreateRecordingSegmentInput,
+    CreateRedactionInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
     CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
     SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
     SaveRecorderSceneSourceInput,
@@ -40,7 +41,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 14);
+    assert_eq!(schema_version, 15);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -1182,6 +1183,104 @@ fn redaction_interval_must_have_positive_duration() {
 }
 
 #[test]
+fn redactions_store_lane_scoped_track_metadata() {
+    let connection = migrated_memory_connection();
+    let recording_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO recordings (
+                id,
+                created_at_ms,
+                status,
+                default_fps,
+                quality_label,
+                storage_dir
+            ) VALUES (?1, 1, 'completed', 1.0, 'ocr', '/tmp/daydream')
+            "#,
+            [&recording_id],
+        )
+        .expect("insert recording");
+
+    let redaction = create_redaction(
+        &connection,
+        &CreateRedactionInput {
+            created_at_ms: 3,
+            end_offset_ms: 2_000,
+            id: Uuid::now_v7().to_string(),
+            reason: Some("private".to_string()),
+            recording_id: recording_id.clone(),
+            start_offset_ms: 1_000,
+            track_ids_json: r#"["desktop-audio-1","video-0"]"#.to_string(),
+        },
+    )
+    .expect("create redaction");
+
+    let redactions = list_redactions(&connection, &recording_id).expect("list redactions");
+
+    assert_eq!(redactions, vec![redaction]);
+    assert_eq!(
+        redactions[0].track_ids_json,
+        r#"["desktop-audio-1","video-0"]"#
+    );
+}
+
+#[test]
+fn deleting_redactions_is_scoped_to_recording() {
+    let connection = migrated_memory_connection();
+    let recording_id = Uuid::now_v7().to_string();
+    let other_recording_id = Uuid::now_v7().to_string();
+    let redaction_id = Uuid::now_v7().to_string();
+
+    for id in [&recording_id, &other_recording_id] {
+        connection
+            .execute(
+                r#"
+                INSERT INTO recordings (
+                    id,
+                    created_at_ms,
+                    status,
+                    default_fps,
+                    quality_label,
+                    storage_dir
+                ) VALUES (?1, 1, 'completed', 1.0, 'ocr', '/tmp/daydream')
+                "#,
+                [id],
+            )
+            .expect("insert recording");
+    }
+    create_redaction(
+        &connection,
+        &CreateRedactionInput {
+            created_at_ms: 3,
+            end_offset_ms: 2_000,
+            id: redaction_id.clone(),
+            reason: None,
+            recording_id: recording_id.clone(),
+            start_offset_ms: 1_000,
+            track_ids_json: r#"["video-0"]"#.to_string(),
+        },
+    )
+    .expect("create redaction");
+
+    assert!(
+        !delete_redaction(&connection, &other_recording_id, &redaction_id)
+            .expect("delete other recording redaction")
+    );
+    assert_eq!(
+        list_redactions(&connection, &recording_id)
+            .expect("list redactions")
+            .len(),
+        1
+    );
+    assert!(delete_redaction(&connection, &recording_id, &redaction_id).expect("delete redaction"));
+    assert!(list_redactions(&connection, &recording_id)
+        .expect("list redactions")
+        .is_empty());
+}
+
+#[test]
 fn track_requires_existing_recording() {
     let connection = migrated_memory_connection();
 
@@ -1234,7 +1333,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 14);
+    assert_eq!(schema_version, 15);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

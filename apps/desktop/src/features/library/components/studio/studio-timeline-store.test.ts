@@ -16,6 +16,7 @@ const detail = {
   id: 'recording-1',
   missingReasons: [],
   playableSegmentCount: 2,
+  redactions: [],
   segments: [
     {
       desktopAudioStreamIndex: 1,
@@ -118,6 +119,7 @@ test('studio timeline store resets session edits when recording changes', () => 
   expect(useStudioTimelineStore.getState().selection).toEqual({
     clipIds: [],
     laneIds: [],
+    redactionIds: [],
     ranges: [],
   });
 });
@@ -130,6 +132,7 @@ test('studio timeline store keeps additive editor selection within one category'
   expect(useStudioTimelineStore.getState().selection).toEqual({
     clipIds: [],
     laneIds: ['video-0', 'desktop-audio-1'],
+    redactionIds: [],
     ranges: [],
   });
 
@@ -141,6 +144,7 @@ test('studio timeline store keeps additive editor selection within one category'
   expect(useStudioTimelineStore.getState().selection).toEqual({
     clipIds: [desktopClipId, videoClipId],
     laneIds: [],
+    redactionIds: [],
     ranges: [],
   });
 
@@ -156,6 +160,7 @@ test('studio timeline store keeps additive editor selection within one category'
   expect(useStudioTimelineStore.getState().selection).toEqual({
     clipIds: [],
     laneIds: [],
+    redactionIds: [],
     ranges: [
       {
         endMs: 2_000,
@@ -234,6 +239,7 @@ test('studio timeline store reconciles same-recording refreshes', () => {
   expect(useStudioTimelineStore.getState().selection).toEqual({
     clipIds: [],
     laneIds: ['desktop-audio-1'],
+    redactionIds: [],
     ranges: [],
   });
 });

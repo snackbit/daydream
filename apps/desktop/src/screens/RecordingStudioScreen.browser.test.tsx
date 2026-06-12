@@ -9,6 +9,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -22,11 +23,14 @@ import { RecordingStudioScreen } from './RecordingStudioScreen';
 const client = vi.hoisted(() => ({
   closeLibraryPlaybackSession: vi.fn(),
   createLibraryPlaybackSession: vi.fn(),
+  createLibraryRedactions: vi.fn(),
   deleteLibraryRecording: vi.fn(),
+  deleteLibraryRedaction: vi.fn(),
   getLibraryRecordingDebug: vi.fn(),
   getLibraryRecording: vi.fn(),
   getRecordingWaveformTiles: vi.fn(),
   renameLibraryRecording: vi.fn(),
+  unredactLibraryRedactions: vi.fn(),
 }));
 
 const aiClient = vi.hoisted(() => ({
@@ -61,6 +65,7 @@ const detail = {
   id: 'recording-1',
   missingReasons: [],
   playableSegmentCount: 2,
+  redactions: [],
   segments: [
     {
       desktopAudioStreamIndex: 1,
@@ -242,6 +247,9 @@ beforeEach(() => {
   );
   routeState.recordingId = 'recording-1';
   client.deleteLibraryRecording.mockResolvedValue(undefined);
+  client.createLibraryRedactions.mockResolvedValue(detail);
+  client.deleteLibraryRedaction.mockResolvedValue(detail);
+  client.unredactLibraryRedactions.mockResolvedValue(detail);
   client.closeLibraryPlaybackSession.mockResolvedValue(undefined);
   client.getLibraryRecording.mockResolvedValue(detail);
   client.renameLibraryRecording.mockImplementation(
@@ -277,6 +285,7 @@ afterEach(() => {
   vi.useRealTimers();
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function deferred<T>() {
@@ -549,9 +558,9 @@ test('RecordingStudioScreen shows processed AI state without a spinner', async (
     name: /processed/i,
   });
   expect((processedButton as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByText('Transcription')).toBeTruthy();
-  expect(screen.getByText('No speech detected')).toBeTruthy();
-  expect(screen.getByText('OCR + VLM')).toBeTruthy();
+  expect(screen.queryByText('Transcription')).toBeNull();
+  expect(screen.queryByText('No speech detected')).toBeNull();
+  expect(screen.queryByText('OCR + VLM')).toBeNull();
 });
 
 test('RecordingStudioScreen clears stale AI state after route changes', async () => {
@@ -660,7 +669,6 @@ test('RecordingStudioScreen treats active chunks as processing even when the job
 
   expect((processingButton as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
-  expect(screen.getByText('Transcription in progress')).toBeTruthy();
   expect(screen.getByLabelText('AI processing in progress')).toBeTruthy();
 });
 
@@ -675,8 +683,9 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
 
   render(<RecordingStudioScreen />);
 
-  expect(await screen.findByText('Transcription')).toBeTruthy();
-  expect(screen.getByText('OCR + VLM')).toBeTruthy();
+  expect(await screen.findByLabelText('Track timeline')).toBeTruthy();
+  expect(screen.queryByText('Transcription')).toBeNull();
+  expect(screen.queryByText('OCR + VLM')).toBeNull();
 
   processingHandler({
     chunks: [
@@ -715,7 +724,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   expect(
     await screen.findByLabelText('AI processing in progress'),
   ).toBeTruthy();
-  expect(screen.getByText('Transcription in progress')).toBeTruthy();
+  expect(screen.queryByText('Transcription in progress')).toBeNull();
   expect(
     (screen.getByRole('button', { name: /processing/i }) as HTMLButtonElement)
       .disabled,
@@ -794,7 +803,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   });
 
   expect(await screen.findByText('Standup notes')).toBeTruthy();
-  expect(screen.getByText('Transcription failed')).toBeTruthy();
+  expect(screen.queryByText('Transcription failed')).toBeNull();
   expect(screen.getByLabelText('AI processing failed')).toBeTruthy();
   expect(
     (screen.getByRole('button', { name: /retry ai/i }) as HTMLButtonElement)
@@ -1368,6 +1377,7 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
     expect(useStudioTimelineStore.getState().selection).toEqual({
       clipIds: [],
       laneIds: [],
+      redactionIds: [],
       ranges: [],
     }),
   );
@@ -1406,7 +1416,222 @@ test('RecordingStudioScreen selects all lanes from a ruler drag', async () => {
   expect(screen.queryByText('recording-1')).toBeNull();
   expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
   expect(screen.getAllByRole('button', { name: /^Redact$/i })).toHaveLength(2);
-  expect(screen.getAllByRole('button', { name: /^Cut$/i })).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: /^Cut$/i })).toBeNull();
+});
+
+test('RecordingStudioScreen persists selected ranges as lane redactions', async () => {
+  const redactedDetail = {
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: ['desktop-audio-1', 'video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+  client.createLibraryRedactions.mockResolvedValue(redactedDetail);
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+  fireEvent.pointerDown(ruler, {
+    button: 0,
+    clientX: 220,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+
+  fireEvent.click(screen.getAllByRole('button', { name: /^Redact$/i })[0]!);
+
+  await waitFor(() =>
+    expect(client.createLibraryRedactions).toHaveBeenCalledWith({
+      ranges: [
+        {
+          endOffsetMs: expect.any(Number),
+          startOffsetMs: expect.any(Number),
+          trackIds: ['desktop-audio-1', 'video-0'],
+        },
+      ],
+      recordingId: 'recording-1',
+    }),
+  );
+  expect(await screen.findAllByText('Redacted')).toHaveLength(2);
+  expect(screen.queryByLabelText('Selected time range')).toBeNull();
+});
+
+test('RecordingStudioScreen renders timeline redaction masks as opaque controls', async () => {
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: ['video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail);
+
+  render(<RecordingStudioScreen />);
+
+  const redactionMask = await screen.findByRole('button', {
+    name: 'Video redacted range',
+  });
+  expect(redactionMask.className).toContain('bg-neutral-700');
+  expect(redactionMask.className).not.toContain('/35');
+  expect(redactionMask.className).not.toContain('backdrop-grayscale');
+});
+
+test('RecordingStudioScreen removes a selected redaction mask', async () => {
+  const redactedDetail = {
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: ['video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+  client.getLibraryRecording.mockResolvedValue(redactedDetail);
+  client.unredactLibraryRedactions.mockResolvedValue({
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_001,
+        endOffsetMs: 1_500,
+        id: 'redaction-left',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_000,
+        trackIds: ['desktop-audio-1', 'video-0'],
+      },
+      {
+        createdAtMs: 12_001,
+        endOffsetMs: 4_500,
+        id: 'redaction-right',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 3_000,
+        trackIds: ['desktop-audio-1', 'video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail);
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Video redacted range',
+    }),
+  );
+  expect(
+    await screen.findByRole('button', { name: /^Unredact$/i }),
+  ).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^Unredact$/i }));
+
+  await waitFor(() =>
+    expect(client.deleteLibraryRedaction).toHaveBeenCalledWith({
+      recordingId: 'recording-1',
+      redactionId: 'redaction-1',
+    }),
+  );
+});
+
+test('RecordingStudioScreen removes a redaction overlapped by a time selection', async () => {
+  const redactedDetail = {
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: ['desktop-audio-1', 'video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+  client.getLibraryRecording.mockResolvedValue(redactedDetail);
+  client.deleteLibraryRedaction.mockResolvedValue({
+    ...detail,
+    redactions: [],
+  } satisfies LibraryRecordingDetail);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(2_400);
+  render(<RecordingStudioScreen />);
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  await waitFor(() => expect(timeline.style.width).toBe('800px'));
+  const ruler = await screen.findByLabelText('Time ruler');
+
+  fireEvent.pointerDown(ruler, {
+    button: 0,
+    clientX: 220,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+
+  expect(await screen.findByText('2 lanes')).toBeTruthy();
+  expect(screen.getAllByRole('button', { name: /^Unredact$/i })).toHaveLength(
+    2,
+  );
+
+  fireEvent.click(screen.getAllByRole('button', { name: /^Unredact$/i })[0]!);
+
+  await waitFor(() =>
+    expect(client.unredactLibraryRedactions).toHaveBeenCalledWith({
+      ranges: [
+        {
+          endOffsetMs: expect.any(Number),
+          startOffsetMs: expect.any(Number),
+          trackIds: ['desktop-audio-1', 'video-0'],
+        },
+      ],
+      recordingId: 'recording-1',
+    }),
+  );
+  expect(client.deleteLibraryRedaction).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Selected time range')).toBeNull();
 });
 
 test('RecordingStudioScreen ctrl-drag creates one additive range despite many moves', async () => {
@@ -1440,6 +1665,7 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
     laneIds: [],
+    redactionIds: [],
     ranges: [
       {
         endMs: 2_000,
@@ -1468,7 +1694,7 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
   expect(screen.getAllByLabelText('Selected time range')).toHaveLength(2);
 });
 
-test('RecordingStudioScreen ctrl-shift-drag cuts out an existing range', async () => {
+test('RecordingStudioScreen ctrl-shift-drag subtracts from an existing range', async () => {
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
@@ -1477,6 +1703,7 @@ test('RecordingStudioScreen ctrl-shift-drag cuts out an existing range', async (
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
     laneIds: [],
+    redactionIds: [],
     ranges: [
       {
         endMs: 7_000,
@@ -1503,7 +1730,6 @@ test('RecordingStudioScreen ctrl-shift-drag cuts out an existing range', async (
   await waitFor(() => {
     const [range] = useStudioTimelineStore.getState().selection.ranges;
     expect(range).toBeDefined();
-    expect(range!.endMs - range!.startMs).toBeLessThan(7_000);
   });
   const remainingRange = useStudioTimelineStore.getState().selection.ranges[0]!;
   expect(remainingRange).toMatchObject({
@@ -1521,6 +1747,7 @@ test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', as
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
     laneIds: [],
+    redactionIds: [],
     ranges: [
       {
         endMs: 7_000,
@@ -1741,6 +1968,108 @@ test('RecordingStudioScreen advances immediately across back-to-back segments', 
     ),
   );
   expect(screen.queryByText(/Recording paused/i)).toBeNull();
+});
+
+test('RecordingStudioScreen fullscreen targets the player surface instead of the raw video', async () => {
+  const fullscreenPrototype = HTMLElement.prototype as Partial<HTMLElement>;
+  const originalRequestFullscreen = fullscreenPrototype.requestFullscreen;
+  const requestFullscreen = vi.fn(() => Promise.resolve());
+  Object.defineProperty(fullscreenPrototype, 'requestFullscreen', {
+    configurable: true,
+    value: requestFullscreen,
+  });
+
+  try {
+    const { container } = render(<RecordingStudioScreen />);
+
+    const video = await waitFor(() => {
+      const element = container.querySelector('video');
+      expect(element).toBeTruthy();
+      return element!;
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^fullscreen$/i }));
+
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    const fullscreenTarget = requestFullscreen.mock.contexts[0] as HTMLElement;
+    expect(fullscreenTarget).not.toBe(video);
+    expect(fullscreenTarget.querySelector('video')).toBe(video);
+  } finally {
+    if (originalRequestFullscreen) {
+      Object.defineProperty(fullscreenPrototype, 'requestFullscreen', {
+        configurable: true,
+        value: originalRequestFullscreen,
+      });
+    } else {
+      delete fullscreenPrototype.requestFullscreen;
+    }
+  }
+});
+
+test('RecordingStudioScreen masks and mutes redactions from media time before timeupdate', async () => {
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 1_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_000,
+        trackIds: ['desktop-audio-1', 'video-0'],
+      },
+    ],
+  } satisfies LibraryRecordingDetail);
+
+  const { container } = render(<RecordingStudioScreen />);
+
+  const video = await waitFor(() => {
+    const element = container.querySelector('video');
+    expect(element).toBeTruthy();
+    return element!;
+  });
+  const audio = await waitFor(() => {
+    const element = container.querySelector('audio');
+    expect(element).toBeTruthy();
+    return element!;
+  });
+
+  video.currentTime = 0.95;
+  fireEvent.play(video);
+
+  await waitFor(() => {
+    expect(within(video.parentElement!).getByText('Redacted')).toBeTruthy();
+    expect(
+      within(video.parentElement!).getByRole('button', {
+        name: /skip redacted part/i,
+      }),
+    ).toBeTruthy();
+    expect(audio.muted).toBe(true);
+  });
+
+  fireEvent.click(
+    within(video.parentElement!).getByRole('button', {
+      name: /skip redacted part/i,
+    }),
+  );
+
+  await waitFor(() =>
+    expect(container.querySelector('video')?.getAttribute('src')).toContain(
+      `${playbackAssets.segments[0]!.videoUrl}?startMs=1500&request=1`,
+    ),
+  );
+
+  const skippedVideo = container.querySelector('video')!;
+  skippedVideo.currentTime = 1.5;
+  fireEvent.timeUpdate(skippedVideo);
+
+  await waitFor(() => {
+    expect(
+      within(skippedVideo.parentElement!).queryByText('Redacted'),
+    ).toBeNull();
+    expect(audio.muted).toBe(false);
+  });
 });
 
 test('RecordingStudioScreen preserves playback intent when pause fires before segment end', async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type {
+  CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   RecordingAiProcessingState,
@@ -18,6 +19,13 @@ import { useRecordingPlaybackController } from './use-recording-playback-control
 export interface RecordingStudioProps {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
+  onCreateRedactions: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
+  onDeleteRedaction: (redactionId: string) => Promise<void>;
+  onUnredactRanges: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
 }
@@ -25,6 +33,9 @@ export interface RecordingStudioProps {
 export function RecordingStudio({
   aiProcessingState,
   detail,
+  onCreateRedactions,
+  onDeleteRedaction,
+  onUnredactRanges,
   playbackAssets,
   thumbnailStatus,
 }: RecordingStudioProps) {
@@ -77,6 +88,8 @@ export function RecordingStudio({
               playback={playback}
               playbackAssets={playbackAssets}
               thumbnailStatus={thumbnailStatus}
+              onCreateRedactions={onCreateRedactions}
+              onUnredactRanges={onUnredactRanges}
               onToggleTrackMuted={toggleTrackMuted}
             />
           </ResizablePanel>
@@ -84,7 +97,13 @@ export function RecordingStudio({
       </ResizablePanel>
       <ResizableHandle withHandle />
       <ResizablePanel defaultSize={26} minSize={18}>
-        <StudioSidebar aiProcessingState={aiProcessingState} detail={detail} />
+        <StudioSidebar
+          aiProcessingState={aiProcessingState}
+          detail={detail}
+          onCreateRedactions={onCreateRedactions}
+          onDeleteRedaction={onDeleteRedaction}
+          onUnredactRanges={onUnredactRanges}
+        />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

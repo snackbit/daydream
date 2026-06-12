@@ -12,8 +12,9 @@ use crate::settings;
 use crate::storage::{
     collect_database_diagnostics, get_latest_processing_job_for_recording, get_latest_recording_id,
     get_portal_restore_token, list_processing_chunks, list_recording_segments,
-    list_recording_tracks, list_transcript_segments, AppStorage, DatabaseDiagnostics,
-    ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, TranscriptSegmentRow,
+    list_recording_tracks, list_redactions, list_transcript_segments,
+    redaction_applies_to_track_range, AppStorage, DatabaseDiagnostics, ProcessingChunkRow,
+    ProcessingJobRow, RecordingSegmentRow, TranscriptSegmentRow,
     LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
 };
 use crate::telemetry::{self, DebugLoggingDiagnostics};
@@ -310,7 +311,20 @@ fn collect_ai_processing_diagnostics(
             Some(job) => list_processing_chunks(connection, &job.id)?,
             None => Vec::new(),
         };
-        let transcripts = list_transcript_segments(connection, recording_id)?;
+        let redactions = list_redactions(connection, recording_id)?;
+        let transcripts = list_transcript_segments(connection, recording_id)?
+            .into_iter()
+            .filter(|transcript| {
+                !redactions.iter().any(|redaction| {
+                    redaction_applies_to_track_range(
+                        redaction,
+                        &transcript.track_id,
+                        transcript.start_offset_ms,
+                        transcript.end_offset_ms,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
         Ok((tracks_by_id, latest_job, chunks, transcripts))
     });
 

@@ -89,7 +89,10 @@ export function StudioPlayer({
 
   return (
     <div className="flex h-full flex-col bg-black text-white">
-      <div className="relative min-h-0 flex-1">
+      <div
+        ref={(element) => actions.setFullscreenElement(element)}
+        className="relative min-h-0 flex-1 bg-black"
+      >
         <video
           key={`${currentPlaybackSegment.segmentId}-${state.streamStartMs}-${state.streamRevision}-video`}
           ref={(element) => actions.setVideoElement(element)}
@@ -123,6 +126,22 @@ export function StudioPlayer({
             )}
           />
         ))}
+        {state.redactedVideoActive ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-neutral-700 text-sm font-medium text-white">
+            <div>Redacted</div>
+            {state.nextUnredactedVideoTimelineMs !== null ? (
+              <Button
+                className="gap-2"
+                size="sm"
+                variant="secondary"
+                onClick={() => actions.skipToNextUnredactedVideo()}
+              >
+                <SkipForward className="size-3.5" />
+                Skip redacted part
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {state.resumeProgress !== null ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70">
             <div className="w-80 max-w-[80%] text-center">

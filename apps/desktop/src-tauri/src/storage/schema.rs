@@ -818,5 +818,25 @@ pub(super) fn migrations() -> Migrations<'static> {
 
             Ok(())
         }),
+        M::up_with_hook("SELECT 1;", |transaction| {
+            let mut statement = transaction.prepare("PRAGMA table_info(redactions)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            for column in columns {
+                if column? == "track_ids_json" {
+                    return Ok(());
+                }
+            }
+
+            transaction.execute(
+                r#"
+                ALTER TABLE redactions
+                    ADD COLUMN track_ids_json TEXT NOT NULL DEFAULT '[]'
+                    CHECK (json_valid(track_ids_json));
+                "#,
+                [],
+            )?;
+
+            Ok(())
+        }),
     ])
 }

@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react';
 import type {
+  CreateLibraryRedactionRangeInput,
   LibraryRecordingDetail,
+  LibraryRecordingRedaction,
   RecordingAiProcessingState,
   RecordingTranscriptionChunkState,
   RecordingTranscriptionTrackState,
 } from '@daydream/shared';
-import { AlertTriangle, Lock, Scissors, ShieldX } from 'lucide-react';
+import { AlertTriangle, Lock, ShieldOff, ShieldX } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +18,9 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { formatDuration, formatTimestamp } from '../../library-format';
+import { redactionsIntersectingRanges } from './studio-redactions';
+import { StudioSidebarRedactionSection } from './studio-sidebar-redaction-section';
+import { MetadataRow, StudioSidebarSection } from './studio-sidebar-section';
 import {
   STUDIO_TIMELINE_COLORS,
   studioColorById,
@@ -33,13 +37,26 @@ interface StudioSidebarSegmentSelection extends StudioClipDraft {
 export function StudioSidebar({
   aiProcessingState,
   detail,
+  onCreateRedactions,
+  onDeleteRedaction,
+  onUnredactRanges,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
+  onCreateRedactions: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
+  onDeleteRedaction: (redactionId: string) => Promise<void>;
+  onUnredactRanges: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
 }) {
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const selection = useStudioTimelineStore((state) => state.selection);
+  const clearSelection = useStudioTimelineStore(
+    (state) => state.clearSelection,
+  );
   const selectedLanes = selection.laneIds
     .map((laneId) => lanesById[laneId])
     .filter((lane): lane is StudioLaneDraft => Boolean(lane));
@@ -51,11 +68,23 @@ export function StudioSidebar({
     .filter((segment): segment is StudioSidebarSegmentSelection =>
       Boolean(segment),
     );
+  const selectedRedactions = selection.redactionIds
+    .map((redactionId) =>
+      detail.redactions.find((redaction) => redaction.id === redactionId),
+    )
+    .filter((redaction): redaction is LibraryRecordingRedaction =>
+      Boolean(redaction),
+    );
   const content = renderStudioSidebarContent({
     aiProcessingState,
+    clearSelection,
     detail,
+    onCreateRedactions,
+    onDeleteRedaction,
+    onUnredactRanges,
     selectedLanes,
     selectedRanges: selection.ranges,
+    selectedRedactions,
     selectedSegments,
   });
 
@@ -97,24 +126,53 @@ export function StudioSidebar({
 
 function renderStudioSidebarContent({
   aiProcessingState,
+  clearSelection,
   detail,
+  onCreateRedactions,
+  onDeleteRedaction,
+  onUnredactRanges,
   selectedLanes,
   selectedRanges,
+  selectedRedactions,
   selectedSegments,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
+  clearSelection: () => void;
   detail: LibraryRecordingDetail;
+  onCreateRedactions: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
+  onDeleteRedaction: (redactionId: string) => Promise<void>;
+  onUnredactRanges: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
   selectedLanes: StudioLaneDraft[];
   selectedRanges: StudioTimeRangeSelection[];
+  selectedRedactions: LibraryRecordingRedaction[];
   selectedSegments: StudioSidebarSegmentSelection[];
 }) {
   if (selectedRanges.length > 0) {
     return (
       <StudioSidebarComponentSelection
         aiProcessingState={aiProcessingState}
+        clearSelection={clearSelection}
+        detail={detail}
+        onCreateRedactions={onCreateRedactions}
+        onUnredactRanges={onUnredactRanges}
         selections={selectedRanges}
       />
     );
+  }
+
+  if (selectedRedactions.length > 0) {
+    return selectedRedactions.map((redaction) => (
+      <StudioSidebarRedactionSection
+        detail={detail}
+        key={redaction.id}
+        redaction={redaction}
+        onDeleteRedaction={onDeleteRedaction}
+      />
+    ));
   }
 
   if (selectedSegments.length > 0) {
@@ -210,11 +268,27 @@ function StudioSidebarSectionSegment({
 
 function StudioSidebarComponentSelection({
   aiProcessingState,
+  clearSelection,
+  detail,
+  onCreateRedactions,
+  onUnredactRanges,
   selections,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
+  clearSelection: () => void;
+  detail: LibraryRecordingDetail;
+  onCreateRedactions: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
+  onUnredactRanges: (
+    ranges: CreateLibraryRedactionRangeInput[],
+  ) => Promise<void>;
   selections: StudioTimeRangeSelection[];
 }) {
+  const intersectingRedactions = redactionsIntersectingRanges(
+    detail.redactions,
+    selections,
+  );
   const selectedLaneCount = new Set(
     selections.flatMap((selection) => selection.laneIds),
   ).size;
@@ -247,15 +321,41 @@ function StudioSidebarComponentSelection({
         aiProcessingState={aiProcessingState}
         selections={selections}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <Button type="button" variant="outline">
+      <div className="grid gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            void onCreateRedactions(
+              selections.map((selection) => ({
+                endOffsetMs: Math.round(selection.endMs),
+                startOffsetMs: Math.round(selection.startMs),
+                trackIds: selection.laneIds,
+              })),
+            ).then(clearSelection);
+          }}
+        >
           <ShieldX data-icon="inline-start" />
           Redact
         </Button>
-        <Button type="button" variant="outline">
-          <Scissors data-icon="inline-start" />
-          Cut
-        </Button>
+        {intersectingRedactions.length > 0 ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              void onUnredactRanges(
+                selections.map((selection) => ({
+                  endOffsetMs: Math.round(selection.endMs),
+                  startOffsetMs: Math.round(selection.startMs),
+                  trackIds: selection.laneIds,
+                })),
+              ).then(clearSelection);
+            }}
+          >
+            <ShieldOff data-icon="inline-start" />
+            Unredact
+          </Button>
+        ) : null}
       </div>
     </StudioSidebarSection>
   );
@@ -481,32 +581,6 @@ function ColorPalettePopover({
         </div>
       </PopoverContent>
     </Popover>
-  );
-}
-
-function StudioSidebarSection({
-  children,
-  title,
-}: {
-  children: ReactNode;
-  title: ReactNode;
-}) {
-  return (
-    <section className="space-y-2 border-b">
-      <div className="text-muted-foreground bg-background border-b p-3 font-medium">
-        {title}
-      </div>
-      <div className="space-y-2 p-3">{children}</div>
-    </section>
-  );
-}
-
-function MetadataRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[5rem_1fr] gap-2">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="truncate">{value}</div>
-    </div>
   );
 }
 

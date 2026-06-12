@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -9,6 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{Manager, State};
+use uuid::Uuid;
 
 use crate::{
     ai, ffmpeg,
@@ -16,7 +17,7 @@ use crate::{
     settings,
     storage::{
         self, AppStorage, ProcessingChunkRow, ProcessingJobRow, RecordingRow, RecordingSegmentRow,
-        RecordingTrackRow, TranscriptSegmentRow, TranscriptWordRow,
+        RecordingTrackRow, RedactionRow, TranscriptSegmentRow, TranscriptWordRow,
     },
 };
 
@@ -60,6 +61,7 @@ pub struct LibraryRecordingDetail {
     id: String,
     missing_reasons: Vec<String>,
     playable_segment_count: usize,
+    redactions: Vec<LibraryRecordingRedaction>,
     segments: Vec<LibraryRecordingSegment>,
     size_bytes: u64,
     started_at_ms: Option<i64>,
@@ -99,6 +101,18 @@ pub struct LibraryRecordingTrack {
     stream_index: Option<i64>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryRecordingRedaction {
+    created_at_ms: i64,
+    end_offset_ms: i64,
+    id: String,
+    reason: Option<String>,
+    recording_id: String,
+    start_offset_ms: i64,
+    track_ids: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LibraryTrackKind {
@@ -124,6 +138,35 @@ pub struct DeleteLibraryRecordingsInput {
 pub struct RenameLibraryRecordingInput {
     recording_id: String,
     title: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLibraryRedactionRangeInput {
+    end_offset_ms: i64,
+    start_offset_ms: i64,
+    track_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLibraryRedactionsInput {
+    recording_id: String,
+    ranges: Vec<CreateLibraryRedactionRangeInput>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLibraryRedactionInput {
+    recording_id: String,
+    redaction_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnredactLibraryRedactionsInput {
+    recording_id: String,
+    ranges: Vec<CreateLibraryRedactionRangeInput>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -326,8 +369,11 @@ pub fn get_library_recording(
     let segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
         .map_err(|error| error.to_string())?;
+    let redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording_id))
+        .map_err(|error| error.to_string())?;
 
-    Ok(detail_from_rows(&recording, &segments))
+    Ok(detail_from_rows(&recording, &segments, &redactions))
 }
 
 #[tauri::command(rename = "getLibraryRecordingDebug")]
@@ -366,11 +412,9 @@ pub fn get_library_recording_debug(
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    let transcript_segments = storage
-        .with_connection(|connection| {
-            storage::list_transcript_segments(connection, &input.recording_id)
-        })
-        .map_err(|error| error.to_string())?;
+    let transcript_segments =
+        ai::visible_transcript_segments_for_recording(storage.inner(), &input.recording_id)
+            .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let transcript_words = transcript_segments
         .iter()
         .map(|segment| {
@@ -389,9 +433,12 @@ pub fn get_library_recording_debug(
             storage::list_activity_intervals(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
+    let redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &input.recording_id))
+        .map_err(|error| error.to_string())?;
     let processing_state = ai::processing_state_for_recording(&storage, &input.recording_id)
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
-    let detail = detail_from_rows(&recording, &segments);
+    let detail = detail_from_rows(&recording, &segments, &redactions);
 
     Ok(LibraryRecordingDebugData {
         raw: json!({
@@ -402,6 +449,7 @@ pub fn get_library_recording_debug(
             "processingChunks": chunks.iter().map(processing_chunk_row_json).collect::<Vec<_>>(),
             "transcriptSegments": transcript_segments.iter().map(transcript_segment_row_json).collect::<Vec<_>>(),
             "transcriptWords": transcript_words.iter().map(transcript_word_row_json).collect::<Vec<_>>(),
+            "redactions": redactions.iter().map(redaction_row_json).collect::<Vec<_>>(),
             "activityIntervals": activity_intervals.iter().map(|interval| json!({
                 "chunkId": interval.chunk_id,
                 "endOffsetMs": interval.end_offset_ms,
@@ -495,8 +543,116 @@ pub fn rename_library_recording(
     let segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, &recording.id))
         .map_err(|error| error.to_string())?;
+    let redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
 
-    Ok(detail_from_rows(&recording, &segments))
+    Ok(detail_from_rows(&recording, &segments, &redactions))
+}
+
+#[tauri::command(rename = "createLibraryRedactions")]
+pub fn create_library_redactions(
+    input: CreateLibraryRedactionsInput,
+    storage: State<'_, AppStorage>,
+) -> Result<LibraryRecordingDetail, String> {
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+        .map_err(|error| error.to_string())?;
+    ensure_recording_allows_redaction(&recording)?;
+    let segments = storage
+        .with_connection(|connection| {
+            storage::list_recording_segments(connection, &input.recording_id)
+        })
+        .map_err(|error| error.to_string())?;
+    let tracks = tracks_from_segments(&segments);
+    let duration_ms = timeline_duration_ms(&segments);
+    let existing_redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
+    let inputs = build_normalized_redaction_inputs(
+        &recording.id,
+        &input.ranges,
+        &existing_redactions,
+        &tracks,
+        duration_ms,
+    )?;
+
+    storage
+        .with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            storage::delete_redactions_for_recording(&transaction, &recording.id)?;
+            for input in &inputs {
+                storage::create_redaction(&transaction, input)?;
+            }
+
+            transaction.commit()
+        })
+        .map_err(|error| error.to_string())?;
+
+    detail_for_recording(storage.inner(), &recording.id)
+}
+
+#[tauri::command(rename = "deleteLibraryRedaction")]
+pub fn delete_library_redaction(
+    input: DeleteLibraryRedactionInput,
+    storage: State<'_, AppStorage>,
+) -> Result<LibraryRecordingDetail, String> {
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+        .map_err(|error| error.to_string())?;
+    ensure_recording_allows_redaction(&recording)?;
+    let deleted = storage
+        .with_connection(|connection| {
+            storage::delete_redaction(connection, &input.recording_id, &input.redaction_id)
+        })
+        .map_err(|error| error.to_string())?;
+    if !deleted {
+        return Err("Redaction was not found.".to_string());
+    }
+
+    detail_for_recording(storage.inner(), &recording.id)
+}
+
+#[tauri::command(rename = "unredactLibraryRedactions")]
+pub fn unredact_library_redactions(
+    input: UnredactLibraryRedactionsInput,
+    storage: State<'_, AppStorage>,
+) -> Result<LibraryRecordingDetail, String> {
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+        .map_err(|error| error.to_string())?;
+    ensure_recording_allows_redaction(&recording)?;
+    let segments = storage
+        .with_connection(|connection| {
+            storage::list_recording_segments(connection, &input.recording_id)
+        })
+        .map_err(|error| error.to_string())?;
+    let tracks = tracks_from_segments(&segments);
+    let duration_ms = timeline_duration_ms(&segments);
+    let existing_redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
+    let inputs = build_unredacted_redaction_inputs(
+        &recording.id,
+        &input.ranges,
+        &existing_redactions,
+        &tracks,
+        duration_ms,
+    )?;
+
+    storage
+        .with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            storage::delete_redactions_for_recording(&transaction, &recording.id)?;
+            for input in &inputs {
+                storage::create_redaction(&transaction, input)?;
+            }
+
+            transaction.commit()
+        })
+        .map_err(|error| error.to_string())?;
+
+    detail_for_recording(storage.inner(), &recording.id)
 }
 
 #[tauri::command(rename = "getRecordingWaveforms")]
@@ -549,7 +705,7 @@ pub fn create_library_playback_session(
             storage::list_recording_segments(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
-    let detail = detail_from_rows(&recording, &segments);
+    let detail = detail_from_rows(&recording, &segments, &[]);
     if detail.availability != LibraryRecordingAvailability::Available {
         return Ok(LibraryPlaybackAssets {
             error: Some("Recording is not available for playback.".to_string()),
@@ -583,7 +739,7 @@ pub async fn prepare_library_recording_thumbnail(
             storage::list_recording_segments(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
-    let detail = detail_from_rows(&recording, &segments);
+    let detail = detail_from_rows(&recording, &segments, &[]);
     if detail.availability != LibraryRecordingAvailability::Available {
         return Ok(LibraryRecordingThumbnail {
             error: Some("Recording is not available for thumbnails.".to_string()),
@@ -615,9 +771,12 @@ pub async fn prepare_library_recording_thumbnail(
 fn detail_from_rows(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
+    redactions: &[RedactionRow],
 ) -> LibraryRecordingDetail {
     let summary = summary_from_rows(recording, segments);
     let library_segments = library_segments(segments);
+    let tracks = tracks_from_segments(segments);
+    let library_redactions = library_redactions(redactions, &tracks);
 
     LibraryRecordingDetail {
         availability: summary.availability,
@@ -626,6 +785,7 @@ fn detail_from_rows(
         id: summary.id,
         missing_reasons: summary.missing_reasons,
         playable_segment_count: summary.playable_segment_count,
+        redactions: library_redactions,
         segments: library_segments,
         size_bytes: summary.size_bytes,
         started_at_ms: summary.started_at_ms,
@@ -633,8 +793,25 @@ fn detail_from_rows(
         storage_dir: summary.storage_dir,
         thumbnail_path: summary.thumbnail_path,
         title: summary.title,
-        tracks: tracks_from_segments(segments),
+        tracks,
     }
+}
+
+fn detail_for_recording(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<LibraryRecordingDetail, String> {
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, recording_id))
+        .map_err(|error| error.to_string())?;
+    let segments = storage
+        .with_connection(|connection| storage::list_recording_segments(connection, recording_id))
+        .map_err(|error| error.to_string())?;
+    let redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, recording_id))
+        .map_err(|error| error.to_string())?;
+
+    Ok(detail_from_rows(&recording, &segments, &redactions))
 }
 
 fn recording_row_json(row: &RecordingRow) -> Value {
@@ -682,6 +859,18 @@ fn recording_track_row_json(row: &RecordingTrackRow) -> Value {
         "path": row.path,
         "recordingId": row.recording_id,
         "sourceId": row.source_id,
+    })
+}
+
+fn redaction_row_json(row: &RedactionRow) -> Value {
+    json!({
+        "createdAtMs": row.created_at_ms,
+        "endOffsetMs": row.end_offset_ms,
+        "id": row.id,
+        "reason": row.reason,
+        "recordingId": row.recording_id,
+        "startOffsetMs": row.start_offset_ms,
+        "trackIdsJson": row.track_ids_json,
     })
 }
 
@@ -798,6 +987,344 @@ fn summary_from_rows(
             .map(|segment| segment.file_path.clone()),
         title: recording.title.clone(),
     }
+}
+
+fn library_redactions(
+    redactions: &[RedactionRow],
+    tracks: &[LibraryRecordingTrack],
+) -> Vec<LibraryRecordingRedaction> {
+    let all_track_ids = tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect::<Vec<_>>();
+
+    redactions
+        .iter()
+        .map(|redaction| {
+            let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
+                .filter(|track_ids| !track_ids.is_empty())
+                .unwrap_or_else(|| all_track_ids.clone());
+
+            LibraryRecordingRedaction {
+                created_at_ms: redaction.created_at_ms,
+                end_offset_ms: redaction.end_offset_ms,
+                id: redaction.id.clone(),
+                reason: redaction.reason.clone(),
+                recording_id: redaction.recording_id.clone(),
+                start_offset_ms: redaction.start_offset_ms,
+                track_ids,
+            }
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RedactionInterval {
+    end_offset_ms: i64,
+    start_offset_ms: i64,
+}
+
+fn build_normalized_redaction_inputs(
+    recording_id: &str,
+    ranges: &[CreateLibraryRedactionRangeInput],
+    existing_redactions: &[RedactionRow],
+    tracks: &[LibraryRecordingTrack],
+    duration_ms: i64,
+) -> Result<Vec<storage::CreateRedactionInput>, String> {
+    if ranges.is_empty() {
+        return Err("At least one redaction range is required.".to_string());
+    }
+    let valid_track_ids = tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if valid_track_ids.is_empty() {
+        return Err("Recording has no playable tracks to redact.".to_string());
+    }
+    let timestamp_ms = now_ms();
+    let all_track_ids = tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect::<Vec<_>>();
+    let mut intervals_by_track: BTreeMap<String, Vec<RedactionInterval>> = BTreeMap::new();
+
+    for redaction in existing_redactions {
+        if redaction.end_offset_ms <= redaction.start_offset_ms {
+            continue;
+        }
+        let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
+            .filter(|track_ids| !track_ids.is_empty())
+            .unwrap_or_else(|| all_track_ids.clone());
+        for track_id in track_ids
+            .into_iter()
+            .filter(|track_id| valid_track_ids.contains(track_id.as_str()))
+        {
+            intervals_by_track
+                .entry(track_id)
+                .or_default()
+                .push(RedactionInterval {
+                    end_offset_ms: redaction.end_offset_ms,
+                    start_offset_ms: redaction.start_offset_ms,
+                });
+        }
+    }
+
+    for range in ranges {
+        if range.end_offset_ms <= range.start_offset_ms {
+            return Err("Redaction range must have positive duration.".to_string());
+        }
+        if range.start_offset_ms < 0 || range.end_offset_ms > duration_ms {
+            return Err(format!(
+                "Redaction range must be within recording duration {} ms.",
+                duration_ms.max(0)
+            ));
+        }
+        let track_ids = normalized_track_ids(&range.track_ids);
+        if track_ids.is_empty() {
+            return Err("Redaction requires at least one target track.".to_string());
+        }
+        if let Some(track_id) = track_ids
+            .iter()
+            .find(|track_id| !valid_track_ids.contains(track_id.as_str()))
+        {
+            return Err(format!("Redaction target track {track_id} does not exist."));
+        }
+
+        for track_id in track_ids {
+            intervals_by_track
+                .entry(track_id)
+                .or_default()
+                .push(RedactionInterval {
+                    end_offset_ms: range.end_offset_ms,
+                    start_offset_ms: range.start_offset_ms,
+                });
+        }
+    }
+
+    let mut track_ids_by_interval: BTreeMap<(i64, i64), Vec<String>> = BTreeMap::new();
+    for (track_id, intervals) in intervals_by_track {
+        for interval in merge_redaction_intervals(intervals) {
+            track_ids_by_interval
+                .entry((interval.start_offset_ms, interval.end_offset_ms))
+                .or_default()
+                .push(track_id.clone());
+        }
+    }
+
+    track_ids_by_interval
+        .into_iter()
+        .map(|((start_offset_ms, end_offset_ms), track_ids)| {
+            Ok(storage::CreateRedactionInput {
+                created_at_ms: timestamp_ms,
+                end_offset_ms,
+                id: Uuid::now_v7().to_string(),
+                reason: None,
+                recording_id: recording_id.to_string(),
+                start_offset_ms,
+                track_ids_json: serde_json::to_string(&track_ids)
+                    .map_err(|error| error.to_string())?,
+            })
+        })
+        .collect()
+}
+
+fn build_unredacted_redaction_inputs(
+    recording_id: &str,
+    ranges: &[CreateLibraryRedactionRangeInput],
+    existing_redactions: &[RedactionRow],
+    tracks: &[LibraryRecordingTrack],
+    duration_ms: i64,
+) -> Result<Vec<storage::CreateRedactionInput>, String> {
+    if ranges.is_empty() {
+        return Err("At least one unredaction range is required.".to_string());
+    }
+    let valid_track_ids = tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if valid_track_ids.is_empty() {
+        return Err("Recording has no playable tracks to unredact.".to_string());
+    }
+    let all_track_ids = tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect::<Vec<_>>();
+    let mut intervals_by_track: BTreeMap<String, Vec<RedactionInterval>> = BTreeMap::new();
+
+    for redaction in existing_redactions {
+        if redaction.end_offset_ms <= redaction.start_offset_ms {
+            continue;
+        }
+        let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
+            .filter(|track_ids| !track_ids.is_empty())
+            .unwrap_or_else(|| all_track_ids.clone());
+        for track_id in track_ids
+            .into_iter()
+            .filter(|track_id| valid_track_ids.contains(track_id.as_str()))
+        {
+            intervals_by_track
+                .entry(track_id)
+                .or_default()
+                .push(RedactionInterval {
+                    end_offset_ms: redaction.end_offset_ms,
+                    start_offset_ms: redaction.start_offset_ms,
+                });
+        }
+    }
+
+    for range in ranges {
+        if range.end_offset_ms <= range.start_offset_ms {
+            return Err("Unredaction range must have positive duration.".to_string());
+        }
+        if range.start_offset_ms < 0 || range.end_offset_ms > duration_ms {
+            return Err(format!(
+                "Unredaction range must be within recording duration {} ms.",
+                duration_ms.max(0)
+            ));
+        }
+        let track_ids = normalized_track_ids(&range.track_ids);
+        if track_ids.is_empty() {
+            return Err("Unredaction requires at least one target track.".to_string());
+        }
+        if let Some(track_id) = track_ids
+            .iter()
+            .find(|track_id| !valid_track_ids.contains(track_id.as_str()))
+        {
+            return Err(format!(
+                "Unredaction target track {track_id} does not exist."
+            ));
+        }
+
+        let removal = RedactionInterval {
+            end_offset_ms: range.end_offset_ms,
+            start_offset_ms: range.start_offset_ms,
+        };
+        for track_id in track_ids {
+            let remaining = subtract_redaction_interval(
+                intervals_by_track.remove(&track_id).unwrap_or_default(),
+                &removal,
+            );
+            if !remaining.is_empty() {
+                intervals_by_track.insert(track_id, remaining);
+            }
+        }
+    }
+
+    redaction_inputs_from_intervals(recording_id, intervals_by_track)
+}
+
+fn merge_redaction_intervals(mut intervals: Vec<RedactionInterval>) -> Vec<RedactionInterval> {
+    intervals.sort_by(|left, right| {
+        left.start_offset_ms
+            .cmp(&right.start_offset_ms)
+            .then(left.end_offset_ms.cmp(&right.end_offset_ms))
+    });
+    let mut merged: Vec<RedactionInterval> = Vec::new();
+
+    for interval in intervals {
+        let Some(current) = merged.last_mut() else {
+            merged.push(interval);
+            continue;
+        };
+        if interval.start_offset_ms <= current.end_offset_ms {
+            current.end_offset_ms = current.end_offset_ms.max(interval.end_offset_ms);
+            continue;
+        }
+
+        merged.push(interval);
+    }
+
+    merged
+}
+
+fn subtract_redaction_interval(
+    intervals: Vec<RedactionInterval>,
+    removal: &RedactionInterval,
+) -> Vec<RedactionInterval> {
+    let mut remaining = Vec::new();
+
+    for interval in intervals {
+        if removal.end_offset_ms <= interval.start_offset_ms
+            || removal.start_offset_ms >= interval.end_offset_ms
+        {
+            remaining.push(interval);
+            continue;
+        }
+
+        if removal.start_offset_ms > interval.start_offset_ms {
+            remaining.push(RedactionInterval {
+                end_offset_ms: removal.start_offset_ms.min(interval.end_offset_ms),
+                start_offset_ms: interval.start_offset_ms,
+            });
+        }
+        if removal.end_offset_ms < interval.end_offset_ms {
+            remaining.push(RedactionInterval {
+                end_offset_ms: interval.end_offset_ms,
+                start_offset_ms: removal.end_offset_ms.max(interval.start_offset_ms),
+            });
+        }
+    }
+
+    merge_redaction_intervals(remaining)
+}
+
+fn redaction_inputs_from_intervals(
+    recording_id: &str,
+    intervals_by_track: BTreeMap<String, Vec<RedactionInterval>>,
+) -> Result<Vec<storage::CreateRedactionInput>, String> {
+    let timestamp_ms = now_ms();
+    let mut track_ids_by_interval: BTreeMap<(i64, i64), Vec<String>> = BTreeMap::new();
+    for (track_id, intervals) in intervals_by_track {
+        for interval in merge_redaction_intervals(intervals) {
+            track_ids_by_interval
+                .entry((interval.start_offset_ms, interval.end_offset_ms))
+                .or_default()
+                .push(track_id.clone());
+        }
+    }
+
+    track_ids_by_interval
+        .into_iter()
+        .map(|((start_offset_ms, end_offset_ms), track_ids)| {
+            Ok(storage::CreateRedactionInput {
+                created_at_ms: timestamp_ms,
+                end_offset_ms,
+                id: Uuid::now_v7().to_string(),
+                reason: None,
+                recording_id: recording_id.to_string(),
+                start_offset_ms,
+                track_ids_json: serde_json::to_string(&track_ids)
+                    .map_err(|error| error.to_string())?,
+            })
+        })
+        .collect()
+}
+
+fn ensure_recording_allows_redaction(recording: &RecordingRow) -> Result<(), String> {
+    if storage::is_active_recording_status(&recording.status) {
+        return Err(
+            "Recording is still controlled by the recorder and cannot be redacted yet.".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+fn parse_redaction_track_ids(track_ids_json: &str) -> Option<Vec<String>> {
+    serde_json::from_str::<Vec<String>>(track_ids_json)
+        .ok()
+        .map(|track_ids| normalized_track_ids(&track_ids))
+}
+
+fn normalized_track_ids(track_ids: &[String]) -> Vec<String> {
+    track_ids
+        .iter()
+        .map(|track_id| track_id.trim())
+        .filter(|track_id| !track_id.is_empty())
+        .map(ToString::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn normalize_recording_title(title: Option<String>) -> Result<Option<String>, String> {
@@ -1166,6 +1693,15 @@ fn recording_duration_ms(
     (total > 0).then_some(total)
 }
 
+fn timeline_duration_ms(segments: &[RecordingSegmentRow]) -> i64 {
+    library_segments(segments)
+        .into_iter()
+        .map(|segment| segment.playback_offset_ms + segment.duration_ms.unwrap_or_default())
+        .max()
+        .unwrap_or_default()
+        .max(0)
+}
+
 fn segment_probe(segment: &RecordingSegmentRow) -> Option<SegmentProbe> {
     segment
         .probe_json
@@ -1300,7 +1836,7 @@ mod tests {
         let segments = vec![segment_row(segment_path, "finalized")];
 
         let summary = summary_from_rows(&recording, &segments);
-        let detail = detail_from_rows(&recording, &segments);
+        let detail = detail_from_rows(&recording, &segments, &[]);
 
         let _ = fs::remove_dir_all(temp_dir);
         assert_eq!(summary.title.as_deref(), Some("Workday review"));
@@ -1321,6 +1857,115 @@ mod tests {
             normalize_recording_title(Some("x".repeat(RECORDING_TITLE_MAX_CHARS + 1)))
                 .expect_err("long title should fail")
                 .contains("characters or fewer")
+        );
+    }
+
+    #[test]
+    fn new_redactions_merge_with_existing_redactions_per_track() {
+        let tracks = vec![
+            library_track("video-0", LibraryTrackKind::Video),
+            library_track("desktop-audio-1", LibraryTrackKind::DesktopAudio),
+            library_track("microphone-2", LibraryTrackKind::Microphone),
+        ];
+        let existing_redactions = vec![
+            redaction_row("existing-video", 24_000, 26_000, &["video-0"]),
+            redaction_row(
+                "existing-desktop-audio",
+                23_000,
+                24_000,
+                &["desktop-audio-1"],
+            ),
+        ];
+
+        let normalized = build_normalized_redaction_inputs(
+            "recording-1",
+            &[CreateLibraryRedactionRangeInput {
+                end_offset_ms: 25_000,
+                start_offset_ms: 23_500,
+                track_ids: vec![
+                    "desktop-audio-1".to_string(),
+                    "microphone-2".to_string(),
+                    "video-0".to_string(),
+                ],
+            }],
+            &existing_redactions,
+            &tracks,
+            30_000,
+        )
+        .expect("normalize redactions");
+
+        let normalized_ranges = normalized
+            .iter()
+            .map(|redaction| {
+                (
+                    redaction.start_offset_ms,
+                    redaction.end_offset_ms,
+                    parse_redaction_track_ids(&redaction.track_ids_json).expect("track ids"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            normalized_ranges,
+            vec![
+                (23_000, 25_000, vec!["desktop-audio-1".to_string()],),
+                (23_500, 25_000, vec!["microphone-2".to_string()]),
+                (23_500, 26_000, vec!["video-0".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn unredaction_range_splits_existing_redactions_per_track() {
+        let tracks = vec![
+            library_track("video-0", LibraryTrackKind::Video),
+            library_track("desktop-audio-1", LibraryTrackKind::DesktopAudio),
+        ];
+        let existing_redactions = vec![redaction_row(
+            "existing",
+            20_000,
+            26_000,
+            &["desktop-audio-1", "video-0"],
+        )];
+
+        let normalized = build_unredacted_redaction_inputs(
+            "recording-1",
+            &[CreateLibraryRedactionRangeInput {
+                end_offset_ms: 24_000,
+                start_offset_ms: 22_000,
+                track_ids: vec!["desktop-audio-1".to_string(), "video-0".to_string()],
+            }],
+            &existing_redactions,
+            &tracks,
+            30_000,
+        )
+        .expect("unredact range");
+
+        let normalized_ranges = normalized
+            .iter()
+            .map(|redaction| {
+                (
+                    redaction.start_offset_ms,
+                    redaction.end_offset_ms,
+                    parse_redaction_track_ids(&redaction.track_ids_json).expect("track ids"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            normalized_ranges,
+            vec![
+                (
+                    20_000,
+                    22_000,
+                    vec!["desktop-audio-1".to_string(), "video-0".to_string()],
+                ),
+                (
+                    24_000,
+                    26_000,
+                    vec!["desktop-audio-1".to_string(), "video-0".to_string()],
+                ),
+            ]
         );
     }
 
@@ -1624,6 +2269,34 @@ mod tests {
             started_at_ms: 1_000,
             state: state.to_string(),
             video_stream_index: Some(0),
+        }
+    }
+
+    fn library_track(id: &str, kind: LibraryTrackKind) -> LibraryRecordingTrack {
+        LibraryRecordingTrack {
+            codec: None,
+            description: id.to_string(),
+            id: id.to_string(),
+            kind,
+            label: id.to_string(),
+            stream_index: None,
+        }
+    }
+
+    fn redaction_row(
+        id: &str,
+        start_offset_ms: i64,
+        end_offset_ms: i64,
+        track_ids: &[&str],
+    ) -> RedactionRow {
+        RedactionRow {
+            created_at_ms: 1,
+            end_offset_ms,
+            id: id.to_string(),
+            reason: None,
+            recording_id: "recording-1".to_string(),
+            start_offset_ms,
+            track_ids_json: serde_json::to_string(track_ids).expect("track ids json"),
         }
     }
 
