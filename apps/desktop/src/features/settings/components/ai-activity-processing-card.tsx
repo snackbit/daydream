@@ -7,6 +7,11 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { FieldGroup } from '@/components/ui/field';
+import {
+  updateAiKeyboardActivity,
+  updateAiMouseActivity,
+  updateAiProcessing,
+} from '@/features/settings/settings-draft-updaters';
 import { formatFps } from '@/features/settings/settings-format';
 import { CheckboxField, SliderField } from './ai-settings-fields';
 
@@ -36,15 +41,9 @@ export function AiActivityProcessingCard({
             description="Process eligible, non-redacted recordings after capture ends."
             label="Start processing after recording"
             onCheckedChange={(checked) => {
-              onUpdateDraft((current) => ({
+              updateAiProcessing(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  processing: {
-                    ...current.ai.processing,
-                    autoStartAfterRecording: checked,
-                  },
-                },
+                autoStartAfterRecording: checked,
               }));
             }}
           />
@@ -53,15 +52,9 @@ export function AiActivityProcessingCard({
             description="Skip visually similar frame regions between periodic full-frame passes."
             label="Use frame similarity cache"
             onCheckedChange={(checked) => {
-              onUpdateDraft((current) => ({
+              updateAiProcessing(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  processing: {
-                    ...current.ai.processing,
-                    frameSimilarityEnabled: checked,
-                  },
-                },
+                frameSimilarityEnabled: checked,
               }));
             }}
           />
@@ -70,15 +63,9 @@ export function AiActivityProcessingCard({
             description="Use the recording frame cadence for OCR and VLM frame recognition."
             label="Sync frame recognition with recording FPS"
             onCheckedChange={(checked) => {
-              onUpdateDraft((current) => ({
+              updateAiProcessing(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  processing: {
-                    ...current.ai.processing,
-                    frameRecognitionSyncWithRecording: checked,
-                  },
-                },
+                frameRecognitionSyncWithRecording: checked,
               }));
             }}
           />
@@ -88,15 +75,9 @@ export function AiActivityProcessingCard({
               max={limits.ai.processing.maxParallelJobsMax}
               min={limits.ai.processing.maxParallelJobsMin}
               onChange={(value) => {
-                onUpdateDraft((current) => ({
+                updateAiProcessing(onUpdateDraft, (current) => ({
                   ...current,
-                  ai: {
-                    ...current.ai,
-                    processing: {
-                      ...current.ai.processing,
-                      maxParallelJobs: value,
-                    },
-                  },
+                  maxParallelJobs: value,
                 }));
               }}
               value={draft.ai.processing.maxParallelJobs}
@@ -106,15 +87,9 @@ export function AiActivityProcessingCard({
               max={limits.ai.processing.maxParallelChunksPerJobMax}
               min={limits.ai.processing.maxParallelChunksPerJobMin}
               onChange={(value) => {
-                onUpdateDraft((current) => ({
+                updateAiProcessing(onUpdateDraft, (current) => ({
                   ...current,
-                  ai: {
-                    ...current.ai,
-                    processing: {
-                      ...current.ai.processing,
-                      maxParallelChunksPerJob: value,
-                    },
-                  },
+                  maxParallelChunksPerJob: value,
                 }));
               }}
               value={draft.ai.processing.maxParallelChunksPerJob}
@@ -125,15 +100,9 @@ export function AiActivityProcessingCard({
               min={limits.ai.processing.frameRecognitionFpsMin}
               formatValue={formatFps}
               onChange={(value) => {
-                onUpdateDraft((current) => ({
+                updateAiProcessing(onUpdateDraft, (current) => ({
                   ...current,
-                  ai: {
-                    ...current.ai,
-                    processing: {
-                      ...current.ai.processing,
-                      frameRecognitionFps: value,
-                    },
-                  },
+                  frameRecognitionFps: value,
                 }));
               }}
               rangeLabel={`${formatFps(
@@ -149,15 +118,9 @@ export function AiActivityProcessingCard({
               min={limits.ai.processing.periodicFullFrameIntervalMsMin}
               formatValue={formatDuration}
               onChange={(value) => {
-                onUpdateDraft((current) => ({
+                updateAiProcessing(onUpdateDraft, (current) => ({
                   ...current,
-                  ai: {
-                    ...current.ai,
-                    processing: {
-                      ...current.ai.processing,
-                      periodicFullFrameIntervalMs: value,
-                    },
-                  },
+                  periodicFullFrameIntervalMs: value,
                 }));
               }}
               rangeLabel={`${formatDuration(
@@ -174,15 +137,9 @@ export function AiActivityProcessingCard({
               max={limits.ai.processing.maxFullFrameCheckpointsPerMinuteMax}
               min={limits.ai.processing.maxFullFrameCheckpointsPerMinuteMin}
               onChange={(value) => {
-                onUpdateDraft((current) => ({
+                updateAiProcessing(onUpdateDraft, (current) => ({
                   ...current,
-                  ai: {
-                    ...current.ai,
-                    processing: {
-                      ...current.ai.processing,
-                      maxFullFrameCheckpointsPerMinute: value,
-                    },
-                  },
+                  maxFullFrameCheckpointsPerMinute: value,
                 }));
               }}
               suffix="/min"
@@ -194,15 +151,9 @@ export function AiActivityProcessingCard({
                 max={limits.ai.processing.visualDeltaTileSizePxMax}
                 min={limits.ai.processing.visualDeltaTileSizePxMin}
                 onChange={(value) => {
-                  onUpdateDraft((current) => ({
+                  updateAiProcessing(onUpdateDraft, (current) => ({
                     ...current,
-                    ai: {
-                      ...current.ai,
-                      processing: {
-                        ...current.ai.processing,
-                        visualDeltaTileSizePx: value,
-                      },
-                    },
+                    visualDeltaTileSizePx: value,
                   }));
                 }}
                 step={16}
@@ -216,18 +167,9 @@ export function AiActivityProcessingCard({
             description="Linux uses privileged /dev/input timing only; key values and typed text are not stored."
             label="Use keyboard activity"
             onCheckedChange={(checked) => {
-              onUpdateDraft((current) => ({
+              updateAiKeyboardActivity(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  activity: {
-                    ...current.ai.activity,
-                    keyboard: {
-                      ...current.ai.activity.keyboard,
-                      enabled: checked,
-                    },
-                  },
-                },
+                enabled: checked,
               }));
             }}
           />
@@ -236,18 +178,9 @@ export function AiActivityProcessingCard({
             max={limits.ai.activity.keyboardWindowMsMax}
             min={limits.ai.activity.keyboardWindowMsMin}
             onChange={(value) => {
-              onUpdateDraft((current) => ({
+              updateAiKeyboardActivity(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  activity: {
-                    ...current.ai.activity,
-                    keyboard: {
-                      ...current.ai.activity.keyboard,
-                      windowMs: value,
-                    },
-                  },
-                },
+                windowMs: value,
               }));
             }}
             step={1_000}
@@ -259,18 +192,9 @@ export function AiActivityProcessingCard({
             description="Linux uses privileged /dev/input timing only; coordinates and target content are not stored."
             label="Use mouse activity"
             onCheckedChange={(checked) => {
-              onUpdateDraft((current) => ({
+              updateAiMouseActivity(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  activity: {
-                    ...current.ai.activity,
-                    mouse: {
-                      ...current.ai.activity.mouse,
-                      enabled: checked,
-                    },
-                  },
-                },
+                enabled: checked,
               }));
             }}
           />
@@ -279,18 +203,9 @@ export function AiActivityProcessingCard({
             max={limits.ai.activity.mouseWindowMsMax}
             min={limits.ai.activity.mouseWindowMsMin}
             onChange={(value) => {
-              onUpdateDraft((current) => ({
+              updateAiMouseActivity(onUpdateDraft, (current) => ({
                 ...current,
-                ai: {
-                  ...current.ai,
-                  activity: {
-                    ...current.ai.activity,
-                    mouse: {
-                      ...current.ai.activity.mouse,
-                      windowMs: value,
-                    },
-                  },
-                },
+                windowMs: value,
               }));
             }}
             step={1_000}

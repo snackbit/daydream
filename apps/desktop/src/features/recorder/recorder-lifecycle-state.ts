@@ -1,5 +1,5 @@
 import type { RecorderError, RecorderStatus } from '@daydream/shared';
-import type { RecorderLifecycleAction } from './recorder-workspace-store';
+import type { RecorderLifecycleAction } from './recorder-workspace-store-types';
 
 export function recorderLifecycleLocked(
   pendingLifecycleAction: RecorderLifecycleAction | null,

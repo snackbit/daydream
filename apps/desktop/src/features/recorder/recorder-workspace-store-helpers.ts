@@ -21,9 +21,10 @@ import {
 } from './recorder-lifecycle-state';
 import type {
   RecorderLifecycleAction,
+  RecorderWorkspaceGet,
   RecorderWorkspaceSet,
   RecorderWorkspaceState,
-} from './recorder-workspace-store';
+} from './recorder-workspace-store-types';
 import {
   classifyCaptureSourceMerge,
   createDefaultRecorderScene,
@@ -118,7 +119,7 @@ export function applyLoadedRecorderWorkspace(
 
 export function applySelectedCaptureSources(
   set: RecorderWorkspaceSet,
-  get: () => RecorderWorkspaceState,
+  get: RecorderWorkspaceGet,
   sources: CaptureSource[],
 ): void {
   const currentScene = get().scene ?? createDefaultRecorderScene([]);
@@ -145,7 +146,7 @@ export function applySelectedCaptureSources(
 
 export async function runStatusMutation(
   set: RecorderWorkspaceSet,
-  get: () => RecorderWorkspaceState,
+  get: RecorderWorkspaceGet,
   action: RecorderLifecycleAction,
   mutation: () => Promise<RecorderStatus>,
 ): Promise<void> {
@@ -177,7 +178,7 @@ export async function runStatusMutation(
 
 async function reconcileStatusUntilSettled(
   set: RecorderWorkspaceSet,
-  get: () => RecorderWorkspaceState,
+  get: RecorderWorkspaceGet,
   action: RecorderLifecycleAction,
 ): Promise<void> {
   const deadline = Date.now() + FINALIZATION_POLL_TIMEOUT_MS;

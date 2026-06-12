@@ -1,0 +1,111 @@
+use super::super::super::*;
+use super::types::*;
+
+#[derive(Default)]
+pub(super) struct PendingVisualOutput {
+    pub(super) frame_similarity_entries: Vec<CreateFrameSimilarityEntryInput>,
+    pub(super) ocr_regions: Vec<CreateVisualRegionInput>,
+    pub(super) vlm_observations: Vec<CreateVisualRegionInput>,
+}
+
+pub(super) fn ocr_region_inputs(
+    chunk: &ProcessingChunkRow,
+    frame: &ExtractedVisualFrame,
+    regions: &[OcrCandidate],
+) -> Vec<CreateVisualRegionInput> {
+    regions
+        .iter()
+        .map(|region| CreateVisualRegionInput {
+            chunk_id: chunk.id.clone(),
+            confidence: region.confidence,
+            frame_timestamp_ms: frame.frame_timestamp_ms,
+            id: Uuid::now_v7().to_string(),
+            job_id: chunk.job_id.clone(),
+            model: Some("tesseract".to_string()),
+            observation_kind: None,
+            prompt_version: None,
+            provider: "tesseract".to_string(),
+            recording_id: chunk.recording_id.clone(),
+            region_height: region.region.height,
+            region_width: region.region.width,
+            region_x: region.region.x,
+            region_y: region.region.y,
+            source_frame_ref: frame.source_frame_ref.clone(),
+            text: region.text.clone(),
+        })
+        .collect()
+}
+
+pub(super) fn frame_similarity_input(
+    chunk: &ProcessingChunkRow,
+    frame: &ExtractedVisualFrame,
+) -> CreateFrameSimilarityEntryInput {
+    CreateFrameSimilarityEntryInput {
+        chunk_id: Some(chunk.id.clone()),
+        id: Uuid::now_v7().to_string(),
+        job_id: chunk.job_id.clone(),
+        last_processed_timestamp_ms: frame.frame_timestamp_ms,
+        recording_id: chunk.recording_id.clone(),
+        region_height: frame.region.height,
+        region_width: frame.region.width,
+        region_x: frame.region.x,
+        region_y: frame.region.y,
+        signature: frame.signature.clone(),
+        source_frame_ref: frame.source_frame_ref.clone(),
+    }
+}
+
+pub(super) fn vlm_observation_inputs(
+    chunk: &ProcessingChunkRow,
+    config: &VisionRequestConfig,
+    observations: Vec<PendingVlmObservation>,
+) -> Vec<CreateVisualRegionInput> {
+    observations
+        .into_iter()
+        .map(|observation| CreateVisualRegionInput {
+            chunk_id: chunk.id.clone(),
+            confidence: observation.confidence,
+            frame_timestamp_ms: observation.frame_timestamp_ms,
+            id: Uuid::now_v7().to_string(),
+            job_id: chunk.job_id.clone(),
+            model: Some(config.model.clone()),
+            observation_kind: Some(observation.observation_kind),
+            prompt_version: Some(VLM_PROMPT_VERSION.to_string()),
+            provider: config.provider.clone(),
+            recording_id: chunk.recording_id.clone(),
+            region_height: observation.region.height,
+            region_width: observation.region.width,
+            region_x: observation.region.x,
+            region_y: observation.region.y,
+            source_frame_ref: observation.source_frame_ref,
+            text: observation.text,
+        })
+        .collect()
+}
+
+pub(super) fn persist_visual_output(
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    output: PendingVisualOutput,
+) -> Result<(), AiError> {
+    storage
+        .with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            storage::delete_visual_output_for_chunks(
+                &transaction,
+                std::slice::from_ref(&chunk.id),
+            )?;
+            for region in output.ocr_regions {
+                storage::create_ocr_region(&transaction, &region)?;
+            }
+            for observation in output.vlm_observations {
+                storage::create_vlm_observation(&transaction, &observation)?;
+            }
+            for entry in output.frame_similarity_entries {
+                storage::create_frame_similarity_entry(&transaction, &entry)?;
+            }
+            transaction.commit()?;
+            Ok(())
+        })
+        .map_err(storage_error)
+}

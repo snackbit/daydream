@@ -191,6 +191,86 @@ SHOULD NOT, and MAY must be interpreted accordingly.
   `*Controls` for action clusters, and `use*Controller` for stateful
   orchestration.
 
+## Complexity, Performance & Refactoring Hygiene
+
+- Agents MUST treat file size as only one maintainability signal. They MUST also
+  watch for high branching, deeply nested conditionals, long functions, mixed
+  sync/async control flow, excessive hook state, broad dependency arrays,
+  repeated data derivation, render-time heavy work, unclear ownership, and tests
+  that require large unrelated setup.
+- Agents MUST NOT add substantial behavior to a file or module that is already
+  large, complex, or ownership-confused without first checking whether the
+  behavior belongs in a focused module. As a rule of thumb, production files
+  above roughly 400 lines SHOULD be treated as split candidates, and files above
+  roughly 500 lines MUST have a clear ownership justification or be split before
+  more behavior is added.
+- Agents SHOULD split earlier than the line-count threshold when complexity is
+  already high. A 150-line hook with fetch lifecycle, timers, subscriptions,
+  mutable refs, retries, and UI state can be a worse offender than a longer
+  declarative component.
+- Agents MUST split by durable ownership, not by arbitrary line count. Good
+  split boundaries include route shell vs feature controller, toolbar vs dialog,
+  store composition vs action groups, IPC commands vs mapping/validation,
+  provider adapters vs domain logic, and public contract barrel vs domain
+  contract modules.
+- Agents SHOULD reduce cognitive complexity before adding features. Prefer
+  named predicates, small deterministic helpers, focused reducers, typed state
+  machines, and explicit action objects over nested conditionals and scattered
+  boolean flags.
+- Route files in `apps/desktop/src/screens` MUST stay composition-focused.
+  They SHOULD own route params, navigation, top-level loading/error/delete
+  flows, and feature assembly only. Data loading, dialogs, toolbar actions,
+  playback control, editor logic, and debug workflows SHOULD live under
+  `apps/desktop/src/features/<feature>/`.
+- React hooks SHOULD have one clear ownership reason to exist. Hooks that mix
+  data loading, subscriptions, timers, DOM/media refs, derived view models,
+  mutations, and error handling SHOULD be split into a controller plus focused
+  helpers.
+- React components SHOULD avoid repeated expensive derivations during render.
+  Agents SHOULD precompute with focused selectors, memoized view models, or
+  deterministic helpers when data volume or render frequency makes repeated work
+  meaningful. Do not add `useMemo` by reflex; use it when it protects a real
+  allocation, calculation, or referential-stability boundary.
+- Agents MUST keep effect dependencies honest. Do not silence dependency
+  warnings or hide values in refs to avoid re-running an effect unless the ref is
+  truly modeling an imperative boundary. Effects SHOULD synchronize with
+  external systems; pure derivations SHOULD stay out of effects.
+- Zustand stores MUST NOT become catch-all modules. Store files SHOULD define
+  the public hook and compose focused action groups. State types, initial state,
+  persistence/load/save actions, preview actions, lifecycle actions, selection
+  actions, and deterministic reducers SHOULD live in separate modules once more
+  than one ownership area exists.
+- Shared package files SHOULD NOT collect unrelated contracts. Keep
+  `packages/shared/src/*.ts` files as compatibility barrels when needed, but
+  move settings, commands, processing state, notifications, transcript, visual,
+  recorder, and diagnostics contracts into focused modules.
+- Rust modules SHOULD keep Tauri command handlers thin. Commands SHOULD validate
+  input, call focused domain/storage/service modules, and map errors. Long files
+  mixing commands, SQL rows, filesystem work, background jobs, and DTO mapping
+  SHOULD be split before adding behavior.
+- Compatibility boundaries SHOULD be preserved during refactors. Existing
+  public hooks, route components, IPC command names, shared package exports, and
+  Rust module imports SHOULD keep working unless the task explicitly includes a
+  breaking change.
+- Performance-sensitive paths SHOULD be identified before refactoring. Timeline
+  rendering, canvas interaction, playback synchronization, recorder preview
+  frames, capture loops, processing queues, storage scans, and large test
+  fixtures SHOULD avoid unnecessary cloning, repeated filtering over large
+  arrays, unstable callbacks passed to dense child trees, and avoidable
+  re-renders.
+- Agents SHOULD prefer data structures that match access patterns. Use maps,
+  sets, indexes, and pre-grouped view models when repeated lookup/filter work is
+  part of a hot path; keep simple arrays when data is small and clarity wins.
+- When a refactor checklist exists, especially `docs/refactoring-tasks.md`,
+  agents SHOULD update it before and after each major cleanup: document the
+  offender, ownership problem, complexity/performance risk, planned split,
+  verification commands, current line counts when relevant, and the next
+  discovered offender. Do not mark a checklist item complete until the split is
+  implemented and verified.
+- New abstractions MUST reduce real ownership confusion or duplication. Do not
+  create wrapper modules that only move code around without making responsibility
+  clearer.
+
 ## UI Component Quality
 
 - React UI code MUST use actual shadcn components from
@@ -248,6 +328,10 @@ SHOULD NOT, and MAY must be interpreted accordingly.
 - Tests MUST be scenario-first for user-facing, stateful, native-boundary, or
   privacy-sensitive changes. Start by naming the real workflow and failure mode
   the test protects.
+- Large test files SHOULD also be split by workflow once production ownership
+  boundaries are clear. Prefer scenario-focused test modules such as playback,
+  redaction, route lifecycle, preview lifecycle, scene editing, storage
+  migrations, and processing recovery over one monolithic test file.
 - Interactive React UI changes MUST include Browser Mode or equivalent
   user-level tests for at least one critical workflow unless the agent documents
   why that layer is not practical.
