@@ -3,6 +3,7 @@ import type { LibraryRecordingDetail } from '@daydream/shared';
 import { timelineDurationMs } from '../../library-timeline';
 import { redactionsIntersectingRanges } from './studio-redactions';
 import type {
+  StudioLaneDraft,
   StudioSelection,
   StudioTimeRangeSelection,
 } from './studio-timeline-store';
@@ -13,13 +14,14 @@ import {
   INITIAL_TRACK_WINDOW_MS,
   minVisibleWindowMs,
   TRACK_LABEL_WIDTH_PX,
+  trackLaneHeightPxForKind,
 } from './track-timeline-math';
-import { orderedDetailTracks } from './track-timeline-parts';
 
 export function useTrackTimelineViewModel({
   detail,
   displayedTimelineMs,
   laneOrder,
+  lanesById,
   scrollLeft,
   selection,
   viewportWidth,
@@ -28,6 +30,7 @@ export function useTrackTimelineViewModel({
   detail: LibraryRecordingDetail;
   displayedTimelineMs: number;
   laneOrder: string[];
+  lanesById: Record<string, StudioLaneDraft>;
   scrollLeft: number;
   selection: StudioSelection;
   viewportWidth: number;
@@ -52,13 +55,18 @@ export function useTrackTimelineViewModel({
   );
   const canZoomIn = visibleWindowMs > minVisibleWindowMs(totalDurationMs);
   const canZoomOut = visibleWindowMs < totalDurationMs;
-  const orderedTracks = useMemo(
-    () => orderedDetailTracks(detail.tracks, laneOrder),
-    [detail.tracks, laneOrder],
+  const orderedLaneIds = useMemo(
+    () => laneOrder.filter((laneId) => Boolean(lanesById[laneId])),
+    [laneOrder, lanesById],
   );
-  const activeLaneIds = useMemo(
-    () => orderedTracks.map((track) => track.id),
-    [orderedTracks],
+  const activeLaneIds = orderedLaneIds;
+  const activeLaneLayouts = useMemo(
+    () =>
+      orderedLaneIds.map((laneId) => ({
+        heightPx: trackLaneHeightPxForKind(lanesById[laneId]!.kind),
+        id: laneId,
+      })),
+    [orderedLaneIds, lanesById],
   );
   const selectedClipIds = useMemo(
     () => new Set(selection.clipIds),
@@ -121,10 +129,11 @@ export function useTrackTimelineViewModel({
 
   return {
     activeLaneIds,
+    activeLaneLayouts,
     canZoomIn,
     canZoomOut,
     rangesByLaneId,
-    orderedTracks,
+    orderedLaneIds,
     playheadLeftPx,
     rulerTicks,
     selectedClipIds,

@@ -1,4 +1,10 @@
-import type { AppSettings, AppSettingsLimits } from '@daydream/shared';
+import type {
+  AppSettings,
+  AppSettingsLimits,
+  InputActivityStatus,
+} from '@daydream/shared';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -17,13 +23,23 @@ import { CheckboxField, SliderField } from './ai-settings-fields';
 
 interface AiActivityProcessingCardProps {
   draft: AppSettings;
+  inputActivityRepairMessage: string | null;
+  inputActivityRepairing: boolean;
+  inputActivityStatus: InputActivityStatus | null;
   limits: AppSettingsLimits;
+  onRefreshInputActivityStatus: () => void;
+  onRepairInputActivity: () => void;
   onUpdateDraft: (updater: (draft: AppSettings) => AppSettings) => void;
 }
 
 export function AiActivityProcessingCard({
   draft,
+  inputActivityRepairMessage,
+  inputActivityRepairing,
+  inputActivityStatus,
   limits,
+  onRefreshInputActivityStatus,
+  onRepairInputActivity,
   onUpdateDraft,
 }: AiActivityProcessingCardProps) {
   return (
@@ -173,6 +189,13 @@ export function AiActivityProcessingCard({
               }));
             }}
           />
+          <InputActivityStatusPanel
+            onRefresh={onRefreshInputActivityStatus}
+            onRepair={onRepairInputActivity}
+            repairMessage={inputActivityRepairMessage}
+            repairing={inputActivityRepairing}
+            status={inputActivityStatus}
+          />
           <SliderField
             label="Keyboard activity window"
             max={limits.ai.activity.keyboardWindowMsMax}
@@ -215,6 +238,88 @@ export function AiActivityProcessingCard({
         </FieldGroup>
       </CardContent>
     </Card>
+  );
+}
+
+function InputActivityStatusPanel({
+  onRefresh,
+  onRepair,
+  repairMessage,
+  repairing,
+  status,
+}: {
+  onRefresh: () => void;
+  onRepair: () => void;
+  repairMessage: string | null;
+  repairing: boolean;
+  status: InputActivityStatus | null;
+}) {
+  if (!status) {
+    return (
+      <Alert>
+        <AlertTitle>Input activity status unknown</AlertTitle>
+        <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+          <span>Daydream has not checked keyboard and mouse access yet.</span>
+          <Button onClick={onRefresh} size="sm" type="button" variant="outline">
+            Recheck
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const canRepair = !status.available && status.repairAvailable;
+  const needsLogout =
+    !status.available &&
+    status.reason === 'permission-denied' &&
+    status.userInInputGroup;
+  const variant = status.available ? 'default' : 'destructive';
+  const deviceSummary =
+    status.platform === 'linux'
+      ? `${status.readableDeviceCount}/${status.candidateDeviceCount} input devices readable.`
+      : null;
+
+  return (
+    <Alert variant={variant}>
+      <AlertTitle>
+        {status.available
+          ? 'Input activity available'
+          : 'Input activity unavailable'}
+      </AlertTitle>
+      <AlertDescription>
+        <div className="grid gap-3">
+          <p>
+            {status.message}
+            {deviceSummary ? ` ${deviceSummary}` : ''}
+          </p>
+          {needsLogout ? (
+            <p>Log out and back in, then reopen Daydream.</p>
+          ) : null}
+          {repairMessage ? <p>{repairMessage}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={onRefresh}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Recheck
+            </Button>
+            {canRepair ? (
+              <Button
+                disabled={repairing}
+                onClick={onRepair}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {repairing ? 'Repairing...' : 'Repair permissions'}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </AlertDescription>
+    </Alert>
   );
 }
 

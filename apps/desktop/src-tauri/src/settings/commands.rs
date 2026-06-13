@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    default_settings,
+    default_settings, input_activity,
     persistence::{settings_from_storage_rows, settings_to_storage_inputs},
     service::{
         cleanup_error, enforce_storage_cleanup_for_settings, load_app_settings, now_ms,
@@ -68,4 +68,14 @@ pub fn reset_app_settings(
     let cleanup = enforce_storage_cleanup_for_settings(&app, &storage, &settings);
 
     Ok(settings_state_with_cleanup(settings, Some(cleanup)))
+}
+
+#[tauri::command(rename = "getInputActivityStatus")]
+pub fn get_input_activity_status() -> InputActivityStatus {
+    input_activity::input_activity_status()
+}
+
+#[tauri::command(rename = "repairInputActivityPermissions")]
+pub fn repair_input_activity_permissions() -> InputActivityRepairResult {
+    input_activity::repair_input_activity_permissions()
 }

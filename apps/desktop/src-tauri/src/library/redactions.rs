@@ -1,4 +1,5 @@
 use super::*;
+use crate::{redaction_targets, timeline_lanes::ACTIVITY_TRACK_IDS};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RedactionInterval {
@@ -19,12 +20,13 @@ pub(super) fn build_normalized_redaction_inputs(
     let valid_track_ids = tracks
         .iter()
         .map(|track| track.id.as_str())
+        .chain(ACTIVITY_TRACK_IDS)
         .collect::<BTreeSet<_>>();
     if valid_track_ids.is_empty() {
         return Err("Recording has no playable tracks to redact.".to_string());
     }
     let timestamp_ms = now_ms();
-    let all_track_ids = tracks
+    let media_track_ids = tracks
         .iter()
         .map(|track| track.id.clone())
         .collect::<Vec<_>>();
@@ -34,9 +36,10 @@ pub(super) fn build_normalized_redaction_inputs(
         if redaction.end_offset_ms <= redaction.start_offset_ms {
             continue;
         }
-        let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
-            .filter(|track_ids| !track_ids.is_empty())
-            .unwrap_or_else(|| all_track_ids.clone());
+        let track_ids = redaction_targets::expanded_redaction_track_ids(
+            &redaction.track_ids_json,
+            &media_track_ids,
+        );
         for track_id in track_ids
             .into_iter()
             .filter(|track_id| valid_track_ids.contains(track_id.as_str()))
@@ -61,7 +64,7 @@ pub(super) fn build_normalized_redaction_inputs(
                 duration_ms.max(0)
             ));
         }
-        let track_ids = normalized_track_ids(&range.track_ids);
+        let track_ids = redaction_targets::normalized_track_ids(&range.track_ids);
         if track_ids.is_empty() {
             return Err("Redaction requires at least one target track.".to_string());
         }
@@ -123,11 +126,12 @@ pub(super) fn build_unredacted_redaction_inputs(
     let valid_track_ids = tracks
         .iter()
         .map(|track| track.id.as_str())
+        .chain(ACTIVITY_TRACK_IDS)
         .collect::<BTreeSet<_>>();
     if valid_track_ids.is_empty() {
         return Err("Recording has no playable tracks to unredact.".to_string());
     }
-    let all_track_ids = tracks
+    let media_track_ids = tracks
         .iter()
         .map(|track| track.id.clone())
         .collect::<Vec<_>>();
@@ -137,9 +141,10 @@ pub(super) fn build_unredacted_redaction_inputs(
         if redaction.end_offset_ms <= redaction.start_offset_ms {
             continue;
         }
-        let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
-            .filter(|track_ids| !track_ids.is_empty())
-            .unwrap_or_else(|| all_track_ids.clone());
+        let track_ids = redaction_targets::expanded_redaction_track_ids(
+            &redaction.track_ids_json,
+            &media_track_ids,
+        );
         for track_id in track_ids
             .into_iter()
             .filter(|track_id| valid_track_ids.contains(track_id.as_str()))
@@ -164,7 +169,7 @@ pub(super) fn build_unredacted_redaction_inputs(
                 duration_ms.max(0)
             ));
         }
-        let track_ids = normalized_track_ids(&range.track_ids);
+        let track_ids = redaction_targets::normalized_track_ids(&range.track_ids);
         if track_ids.is_empty() {
             return Err("Unredaction requires at least one target track.".to_string());
         }
@@ -292,19 +297,7 @@ pub(super) fn ensure_recording_allows_redaction(recording: &RecordingRow) -> Res
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn parse_redaction_track_ids(track_ids_json: &str) -> Option<Vec<String>> {
-    serde_json::from_str::<Vec<String>>(track_ids_json)
-        .ok()
-        .map(|track_ids| normalized_track_ids(&track_ids))
-}
-
-fn normalized_track_ids(track_ids: &[String]) -> Vec<String> {
-    track_ids
-        .iter()
-        .map(|track_id| track_id.trim())
-        .filter(|track_id| !track_id.is_empty())
-        .map(ToString::to_string)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+    redaction_targets::parse_redaction_track_ids(track_ids_json)
 }

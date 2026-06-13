@@ -1,6 +1,7 @@
 import {
   useRef,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
 } from 'react';
@@ -12,6 +13,7 @@ import type {
   RecordingAiProcessingState,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
+import { formatDuration } from '../../library-format';
 import { buildDerivedLane } from './derived-ai-lane-strip';
 import {
   studioClipId,
@@ -29,6 +31,8 @@ import {
   TRACK_LANE_HEIGHT_PX,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
 } from './track-timeline-math';
+
+type VisualFrameSource = 'mixed' | 'ocr' | 'vlm';
 
 export interface TrackLaneProps {
   aiProcessingState: RecordingAiProcessingState | null;
@@ -53,7 +57,7 @@ export interface TrackLaneProps {
   lane: StudioLaneDraft;
   visualFrames: StudioVisualFrame[];
   waveformTiles: LibraryWaveformTiles | null;
-  onSelectVisualFrame: (visualFrameId: string, additive: boolean) => void;
+  onSelectVisualFrame: (frame: StudioVisualFrame, additive: boolean) => void;
 }
 
 export function TrackLane({
@@ -156,7 +160,7 @@ export function TrackLane({
         lane={lane}
         muted={muted}
         selectedLane={selectedLane}
-        track={track}
+        trackId={track.id}
         onSelectLane={onSelectLane}
         onToggleTrackMuted={onToggleTrackMuted}
       />
@@ -218,9 +222,9 @@ export function TrackLane({
             key={redaction.id}
             redaction={redaction}
             selected={selectedRedactionIds.has(redaction.id)}
+            trackLabel={track.label}
             timelineWidthPx={timelineWidthPx}
             totalDurationMs={totalDurationMs}
-            track={track}
             onSelectRedaction={onSelectRedaction}
           />
         ))}
@@ -249,7 +253,7 @@ function VisualFrameSegments({
   timelineWidthPx: number;
   totalDurationMs: number;
   visualFrames: StudioVisualFrame[];
-  onSelectVisualFrame: (visualFrameId: string, additive: boolean) => void;
+  onSelectVisualFrame: (frame: StudioVisualFrame, additive: boolean) => void;
 }) {
   if (visualFrames.length === 0) {
     return null;
@@ -271,6 +275,7 @@ function VisualFrameSegments({
             totalDurationMs) *
             timelineWidthPx,
         );
+        const source = visualFrameSource(frame);
         const title = visualFrameMarkerTitle(frame);
 
         return (
@@ -278,35 +283,79 @@ function VisualFrameSegments({
             aria-label={title}
             aria-pressed={selected}
             className={cn(
-              'border-primary/80 bg-background/95 absolute bottom-1 z-20 h-6 overflow-hidden rounded-sm border px-1 text-[0.625rem] font-medium shadow-sm',
-              'hover:bg-accent focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+              'absolute bottom-1 z-20 h-6 overflow-hidden rounded-sm border px-1 text-[0.625rem] font-medium shadow-sm',
+              'focus-visible:ring-ring hover:brightness-95 focus-visible:ring-2 focus-visible:outline-none',
+              visualFrameMarkerClassName(source),
               selected && 'ring-ring ring-2',
             )}
             data-library-action
+            data-visual-frame-source={source}
             key={frame.id}
             style={{
               left,
               width,
+              ...visualFrameMarkerStyle(source),
             }}
             title={title}
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               onSelectVisualFrame(
-                frame.id,
+                frame,
                 event.shiftKey || event.metaKey || event.ctrlKey,
               );
             }}
           >
             <span className="block truncate">
-              {frame.vlmObservations.length > 0 ? 'VLM' : 'OCR'}{' '}
-              {frame.ocrRegions.length > 0 ? frame.ocrRegions.length : ''}
+              {formatVisualFrameMarkerTimestamp(frame.frameTimestampMs)}
             </span>
           </button>
         );
       })}
     </>
   );
+}
+
+function visualFrameSource(frame: StudioVisualFrame): VisualFrameSource {
+  const hasOcr = frame.ocrRegions.length > 0;
+  const hasVlm = frame.vlmObservations.length > 0;
+  if (hasOcr && hasVlm) {
+    return 'mixed';
+  }
+
+  return hasVlm ? 'vlm' : 'ocr';
+}
+
+function visualFrameMarkerClassName(source: VisualFrameSource): string {
+  switch (source) {
+    case 'mixed':
+      return 'border-cyan-600/90 bg-amber-100 text-slate-950 dark:border-cyan-300/80';
+    case 'vlm':
+      return 'border-sky-500/80 bg-sky-100/95 text-sky-950 dark:border-sky-300/80 dark:bg-sky-950/90 dark:text-sky-100';
+    case 'ocr':
+      return 'border-amber-500/80 bg-amber-100/95 text-amber-950 dark:border-amber-300/80 dark:bg-amber-950/90 dark:text-amber-100';
+  }
+}
+
+function visualFrameMarkerStyle(
+  source: VisualFrameSource,
+): CSSProperties | undefined {
+  if (source !== 'mixed') {
+    return undefined;
+  }
+
+  return {
+    backgroundImage:
+      'repeating-linear-gradient(135deg, rgb(254 243 199 / 0.95) 0, rgb(254 243 199 / 0.95) 6px, rgb(186 230 253 / 0.95) 6px, rgb(186 230 253 / 0.95) 12px)',
+  };
+}
+
+function formatVisualFrameMarkerTimestamp(timestampMs: number): string {
+  if (timestampMs < 60_000 && timestampMs % 1_000 !== 0) {
+    return `${(timestampMs / 1_000).toFixed(1)}s`;
+  }
+
+  return formatDuration(timestampMs);
 }
 
 function visualFrameMarkerTitle(frame: StudioVisualFrame): string {
@@ -316,6 +365,9 @@ function visualFrameMarkerTitle(frame: StudioVisualFrame): string {
     frame.vlmObservations.length > 0
       ? `${frame.vlmObservations.length} VLM`
       : 'no VLM';
+  const ocrText = `${frame.ocrRegions.length} OCR ${
+    frame.ocrRegions.length === 1 ? 'candidate' : 'candidates'
+  }`;
 
-  return `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${frame.ocrRegions.length} OCR candidates`;
+  return `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${ocrText}`;
 }

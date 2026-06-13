@@ -97,6 +97,12 @@ function ColorPalettePopover({
 
 export function trackKindLabel(kind: StudioLaneDraft['kind']): string {
   switch (kind) {
+    case 'activity-focus':
+      return 'Activity events';
+    case 'activity-keyboard':
+      return 'Keyboard activity';
+    case 'activity-mouse':
+      return 'Mouse activity';
     case 'desktop-audio':
       return 'Desktop audio';
     case 'microphone':

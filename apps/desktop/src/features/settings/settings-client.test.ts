@@ -2,7 +2,9 @@ import type { SaveAppSettingsInput } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
   getAppSettings,
+  getInputActivityStatus,
   previewAppSettingsStorageCleanup,
+  repairInputActivityPermissions,
   resetAppSettings,
   saveAppSettings,
 } from './settings-client';
@@ -95,6 +97,8 @@ test('settings client uses typed camelCase command names', async () => {
   await previewAppSettingsStorageCleanup(input);
   await saveAppSettings(input);
   await resetAppSettings();
+  await getInputActivityStatus();
+  await repairInputActivityPermissions();
 
   expect(invokeMock).toHaveBeenNthCalledWith(1, 'getAppSettings');
   expect(invokeMock).toHaveBeenNthCalledWith(
@@ -108,4 +112,9 @@ test('settings client uses typed camelCase command names', async () => {
     input,
   });
   expect(invokeMock).toHaveBeenNthCalledWith(4, 'resetAppSettings');
+  expect(invokeMock).toHaveBeenNthCalledWith(5, 'getInputActivityStatus');
+  expect(invokeMock).toHaveBeenNthCalledWith(
+    6,
+    'repairInputActivityPermissions',
+  );
 });

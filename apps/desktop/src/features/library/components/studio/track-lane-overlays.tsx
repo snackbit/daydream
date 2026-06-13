@@ -1,7 +1,4 @@
-import type {
-  LibraryRecordingRedaction,
-  LibraryRecordingTrack,
-} from '@daydream/shared';
+import type { LibraryRecordingRedaction } from '@daydream/shared';
 import { cn } from '@/lib/utils';
 import type { StudioTimeRangeSelection } from './studio-timeline-store';
 
@@ -31,16 +28,16 @@ export function RedactionOverlay({
   onSelectRedaction,
   redaction,
   selected,
+  trackLabel,
   timelineWidthPx,
   totalDurationMs,
-  track,
 }: {
   onSelectRedaction: (redactionId: string, additive: boolean) => void;
   redaction: LibraryRecordingRedaction;
   selected: boolean;
+  trackLabel: string;
   timelineWidthPx: number;
   totalDurationMs: number;
-  track: LibraryRecordingTrack;
 }) {
   const left = (redaction.startOffsetMs / totalDurationMs) * timelineWidthPx;
   const width =
@@ -49,7 +46,7 @@ export function RedactionOverlay({
 
   return (
     <button
-      aria-label={`${track.label} redacted range`}
+      aria-label={`${trackLabel} redacted range`}
       aria-pressed={selected}
       className={cn(
         'absolute inset-y-1 z-30 overflow-hidden rounded-sm border border-neutral-900 bg-neutral-700 text-left text-[0.625rem] font-medium text-white shadow-inner outline-none',
@@ -61,7 +58,7 @@ export function RedactionOverlay({
         left,
         width: Math.max(4, width),
       }}
-      title={`${track.label} redacted`}
+      title={`${trackLabel} redacted`}
       type="button"
       onClick={(event) => {
         event.stopPropagation();

@@ -10,6 +10,11 @@ export const DEFAULT_TRACK_VIEWPORT_WIDTH_PX = 800;
 export const RULER_TARGET_TICK_PX = 90;
 export const TRACK_SELECTION_DRAG_THRESHOLD_PX = 4;
 
+export interface TimelineLaneLayout {
+  heightPx: number;
+  id: string;
+}
+
 export interface RulerTick {
   leftPx: number;
   major: boolean;
@@ -132,6 +137,46 @@ export function intersectLaneIds({
   }
 
   return laneIds.slice(firstIndex, lastIndex + 1);
+}
+
+export function intersectTimelineLaneIds({
+  endY,
+  lanes,
+  rulerHeightPx = TRACK_RULER_HEIGHT_PX,
+  startY,
+}: {
+  endY: number;
+  lanes: TimelineLaneLayout[];
+  rulerHeightPx?: number;
+  startY: number;
+}): string[] {
+  if (lanes.length === 0) {
+    return [];
+  }
+
+  const selectionTop = Math.max(0, Math.min(startY, endY) - rulerHeightPx);
+  const selectionBottom = Math.max(0, Math.max(startY, endY) - rulerHeightPx);
+  if (selectionBottom === 0) {
+    return [];
+  }
+
+  const intersected: string[] = [];
+  let laneTop = 0;
+  for (const lane of lanes) {
+    const laneBottom = laneTop + lane.heightPx;
+    if (selectionTop < laneBottom && selectionBottom > laneTop) {
+      intersected.push(lane.id);
+    }
+    laneTop = laneBottom;
+  }
+
+  return intersected;
+}
+
+export function trackLaneHeightPxForKind(kind: string): number {
+  return kind.startsWith('activity-')
+    ? TRACK_DERIVED_LANE_HEIGHT_PX
+    : TRACK_LANE_HEIGHT_PX;
 }
 
 export function selectionDistancePx({

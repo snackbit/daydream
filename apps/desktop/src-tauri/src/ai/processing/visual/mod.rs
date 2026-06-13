@@ -26,11 +26,11 @@ use persistence::{
 pub(in crate::ai) use types::{ExtractedVisualFrame, OcrCandidate, PreviousVisualObservation};
 #[cfg(test)]
 pub(in crate::ai) use types::{VisionRequestConfig, VisualImage};
+use vlm::{request_vlm_observations, vision_provider_ready, vision_request_config};
 #[cfg(test)]
 pub(in crate::ai) use vlm::{
     validate_vlm_observation_text, vision_chat_completions_url, vlm_chat_completions_body,
 };
-use vlm::{request_vlm_observations, vision_provider_ready, vision_request_config};
 
 pub(in crate::ai) async fn process_visual_chunk_inner(
     app: &AppHandle,

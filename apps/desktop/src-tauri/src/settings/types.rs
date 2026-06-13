@@ -220,3 +220,37 @@ pub struct AppSettingsError {
     pub field: Option<String>,
     pub message: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum InputActivityStatusReason {
+    Available,
+    DevInputMissing,
+    NoSupportedDevices,
+    PermissionDenied,
+    Unknown,
+    UnsupportedPlatform,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputActivityStatus {
+    pub available: bool,
+    pub candidate_device_count: usize,
+    pub current_user: Option<String>,
+    pub message: String,
+    pub permission_denied_device_count: usize,
+    pub platform: String,
+    pub readable_device_count: usize,
+    pub reason: InputActivityStatusReason,
+    pub repair_available: bool,
+    pub user_in_input_group: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputActivityRepairResult {
+    pub message: String,
+    pub status: InputActivityStatus,
+    pub success: bool,
+}

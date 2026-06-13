@@ -92,8 +92,8 @@ pub(crate) use results::{
     visible_visual_observation_rows_for_recording, visual_observations_for_recording,
 };
 pub use types::{
-    ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus, AiModelAsset,
-    AiModelAssetList, AiOcrStatus, AiProviderStatus, AiTranscriptionLanguageStatus,
+    ActivityEvent, ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus,
+    AiModelAsset, AiModelAssetList, AiOcrStatus, AiProviderStatus, AiTranscriptionLanguageStatus,
     CancelAiModelDownloadInput, DeleteAiModelInput, DeleteAiProviderSecretInput,
     DownloadAiModelInput, GetRecordingTranscriptInput, ListProcessingJobsInput, OcrRegion,
     ProcessingChunk, ProcessingJob, ProcessingJobActionInput, ProcessingJobList, RecordingActivity,

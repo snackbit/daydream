@@ -77,3 +77,30 @@ export interface AppSettingsError {
   field?: string;
   message: string;
 }
+
+export type InputActivityStatusReason =
+  | 'available'
+  | 'dev-input-missing'
+  | 'no-supported-devices'
+  | 'permission-denied'
+  | 'unknown'
+  | 'unsupported-platform';
+
+export interface InputActivityStatus {
+  available: boolean;
+  candidateDeviceCount: number;
+  currentUser: string | null;
+  message: string;
+  permissionDeniedDeviceCount: number;
+  platform: string;
+  readableDeviceCount: number;
+  reason: InputActivityStatusReason;
+  repairAvailable: boolean;
+  userInInputGroup: boolean;
+}
+
+export interface InputActivityRepairResult {
+  message: string;
+  status: InputActivityStatus;
+  success: boolean;
+}

@@ -961,6 +961,368 @@ fn visual_observation_queries_hide_all_track_redactions() {
 }
 
 #[test]
+fn activity_queries_hide_lane_scoped_redactions_without_deleting_rows() {
+    let storage = storage::test_storage(PathBuf::new());
+    let recording_id = storage
+        .with_connection_mut(|connection| {
+            let fixture = test_visual_recording(connection);
+            storage::create_activity_interval(
+                connection,
+                &CreateActivityIntervalInput {
+                    chunk_id: None,
+                    end_offset_ms: 5_000,
+                    id: Uuid::now_v7().to_string(),
+                    job_id: fixture.job_id.clone(),
+                    recording_id: fixture.recording_id.clone(),
+                    regions_json: Some("[]".to_string()),
+                    score: Some(0.9),
+                    source_kind: "mouse".to_string(),
+                    start_offset_ms: 0,
+                    state: "active".to_string(),
+                },
+            )?;
+            storage::create_activity_interval(
+                connection,
+                &CreateActivityIntervalInput {
+                    chunk_id: None,
+                    end_offset_ms: 5_000,
+                    id: Uuid::now_v7().to_string(),
+                    job_id: fixture.job_id.clone(),
+                    recording_id: fixture.recording_id.clone(),
+                    regions_json: Some("[]".to_string()),
+                    score: Some(0.7),
+                    source_kind: "keyboard".to_string(),
+                    start_offset_ms: 0,
+                    state: "active".to_string(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "focused-window".to_string(),
+                    occurred_at_ms: 2_500,
+                    offset_ms: 1_500,
+                    payload_json: r#"{"applicationName":"Hidden Editor","title":"Secrets.md"}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "focused-window".to_string(),
+                    occurred_at_ms: 3_500,
+                    offset_ms: 2_500,
+                    payload_json: r#"{"appName":"Visible Editor","windowTitle":"Notes.md"}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    created_at_ms: 20,
+                    end_offset_ms: 2_000,
+                    id: Uuid::now_v7().to_string(),
+                    reason: None,
+                    recording_id: fixture.recording_id.clone(),
+                    start_offset_ms: 1_000,
+                    track_ids_json: serde_json::to_string(&vec![
+                        crate::timeline_lanes::ACTIVITY_MOUSE_TRACK_ID.to_string(),
+                    ])
+                    .expect("serialize mouse redaction tracks"),
+                },
+            )?;
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    created_at_ms: 21,
+                    end_offset_ms: 2_000,
+                    id: Uuid::now_v7().to_string(),
+                    reason: None,
+                    recording_id: fixture.recording_id.clone(),
+                    start_offset_ms: 1_000,
+                    track_ids_json: serde_json::to_string(&vec![
+                        crate::timeline_lanes::ACTIVITY_FOCUS_TRACK_ID.to_string(),
+                    ])
+                    .expect("serialize focus redaction tracks"),
+                },
+            )?;
+
+            Ok(fixture.recording_id)
+        })
+        .expect("seed activity observations and redactions");
+
+    let activity = activity_for_recording(&storage, &recording_id).expect("activity");
+    let stored_counts = storage
+        .with_connection(|connection| {
+            Ok((
+                storage::list_activity_intervals(connection, &recording_id)?.len(),
+                storage::list_capture_events(
+                    connection,
+                    &recording_id,
+                    &["focused-window"],
+                    0,
+                    10_000,
+                )?
+                .len(),
+            ))
+        })
+        .expect("stored activity counts");
+
+    assert_eq!(stored_counts, (2, 2));
+    let interval_ranges = activity
+        .intervals
+        .iter()
+        .map(|interval| {
+            (
+                interval.source_kind.as_str(),
+                interval.start_offset_ms,
+                interval.end_offset_ms,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        interval_ranges,
+        vec![
+            ("keyboard", 0, 5_000),
+            ("mouse", 0, 1_000),
+            ("mouse", 2_000, 5_000),
+        ]
+    );
+
+    assert_eq!(activity.events.len(), 1);
+    assert_eq!(activity.events[0].offset_ms, 2_500);
+    assert_eq!(
+        activity.events[0].application_name.as_deref(),
+        Some("Visible Editor")
+    );
+    assert_eq!(activity.events[0].title.as_deref(), Some("Notes.md"));
+}
+
+#[test]
+fn activity_queries_hide_legacy_all_media_redactions() {
+    let storage = storage::test_storage(PathBuf::new());
+    let recording_id = storage
+        .with_connection_mut(|connection| {
+            let fixture = test_visual_recording(connection);
+            storage::finalize_recording_segment(
+                connection,
+                &storage::FinalizeRecordingSegmentInput {
+                    desktop_audio_stream_index: Some(1),
+                    duration_ms: 5_000,
+                    ended_at_ms: 5_001,
+                    id: fixture.segment_id.clone(),
+                    microphone_audio_stream_index: None,
+                    probe_json: None,
+                    updated_at_ms: 5_001,
+                    video_stream_index: Some(0),
+                },
+            )?;
+            storage::create_activity_interval(
+                connection,
+                &CreateActivityIntervalInput {
+                    chunk_id: None,
+                    end_offset_ms: 5_000,
+                    id: Uuid::now_v7().to_string(),
+                    job_id: fixture.job_id.clone(),
+                    recording_id: fixture.recording_id.clone(),
+                    regions_json: Some("[]".to_string()),
+                    score: Some(0.9),
+                    source_kind: "mouse".to_string(),
+                    start_offset_ms: 0,
+                    state: "active".to_string(),
+                },
+            )?;
+            storage::create_activity_interval(
+                connection,
+                &CreateActivityIntervalInput {
+                    chunk_id: None,
+                    end_offset_ms: 5_000,
+                    id: Uuid::now_v7().to_string(),
+                    job_id: fixture.job_id.clone(),
+                    recording_id: fixture.recording_id.clone(),
+                    regions_json: Some("[]".to_string()),
+                    score: Some(0.7),
+                    source_kind: "keyboard".to_string(),
+                    start_offset_ms: 0,
+                    state: "active".to_string(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "focused-window".to_string(),
+                    occurred_at_ms: 1_500,
+                    offset_ms: 1_500,
+                    payload_json: r#"{"applicationName":"Hidden Editor","title":"Secrets.md"}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "capture-state".to_string(),
+                    occurred_at_ms: 1_500,
+                    offset_ms: 1_500,
+                    payload_json:
+                        r#"{"reason":"permission-denied","source":"evdev","status":"unavailable"}"#
+                            .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    created_at_ms: 20,
+                    end_offset_ms: 2_000,
+                    id: Uuid::now_v7().to_string(),
+                    reason: None,
+                    recording_id: fixture.recording_id.clone(),
+                    start_offset_ms: 1_000,
+                    track_ids_json: serde_json::to_string(&vec![
+                        "desktop-audio-1".to_string(),
+                        "video-0".to_string(),
+                    ])
+                    .expect("serialize legacy media redaction tracks"),
+                },
+            )?;
+
+            Ok(fixture.recording_id)
+        })
+        .expect("seed legacy media redaction");
+
+    let activity = activity_for_recording(&storage, &recording_id).expect("activity");
+    let interval_ranges = activity
+        .intervals
+        .iter()
+        .map(|interval| {
+            (
+                interval.source_kind.as_str(),
+                interval.start_offset_ms,
+                interval.end_offset_ms,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        interval_ranges,
+        vec![
+            ("keyboard", 0, 1_000),
+            ("keyboard", 2_000, 5_000),
+            ("mouse", 0, 1_000),
+            ("mouse", 2_000, 5_000),
+        ]
+    );
+    assert!(activity.capture_states.is_empty());
+    assert!(activity.events.is_empty());
+}
+
+#[test]
+fn activity_queries_keep_activity_visible_for_media_subset_redactions() {
+    let storage = storage::test_storage(PathBuf::new());
+    let recording_id = storage
+        .with_connection_mut(|connection| {
+            let fixture = test_visual_recording(connection);
+            storage::finalize_recording_segment(
+                connection,
+                &storage::FinalizeRecordingSegmentInput {
+                    desktop_audio_stream_index: Some(1),
+                    duration_ms: 5_000,
+                    ended_at_ms: 5_001,
+                    id: fixture.segment_id.clone(),
+                    microphone_audio_stream_index: None,
+                    probe_json: None,
+                    updated_at_ms: 5_001,
+                    video_stream_index: Some(0),
+                },
+            )?;
+            storage::create_activity_interval(
+                connection,
+                &CreateActivityIntervalInput {
+                    chunk_id: None,
+                    end_offset_ms: 5_000,
+                    id: Uuid::now_v7().to_string(),
+                    job_id: fixture.job_id.clone(),
+                    recording_id: fixture.recording_id.clone(),
+                    regions_json: Some("[]".to_string()),
+                    score: Some(0.9),
+                    source_kind: "mouse".to_string(),
+                    start_offset_ms: 0,
+                    state: "active".to_string(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "focused-window".to_string(),
+                    occurred_at_ms: 1_500,
+                    offset_ms: 1_500,
+                    payload_json: r#"{"applicationName":"Visible Editor","title":"Notes.md"}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "capture-state".to_string(),
+                    occurred_at_ms: 1_500,
+                    offset_ms: 1_500,
+                    payload_json:
+                        r#"{"reason":"permission-denied","source":"evdev","status":"unavailable"}"#
+                            .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    created_at_ms: 20,
+                    end_offset_ms: 2_000,
+                    id: Uuid::now_v7().to_string(),
+                    reason: None,
+                    recording_id: fixture.recording_id.clone(),
+                    start_offset_ms: 1_000,
+                    track_ids_json: serde_json::to_string(&vec!["video-0".to_string()])
+                        .expect("serialize media subset redaction tracks"),
+                },
+            )?;
+
+            Ok(fixture.recording_id)
+        })
+        .expect("seed media subset redaction");
+
+    let activity = activity_for_recording(&storage, &recording_id).expect("activity");
+    let interval_ranges = activity
+        .intervals
+        .iter()
+        .map(|interval| {
+            (
+                interval.source_kind.as_str(),
+                interval.start_offset_ms,
+                interval.end_offset_ms,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(interval_ranges, vec![("mouse", 0, 5_000)]);
+    assert_eq!(activity.capture_states.len(), 1);
+    assert_eq!(activity.events.len(), 1);
+    assert_eq!(
+        activity.events[0].application_name.as_deref(),
+        Some("Visible Editor")
+    );
+}
+
+#[test]
 fn visual_observation_queries_hide_non_succeeded_chunk_rows() {
     let storage = storage::test_storage(PathBuf::new());
     let recording_id = storage

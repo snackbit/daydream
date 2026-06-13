@@ -2,6 +2,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   LibraryWaveformTiles,
+  RecordingActivity,
   RecordingAiProcessingState,
   RecordingVisualObservations,
 } from '@daydream/shared';
@@ -36,6 +37,7 @@ const client = vi.hoisted(() => ({
 
 const aiClient = vi.hoisted(() => ({
   getRecordingAiProcessingState: vi.fn(),
+  getRecordingActivity: vi.fn(),
   getRecordingVisualObservations: vi.fn(),
   listenToAiProcessingChanged: vi.fn(),
   startRecordingAiProcessing: vi.fn(),
@@ -125,6 +127,14 @@ const detail = {
     },
   ],
 } satisfies LibraryRecordingDetail;
+
+const allTimelineLaneIds = [
+  'activity:focus',
+  'activity:keyboard',
+  'activity:mouse',
+  'desktop-audio-1',
+  'video-0',
+];
 
 const waveformTiles = {
   binMs: 10,
@@ -268,6 +278,12 @@ beforeEach(() => {
     job: null,
     recordingId: 'recording-1',
     transcript: { recordingId: 'recording-1', tracks: [] },
+  });
+  aiClient.getRecordingActivity.mockResolvedValue({
+    captureStates: [],
+    events: [],
+    intervals: [],
+    recordingId: 'recording-1',
   });
   aiClient.getRecordingVisualObservations.mockResolvedValue({
     ocrRegions: [],
@@ -982,6 +998,26 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
         sourceFrameRef: 'segment:segment-1:offset:500:frame:0',
         text: 'A browser checkout page is visible with a payment form and order summary.',
       },
+      {
+        chunkId: 'vlm-chunk-1',
+        confidence: null,
+        frameTimestampMs: 1_500,
+        id: 'vlm-2',
+        jobId: 'job-1',
+        model: 'qwen/qwen3-vl-8b',
+        observationKind: 'screen-observation',
+        promptVersion: 'm2-visual-observation-v2',
+        provider: 'openai-compatible',
+        recordingId: 'recording-1',
+        region: {
+          height: 1440,
+          width: 2560,
+          x: 0,
+          y: 0,
+        },
+        sourceFrameRef: 'segment:segment-1:offset:1500:frame:2',
+        text: 'The checkout page remains visible with the payment step active.',
+      },
     ],
     vlmState: {
       errorCode: null,
@@ -995,13 +1031,38 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   const markers = await screen.findAllByRole('button', {
     name: /visual frame/i,
   });
-  expect(markers).toHaveLength(2);
+  expect(markers).toHaveLength(3);
 
   const marker = screen.getByRole('button', {
     name: /visual frame 0\.5s to 1\.0s, 1 vlm, 2 ocr candidates/i,
   });
+  const ocrMarker = screen.getByRole('button', {
+    name: /visual frame 1\.0s to 1\.5s, no vlm, 1 ocr candidate/i,
+  });
+  const vlmMarker = screen.getByRole('button', {
+    name: /visual frame 1\.5s to 2\.0s, 1 vlm, 0 ocr candidates/i,
+  });
+  expect(marker.textContent).toBe('0.5s');
+  expect(marker.textContent).not.toMatch(/OCR 2|VLM 1/i);
+  expect(marker.getAttribute('data-visual-frame-source')).toBe('mixed');
+  expect(ocrMarker.textContent).toBe('0:01');
+  expect(ocrMarker.getAttribute('data-visual-frame-source')).toBe('ocr');
+  expect(vlmMarker.textContent).toBe('1.5s');
+  expect(vlmMarker.getAttribute('data-visual-frame-source')).toBe('vlm');
+
+  fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  expect(await screen.findByRole('button', { name: /^pause$/i })).toBeTruthy();
+
   fireEvent.click(marker);
 
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('slider', { name: /playback position/i })
+        .getAttribute('aria-valuenow'),
+    ).toBe('500'),
+  );
+  expect(screen.getByRole('button', { name: /^play$/i })).toBeTruthy();
   expect(
     await screen.findByText(
       'A browser checkout page is visible with a payment form and order summary.',
@@ -1012,6 +1073,251 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   fireEvent.click(screen.getByRole('button', { name: /ocr text \(2\)/i }));
 
   expect(await screen.findByText(/Checkout Total/i)).toBeTruthy();
+});
+
+test('RecordingStudioScreen renders activity lanes and seeks from focus markers', async () => {
+  aiClient.getRecordingActivity.mockResolvedValue({
+    captureStates: [],
+    events: [
+      {
+        applicationName: 'Editor',
+        id: 'focus-1',
+        kind: 'focused-window',
+        occurredAtMs: 2_200,
+        offsetMs: 1_200,
+        recordingId: 'recording-1',
+        title: 'Notes.md',
+      },
+    ],
+    intervals: [
+      {
+        endOffsetMs: 1_500,
+        id: 'mouse-1',
+        jobId: 'job-1',
+        recordingId: 'recording-1',
+        score: 1,
+        sourceKind: 'mouse',
+        startOffsetMs: 500,
+        state: 'active',
+      },
+      {
+        endOffsetMs: 1_800,
+        id: 'keyboard-1',
+        jobId: 'job-1',
+        recordingId: 'recording-1',
+        score: 1,
+        sourceKind: 'keyboard',
+        startOffsetMs: 900,
+        state: 'active',
+      },
+    ],
+    recordingId: 'recording-1',
+  } satisfies RecordingActivity);
+
+  render(<RecordingStudioScreen />);
+
+  expect(
+    await screen.findByRole('button', { name: /^Select Mouse$/i }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: /^Select Keyboard$/i }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: /^Select Activity$/i }),
+  ).toBeTruthy();
+  expect(screen.getByLabelText(/Mouse activity 0:01 to 0:02/i)).toBeTruthy();
+  expect(screen.getByLabelText(/Keyboard activity 0:01 to 0:02/i)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  expect(await screen.findByRole('button', { name: /^pause$/i })).toBeTruthy();
+
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+    }),
+  );
+
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('slider', { name: /playback position/i })
+        .getAttribute('aria-valuenow'),
+    ).toBe('1200'),
+  );
+  expect(screen.getByRole('button', { name: /^play$/i })).toBeTruthy();
+});
+
+test('RecordingStudioScreen reloads activity after creating redactions', async () => {
+  const redactedDetail = {
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: allTimelineLaneIds,
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+  aiClient.getRecordingActivity
+    .mockResolvedValueOnce({
+      captureStates: [],
+      events: [
+        {
+          applicationName: 'Editor',
+          id: 'focus-1',
+          kind: 'focused-window',
+          occurredAtMs: 2_200,
+          offsetMs: 1_200,
+          recordingId: 'recording-1',
+          title: 'Notes.md',
+        },
+      ],
+      intervals: [],
+      recordingId: 'recording-1',
+    } satisfies RecordingActivity)
+    .mockResolvedValue({
+      captureStates: [],
+      events: [],
+      intervals: [],
+      recordingId: 'recording-1',
+    } satisfies RecordingActivity);
+  client.createLibraryRedactions.mockResolvedValue(redactedDetail);
+  render(<RecordingStudioScreen />);
+
+  expect(
+    await screen.findByRole('button', {
+      name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+    }),
+  ).toBeTruthy();
+
+  const timeline = await screen.findByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const ruler = await screen.findByLabelText('Time ruler');
+  fireEvent.pointerDown(ruler, {
+    button: 0,
+    clientX: 220,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: 520,
+    clientY: 12,
+    pointerId: 1,
+  });
+  fireEvent.click(screen.getAllByRole('button', { name: /^Redact$/i })[0]!);
+
+  await waitFor(() =>
+    expect(aiClient.getRecordingActivity).toHaveBeenCalledTimes(2),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', {
+        name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+      }),
+    ).toBeNull(),
+  );
+});
+
+test('RecordingStudioScreen reloads activity after deleting redactions', async () => {
+  const redactedDetail = {
+    ...detail,
+    redactions: [
+      {
+        createdAtMs: 12_000,
+        endOffsetMs: 4_500,
+        id: 'redaction-1',
+        reason: null,
+        recordingId: 'recording-1',
+        startOffsetMs: 1_500,
+        trackIds: allTimelineLaneIds,
+      },
+    ],
+  } satisfies LibraryRecordingDetail;
+  const restoredActivity = {
+    captureStates: [],
+    events: [
+      {
+        applicationName: 'Editor',
+        id: 'focus-1',
+        kind: 'focused-window',
+        occurredAtMs: 2_200,
+        offsetMs: 1_200,
+        recordingId: 'recording-1',
+        title: 'Notes.md',
+      },
+    ],
+    intervals: [],
+    recordingId: 'recording-1',
+  } satisfies RecordingActivity;
+  client.getLibraryRecording.mockResolvedValue(redactedDetail);
+  client.deleteLibraryRedaction.mockResolvedValue(detail);
+  aiClient.getRecordingActivity
+    .mockResolvedValueOnce({
+      captureStates: [],
+      events: [],
+      intervals: [],
+      recordingId: 'recording-1',
+    } satisfies RecordingActivity)
+    .mockResolvedValueOnce({
+      captureStates: [],
+      events: [],
+      intervals: [],
+      recordingId: 'recording-1',
+    } satisfies RecordingActivity)
+    .mockResolvedValue(restoredActivity);
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Video redacted range',
+    }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: /^Unredact$/i }));
+
+  await waitFor(() =>
+    expect(aiClient.getRecordingActivity).toHaveBeenCalledTimes(3),
+  );
+  expect(
+    await screen.findByRole('button', {
+      name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+    }),
+  ).toBeTruthy();
+});
+
+test('RecordingStudioScreen marks mouse and keyboard lanes when input capture was unavailable', async () => {
+  aiClient.getRecordingActivity.mockResolvedValue({
+    captureStates: [
+      {
+        id: 'capture-state-1',
+        offsetMs: 0,
+        reason: 'permission-denied',
+        recordingId: 'recording-1',
+        source: 'evdev',
+        status: 'unavailable',
+      },
+    ],
+    events: [],
+    intervals: [],
+    recordingId: 'recording-1',
+  } satisfies RecordingActivity);
+
+  render(<RecordingStudioScreen />);
+
+  expect(
+    await screen.findByLabelText('Mouse activity unavailable'),
+  ).toBeTruthy();
+  expect(screen.getByLabelText('Keyboard activity unavailable')).toBeTruthy();
 });
 
 test('RecordingStudioScreen renders transcript text by transcript segment offsets', async () => {
@@ -1614,7 +1920,7 @@ test('RecordingStudioScreen selects all lanes from a ruler drag', async () => {
     pointerId: 1,
   });
 
-  expect(await screen.findByText('2 lanes')).toBeTruthy();
+  expect(await screen.findByText('5 lanes')).toBeTruthy();
   expect(screen.getByText('Range 1')).toBeTruthy();
   expect(screen.queryByLabelText('Track name')).toBeNull();
   expect(screen.queryByText('recording-1')).toBeNull();
@@ -1671,7 +1977,7 @@ test('RecordingStudioScreen persists selected ranges as lane redactions', async 
         {
           endOffsetMs: expect.any(Number),
           startOffsetMs: expect.any(Number),
-          trackIds: ['desktop-audio-1', 'video-0'],
+          trackIds: allTimelineLaneIds,
         },
       ],
       recordingId: 'recording-1',
@@ -1815,7 +2121,7 @@ test('RecordingStudioScreen removes a redaction overlapped by a time selection',
     pointerId: 1,
   });
 
-  expect(await screen.findByText('2 lanes')).toBeTruthy();
+  expect(await screen.findByText('5 lanes')).toBeTruthy();
   expect(screen.getAllByRole('button', { name: /^Unredact$/i })).toHaveLength(
     2,
   );
@@ -1828,7 +2134,7 @@ test('RecordingStudioScreen removes a redaction overlapped by a time selection',
         {
           endOffsetMs: expect.any(Number),
           startOffsetMs: expect.any(Number),
-          trackIds: ['desktop-audio-1', 'video-0'],
+          trackIds: allTimelineLaneIds,
         },
       ],
       recordingId: 'recording-1',
@@ -1874,7 +2180,7 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
       {
         endMs: 2_000,
         id: 'seed-range',
-        laneIds: ['video-0', 'desktop-audio-1'],
+        laneIds: allTimelineLaneIds,
         startMs: 1_000,
       },
     ],
@@ -1958,7 +2264,7 @@ test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', as
       {
         endMs: 7_000,
         id: 'seed-range',
-        laneIds: ['video-0', 'desktop-audio-1'],
+        laneIds: allTimelineLaneIds,
         startMs: 6_000,
       },
     ],
@@ -1984,7 +2290,7 @@ test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', as
   const mergedRange = useStudioTimelineStore.getState().selection.ranges[0]!;
   expect(mergedRange).toMatchObject({
     endMs: firstRange.endMs,
-    laneIds: ['desktop-audio-1', 'video-0'],
+    laneIds: allTimelineLaneIds,
     startMs: firstRange.startMs,
   });
   expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1);
@@ -2060,7 +2366,13 @@ test('RecordingStudioScreen exposes compact lane reorder handles', async () => {
     screen
       .getAllByRole('button', { name: /^Reorder /i })
       .map((button) => button.getAttribute('aria-label')),
-  ).toEqual(['Reorder Video', 'Reorder Desktop audio']);
+  ).toEqual([
+    'Reorder Video',
+    'Reorder Desktop audio',
+    'Reorder Mouse',
+    'Reorder Keyboard',
+    'Reorder Activity',
+  ]);
 });
 
 test('RecordingStudioScreen ignores stale playback assets after route changes', async () => {

@@ -5,12 +5,14 @@ mod library;
 mod notifications;
 mod playback_server;
 pub mod recorder;
+mod redaction_targets;
 pub mod secret_crypto;
 mod settings;
 mod startup;
 pub mod storage;
 mod storage_limits;
 mod telemetry;
+mod timeline_lanes;
 mod transcription;
 mod whisper_backend;
 
@@ -92,7 +94,9 @@ pub fn run() {
             library::commands::rename_library_recording,
             library::commands::unredact_library_redactions,
             settings::commands::get_app_settings,
+            settings::commands::get_input_activity_status,
             settings::commands::preview_app_settings_storage_cleanup,
+            settings::commands::repair_input_activity_permissions,
             settings::commands::save_app_settings,
             settings::commands::reset_app_settings,
             notifications::get_notifications,

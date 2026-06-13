@@ -3,6 +3,7 @@ import type {
   AiModelAsset,
   AiProviderStatus,
   AppSettings,
+  InputActivityStatus,
 } from '@daydream/shared';
 import {
   cancelAiModelDownload,
@@ -15,6 +16,10 @@ import {
   saveAiProviderSecret,
 } from '@/features/ai/ai-client';
 import { collectSupersededAiSecretRefs } from '@/features/settings/settings-ai-secret-utils';
+import {
+  getInputActivityStatus,
+  repairInputActivityPermissions,
+} from '@/features/settings/settings-client';
 import { screenErrorMessage } from '@/features/settings/settings-screen-utils';
 
 interface AiSettingsSavePreparation {
@@ -36,19 +41,28 @@ export function useSettingsAiController({
   const [aiModels, setAiModels] = useState<AiModelAsset[]>([]);
   const [aiProviderStatus, setAiProviderStatus] =
     useState<AiProviderStatus | null>(null);
+  const [inputActivityRepairMessage, setInputActivityRepairMessage] = useState<
+    string | null
+  >(null);
+  const [inputActivityRepairing, setInputActivityRepairing] = useState(false);
+  const [inputActivityStatus, setInputActivityStatus] =
+    useState<InputActivityStatus | null>(null);
   const [transcriptionKeyDraft, setTranscriptionKeyDraft] = useState('');
   const [visionKeyDraft, setVisionKeyDraft] = useState('');
   const pendingSecretRefsForDeletion = useRef<string[]>([]);
 
   const refreshAiScaffolds = useCallback(async () => {
     try {
-      const [modelList, providerStatus] = await Promise.all([
-        listAiModels(),
-        getAiProviderStatus(),
-      ]);
+      const [modelList, providerStatus, nextInputActivityStatus] =
+        await Promise.all([
+          listAiModels(),
+          getAiProviderStatus(),
+          getInputActivityStatus(),
+        ]);
       setAiActionError(null);
       setAiModels(modelList.models);
       setAiProviderStatus(providerStatus);
+      setInputActivityStatus(nextInputActivityStatus);
     } catch (error) {
       setAiActionError(screenErrorMessage(error));
     }
@@ -188,6 +202,33 @@ export function useSettingsAiController({
     }
   }
 
+  async function refreshInputActivityStatus() {
+    try {
+      setAiActionError(null);
+      setInputActivityStatus(await getInputActivityStatus());
+    } catch (error) {
+      setAiActionError(screenErrorMessage(error));
+    }
+  }
+
+  async function repairInputActivity() {
+    try {
+      setAiActionError(null);
+      setInputActivityRepairMessage(null);
+      setInputActivityRepairing(true);
+      const result = await repairInputActivityPermissions();
+      setInputActivityStatus(result.status);
+      setInputActivityRepairMessage(result.message);
+      if (!result.success) {
+        setAiActionError(result.message);
+      }
+    } catch (error) {
+      setAiActionError(screenErrorMessage(error));
+    } finally {
+      setInputActivityRepairing(false);
+    }
+  }
+
   async function deletePendingAiSecrets() {
     const secretRefs = pendingSecretRefsForDeletion.current;
     pendingSecretRefsForDeletion.current = [];
@@ -228,10 +269,15 @@ export function useSettingsAiController({
     ),
     prepareAiSettingsForSave,
     refreshAiScaffolds,
+    refreshInputActivityStatus,
+    repairInputActivity,
     runAiModelAction,
     setPendingSecretRefsForDeletion,
     setTranscriptionKeyDraft,
     setVisionKeyDraft,
+    inputActivityRepairMessage,
+    inputActivityRepairing,
+    inputActivityStatus,
     transcriptionKeyDraft,
     visionKeyDraft,
   };

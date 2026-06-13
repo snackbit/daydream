@@ -1,4 +1,5 @@
 import type { LibraryRecordingDetail } from '@daydream/shared';
+import { STUDIO_ACTIVITY_LANES } from './studio-activity-lanes';
 import { STUDIO_TIMELINE_COLORS } from './studio-timeline-colors';
 import type {
   ExistingTimelineDraftState,
@@ -44,8 +45,21 @@ export function buildTimelineDrafts(
       };
     }
   }
+  for (const definition of STUDIO_ACTIVITY_LANES) {
+    const currentLane = current?.lanesById[definition.id];
+    lanesById[definition.id] = {
+      colorId: currentLane?.colorId ?? definition.colorId,
+      description: definition.description,
+      kind: definition.kind,
+      label: currentLane?.label ?? definition.label,
+      trackId: definition.id,
+    };
+  }
 
-  const trackIds = detail.tracks.map((track) => track.id);
+  const trackIds = [
+    ...detail.tracks.map((track) => track.id),
+    ...STUDIO_ACTIVITY_LANES.map((lane) => lane.id),
+  ];
   const trackIdSet = new Set(trackIds);
   const currentLaneOrderSet = new Set(current?.laneOrder ?? []);
   const laneOrder = current

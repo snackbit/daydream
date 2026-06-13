@@ -2,6 +2,7 @@ import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  RecordingActivity,
   RecordingAiProcessingState,
   RecordingVisualObservations,
 } from '@daydream/shared';
@@ -21,8 +22,12 @@ import {
 } from '@dnd-kit/sortable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
+import { isStudioActivityLaneKind } from './studio-activity-lanes';
 import { useStudioTimelineStore } from './studio-timeline-store';
-import { buildStudioVisualFrames } from './studio-visual-observations';
+import {
+  buildStudioVisualFrames,
+  type StudioVisualFrame,
+} from './studio-visual-observations';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
@@ -31,6 +36,7 @@ import {
 } from './track-timeline-math';
 import {
   SortableTrackLane,
+  SortableActivityTrackLane,
   TimelineRangeLabels,
   TimeRuler,
   TrackTimelineToolbar,
@@ -47,6 +53,7 @@ import { useTrackTimelineZoomScroll } from './use-track-timeline-zoom-scroll';
 import { useWaveformTileQueue } from './use-waveform-tile-queue';
 
 export function TrackTimeline({
+  activity,
   aiProcessingState,
   detail,
   mutedTrackIds,
@@ -58,6 +65,7 @@ export function TrackTimeline({
   thumbnailStatus,
   visualObservations,
 }: {
+  activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
@@ -113,6 +121,7 @@ export function TrackTimeline({
     detail,
     displayedTimelineMs: state.snapshot.displayedTimelineMs,
     laneOrder,
+    lanesById,
     scrollLeft,
     selection,
     viewportWidth,
@@ -142,6 +151,7 @@ export function TrackTimeline({
   } = useTrackTimelineSelection({
     actions,
     activeLaneIds: viewModel.activeLaneIds,
+    activeLaneLayouts: viewModel.activeLaneLayouts,
     clearSelection,
     contentRef,
     selection,
@@ -194,6 +204,20 @@ export function TrackTimeline({
     }
     await onUnredactRanges(redactionRangesFromSelection(selection.ranges));
     clearSelection();
+  }
+
+  function selectVisualFrameForInspection(
+    frame: StudioVisualFrame,
+    additive: boolean,
+  ) {
+    selectVisualFrame(frame.id, additive);
+    actions.seekTimeline(frame.frameTimestampMs, { resume: false });
+    setFollowPlayhead(true);
+  }
+
+  function selectActivityEventForInspection(event: { offsetMs: number }) {
+    actions.seekTimeline(event.offsetMs, { resume: false });
+    setFollowPlayhead(true);
   }
 
   return (
@@ -267,9 +291,35 @@ export function TrackTimeline({
               items={viewModel.activeLaneIds}
               strategy={verticalListSortingStrategy}
             >
-              {viewModel.orderedTracks.map((track) => {
-                const lane = lanesById[track.id];
+              {viewModel.orderedLaneIds.map((laneId) => {
+                const lane = lanesById[laneId];
                 if (!lane) {
+                  return null;
+                }
+                if (isStudioActivityLaneKind(lane.kind)) {
+                  return (
+                    <SortableActivityTrackLane
+                      activity={activity}
+                      key={lane.trackId}
+                      lane={lane}
+                      redactions={detail.redactions}
+                      selectedLane={viewModel.selectedLaneIds.has(lane.trackId)}
+                      selectedRedactionIds={viewModel.selectedRedactionIds}
+                      timelineWidthPx={viewModel.timelineWidthPx}
+                      timeRanges={
+                        viewModel.rangesByLaneId.get(lane.trackId) ?? []
+                      }
+                      totalDurationMs={viewModel.totalDurationMs}
+                      onSelectActivityEvent={selectActivityEventForInspection}
+                      onSelectLane={selectLane}
+                      onSelectRedaction={selectRedaction}
+                    />
+                  );
+                }
+                const track = detail.tracks.find(
+                  (candidate) => candidate.id === lane.trackId,
+                );
+                if (!track) {
                   return null;
                 }
 
@@ -296,7 +346,7 @@ export function TrackTimeline({
                     onSelectClip={selectClip}
                     onSelectLane={selectLane}
                     onSelectRedaction={selectRedaction}
-                    onSelectVisualFrame={selectVisualFrame}
+                    onSelectVisualFrame={selectVisualFrameForInspection}
                     onToggleTrackMuted={onToggleTrackMuted}
                   />
                 );

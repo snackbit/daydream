@@ -1,9 +1,13 @@
 import type { LibraryRecordingDetail } from '@daydream/shared';
+import type { StudioActivityLaneKind } from './studio-activity-lanes';
+
+export type StudioMediaLaneKind = 'desktop-audio' | 'microphone' | 'video';
+export type StudioLaneKind = StudioActivityLaneKind | StudioMediaLaneKind;
 
 export interface StudioLaneDraft {
   colorId: string;
   description: string;
-  kind: 'desktop-audio' | 'microphone' | 'video';
+  kind: StudioLaneKind;
   label: string;
   trackId: string;
 }

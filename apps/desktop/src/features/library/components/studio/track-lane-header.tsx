@@ -1,5 +1,4 @@
 import type { ButtonHTMLAttributes } from 'react';
-import type { LibraryRecordingTrack } from '@daydream/shared';
 import { GripVertical, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -11,21 +10,24 @@ export function TrackLaneHeader({
   dragHandleProps,
   lane,
   muted,
+  heightPx = TRACK_LANE_HEIGHT_PX,
   onSelectLane,
   onToggleTrackMuted,
   selectedLane,
-  track,
+  trackId,
 }: {
   audioTrack: boolean;
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
   lane: StudioLaneDraft;
+  heightPx?: number;
   muted: boolean;
   onSelectLane: (trackId: string, additive: boolean) => void;
   onToggleTrackMuted: (trackId: string) => void;
   selectedLane: boolean;
-  track: LibraryRecordingTrack;
+  trackId: string;
 }) {
   const color = studioColorById(lane.colorId);
+  const compact = heightPx < TRACK_LANE_HEIGHT_PX;
 
   return (
     <div
@@ -33,13 +35,21 @@ export function TrackLaneHeader({
         'bg-background group-hover/lane:bg-muted/70 sticky left-0 z-10 flex min-w-0 flex-col border-r border-b transition-colors',
         selectedLane && 'bg-accent text-accent-foreground',
       )}
-      data-track-id={track.id}
-      style={{ height: TRACK_LANE_HEIGHT_PX }}
+      data-track-id={trackId}
+      style={{ height: heightPx }}
     >
-      <div className="flex min-h-0 flex-1 items-center gap-1 p-2">
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 items-center',
+          compact ? 'gap-0.5 px-1 py-0' : 'gap-1 p-2',
+        )}
+      >
         <Button
           aria-label={`Reorder ${lane.label}`}
-          className="cursor-grab active:cursor-grabbing"
+          className={cn(
+            'cursor-grab active:cursor-grabbing',
+            compact && 'size-5',
+          )}
           data-library-action
           size="icon-xs"
           type="button"
@@ -54,7 +64,7 @@ export function TrackLaneHeader({
             data-library-action
             size="icon"
             variant={muted ? 'outline' : 'ghost'}
-            onClick={() => onToggleTrackMuted(track.id)}
+            onClick={() => onToggleTrackMuted(trackId)}
           >
             {muted ? (
               <VolumeX className="size-3.5" />
@@ -71,7 +81,7 @@ export function TrackLaneHeader({
           type="button"
           onClick={(event) =>
             onSelectLane(
-              track.id,
+              trackId,
               event.shiftKey || event.metaKey || event.ctrlKey,
             )
           }
@@ -79,16 +89,26 @@ export function TrackLaneHeader({
           <span className="flex items-center gap-2">
             <span
               aria-hidden="true"
-              className="size-2.5 shrink-0 rounded-full"
+              className={cn(
+                'shrink-0 rounded-full',
+                compact ? 'size-2' : 'size-2.5',
+              )}
               style={{ backgroundColor: color.strong }}
             />
             <span className="min-w-0">
-              <span className="block truncate text-xs font-medium">
+              <span
+                className={cn(
+                  'block truncate text-xs font-medium',
+                  compact && 'leading-none',
+                )}
+              >
                 {lane.label}
               </span>
-              <span className="text-muted-foreground block truncate text-xs">
-                {lane.description}
-              </span>
+              {compact ? null : (
+                <span className="text-muted-foreground block truncate text-xs">
+                  {lane.description}
+                </span>
+              )}
             </span>
           </span>
         </button>

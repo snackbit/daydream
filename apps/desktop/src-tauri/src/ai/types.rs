@@ -285,6 +285,8 @@ pub struct RecordingTranscriptWord {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingActivity {
+    pub capture_states: Vec<ActivityCaptureState>,
+    pub events: Vec<ActivityEvent>,
     pub intervals: Vec<ActivityInterval>,
     pub recording_id: String,
 }
@@ -300,6 +302,29 @@ pub struct ActivityInterval {
     pub source_kind: String,
     pub start_offset_ms: i64,
     pub state: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityEvent {
+    pub application_name: Option<String>,
+    pub id: String,
+    pub kind: String,
+    pub occurred_at_ms: i64,
+    pub offset_ms: i64,
+    pub recording_id: String,
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityCaptureState {
+    pub id: String,
+    pub offset_ms: i64,
+    pub reason: Option<String>,
+    pub recording_id: String,
+    pub source: Option<String>,
+    pub status: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
+import { useRecordingActivity } from '@/features/ai/use-recording-activity';
 import { useRecordingAiProcessingState } from '@/features/ai/use-recording-ai-processing-state';
 import { useRecordingVisualObservations } from '@/features/ai/use-recording-visual-observations';
 import {
@@ -38,6 +39,15 @@ export function useRecordingStudioController({
   >('idle');
   const [processingStartBusy, setProcessingStartBusy] = useState(false);
   const aiProcessing = useRecordingAiProcessingState(recordingId);
+  const redactionSignature = useMemo(
+    () => recordingRedactionSignature(detail),
+    [detail],
+  );
+  const activity = useRecordingActivity(
+    recordingId,
+    aiProcessing.state,
+    redactionSignature,
+  );
   const visualObservations = useRecordingVisualObservations(
     recordingId,
     aiProcessing.state,
@@ -242,6 +252,7 @@ export function useRecordingStudioController({
       unredactRanges,
     },
     state: {
+      activity,
       aiProcessing,
       detail,
       error,
@@ -252,4 +263,22 @@ export function useRecordingStudioController({
       visualObservations,
     },
   };
+}
+
+function recordingRedactionSignature(
+  detail: LibraryRecordingDetail | null,
+): string {
+  return (
+    detail?.redactions
+      .map((redaction) =>
+        [
+          redaction.id,
+          redaction.startOffsetMs,
+          redaction.endOffsetMs,
+          [...redaction.trackIds].sort().join(','),
+        ].join(':'),
+      )
+      .sort()
+      .join('|') ?? ''
+  );
 }

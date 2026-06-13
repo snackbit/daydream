@@ -14,7 +14,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
-    settings::AiActivitySettings,
+    settings::{AiActivitySettings, InputActivityStatusReason},
     storage::{self, AppStorage, CreateCaptureEventInput},
 };
 
@@ -90,7 +90,13 @@ fn run_activity_monitor(
 ) {
     let devices = linux_devices();
     if devices.is_empty() {
-        save_input_unavailable(&app, &recording_id, recording_started_at_ms);
+        let status = crate::settings::input_activity::input_activity_status();
+        save_input_unavailable(
+            &app,
+            &recording_id,
+            recording_started_at_ms,
+            input_activity_reason_code(&status.reason),
+        );
         return;
     }
 
@@ -166,7 +172,12 @@ fn run_activity_monitor(
     _mouse_enabled: bool,
     _stop: Arc<AtomicBool>,
 ) {
-    save_input_unavailable(&app, &recording_id, recording_started_at_ms);
+    save_input_unavailable(
+        &app,
+        &recording_id,
+        recording_started_at_ms,
+        "unsupported-platform",
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -228,6 +239,7 @@ fn save_input_unavailable(
     app: &AppHandle<impl Runtime>,
     recording_id: &str,
     recording_started_at_ms: u64,
+    reason: &str,
 ) {
     let storage = app.state::<AppStorage>();
     let timestamp_ms = now_ms() as i64;
@@ -237,7 +249,7 @@ fn save_input_unavailable(
     let payload = json!({
         "source": "evdev",
         "status": "unavailable",
-        "reason": "input-device-access-unavailable",
+        "reason": reason,
     })
     .to_string();
     let _ = storage.with_connection(|connection| {
@@ -253,6 +265,17 @@ fn save_input_unavailable(
             },
         )
     });
+}
+
+fn input_activity_reason_code(reason: &InputActivityStatusReason) -> &'static str {
+    match reason {
+        InputActivityStatusReason::Available => "available",
+        InputActivityStatusReason::DevInputMissing => "dev-input-missing",
+        InputActivityStatusReason::NoSupportedDevices => "no-supported-devices",
+        InputActivityStatusReason::PermissionDenied => "permission-denied",
+        InputActivityStatusReason::Unknown => "unknown",
+        InputActivityStatusReason::UnsupportedPlatform => "unsupported-platform",
+    }
 }
 
 #[cfg(test)]

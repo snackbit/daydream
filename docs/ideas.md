@@ -3,6 +3,20 @@
 This file is for interesting product or technical ideas that are worth
 revisiting later, but are not current implementation priorities.
 
+## Desktop Metadata Ideas
+
+### Native focused window capture
+
+Focused-window capture is out of scope for the current activity track work, but
+it should be revisited. A native adapter could record focused application and
+window title changes as `focused-window` capture events so playback can show
+task and context shifts alongside mouse and keyboard activity.
+
+This needs explicit OS permission handling, visible recording state, platform
+adapters for macOS, Windows, and Linux, and redaction-aware deletion or
+invalidation. Window titles are private content, so they must not be logged or
+sent to remote services by default.
+
 ## Audio Capture Ideas
 
 ### Optional acoustic echo cancellation for microphone transcription

@@ -442,9 +442,30 @@ fn input_activity_unavailable(events: &[CaptureEventRow]) -> bool {
     events
         .iter()
         .filter(|event| event.kind == "capture-state")
-        .any(|event| {
-            event
-                .payload_json
-                .contains("input-device-access-unavailable")
-        })
+        .any(capture_state_marks_input_unavailable)
+}
+
+fn capture_state_marks_input_unavailable(event: &CaptureEventRow) -> bool {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&event.payload_json) else {
+        return event
+            .payload_json
+            .contains("input-device-access-unavailable");
+    };
+
+    let status_unavailable =
+        payload.get("status").and_then(|value| value.as_str()) == Some("unavailable");
+    let reason = payload.get("reason").and_then(|value| value.as_str());
+
+    status_unavailable || reason.is_some_and(input_activity_unavailable_reason)
+}
+
+fn input_activity_unavailable_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "dev-input-missing"
+            | "input-device-access-unavailable"
+            | "no-supported-devices"
+            | "permission-denied"
+            | "unsupported-platform"
+    )
 }

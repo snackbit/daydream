@@ -17,3 +17,5 @@ export type ActivitySourceKind =
   | 'mouse';
 
 export type ActivityIntervalState = 'active' | 'idle' | 'unknown';
+
+export type ActivityEventKind = 'focused-window';

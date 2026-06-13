@@ -4,6 +4,10 @@ import { CSS } from '@dnd-kit/utilities';
 import { Minus, Plus, ShieldOff, ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDuration } from '../../library-format';
+import {
+  ActivityTrackLane,
+  type ActivityTrackLaneProps,
+} from './activity-track-lane';
 import type { StudioTimeRangeSelection } from './studio-timeline-store';
 import { TrackLane, type TrackLaneProps } from './track-lane';
 import {
@@ -171,6 +175,57 @@ export function SortableTrackLane({
         onSelectRedaction={onSelectRedaction}
         onSelectVisualFrame={onSelectVisualFrame}
         onToggleTrackMuted={onToggleTrackMuted}
+      />
+    </div>
+  );
+}
+
+export function SortableActivityTrackLane({
+  activity,
+  lane,
+  onSelectActivityEvent,
+  onSelectLane,
+  onSelectRedaction,
+  redactions,
+  selectedLane,
+  selectedRedactionIds,
+  timelineWidthPx,
+  timeRanges,
+  totalDurationMs,
+}: Omit<ActivityTrackLaneProps, 'dragHandleProps'>) {
+  const { attributes, listeners, setNodeRef, transform, transition } =
+    useSortable({ id: lane.trackId });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="group/lane grid"
+      style={{
+        ...style,
+        gridTemplateColumns: `${TRACK_LABEL_WIDTH_PX}px ${timelineWidthPx}px`,
+        width: TRACK_LABEL_WIDTH_PX + timelineWidthPx,
+      }}
+    >
+      <ActivityTrackLane
+        activity={activity}
+        dragHandleProps={{
+          ...attributes,
+          ...listeners,
+        }}
+        lane={lane}
+        redactions={redactions}
+        selectedLane={selectedLane}
+        selectedRedactionIds={selectedRedactionIds}
+        timelineWidthPx={timelineWidthPx}
+        timeRanges={timeRanges}
+        totalDurationMs={totalDurationMs}
+        onSelectActivityEvent={onSelectActivityEvent}
+        onSelectLane={onSelectLane}
+        onSelectRedaction={onSelectRedaction}
       />
     </div>
   );

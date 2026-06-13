@@ -3,6 +3,7 @@ import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  RecordingActivity,
   RecordingAiProcessingState,
   RecordingVisualObservations,
 } from '@daydream/shared';
@@ -18,6 +19,7 @@ import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
 
 export interface RecordingStudioProps {
+  activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   onCreateRedactions: (
@@ -33,6 +35,7 @@ export interface RecordingStudioProps {
 }
 
 export function RecordingStudio({
+  activity,
   aiProcessingState,
   detail,
   onCreateRedactions,
@@ -85,6 +88,7 @@ export function RecordingStudio({
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={32} minSize={18}>
             <TrackTimeline
+              activity={activity}
               aiProcessingState={aiProcessingState}
               detail={detail}
               mutedTrackIds={mutedTrackIds}

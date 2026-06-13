@@ -127,7 +127,7 @@ fn library_redactions(
     redactions: &[RedactionRow],
     tracks: &[LibraryRecordingTrack],
 ) -> Vec<LibraryRecordingRedaction> {
-    let all_track_ids = tracks
+    let media_track_ids = tracks
         .iter()
         .map(|track| track.id.clone())
         .collect::<Vec<_>>();
@@ -135,9 +135,10 @@ fn library_redactions(
     redactions
         .iter()
         .map(|redaction| {
-            let track_ids = parse_redaction_track_ids(&redaction.track_ids_json)
-                .filter(|track_ids| !track_ids.is_empty())
-                .unwrap_or_else(|| all_track_ids.clone());
+            let track_ids = crate::redaction_targets::expanded_redaction_track_ids(
+                &redaction.track_ids_json,
+                &media_track_ids,
+            );
 
             LibraryRecordingRedaction {
                 created_at_ms: redaction.created_at_ms,

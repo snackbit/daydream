@@ -146,31 +146,34 @@ fn log_capacity_full_throttled(running_job_count: usize, max_parallel_jobs: u32)
 }
 
 fn log_worker_tick(running_job_count: usize, queued_job_count: usize, available_job_slots: usize) {
-    if queued_job_count > 0 {
-        tracing::debug!(
-            running_job_count,
-            queued_job_count,
-            available_job_slots,
-            "ai_processing_worker_tick"
-        );
+    if !should_log_worker_tick(queued_job_count) {
         return;
     }
 
-    static LAST_IDLE_LOGGED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
-    let now = Instant::now();
-    let lock = LAST_IDLE_LOGGED_AT.get_or_init(|| Mutex::new(None));
-    let Ok(mut last_logged_at) = lock.lock() else {
-        return;
-    };
-    if last_logged_at.is_some_and(|previous| now.duration_since(previous) < Duration::from_secs(10))
-    {
-        return;
-    }
-    *last_logged_at = Some(now);
     tracing::debug!(
         running_job_count,
         queued_job_count,
         available_job_slots,
         "ai_processing_worker_tick"
     );
+}
+
+fn should_log_worker_tick(queued_job_count: usize) -> bool {
+    queued_job_count > 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_log_worker_tick;
+
+    #[test]
+    fn worker_tick_log_is_silent_when_no_jobs_are_queued() {
+        assert!(!should_log_worker_tick(0));
+    }
+
+    #[test]
+    fn worker_tick_log_is_emitted_when_jobs_are_queued() {
+        assert!(should_log_worker_tick(1));
+        assert!(should_log_worker_tick(4));
+    }
 }

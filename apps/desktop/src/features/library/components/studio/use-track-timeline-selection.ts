@@ -6,10 +6,11 @@ import {
 } from './studio-timeline-store';
 import {
   clampTimelineMs,
-  intersectLaneIds,
+  intersectTimelineLaneIds,
   selectionDistancePx,
   TRACK_LABEL_WIDTH_PX,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
+  type TimelineLaneLayout,
 } from './track-timeline-math';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
 
@@ -29,6 +30,7 @@ interface TimelineDragState {
 
 export function useTrackTimelineSelection({
   activeLaneIds,
+  activeLaneLayouts,
   actions,
   contentRef,
   clearSelection,
@@ -39,6 +41,7 @@ export function useTrackTimelineSelection({
   totalDurationMs,
 }: {
   activeLaneIds: string[];
+  activeLaneLayouts: TimelineLaneLayout[];
   actions: RecordingPlaybackController['actions'];
   clearSelection: () => void;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -171,9 +174,9 @@ export function useTrackTimelineSelection({
     const laneIds =
       drag.source === 'ruler'
         ? activeLaneIds
-        : intersectLaneIds({
+        : intersectTimelineLaneIds({
             endY: currentPoint.y,
-            laneIds: activeLaneIds,
+            lanes: activeLaneLayouts,
             startY: startPoint.y,
           });
     if (laneIds.length === 0) {

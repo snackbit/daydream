@@ -7,7 +7,11 @@ import {
   subtractTimeRangeSelection,
   useStudioTimelineStore,
 } from './studio-timeline-store';
-import { intersectLaneIds, selectionDistancePx } from './track-timeline-math';
+import {
+  intersectLaneIds,
+  intersectTimelineLaneIds,
+  selectionDistancePx,
+} from './track-timeline-math';
 
 const detail = {
   availability: 'available',
@@ -75,6 +79,12 @@ const detail = {
   ],
 } satisfies LibraryRecordingDetail;
 
+const activityLaneIds = [
+  'activity:mouse',
+  'activity:keyboard',
+  'activity:focus',
+];
+
 afterEach(() => {
   useStudioTimelineStore.setState(
     useStudioTimelineStore.getInitialState(),
@@ -88,6 +98,7 @@ test('studio timeline store initializes deterministic lane and clip drafts', () 
   expect(useStudioTimelineStore.getState().laneOrder).toEqual([
     'video-0',
     'desktop-audio-1',
+    ...activityLaneIds,
   ]);
   expect(useStudioTimelineStore.getState().lanesById['video-0']).toMatchObject({
     colorId: 'blue',
@@ -213,6 +224,7 @@ test('studio timeline store reconciles same-recording refreshes', () => {
   expect(useStudioTimelineStore.getState().laneOrder).toEqual([
     'desktop-audio-1',
     'video-0',
+    ...activityLaneIds,
     'microphone-2',
   ]);
   expect(
@@ -460,6 +472,7 @@ test('studio timeline store reorders and edits lanes without changing clips', ()
   expect(useStudioTimelineStore.getState().laneOrder).toEqual([
     'desktop-audio-1',
     'video-0',
+    ...activityLaneIds,
   ]);
   expect(
     useStudioTimelineStore.getState().lanesById['desktop-audio-1'],
@@ -482,6 +495,21 @@ test('timeline math intersects only lanes touched by a vertical marquee', () => 
       startY: 92,
     }),
   ).toEqual(['video-0', 'desktop-audio-1']);
+});
+
+test('timeline math intersects mixed-height timeline lanes', () => {
+  expect(
+    intersectTimelineLaneIds({
+      endY: 248,
+      lanes: [
+        { heightPx: 96, id: 'video-0' },
+        { heightPx: 96, id: 'desktop-audio-1' },
+        { heightPx: 24, id: 'activity:mouse' },
+        { heightPx: 24, id: 'activity:keyboard' },
+      ],
+      startY: 224,
+    }),
+  ).toEqual(['activity:mouse']);
 });
 
 test('timeline math reports pointer drag distance', () => {

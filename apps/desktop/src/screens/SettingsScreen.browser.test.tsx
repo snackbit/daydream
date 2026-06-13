@@ -1,4 +1,8 @@
-import type { AppSettingsState, RecorderScene } from '@daydream/shared';
+import type {
+  AppSettingsState,
+  InputActivityStatus,
+  RecorderScene,
+} from '@daydream/shared';
 import {
   cleanup,
   fireEvent,
@@ -25,7 +29,9 @@ const aiClient = vi.hoisted(() => ({
 }));
 const settingsClient = vi.hoisted(() => ({
   getAppSettings: vi.fn(),
+  getInputActivityStatus: vi.fn(),
   previewAppSettingsStorageCleanup: vi.fn(),
+  repairInputActivityPermissions: vi.fn(),
   resetAppSettings: vi.fn(),
   saveAppSettings: vi.fn(),
 }));
@@ -231,6 +237,19 @@ const aiModels = [
   },
 ] as const;
 
+const availableInputActivityStatus = {
+  available: true,
+  candidateDeviceCount: 2,
+  currentUser: 'felixf',
+  message: 'Keyboard and mouse activity capture can read Linux input devices.',
+  permissionDeniedDeviceCount: 0,
+  platform: 'linux',
+  readableDeviceCount: 2,
+  reason: 'available',
+  repairAvailable: false,
+  userInInputGroup: true,
+} satisfies InputActivityStatus;
+
 async function openAiSettingsTab() {
   await screen.findByRole('tablist', { name: 'Settings sections' });
   const aiTab = screen.getByRole('tab', { name: 'AI/LLM' });
@@ -275,6 +294,14 @@ beforeEach(() => {
   settingsClient.previewAppSettingsStorageCleanup.mockResolvedValue({
     recordingCount: 0,
     sizeBytes: 0,
+  });
+  settingsClient.getInputActivityStatus.mockResolvedValue(
+    availableInputActivityStatus,
+  );
+  settingsClient.repairInputActivityPermissions.mockResolvedValue({
+    message: 'Input activity permissions are already available.',
+    status: availableInputActivityStatus,
+    success: true,
   });
   settingsClient.resetAppSettings.mockResolvedValue(defaultSettingsState);
   recorderClient.getRecorderScene.mockResolvedValue(scene);
@@ -587,6 +614,48 @@ test('SettingsScreen reveals expert transcription controls from General settings
       }),
     }),
   );
+});
+
+test('SettingsScreen repairs Linux input activity permissions from AI settings', async () => {
+  const deniedStatus = {
+    ...availableInputActivityStatus,
+    available: false,
+    message:
+      'Keyboard and mouse activity capture cannot read Linux input devices.',
+    permissionDeniedDeviceCount: 2,
+    readableDeviceCount: 0,
+    reason: 'permission-denied',
+    repairAvailable: true,
+    userInInputGroup: false,
+  } satisfies InputActivityStatus;
+  const repairedStatus = {
+    ...deniedStatus,
+    message:
+      'Input activity permission repair completed. Log out and back in, then reopen Daydream.',
+    repairAvailable: false,
+    userInInputGroup: true,
+  } satisfies InputActivityStatus;
+  settingsClient.getInputActivityStatus.mockResolvedValue(deniedStatus);
+  settingsClient.repairInputActivityPermissions.mockResolvedValue({
+    message:
+      'Input activity permission repair completed. Log out and back in, then reopen Daydream.',
+    status: repairedStatus,
+    success: true,
+  });
+
+  render(<SettingsScreen />);
+
+  await openAiSettingsTab();
+  expect(await screen.findByText('Input activity unavailable')).toBeTruthy();
+  expect(screen.getByText(/0\/2 input devices readable/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Repair permissions' }));
+
+  await waitFor(() =>
+    expect(settingsClient.repairInputActivityPermissions).toHaveBeenCalled(),
+  );
+  expect(
+    await screen.findByText('Log out and back in, then reopen Daydream.'),
+  ).toBeTruthy();
 });
 
 test('SettingsScreen saves AI slider values', async () => {

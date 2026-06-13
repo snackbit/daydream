@@ -60,6 +60,7 @@ export function RecordingStudioScreen() {
 
       {state.detail ? (
         <RecordingStudio
+          activity={state.activity.state}
           aiProcessingState={state.aiProcessing.state}
           detail={state.detail}
           onCreateRedactions={actions.createRedactions}

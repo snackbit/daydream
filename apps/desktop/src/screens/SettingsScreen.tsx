@@ -46,9 +46,14 @@ export function SettingsScreen() {
     draft,
     error,
     loadStatus,
+    inputActivityRepairMessage,
+    inputActivityRepairing,
+    inputActivityStatus,
     requestReset,
     requestSave,
     resetOpen,
+    refreshInputActivityStatus,
+    repairInputActivity,
     runAiModelAction,
     savedScene,
     saving,
@@ -249,7 +254,14 @@ export function SettingsScreen() {
               onDownloadModel={(modelId) =>
                 void runAiModelAction(() => downloadAiModel({ modelId }))
               }
+              onRefreshInputActivityStatus={() =>
+                void refreshInputActivityStatus()
+              }
+              onRepairInputActivity={() => void repairInputActivity()}
               onUpdateDraft={updateDraft}
+              inputActivityRepairMessage={inputActivityRepairMessage}
+              inputActivityRepairing={inputActivityRepairing}
+              inputActivityStatus={inputActivityStatus}
               providerStatus={aiProviderStatus}
               transcriptionKeyDraft={transcriptionKeyDraft}
               visionKeyDraft={visionKeyDraft}

@@ -202,6 +202,15 @@ fn unredaction_range_splits_existing_redactions_per_track() {
                 vec!["desktop-audio-1".to_string(), "video-0".to_string()],
             ),
             (
+                20_000,
+                26_000,
+                vec![
+                    "activity:focus".to_string(),
+                    "activity:keyboard".to_string(),
+                    "activity:mouse".to_string(),
+                ],
+            ),
+            (
                 24_000,
                 26_000,
                 vec!["desktop-audio-1".to_string(), "video-0".to_string()],

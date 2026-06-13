@@ -3,6 +3,7 @@ import type {
   AiProviderStatus,
   AppSettings,
   AppSettingsLimits,
+  InputActivityStatus,
 } from '@daydream/shared';
 import { AiActivityProcessingCard } from './ai-activity-processing-card';
 import { AiModelCacheCard } from './ai-model-cache-card';
@@ -18,7 +19,12 @@ interface AiSettingsTabProps {
   onChangeVisionKey: (value: string) => void;
   onDeleteModel: (modelId: string) => void;
   onDownloadModel: (modelId: string) => void;
+  onRefreshInputActivityStatus: () => void;
+  onRepairInputActivity: () => void;
   onUpdateDraft: (updater: (draft: AppSettings) => AppSettings) => void;
+  inputActivityRepairMessage: string | null;
+  inputActivityRepairing: boolean;
+  inputActivityStatus: InputActivityStatus | null;
   providerStatus: AiProviderStatus | null;
   transcriptionKeyDraft: string;
   visionKeyDraft: string;
@@ -33,7 +39,12 @@ export function AiSettingsTab({
   onChangeVisionKey,
   onDeleteModel,
   onDownloadModel,
+  onRefreshInputActivityStatus,
+  onRepairInputActivity,
   onUpdateDraft,
+  inputActivityRepairMessage,
+  inputActivityRepairing,
+  inputActivityStatus,
   providerStatus,
   transcriptionKeyDraft,
   visionKeyDraft,
@@ -78,7 +89,12 @@ export function AiSettingsTab({
 
       <AiActivityProcessingCard
         draft={draft}
+        inputActivityRepairMessage={inputActivityRepairMessage}
+        inputActivityRepairing={inputActivityRepairing}
+        inputActivityStatus={inputActivityStatus}
         limits={limits}
+        onRefreshInputActivityStatus={onRefreshInputActivityStatus}
+        onRepairInputActivity={onRepairInputActivity}
         onUpdateDraft={onUpdateDraft}
       />
     </div>
