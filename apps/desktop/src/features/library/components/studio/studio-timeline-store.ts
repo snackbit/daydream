@@ -113,8 +113,15 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
               laneIds: [],
               redactionIds: [],
               ranges: [],
+              visualFrameIds: [],
             }
-          : { clipIds: [clipId], laneIds: [], redactionIds: [], ranges: [] },
+          : {
+              clipIds: [clipId],
+              laneIds: [],
+              redactionIds: [],
+              ranges: [],
+              visualFrameIds: [],
+            },
       }));
     },
     selectLane(trackId, additive = false) {
@@ -125,8 +132,15 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
               laneIds: toggleId(state.selection.laneIds, trackId),
               redactionIds: [],
               ranges: [],
+              visualFrameIds: [],
             }
-          : { clipIds: [], laneIds: [trackId], redactionIds: [], ranges: [] },
+          : {
+              clipIds: [],
+              laneIds: [trackId],
+              redactionIds: [],
+              ranges: [],
+              visualFrameIds: [],
+            },
       }));
     },
     selectRedaction(redactionId, additive = false) {
@@ -137,12 +151,36 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
               laneIds: [],
               redactionIds: toggleId(state.selection.redactionIds, redactionId),
               ranges: [],
+              visualFrameIds: [],
             }
           : {
               clipIds: [],
               laneIds: [],
               redactionIds: [redactionId],
               ranges: [],
+              visualFrameIds: [],
+            },
+      }));
+    },
+    selectVisualFrame(visualFrameId, additive = false) {
+      set((state) => ({
+        selection: additive
+          ? {
+              clipIds: [],
+              laneIds: [],
+              redactionIds: [],
+              ranges: [],
+              visualFrameIds: toggleId(
+                state.selection.visualFrameIds,
+                visualFrameId,
+              ),
+            }
+          : {
+              clipIds: [],
+              laneIds: [],
+              redactionIds: [],
+              ranges: [],
+              visualFrameIds: [visualFrameId],
             },
       }));
     },
@@ -176,12 +214,14 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
               laneIds: [],
               redactionIds: [],
               ranges: [...state.selection.ranges, nextRange],
+              visualFrameIds: [],
             })
           : {
               clipIds: [],
               laneIds: [],
               redactionIds: [],
               ranges: [nextRange],
+              visualFrameIds: [],
             },
       }));
     },

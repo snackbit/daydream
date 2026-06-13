@@ -8,6 +8,7 @@ import type {
   RecordingTranscriptionTrackState,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
+import { aiProcessingErrorDetails } from './ai-processing-error-copy';
 import { TRACK_DERIVED_LANE_HEIGHT_PX } from './track-timeline-math';
 
 export interface DerivedAiLane {
@@ -357,7 +358,7 @@ function chunkTitle(chunk: RecordingTranscriptionChunkState): string {
     return chunk.text;
   }
   if (chunk.errorCode) {
-    return chunk.errorCode;
+    return aiProcessingErrorDetails(chunk.errorCode);
   }
   if (chunk.resultCode === 'skipped-silence') {
     return 'Skipped: below silence threshold.';

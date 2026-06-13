@@ -1,13 +1,14 @@
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
+    ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -67,28 +68,35 @@ const VISUAL_DELTA_PIXEL_DIFF_THRESHOLD: u32 = 30;
 const VISUAL_DELTA_MIN_CHANGED_PIXELS_PER_TILE: usize = 8;
 const VISUAL_DELTA_TILE_CHANGE_RATIO: f64 = 0.0005;
 const VISUAL_ABRUPT_TRANSITION_RATIO: f64 = 0.25;
-const VLM_PROMPT_VERSION: &str = "m2-visual-observation-v1";
+const VISUAL_FULL_FRAME_CHANGED_RATIO: f64 = 0.75;
+const VLM_MAX_IMAGE_LONG_EDGE_PX: usize = 1_600;
+const VLM_MAX_OCR_CANDIDATES: usize = 80;
+const VLM_MAX_OCR_TEXT_CHARS: usize = 8_000;
+const VLM_PROMPT_VERSION: &str = "m2-visual-observation-v2";
 const TRANSCRIPTION_RESULT_SKIPPED_SILENCE: &str = "skipped-silence";
 
 pub(crate) mod commands;
 mod models;
+mod ocr_runtime;
 mod processing;
 mod results;
 mod types;
 pub(super) use models::*;
 pub use models::{recover_model_downloads, AiModelManager};
+pub(crate) use ocr_runtime::*;
 pub(crate) use processing::enqueue_recording_ai_processing;
 use processing::*;
 use results::*;
 pub(crate) use results::{
     processing_state_for_recording, visible_transcript_segments_for_recording,
+    visible_visual_observation_rows_for_recording, visual_observations_for_recording,
 };
 pub use types::{
     ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus, AiModelAsset,
-    AiModelAssetList, AiProviderStatus, AiTranscriptionLanguageStatus, CancelAiModelDownloadInput,
-    DeleteAiModelInput, DeleteAiProviderSecretInput, DownloadAiModelInput,
-    GetRecordingTranscriptInput, ListProcessingJobsInput, OcrRegion, ProcessingChunk,
-    ProcessingJob, ProcessingJobActionInput, ProcessingJobList, RecordingActivity,
+    AiModelAssetList, AiOcrStatus, AiProviderStatus, AiTranscriptionLanguageStatus,
+    CancelAiModelDownloadInput, DeleteAiModelInput, DeleteAiProviderSecretInput,
+    DownloadAiModelInput, GetRecordingTranscriptInput, ListProcessingJobsInput, OcrRegion,
+    ProcessingChunk, ProcessingJob, ProcessingJobActionInput, ProcessingJobList, RecordingActivity,
     RecordingAiProcessingState, RecordingAiResultInput, RecordingTranscript,
     RecordingTranscriptSegment, RecordingTranscriptTrack, RecordingTranscriptWord,
     RecordingTranscriptionChunkState, RecordingTranscriptionTrackState,
@@ -196,6 +204,10 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

@@ -142,6 +142,7 @@ export function normalizeSelection(
       laneIds: [],
       redactionIds: [],
       ranges: mergeTimeRangeSelections(selection.ranges),
+      visualFrameIds: [],
     };
   }
 
@@ -151,6 +152,7 @@ export function normalizeSelection(
       laneIds: [],
       redactionIds: [],
       ranges: [],
+      visualFrameIds: [],
     };
   }
 
@@ -160,6 +162,17 @@ export function normalizeSelection(
       laneIds: [],
       redactionIds: [...selection.redactionIds],
       ranges: [],
+      visualFrameIds: [],
+    };
+  }
+
+  if (selection.visualFrameIds.length > 0) {
+    return {
+      clipIds: [],
+      laneIds: [],
+      redactionIds: [],
+      ranges: [],
+      visualFrameIds: [...selection.visualFrameIds],
     };
   }
 
@@ -168,6 +181,7 @@ export function normalizeSelection(
     laneIds: [...selection.laneIds],
     redactionIds: [],
     ranges: [],
+    visualFrameIds: [],
   };
 }
 
@@ -190,6 +204,7 @@ export function pruneSelection(
         }),
       )
       .filter((range) => range.laneIds.length > 0),
+    visualFrameIds: [...selection.visualFrameIds],
   });
 }
 

@@ -112,17 +112,20 @@ export function SortableTrackLane({
   onSelectClip,
   onSelectLane,
   onSelectRedaction,
+  onSelectVisualFrame,
   onToggleTrackMuted,
   playbackAssets,
   selectedClipIds,
   selectedLane,
   selectedRedactionIds,
+  selectedVisualFrameIds,
   thumbnailStatus,
   timelineWidthPx,
   timeRanges,
   totalDurationMs,
   track,
   waveformTiles,
+  visualFrames,
 }: Omit<TrackLaneProps, 'dragHandleProps'>) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: track.id });
@@ -155,15 +158,18 @@ export function SortableTrackLane({
         selectedClipIds={selectedClipIds}
         selectedLane={selectedLane}
         selectedRedactionIds={selectedRedactionIds}
+        selectedVisualFrameIds={selectedVisualFrameIds}
         thumbnailStatus={thumbnailStatus}
         timelineWidthPx={timelineWidthPx}
         timeRanges={timeRanges}
         totalDurationMs={totalDurationMs}
         track={track}
         waveformTiles={waveformTiles}
+        visualFrames={visualFrames}
         onSelectClip={onSelectClip}
         onSelectLane={onSelectLane}
         onSelectRedaction={onSelectRedaction}
+        onSelectVisualFrame={onSelectVisualFrame}
         onToggleTrackMuted={onToggleTrackMuted}
       />
     </div>

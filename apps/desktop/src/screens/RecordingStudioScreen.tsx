@@ -67,6 +67,7 @@ export function RecordingStudioScreen() {
           onUnredactRanges={actions.unredactRanges}
           playbackAssets={state.playbackAssets}
           thumbnailStatus={state.thumbnailStatus}
+          visualObservations={state.visualObservations.state}
         />
       ) : null}
 

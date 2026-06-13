@@ -1,6 +1,8 @@
 use std::fs;
 
-use super::debug::ensure_debug_tools_enabled;
+use uuid::Uuid;
+
+use super::debug::{debug_data_for_recording, ensure_debug_tools_enabled};
 use super::waveforms::{
     parse_volumedetect_max_amplitude, waveform_bins, waveform_peak_rms_bins, waveform_tile_bin_ms,
     waveform_tile_ranges_for_segment, waveform_tile_sample_count, waveforms_for_recording,
@@ -235,6 +237,195 @@ fn debug_tools_are_enabled_by_persisted_setting() {
         .expect("save debug setting");
 
     ensure_debug_tools_enabled(&storage).expect("debug should be enabled");
+}
+
+#[test]
+fn debug_raw_visual_rows_hide_redacted_visual_text() {
+    let storage = storage::test_storage(PathBuf::new());
+    let recording_id = storage
+        .with_connection_mut(|connection| {
+            storage::save_app_setting(
+                connection,
+                &storage::SaveAppSettingInput {
+                    is_sensitive: false,
+                    key: "debug.enabled".to_string(),
+                    timestamp_ms: 1,
+                    value_json: "true".to_string(),
+                },
+            )?;
+
+            let recording_id = Uuid::now_v7().to_string();
+            let segment_id = Uuid::now_v7().to_string();
+            let video_track_id = Uuid::now_v7().to_string();
+            let audio_track_id = Uuid::now_v7().to_string();
+            let job_id = Uuid::now_v7().to_string();
+            let ocr_chunk_id = Uuid::now_v7().to_string();
+            let vlm_chunk_id = Uuid::now_v7().to_string();
+
+            storage::create_recording(
+                connection,
+                &storage::CreateRecordingInput {
+                    active_scene_id: None,
+                    created_at_ms: 1,
+                    default_fps: 1.0,
+                    id: recording_id.clone(),
+                    notes: None,
+                    output_root: None,
+                    quality_label: "balanced-ocr".to_string(),
+                    storage_dir: "/tmp/daydream-debug-redaction-test".to_string(),
+                },
+            )?;
+            storage::create_recording_segment(
+                connection,
+                &storage::CreateRecordingSegmentInput {
+                    file_path: "/tmp/daydream-debug-redaction-test/segments/0001.mkv".to_string(),
+                    id: segment_id.clone(),
+                    recording_id: recording_id.clone(),
+                    segment_index: 1,
+                    started_at_ms: 1,
+                },
+            )?;
+            storage::upsert_recording_track(
+                connection,
+                &storage::UpsertRecordingTrackInput {
+                    codec: Some("h264".to_string()),
+                    created_at_ms: 1,
+                    id: video_track_id.clone(),
+                    kind: "screen".to_string(),
+                    label: "Display".to_string(),
+                    path: None,
+                    recording_id: recording_id.clone(),
+                    source_id: None,
+                },
+            )?;
+            storage::upsert_recording_track(
+                connection,
+                &storage::UpsertRecordingTrackInput {
+                    codec: Some("pcm_s16le".to_string()),
+                    created_at_ms: 1,
+                    id: audio_track_id.clone(),
+                    kind: "microphone".to_string(),
+                    label: "Microphone".to_string(),
+                    path: None,
+                    recording_id: recording_id.clone(),
+                    source_id: None,
+                },
+            )?;
+            storage::create_processing_job(
+                connection,
+                &storage::CreateProcessingJobInput {
+                    created_at_ms: 1,
+                    error: None,
+                    id: job_id.clone(),
+                    kind: "ai-processing".to_string(),
+                    recording_id: recording_id.clone(),
+                    status: "running".to_string(),
+                    updated_at_ms: 1,
+                },
+            )?;
+
+            for (chunk_id, source_kind) in [(&ocr_chunk_id, "ocr"), (&vlm_chunk_id, "vlm")] {
+                storage::create_processing_chunk(
+                    connection,
+                    &storage::CreateProcessingChunkInput {
+                        attempt_count: 1,
+                        created_at_ms: 1,
+                        end_offset_ms: Some(10_000),
+                        error_code: None,
+                        id: chunk_id.clone(),
+                        job_id: job_id.clone(),
+                        progress: 1.0,
+                        recording_id: recording_id.clone(),
+                        result_code: None,
+                        segment_id: Some(segment_id.clone()),
+                        source_kind: source_kind.to_string(),
+                        start_offset_ms: Some(0),
+                        status: "succeeded".to_string(),
+                        track_id: None,
+                        updated_at_ms: 1,
+                    },
+                )?;
+            }
+
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    created_at_ms: 2,
+                    end_offset_ms: 2_000,
+                    id: Uuid::now_v7().to_string(),
+                    reason: None,
+                    recording_id: recording_id.clone(),
+                    start_offset_ms: 1_000,
+                    track_ids_json: serde_json::to_string(&vec![video_track_id])
+                        .expect("track ids json"),
+                },
+            )?;
+
+            for (chunk_id, timestamp, text) in [
+                (&ocr_chunk_id, 1_500, "hidden debug OCR text"),
+                (&ocr_chunk_id, 2_500, "visible debug OCR text"),
+            ] {
+                storage::create_ocr_region(
+                    connection,
+                    &storage::CreateVisualRegionInput {
+                        chunk_id: chunk_id.clone(),
+                        confidence: Some(0.9),
+                        frame_timestamp_ms: timestamp,
+                        id: Uuid::now_v7().to_string(),
+                        job_id: job_id.clone(),
+                        model: Some("tesseract".to_string()),
+                        observation_kind: None,
+                        prompt_version: None,
+                        provider: "tesseract".to_string(),
+                        recording_id: recording_id.clone(),
+                        region_height: 20,
+                        region_width: 30,
+                        region_x: 1,
+                        region_y: 2,
+                        source_frame_ref: format!("segment:test:offset:{timestamp}:frame:0"),
+                        text: text.to_string(),
+                    },
+                )?;
+            }
+
+            for (chunk_id, timestamp, text) in [
+                (&vlm_chunk_id, 1_500, "hidden debug VLM observation"),
+                (&vlm_chunk_id, 2_500, "visible debug VLM observation"),
+            ] {
+                storage::create_vlm_observation(
+                    connection,
+                    &storage::CreateVisualRegionInput {
+                        chunk_id: chunk_id.clone(),
+                        confidence: Some(0.8),
+                        frame_timestamp_ms: timestamp,
+                        id: Uuid::now_v7().to_string(),
+                        job_id: job_id.clone(),
+                        model: Some("vision".to_string()),
+                        observation_kind: Some("screen-observation".to_string()),
+                        prompt_version: Some("m2-test".to_string()),
+                        provider: "openai-compatible".to_string(),
+                        recording_id: recording_id.clone(),
+                        region_height: 20,
+                        region_width: 30,
+                        region_x: 1,
+                        region_y: 2,
+                        source_frame_ref: format!("segment:test:offset:{timestamp}:frame:0"),
+                        text: text.to_string(),
+                    },
+                )?;
+            }
+
+            Ok(recording_id)
+        })
+        .expect("seed debug visual rows");
+
+    let debug = debug_data_for_recording(&recording_id, &storage).expect("debug data");
+    let raw_json = serde_json::to_string(&debug.raw).expect("serialize raw debug data");
+
+    assert!(!raw_json.contains("hidden debug OCR text"));
+    assert!(!raw_json.contains("hidden debug VLM observation"));
+    assert!(raw_json.contains("visible debug OCR text"));
+    assert!(raw_json.contains("visible debug VLM observation"));
 }
 
 #[test]

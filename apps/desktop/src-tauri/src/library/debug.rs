@@ -47,10 +47,14 @@ pub(super) fn debug_data_for_recording(
     let activity_intervals = storage
         .with_connection(|connection| storage::list_activity_intervals(connection, recording_id))
         .map_err(|error| error.to_string())?;
+    let visual_rows = ai::visible_visual_observation_rows_for_recording(storage, recording_id)
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, recording_id))
         .map_err(|error| error.to_string())?;
     let processing_state = ai::processing_state_for_recording(storage, recording_id)
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
+    let visual_observations = ai::visual_observations_for_recording(storage, recording_id)
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let detail = detail_from_rows(&recording, &segments, &redactions);
 
@@ -61,6 +65,8 @@ pub(super) fn debug_data_for_recording(
             "tracks": tracks.iter().map(recording_track_row_json).collect::<Vec<_>>(),
             "processingJobs": jobs.iter().map(processing_job_row_json).collect::<Vec<_>>(),
             "processingChunks": chunks.iter().map(processing_chunk_row_json).collect::<Vec<_>>(),
+            "ocrRegions": visual_rows.ocr_regions.iter().map(ocr_region_row_json).collect::<Vec<_>>(),
+            "vlmObservations": visual_rows.vlm_observations.iter().map(vlm_observation_row_json).collect::<Vec<_>>(),
             "transcriptSegments": transcript_segments.iter().map(transcript_segment_row_json).collect::<Vec<_>>(),
             "transcriptWords": transcript_words.iter().map(transcript_word_row_json).collect::<Vec<_>>(),
             "redactions": redactions.iter().map(redaction_row_json).collect::<Vec<_>>(),
@@ -80,6 +86,7 @@ pub(super) fn debug_data_for_recording(
         detail,
         processing_state,
         recording_id: recording_id.to_string(),
+        visual_observations,
     })
 }
 
@@ -210,5 +217,45 @@ fn transcript_word_row_json(row: &TranscriptWordRow) -> Value {
         "startOffsetMs": row.start_offset_ms,
         "text": row.text,
         "transcriptSegmentId": row.transcript_segment_id,
+    })
+}
+
+fn ocr_region_row_json(row: &OcrRegionRow) -> Value {
+    json!({
+        "chunkId": row.chunk_id,
+        "confidence": row.confidence,
+        "frameTimestampMs": row.frame_timestamp_ms,
+        "id": row.id,
+        "jobId": row.job_id,
+        "model": row.model,
+        "provider": row.provider,
+        "recordingId": row.recording_id,
+        "regionHeight": row.region_height,
+        "regionWidth": row.region_width,
+        "regionX": row.region_x,
+        "regionY": row.region_y,
+        "sourceFrameRef": row.source_frame_ref,
+        "text": row.text,
+    })
+}
+
+fn vlm_observation_row_json(row: &VlmObservationRow) -> Value {
+    json!({
+        "chunkId": row.chunk_id,
+        "confidence": row.confidence,
+        "frameTimestampMs": row.frame_timestamp_ms,
+        "id": row.id,
+        "jobId": row.job_id,
+        "model": row.model,
+        "observationKind": row.observation_kind,
+        "promptVersion": row.prompt_version,
+        "provider": row.provider,
+        "recordingId": row.recording_id,
+        "regionHeight": row.region_height,
+        "regionWidth": row.region_width,
+        "regionX": row.region_x,
+        "regionY": row.region_y,
+        "sourceFrameRef": row.source_frame_ref,
+        "text": row.text,
     })
 }

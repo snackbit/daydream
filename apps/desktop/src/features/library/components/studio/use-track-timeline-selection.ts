@@ -195,6 +195,7 @@ export function useTrackTimelineSelection({
           drag.baseSelection.ranges,
           nextRange,
         ),
+        visualFrameIds: [],
       });
       return;
     }
@@ -206,12 +207,14 @@ export function useTrackTimelineSelection({
             laneIds: [],
             redactionIds: [],
             ranges: [...drag.baseSelection.ranges, nextRange],
+            visualFrameIds: [],
           }
         : {
             clipIds: [],
             laneIds: [],
             redactionIds: [],
             ranges: [nextRange],
+            visualFrameIds: [],
           },
     );
   }
@@ -261,6 +264,7 @@ function cloneSelection(selection: StudioSelection): StudioSelection {
       ...range,
       laneIds: [...range.laneIds],
     })),
+    visualFrameIds: [...selection.visualFrameIds],
   };
 }
 

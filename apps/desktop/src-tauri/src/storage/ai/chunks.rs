@@ -303,6 +303,26 @@ pub fn update_processing_chunk_status(
     get_processing_chunk(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
 }
 
+pub fn update_processing_chunk_progress(
+    connection: &Connection,
+    id: &str,
+    progress: f64,
+    timestamp_ms: i64,
+) -> rusqlite::Result<ProcessingChunkRow> {
+    connection.execute(
+        r#"
+        UPDATE processing_chunks
+        SET progress = ?2,
+            updated_at_ms = ?3
+        WHERE id = ?1
+            AND status = 'running'
+        "#,
+        params![id, progress, timestamp_ms],
+    )?;
+
+    get_processing_chunk(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
 pub fn update_processing_chunk_result_code(
     connection: &Connection,
     id: &str,

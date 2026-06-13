@@ -3,6 +3,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   RecordingAiProcessingState,
+  RecordingVisualObservations,
 } from '@daydream/shared';
 import {
   DndContext,
@@ -21,6 +22,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
 import { useStudioTimelineStore } from './studio-timeline-store';
+import { buildStudioVisualFrames } from './studio-visual-observations';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
@@ -54,6 +56,7 @@ export function TrackTimeline({
   playback,
   playbackAssets,
   thumbnailStatus,
+  visualObservations,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
@@ -68,6 +71,7 @@ export function TrackTimeline({
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
+  visualObservations: RecordingVisualObservations | null;
 }) {
   const { actions, state } = playback;
   const clipsById = useStudioTimelineStore((store) => store.clipsById);
@@ -81,6 +85,9 @@ export function TrackTimeline({
   const selectLane = useStudioTimelineStore((store) => store.selectLane);
   const selectRedaction = useStudioTimelineStore(
     (store) => store.selectRedaction,
+  );
+  const selectVisualFrame = useStudioTimelineStore(
+    (store) => store.selectVisualFrame,
   );
   const selection = useStudioTimelineStore((store) => store.selection);
   const setSelection = useStudioTimelineStore((store) => store.setSelection);
@@ -112,6 +119,7 @@ export function TrackTimeline({
     visibleWindowMs,
   });
   const hasTimeRangeSelection = selection.ranges.length > 0;
+  const visualFrames = buildStudioVisualFrames(visualObservations, detail);
   const { waveformStatus, waveformTiles } = useWaveformTileQueue({
     detail,
     requestRange: viewModel.waveformRequestRange,
@@ -277,15 +285,18 @@ export function TrackTimeline({
                     selectedClipIds={viewModel.selectedClipIds}
                     selectedLane={viewModel.selectedLaneIds.has(track.id)}
                     selectedRedactionIds={viewModel.selectedRedactionIds}
+                    selectedVisualFrameIds={viewModel.selectedVisualFrameIds}
                     thumbnailStatus={thumbnailStatus}
                     timelineWidthPx={viewModel.timelineWidthPx}
                     timeRanges={viewModel.rangesByLaneId.get(track.id) ?? []}
                     totalDurationMs={viewModel.totalDurationMs}
                     track={track}
                     waveformTiles={waveformTiles}
+                    visualFrames={visualFrames}
                     onSelectClip={selectClip}
                     onSelectLane={selectLane}
                     onSelectRedaction={selectRedaction}
+                    onSelectVisualFrame={selectVisualFrame}
                     onToggleTrackMuted={onToggleTrackMuted}
                   />
                 );

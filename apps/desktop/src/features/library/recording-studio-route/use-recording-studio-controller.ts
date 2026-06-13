@@ -6,6 +6,7 @@ import type {
 } from '@daydream/shared';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
 import { useRecordingAiProcessingState } from '@/features/ai/use-recording-ai-processing-state';
+import { useRecordingVisualObservations } from '@/features/ai/use-recording-visual-observations';
 import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
@@ -37,6 +38,10 @@ export function useRecordingStudioController({
   >('idle');
   const [processingStartBusy, setProcessingStartBusy] = useState(false);
   const aiProcessing = useRecordingAiProcessingState(recordingId);
+  const visualObservations = useRecordingVisualObservations(
+    recordingId,
+    aiProcessing.state,
+  );
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
 
@@ -244,6 +249,7 @@ export function useRecordingStudioController({
       processingStartBusy,
       status,
       thumbnailStatus,
+      visualObservations,
     },
   };
 }

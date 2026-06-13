@@ -34,7 +34,7 @@ export function AiModelCacheCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Model Cache</CardTitle>
+        <CardTitle>Whisper Model Cache</CardTitle>
         <CardDescription>
           Downloads use pinned Hugging Face GGML files and SHA-1 verification.
         </CardDescription>
@@ -80,6 +80,7 @@ export function AiModelActionButton({
   const isActive =
     model.downloadStatus === 'downloading' || model.downloadStatus === 'queued';
   const isAvailable = model.downloadStatus === 'available';
+  const canDownload = Boolean(model.sourceUrl);
 
   if (isAvailable) {
     return (
@@ -109,12 +110,13 @@ export function AiModelActionButton({
 
   return (
     <Button
+      disabled={!canDownload}
       onClick={() => onDownloadModel(model.id)}
       type="button"
       variant="outline"
     >
       <Download className="size-3.5" />
-      Download
+      {canDownload ? 'Download' : 'Unavailable'}
     </Button>
   );
 }
@@ -175,11 +177,12 @@ function ModelDownloadProgress({ model }: { model: AiModelAsset }) {
   );
 }
 
-function ModelStatusIcon({ model }: { model: AiModelAsset }) {
+export function ModelStatusIcon({ model }: { model: AiModelAsset }) {
   const className =
     model.downloadStatus === 'available'
       ? 'text-primary size-4 shrink-0'
-      : model.downloadStatus === 'failed'
+      : model.downloadStatus === 'failed' ||
+          (model.downloadStatus === 'missing' && !model.sourceUrl)
         ? 'text-destructive size-4 shrink-0'
         : 'text-muted-foreground size-4 shrink-0';
 
@@ -193,6 +196,9 @@ function ModelStatusIcon({ model }: { model: AiModelAsset }) {
     return <LoaderCircle aria-hidden="true" className={className} />;
   }
   if (model.downloadStatus === 'failed') {
+    return <TriangleAlert aria-hidden="true" className={className} />;
+  }
+  if (model.downloadStatus === 'missing' && !model.sourceUrl) {
     return <TriangleAlert aria-hidden="true" className={className} />;
   }
   if (model.downloadStatus === 'cancelled') {
@@ -256,6 +262,9 @@ function modelStatusText(model: AiModelAsset): string {
 function modelErrorText(errorCode: string): string {
   if (errorCode === 'ai_model_download_cancelled') {
     return 'Cancelled';
+  }
+  if (errorCode === 'ai_ocr_tesseract_runtime_unavailable') {
+    return 'No pinned runtime artifact for this platform';
   }
 
   return errorCode;

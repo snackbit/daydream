@@ -43,17 +43,37 @@ pub struct LinuxSecretServiceKeyProvider;
 #[cfg(target_os = "linux")]
 impl SecretKeyProvider for LinuxSecretServiceKeyProvider {
     fn get_or_create_key(&self) -> Result<[u8; KEY_BYTES], SecretCryptoError> {
-        let entry = keyring::Entry::new("com.snackbit.daydream", "settings-encryption-key")
-            .map_err(secret_service_error)?;
-
+        let entry = linux_settings_key_entry()?;
         match entry.get_secret() {
             Ok(secret) => decode_key(&secret),
             Err(keyring::Error::NoEntry) => {
-                let key = Aes256Gcm::generate_key(&mut OsRng);
-                entry
-                    .set_secret(key.as_slice())
-                    .map_err(secret_service_error)?;
-                decode_key(key.as_slice())
+                let key = generate_settings_key();
+                store_settings_key(&entry, &key)?;
+                Ok(key)
+            }
+            Err(error) => Err(secret_service_error(error)),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxSecretServiceKeyProvider {
+    fn get_or_create_key_replacing_invalid(&self) -> Result<[u8; KEY_BYTES], SecretCryptoError> {
+        let entry = linux_settings_key_entry()?;
+        match entry.get_secret() {
+            Ok(secret) => match decode_key(&secret) {
+                Ok(key) => Ok(key),
+                Err(error) if error.code == "secret_crypto_invalid_key" => {
+                    let key = generate_settings_key();
+                    store_settings_key(&entry, &key)?;
+                    Ok(key)
+                }
+                Err(error) => Err(error),
+            },
+            Err(keyring::Error::NoEntry) => {
+                let key = generate_settings_key();
+                store_settings_key(&entry, &key)?;
+                Ok(key)
             }
             Err(error) => Err(secret_service_error(error)),
         }
@@ -87,7 +107,14 @@ pub fn encrypt_sensitive_setting(
     provider: &impl SecretKeyProvider,
 ) -> Result<String, SecretCryptoError> {
     let key = provider.get_or_create_key()?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(crypto_error)?;
+    encrypt_sensitive_setting_with_key(plaintext, &key)
+}
+
+fn encrypt_sensitive_setting_with_key(
+    plaintext: &str,
+    key: &[u8; KEY_BYTES],
+) -> Result<String, SecretCryptoError> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(crypto_error)?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
@@ -106,7 +133,8 @@ pub fn encrypt_sensitive_setting(
 pub fn encrypt_sensitive_setting_with_platform_key(
     plaintext: &str,
 ) -> Result<String, SecretCryptoError> {
-    encrypt_sensitive_setting(plaintext, &LinuxSecretServiceKeyProvider)
+    let key = LinuxSecretServiceKeyProvider.get_or_create_key_replacing_invalid()?;
+    encrypt_sensitive_setting_with_key(plaintext, &key)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -162,11 +190,55 @@ fn secret_service_error(error: impl std::fmt::Display) -> SecretCryptoError {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_settings_key_entry() -> Result<keyring::Entry, SecretCryptoError> {
+    keyring::Entry::new("com.snackbit.daydream", "settings-encryption-key")
+        .map_err(secret_service_error)
+}
+
+#[cfg(target_os = "linux")]
+fn generate_settings_key() -> [u8; KEY_BYTES] {
+    let key = Aes256Gcm::generate_key(&mut OsRng);
+    let mut bytes = [0; KEY_BYTES];
+    bytes.copy_from_slice(key.as_slice());
+    bytes
+}
+
+#[cfg(target_os = "linux")]
+fn store_settings_key(
+    entry: &keyring::Entry,
+    key: &[u8; KEY_BYTES],
+) -> Result<(), SecretCryptoError> {
+    entry
+        .set_secret(encode_key(key).as_bytes())
+        .map_err(secret_service_error)
+}
+
+fn encode_key(key: &[u8; KEY_BYTES]) -> String {
+    STANDARD.encode(key)
+}
+
 fn decode_key(secret: &[u8]) -> Result<[u8; KEY_BYTES], SecretCryptoError> {
-    secret.try_into().map_err(|_error| SecretCryptoError {
+    if secret.len() == KEY_BYTES {
+        let mut key = [0; KEY_BYTES];
+        key.copy_from_slice(secret);
+        return Ok(key);
+    }
+
+    let decoded = STANDARD
+        .decode(secret)
+        .map_err(|_error| invalid_key_error())?;
+    decoded
+        .as_slice()
+        .try_into()
+        .map_err(|_error| invalid_key_error())
+}
+
+fn invalid_key_error() -> SecretCryptoError {
+    SecretCryptoError {
         code: "secret_crypto_invalid_key".to_string(),
         message: "Stored settings encryption key has invalid length.".to_string(),
-    })
+    }
 }
 
 fn crypto_error(error: impl std::fmt::Display) -> SecretCryptoError {
@@ -191,5 +263,23 @@ mod tests {
         let plaintext = decrypt_sensitive_setting(&envelope, &provider).expect("decrypt");
 
         assert_eq!(plaintext, "sk-private");
+    }
+
+    #[test]
+    fn key_encoding_uses_text_safe_base64_and_decodes_legacy_raw_bytes() {
+        let key = [9; KEY_BYTES];
+        let encoded = encode_key(&key);
+
+        assert_eq!(encoded.len(), 44);
+        assert_eq!(decode_key(encoded.as_bytes()).expect("base64 key"), key);
+        assert_eq!(decode_key(&key).expect("legacy raw key"), key);
+    }
+
+    #[test]
+    fn malformed_key_bytes_return_typed_invalid_key_error() {
+        let error = decode_key(b"not a valid daydream encryption key")
+            .expect_err("invalid key should fail");
+
+        assert_eq!(error.code, "secret_crypto_invalid_key");
     }
 }

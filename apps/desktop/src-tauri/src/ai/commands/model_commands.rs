@@ -13,6 +13,7 @@ pub fn download_ai_model(
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
     let catalog = ensure_catalog_model(&input.model_id)?;
+    let source_url = require_model_source_url(catalog)?;
     let existing_model_path = model_path(&app, catalog)?;
     if existing_model_path.is_file() && is_verified_model_file(&existing_model_path, catalog)? {
         let notification = storage
@@ -85,7 +86,7 @@ pub fn download_ai_model(
                 connection,
                 ModelDownloadNotificationInput {
                     actions: &[model_download_cancel_action(catalog.id)],
-                    message: &format!("{} will download from Hugging Face.", catalog.label),
+                    message: &format!("{} will download from {}.", catalog.label, source_url),
                     model_id: catalog.id,
                     preferred_notification_id: input.notification_id.as_deref(),
                     status: status_to_notification_status(status),
@@ -193,6 +194,12 @@ pub async fn self_test_ai_model(
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
     let catalog = ensure_catalog_model(&input.model_id)?;
+    if !is_whisper_model(catalog) {
+        return Err(AiError {
+            code: "ai_model_self_test_unsupported".to_string(),
+            message: "Only local Whisper models support load tests.".to_string(),
+        });
+    }
     let path = model_path(&app, catalog)?;
     if !path.is_file() {
         return Err(AiError {

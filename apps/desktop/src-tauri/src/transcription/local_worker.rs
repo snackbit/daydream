@@ -341,26 +341,36 @@ fn run_whisper_worker(receiver: mpsc::Receiver<WhisperWorkerCommand>) {
                 let _ = response.send(result);
             }
             WhisperWorkerCommand::Transcribe { input, response } => {
-                let result = check_cancelled(Some(input.cancel.as_ref())).and_then(|()| {
-                    ensure_cached_model(
+                let result = match check_cancelled(Some(input.cancel.as_ref())) {
+                    Ok(()) => match ensure_cached_model(
                         &mut cached_model,
                         &input.model_id,
                         &input.model_path,
                         &input.local_backend,
-                    )
-                    .and_then(|model| {
-                        model
-                            .model
-                            .transcribe_wav(
-                                &input.audio_path,
-                                &input.language,
-                                input.max_initial_timestamp_seconds as f32,
-                                input.word_timestamps,
-                                input.cancel,
-                            )
-                            .map_err(whisper_error)
-                    })
-                });
+                    ) {
+                        Ok(model) => {
+                            let backend = model.backend;
+                            let result = model
+                                .model
+                                .transcribe_wav(
+                                    &input.audio_path,
+                                    &input.language,
+                                    input.max_initial_timestamp_seconds as f32,
+                                    input.word_timestamps,
+                                    input.cancel,
+                                )
+                                .map_err(whisper_error);
+                            if result.as_ref().is_err_and(|error| {
+                                should_drop_cached_model_after_error(backend, error)
+                            }) {
+                                cached_model = None;
+                            }
+                            result
+                        }
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                };
                 let _ = response.send(result);
             }
         }
@@ -396,4 +406,12 @@ fn ensure_cached_model<'a>(
             "Local transcription model is not available.",
         )
     })
+}
+
+pub(super) fn should_drop_cached_model_after_error(
+    backend: whisper_backend::WhisperExecutionBackend,
+    error: &TranscriptionError,
+) -> bool {
+    backend != whisper_backend::WhisperExecutionBackend::Cpu
+        && error.code == "ai_transcription_provider_failed"
 }

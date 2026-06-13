@@ -16,6 +16,58 @@ fn catalog_models_default_to_missing_with_pinned_sha1() {
 }
 
 #[test]
+fn ocr_assets_default_to_missing_with_pinned_tessdata_source() {
+    let english = catalog_asset(catalog_model("tessdata-eng").expect("english tessdata catalog"));
+    let german = catalog_asset(catalog_model("tessdata-deu").expect("german tessdata catalog"));
+
+    assert_eq!(english.id, "tessdata-eng");
+    assert_eq!(english.provider, "local-tesseract-ocr");
+    assert_eq!(english.checksum_algorithm.as_deref(), Some("sha1"));
+    assert_eq!(
+        english.checksum.as_deref(),
+        Some("a63325f7bed43a0070ea61c3e4eccf646e429839")
+    );
+    assert_eq!(
+        english.source_url.as_deref(),
+        Some("https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata")
+    );
+    assert_eq!(english.download_status, "missing");
+
+    assert_eq!(german.id, "tessdata-deu");
+    assert_eq!(
+        german.checksum.as_deref(),
+        Some("6a9ea6731dfa2c745833853d87dd23ac729543fd")
+    );
+    assert_eq!(
+        german.source_url.as_deref(),
+        Some("https://github.com/tesseract-ocr/tessdata_best/raw/main/deu.traineddata")
+    );
+    assert_eq!(german.download_status, "missing");
+}
+
+#[test]
+fn tesseract_runtime_download_source_is_typed_unavailable_until_pinned() {
+    let error =
+        require_model_source_url(catalog_model("tesseract-runtime").expect("runtime catalog"))
+            .expect_err("runtime source is not pinned yet");
+
+    assert_eq!(error.code, "ai_ocr_tesseract_runtime_unavailable");
+    assert!(!error.message.contains("frame"));
+}
+
+#[test]
+fn tesseract_probe_parsers_read_version_tessdata_path_and_languages() {
+    let version = parse_tesseract_version("tesseract 5.5.2\n leptonica-1.87.0\n Found AVX2\n");
+    let (tessdata_dir, languages) = parse_tesseract_languages(
+        "List of available languages in \"/usr/share/tessdata/\" (3):\ndeu\neng\nosd\n",
+    );
+
+    assert_eq!(version.as_deref(), Some("5.5.2"));
+    assert_eq!(tessdata_dir, Some(PathBuf::from("/usr/share/tessdata/")));
+    assert_eq!(languages, vec!["deu", "eng", "osd"]);
+}
+
+#[test]
 fn visual_sampling_uses_recording_fps_when_synced() {
     let mut app_settings = settings::default_settings();
     app_settings
@@ -154,6 +206,30 @@ fn parse_tesseract_tsv_translates_crop_regions_to_full_frame() {
 }
 
 #[test]
+fn tesseract_ocr_command_requests_tsv_without_external_config_file() {
+    let args = tesseract_ocr_command_args_for_test(
+        Some(Path::new("/tmp/daydream-tessdata")),
+        Some("eng+deu"),
+        Path::new("/tmp/frame.png"),
+    );
+
+    assert_eq!(
+        args,
+        vec![
+            "--tessdata-dir",
+            "/tmp/daydream-tessdata",
+            "-l",
+            "eng+deu",
+            "/tmp/frame.png",
+            "stdout",
+            "-c",
+            "tessedit_create_tsv=1",
+        ]
+    );
+    assert!(!args.iter().any(|arg| arg == "tsv"));
+}
+
+#[test]
 fn tesseract_missing_binary_returns_privacy_safe_error() {
     let frame = ExtractedVisualFrame {
         abrupt_transition: false,
@@ -186,7 +262,7 @@ fn tesseract_missing_binary_returns_privacy_safe_error() {
 }
 
 #[test]
-fn vlm_observation_validation_requires_typed_source_links() {
+fn vlm_observation_text_validation_creates_source_linked_screen_observation() {
     let frame = ExtractedVisualFrame {
         abrupt_transition: false,
         after_context: None,
@@ -205,52 +281,171 @@ fn vlm_observation_validation_requires_typed_source_links() {
         source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
         width: 200,
     };
-    let observations = validate_vlm_observations(
-        VlmObservationPayload {
-            observations: vec![VlmObservationCandidate {
-                confidence: Some(1.2),
-                frame_timestamp_ms: 500,
-                kind: "corrected-ocr".to_string(),
-                region: VlmObservationRegion {
-                    height: 25,
-                    width: 50,
-                    x: 0,
-                    y: 0,
-                },
-                text: "Corrected text".to_string(),
-            }],
-        },
-        &frame,
-    )
-    .expect("validate observations");
+    let observations = validate_vlm_observation_text("A settings window is visible.", &frame)
+        .expect("validate observations");
 
-    assert_eq!(observations[0].observation_kind, "corrected-ocr");
-    assert_eq!(observations[0].confidence, Some(1.0));
+    assert_eq!(observations[0].observation_kind, "screen-observation");
+    assert_eq!(observations[0].confidence, None);
+    assert_eq!(observations[0].text, "A settings window is visible.");
     assert_eq!(
         observations[0].source_frame_ref,
         "segment:one:offset:500:frame:0"
     );
+    assert_eq!(observations[0].frame_timestamp_ms, 500);
+    assert_eq!(
+        observations[0].region,
+        VisualRegion {
+            height: 100,
+            width: 200,
+            x: 0,
+            y: 0,
+        }
+    );
 
-    let error = validate_vlm_observations(
-        VlmObservationPayload {
-            observations: vec![VlmObservationCandidate {
-                confidence: None,
-                frame_timestamp_ms: 501,
-                kind: "screen-observation".to_string(),
-                region: VlmObservationRegion {
-                    height: 25,
-                    width: 50,
-                    x: 0,
-                    y: 0,
-                },
-                text: "Mismatch".to_string(),
-            }],
-        },
-        &frame,
-    )
-    .expect_err("timestamp mismatch should fail");
+    let error = validate_vlm_observation_text("   ", &frame).expect_err("blank text should fail");
 
     assert_eq!(error.code, "ai_vision_observation_invalid");
+}
+
+#[test]
+fn vlm_chat_completions_request_uses_plain_text_and_source_metadata() {
+    let frame_path = std::env::temp_dir().join(format!("daydream-vlm-{}.png", Uuid::now_v7()));
+    std::fs::write(&frame_path, b"not-a-real-png").expect("write frame");
+    let frame = ExtractedVisualFrame {
+        abrupt_transition: true,
+        after_context: None,
+        before_context: None,
+        frame_timestamp_ms: 500,
+        full_checkpoint: false,
+        height: 100,
+        path: frame_path.clone(),
+        region: VisualRegion {
+            height: 80,
+            width: 160,
+            x: 10,
+            y: 20,
+        },
+        signature: "sig".to_string(),
+        source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+        width: 200,
+    };
+    let config = VisionRequestConfig {
+        api_key: "secret".to_string(),
+        base_url: "https://example.test/api".to_string(),
+        model: "vision-model".to_string(),
+        provider: "openai-compatible".to_string(),
+    };
+    let body = vlm_chat_completions_body(
+        &config,
+        &frame,
+        &[OcrCandidate {
+            confidence: Some(0.75),
+            region: VisualRegion {
+                height: 10,
+                width: 20,
+                x: 1,
+                y: 2,
+            },
+            text: "Settings".to_string(),
+        }],
+        &[PreviousVisualObservation {
+            frame_timestamp_ms: 400,
+            kind: "screen-observation".to_string(),
+            text: "A settings window is visible.".to_string(),
+        }],
+    )
+    .expect("build request body");
+    let _ = std::fs::remove_file(frame_path);
+
+    assert_eq!(
+        vision_chat_completions_url("https://example.test/api"),
+        "https://example.test/api/v1/chat/completions"
+    );
+    assert_eq!(
+        vision_chat_completions_url("https://example.test/api/v1"),
+        "https://example.test/api/v1/chat/completions"
+    );
+    assert_eq!(
+        vision_chat_completions_url("https://example.test/api/v1/chat/completions"),
+        "https://example.test/api/v1/chat/completions"
+    );
+    assert_eq!(body["model"], "vision-model");
+    assert!(body.get("store").is_none());
+    assert!(body.get("include").is_none());
+    assert!(body.get("input").is_none());
+    assert!(body.get("text").is_none());
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert_eq!(body["messages"][1]["content"][0]["type"], "text");
+    assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
+    assert!(body["messages"][1]["content"][1]["image_url"]["url"]
+        .as_str()
+        .expect("image URL")
+        .starts_with("data:image/png;base64,"));
+    assert!(body.get("response_format").is_none());
+
+    let user_prompt = body["messages"][1]["content"][0]["text"]
+        .as_str()
+        .expect("user prompt text");
+    assert!(user_prompt.contains("Source frame: segment:one:offset:500:frame:0"));
+    assert!(user_prompt.contains("Previous screen descriptions"));
+    assert!(user_prompt.contains("screen-observation: A settings window is visible."));
+    assert!(user_prompt.contains("conf=0.75: Settings"));
+    assert!(user_prompt.contains("These are hints only"));
+    assert!(!user_prompt.contains("x=1"));
+    assert!(!user_prompt.contains("Frame timestamp"));
+}
+
+#[test]
+fn vlm_chat_completions_request_caps_ocr_candidates() {
+    let frame_path = test_temp_path("vlm-capped-prompt.png");
+    write_test_png(&frame_path, 16, 16).expect("write frame");
+    let frame = ExtractedVisualFrame {
+        abrupt_transition: false,
+        after_context: None,
+        before_context: None,
+        frame_timestamp_ms: 500,
+        full_checkpoint: true,
+        height: 16,
+        path: frame_path.clone(),
+        region: VisualRegion {
+            height: 16,
+            width: 16,
+            x: 0,
+            y: 0,
+        },
+        signature: "sig".to_string(),
+        source_frame_ref: "segment:one:offset:500:frame:0:region:0,0,16,16".to_string(),
+        width: 16,
+    };
+    let config = VisionRequestConfig {
+        api_key: "secret".to_string(),
+        base_url: "https://example.test/api".to_string(),
+        model: "vision-model".to_string(),
+        provider: "openai-compatible".to_string(),
+    };
+    let candidates = (0..100)
+        .map(|index| OcrCandidate {
+            confidence: Some(0.9),
+            region: VisualRegion {
+                height: 8,
+                width: 8,
+                x: 0,
+                y: 0,
+            },
+            text: format!("candidate-{index}"),
+        })
+        .collect::<Vec<_>>();
+    let body =
+        vlm_chat_completions_body(&config, &frame, &candidates, &[]).expect("build request body");
+    let _ = std::fs::remove_file(frame_path);
+
+    let user_prompt = body["messages"][1]["content"][0]["text"]
+        .as_str()
+        .expect("user prompt text");
+    assert!(user_prompt.contains("candidate-79"));
+    assert!(!user_prompt.contains("candidate-80"));
+    assert!(user_prompt.contains("additional OCR candidates omitted"));
 }
 
 #[test]
@@ -1141,10 +1336,14 @@ fn complete_partial_file_can_be_recovered_before_ranged_download() {
     fs::write(&path, bytes).expect("write partial");
     let sha1 = Box::leak(test_sha1(bytes).into_boxed_str());
     let catalog = CatalogModel {
+        cache_dir: "test",
+        filename: "model.bin",
         id: "test",
         label: "Test model",
+        provider: "local-whisper-cpp",
         sha1,
         size_bytes: bytes.len() as i64,
+        source_url: None,
     };
 
     assert_eq!(
@@ -1162,10 +1361,14 @@ fn corrupt_complete_partial_file_restarts_from_zero() {
     fs::write(&path, b"corrupt").expect("write partial");
     let sha1 = Box::leak(test_sha1(b"expected").into_boxed_str());
     let catalog = CatalogModel {
+        cache_dir: "test",
+        filename: "model.bin",
         id: "test",
         label: "Test model",
+        provider: "local-whisper-cpp",
         sha1,
         size_bytes: 1,
+        source_url: None,
     };
 
     assert_eq!(
@@ -1185,10 +1388,14 @@ fn recovery_uses_verified_final_model_file() {
     fs::write(&final_path, bytes).expect("write final");
     let sha1 = Box::leak(test_sha1(bytes).into_boxed_str());
     let catalog = CatalogModel {
+        cache_dir: "test",
+        filename: "model.bin",
         id: "test",
         label: "Test model",
+        provider: "local-whisper-cpp",
         sha1,
         size_bytes: bytes.len() as i64,
+        source_url: None,
     };
 
     assert_eq!(
@@ -1209,10 +1416,14 @@ fn recovery_deletes_corrupt_final_and_resumes_partial() {
     fs::write(&partial_path, b"partial").expect("write partial");
     let sha1 = Box::leak(test_sha1(b"expected").into_boxed_str());
     let catalog = CatalogModel {
+        cache_dir: "test",
+        filename: "model.bin",
         id: "test",
         label: "Test model",
+        provider: "local-whisper-cpp",
         sha1,
         size_bytes: 100,
+        source_url: None,
     };
 
     assert_eq!(
@@ -1232,10 +1443,14 @@ fn recovery_reports_no_files_when_partial_is_missing() {
     let partial_path = dir.join("model.part");
     let sha1 = Box::leak(test_sha1(b"expected").into_boxed_str());
     let catalog = CatalogModel {
+        cache_dir: "test",
+        filename: "model.bin",
         id: "test",
         label: "Test model",
+        provider: "local-whisper-cpp",
         sha1,
         size_bytes: 100,
+        source_url: None,
     };
 
     assert_eq!(
@@ -1498,6 +1713,24 @@ fn test_visual_image(width: usize, height: usize, white_pixels: &[(usize, usize)
         pixels,
         width,
     }
+}
+
+fn write_test_png(
+    path: &Path,
+    width: usize,
+    height: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut pixels = vec![0; width * height * 4];
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel[3] = 255;
+    }
+    let file = std::fs::File::create(path)?;
+    let mut encoder = png::Encoder::new(file, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&pixels)?;
+    Ok(())
 }
 
 fn test_vlm_chunk(

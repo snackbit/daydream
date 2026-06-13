@@ -3,6 +3,7 @@ import type {
   LibraryRecordingDetail,
   LibraryRecordingRedaction,
   RecordingAiProcessingState,
+  RecordingVisualObservations,
 } from '@daydream/shared';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,6 +13,7 @@ import {
   StudioSidebarRecordingSection,
   StudioSidebarSectionLane,
   StudioSidebarSectionSegment,
+  StudioSidebarVisualFrameSection,
   type StudioSidebarSegmentSelection,
 } from './studio-sidebar-inspector-sections';
 import { StudioSidebarRedactionSection } from './studio-sidebar-redaction-section';
@@ -20,6 +22,10 @@ import {
   type StudioLaneDraft,
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
+import {
+  buildStudioVisualFrames,
+  type StudioVisualFrame,
+} from './studio-visual-observations';
 
 export function StudioSidebar({
   aiProcessingState,
@@ -27,6 +33,7 @@ export function StudioSidebar({
   onCreateRedactions,
   onDeleteRedaction,
   onUnredactRanges,
+  visualObservations,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
@@ -37,6 +44,7 @@ export function StudioSidebar({
   onUnredactRanges: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
+  visualObservations: RecordingVisualObservations | null;
 }) {
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
@@ -62,6 +70,10 @@ export function StudioSidebar({
     .filter((redaction): redaction is LibraryRecordingRedaction =>
       Boolean(redaction),
     );
+  const visualFrames = buildStudioVisualFrames(visualObservations, detail);
+  const selectedVisualFrames = selection.visualFrameIds
+    .map((frameId) => visualFrames.find((frame) => frame.id === frameId))
+    .filter((frame): frame is StudioVisualFrame => Boolean(frame));
   const content = renderStudioSidebarContent({
     aiProcessingState,
     clearSelection,
@@ -73,17 +85,18 @@ export function StudioSidebar({
     selectedRanges: selection.ranges,
     selectedRedactions,
     selectedSegments,
+    selectedVisualFrames,
   });
 
   return (
-    <aside className="bg-sidebar text-sidebar-foreground flex h-full flex-col">
-      <div className="border-b p-3">
+    <aside className="bg-sidebar text-sidebar-foreground flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 border-b p-3">
         <div className="text-sm font-medium">Inspector</div>
         <div className="text-muted-foreground mt-1 text-xs">
           Selection and recording metadata
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1 overflow-hidden">
         <div className="text-xs">
           {detail.availability !== 'available' ? (
             <Alert
@@ -122,6 +135,7 @@ function renderStudioSidebarContent({
   selectedRanges,
   selectedRedactions,
   selectedSegments,
+  selectedVisualFrames,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   clearSelection: () => void;
@@ -137,7 +151,14 @@ function renderStudioSidebarContent({
   selectedRanges: StudioTimeRangeSelection[];
   selectedRedactions: LibraryRecordingRedaction[];
   selectedSegments: StudioSidebarSegmentSelection[];
+  selectedVisualFrames: StudioVisualFrame[];
 }) {
+  if (selectedVisualFrames.length > 0) {
+    return selectedVisualFrames.map((frame) => (
+      <StudioSidebarVisualFrameSection frame={frame} key={frame.id} />
+    ));
+  }
+
   if (selectedRanges.length > 0) {
     return (
       <StudioSidebarComponentSelection

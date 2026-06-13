@@ -20,6 +20,7 @@ import {
   type StudioLaneDraft,
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
+import type { StudioVisualFrame } from './studio-visual-observations';
 import { TrackClip } from './track-clip';
 import { TrackLaneHeader } from './track-lane-header';
 import { TrackClipMedia } from './track-lane-media';
@@ -43,13 +44,16 @@ export interface TrackLaneProps {
   selectedClipIds: Set<string>;
   selectedLane: boolean;
   selectedRedactionIds: Set<string>;
+  selectedVisualFrameIds: Set<string>;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   timelineWidthPx: number;
   timeRanges: StudioTimeRangeSelection[];
   totalDurationMs: number;
   track: LibraryRecordingTrack;
   lane: StudioLaneDraft;
+  visualFrames: StudioVisualFrame[];
   waveformTiles: LibraryWaveformTiles | null;
+  onSelectVisualFrame: (visualFrameId: string, additive: boolean) => void;
 }
 
 export function TrackLane({
@@ -66,13 +70,16 @@ export function TrackLane({
   selectedClipIds,
   selectedLane,
   selectedRedactionIds,
+  selectedVisualFrameIds,
   thumbnailStatus,
   timelineWidthPx,
   timeRanges,
   totalDurationMs,
   track,
   lane,
+  visualFrames,
   waveformTiles,
+  onSelectVisualFrame,
 }: TrackLaneProps) {
   const waveformTrack = waveformTiles?.tracks.find(
     (waveform) =>
@@ -217,7 +224,98 @@ export function TrackLane({
             onSelectRedaction={onSelectRedaction}
           />
         ))}
+        {track.kind === 'video' ? (
+          <VisualFrameSegments
+            selectedVisualFrameIds={selectedVisualFrameIds}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            visualFrames={visualFrames}
+            onSelectVisualFrame={onSelectVisualFrame}
+          />
+        ) : null}
       </div>
     </>
   );
+}
+
+function VisualFrameSegments({
+  selectedVisualFrameIds,
+  timelineWidthPx,
+  totalDurationMs,
+  visualFrames,
+  onSelectVisualFrame,
+}: {
+  selectedVisualFrameIds: Set<string>;
+  timelineWidthPx: number;
+  totalDurationMs: number;
+  visualFrames: StudioVisualFrame[];
+  onSelectVisualFrame: (visualFrameId: string, additive: boolean) => void;
+}) {
+  if (visualFrames.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {visualFrames.map((frame) => {
+        const selected = selectedVisualFrameIds.has(frame.id);
+        const startMs = Math.max(0, frame.frameTimestampMs);
+        const endMs = Math.max(startMs + 1, frame.endTimestampMs);
+        const left =
+          (Math.min(startMs, totalDurationMs) / totalDurationMs) *
+          timelineWidthPx;
+        const width = Math.max(
+          4,
+          ((Math.min(endMs, totalDurationMs) -
+            Math.min(startMs, totalDurationMs)) /
+            totalDurationMs) *
+            timelineWidthPx,
+        );
+        const title = visualFrameMarkerTitle(frame);
+
+        return (
+          <button
+            aria-label={title}
+            aria-pressed={selected}
+            className={cn(
+              'border-primary/80 bg-background/95 absolute bottom-1 z-20 h-6 overflow-hidden rounded-sm border px-1 text-[0.625rem] font-medium shadow-sm',
+              'hover:bg-accent focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+              selected && 'ring-ring ring-2',
+            )}
+            data-library-action
+            key={frame.id}
+            style={{
+              left,
+              width,
+            }}
+            title={title}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectVisualFrame(
+                frame.id,
+                event.shiftKey || event.metaKey || event.ctrlKey,
+              );
+            }}
+          >
+            <span className="block truncate">
+              {frame.vlmObservations.length > 0 ? 'VLM' : 'OCR'}{' '}
+              {frame.ocrRegions.length > 0 ? frame.ocrRegions.length : ''}
+            </span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function visualFrameMarkerTitle(frame: StudioVisualFrame): string {
+  const startSeconds = (frame.frameTimestampMs / 1_000).toFixed(1);
+  const endSeconds = (frame.endTimestampMs / 1_000).toFixed(1);
+  const vlmText =
+    frame.vlmObservations.length > 0
+      ? `${frame.vlmObservations.length} VLM`
+      : 'no VLM';
+
+  return `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${frame.ocrRegions.length} OCR candidates`;
 }

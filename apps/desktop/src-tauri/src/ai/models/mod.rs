@@ -7,8 +7,9 @@ mod recovery;
 #[cfg(test)]
 pub(in crate::ai) use catalog::{catalog_asset, LOCAL_WHISPER_CATALOG};
 pub(in crate::ai) use catalog::{
-    catalog_model, emit_model_list, ensure_catalog_model, model_list, model_source_url,
-    models_from_stored, save_catalog_model, CatalogModel, ModelAssetPatch,
+    catalog_model, emit_model_list, ensure_catalog_model, is_whisper_model, model_list,
+    models_from_stored, require_model_source_url, save_catalog_model, CatalogModel,
+    ModelAssetPatch,
 };
 pub(in crate::ai) use download::{
     prepare_partial_download, save_cancel_download_result, spawn_model_download,

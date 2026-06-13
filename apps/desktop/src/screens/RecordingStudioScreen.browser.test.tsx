@@ -3,6 +3,7 @@ import type {
   LibraryRecordingDetail,
   LibraryWaveformTiles,
   RecordingAiProcessingState,
+  RecordingVisualObservations,
 } from '@daydream/shared';
 import {
   cleanup,
@@ -35,6 +36,7 @@ const client = vi.hoisted(() => ({
 
 const aiClient = vi.hoisted(() => ({
   getRecordingAiProcessingState: vi.fn(),
+  getRecordingVisualObservations: vi.fn(),
   listenToAiProcessingChanged: vi.fn(),
   startRecordingAiProcessing: vi.fn(),
 }));
@@ -266,6 +268,16 @@ beforeEach(() => {
     job: null,
     recordingId: 'recording-1',
     transcript: { recordingId: 'recording-1', tracks: [] },
+  });
+  aiClient.getRecordingVisualObservations.mockResolvedValue({
+    ocrRegions: [],
+    recordingId: 'recording-1',
+    vlmObservations: [],
+    vlmState: {
+      errorCode: null,
+      providerStatus: 'disabled',
+      status: 'disabled',
+    },
   });
   aiClient.listenToAiProcessingChanged.mockResolvedValue(() => undefined);
   aiClient.startRecordingAiProcessing.mockResolvedValue({
@@ -809,6 +821,197 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
     (screen.getByRole('button', { name: /retry ai/i }) as HTMLButtonElement)
       .disabled,
   ).toBe(false);
+});
+
+test('RecordingStudioScreen explains local Whisper GPU failures in the inspector', async () => {
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
+        errorCode: 'ai_transcription_provider_failed',
+        id: 'chunk-1',
+        jobId: 'job-1',
+        progress: 0,
+        recordingId: 'recording-1',
+        resultCode: null,
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'failed',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 2,
+      },
+    ],
+    job: {
+      createdAtMs: 1,
+      errorCode: 'ai_transcription_provider_failed',
+      id: 'job-1',
+      kind: 'ai-processing',
+      progress: 0,
+      recordingId: 'recording-1',
+      status: 'failed',
+      updatedAtMs: 2,
+    },
+    recordingId: 'recording-1',
+    transcript: { recordingId: 'recording-1', tracks: [] },
+    transcriptionTracks: [
+      {
+        chunks: [
+          {
+            attemptCount: 1,
+            endOffsetMs: 2_000,
+            errorCode: 'ai_transcription_provider_failed',
+            id: 'chunk-1',
+            progress: 0,
+            result: 'failed',
+            resultCode: null,
+            segmentId: 'segment-1',
+            startOffsetMs: 0,
+            status: 'failed',
+            text: null,
+            transcriptSegments: [],
+          },
+        ],
+        description: 'desktop-audio timeline track desktop-audio-1',
+        label: 'Desktop audio transcription',
+        libraryTrackId: 'desktop-audio-1',
+        sourceRole: 'desktop-audio',
+        status: 'failed',
+        statusLabel: 'Transcription failed',
+        textSegmentCount: 0,
+        trackId: 'desktop-audio-1',
+        trackKey: 'desktop-audio',
+      },
+    ],
+  });
+
+  render(<RecordingStudioScreen />);
+
+  fireEvent.click(
+    await screen.findByRole('button', { name: /^Select Desktop audio$/i }),
+  );
+
+  expect(
+    await screen.findByText(/Local Whisper transcription failed/i),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/switch local transcription backend to CPU/i),
+  ).toBeTruthy();
+  expect(screen.getByText('ai_transcription_provider_failed')).toBeTruthy();
+});
+
+test('RecordingStudioScreen shows visual frame details from video AI markers', async () => {
+  aiClient.getRecordingVisualObservations.mockResolvedValue({
+    ocrRegions: [
+      {
+        chunkId: 'ocr-chunk-1',
+        confidence: 0.9,
+        frameTimestampMs: 500,
+        id: 'ocr-1',
+        jobId: 'job-1',
+        model: 'tesseract',
+        provider: 'tesseract',
+        recordingId: 'recording-1',
+        region: {
+          height: 20,
+          width: 120,
+          x: 10,
+          y: 20,
+        },
+        sourceFrameRef: 'segment:segment-1:offset:500:frame:0',
+        text: 'Checkout',
+      },
+      {
+        chunkId: 'ocr-chunk-1',
+        confidence: 0.86,
+        frameTimestampMs: 500,
+        id: 'ocr-2',
+        jobId: 'job-1',
+        model: 'tesseract',
+        provider: 'tesseract',
+        recordingId: 'recording-1',
+        region: {
+          height: 20,
+          width: 80,
+          x: 140,
+          y: 20,
+        },
+        sourceFrameRef: 'segment:segment-1:offset:500:frame:0:region:140,20',
+        text: 'Total',
+      },
+      {
+        chunkId: 'ocr-chunk-1',
+        confidence: 0.8,
+        frameTimestampMs: 1_000,
+        id: 'ocr-3',
+        jobId: 'job-1',
+        model: 'tesseract',
+        provider: 'tesseract',
+        recordingId: 'recording-1',
+        region: {
+          height: 20,
+          width: 90,
+          x: 20,
+          y: 50,
+        },
+        sourceFrameRef: 'segment:segment-1:offset:1000:frame:1',
+        text: 'Payment',
+      },
+    ],
+    recordingId: 'recording-1',
+    vlmObservations: [
+      {
+        chunkId: 'vlm-chunk-1',
+        confidence: null,
+        frameTimestampMs: 500,
+        id: 'vlm-1',
+        jobId: 'job-1',
+        model: 'qwen/qwen3-vl-8b',
+        observationKind: 'screen-observation',
+        promptVersion: 'm2-visual-observation-v2',
+        provider: 'openai-compatible',
+        recordingId: 'recording-1',
+        region: {
+          height: 1440,
+          width: 2560,
+          x: 0,
+          y: 0,
+        },
+        sourceFrameRef: 'segment:segment-1:offset:500:frame:0',
+        text: 'A browser checkout page is visible with a payment form and order summary.',
+      },
+    ],
+    vlmState: {
+      errorCode: null,
+      providerStatus: 'configured',
+      status: 'succeeded',
+    },
+  } satisfies RecordingVisualObservations);
+
+  render(<RecordingStudioScreen />);
+
+  const markers = await screen.findAllByRole('button', {
+    name: /visual frame/i,
+  });
+  expect(markers).toHaveLength(2);
+
+  const marker = screen.getByRole('button', {
+    name: /visual frame 0\.5s to 1\.0s, 1 vlm, 2 ocr candidates/i,
+  });
+  fireEvent.click(marker);
+
+  expect(
+    await screen.findByText(
+      'A browser checkout page is visible with a payment form and order summary.',
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText('Checkout')).toBeNull();
+
+  fireEvent.click(screen.getByRole('button', { name: /ocr text \(2\)/i }));
+
+  expect(await screen.findByText(/Checkout Total/i)).toBeTruthy();
 });
 
 test('RecordingStudioScreen renders transcript text by transcript segment offsets', async () => {
@@ -1379,6 +1582,7 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
       laneIds: [],
       redactionIds: [],
       ranges: [],
+      visualFrameIds: [],
     }),
   );
   expect(screen.queryByLabelText('Track name')).toBeNull();
@@ -1674,6 +1878,7 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
         startMs: 1_000,
       },
     ],
+    visualFrameIds: [],
   });
   await waitFor(() =>
     expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
@@ -1712,6 +1917,7 @@ test('RecordingStudioScreen ctrl-shift-drag subtracts from an existing range', a
         startMs: 0,
       },
     ],
+    visualFrameIds: [],
   });
   await waitFor(() =>
     expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
@@ -1756,6 +1962,7 @@ test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', as
         startMs: 6_000,
       },
     ],
+    visualFrameIds: [],
   });
   await waitFor(() =>
     expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),

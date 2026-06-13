@@ -21,6 +21,7 @@ async fn process_audio_chunk(
     job_id: &str,
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
+    let started = Instant::now();
     let context = ProcessingChunkContext::new(app, job_id, &chunk);
     tracing::info!(
         recording_id = %chunk.recording_id,
@@ -47,6 +48,7 @@ async fn process_audio_chunk(
                 job_id = %job_id,
                 chunk_id = %chunk.id,
                 track_id = chunk.track_id.as_deref().unwrap_or(""),
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_audio_chunk_succeeded"
             );
             context.emit_processing_state();
@@ -63,6 +65,7 @@ async fn process_audio_chunk(
                 chunk_id = %chunk.id,
                 track_id = chunk.track_id.as_deref().unwrap_or(""),
                 error_code = %error.code,
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_audio_chunk_failed"
             );
             context.emit_processing_state();
@@ -76,6 +79,7 @@ async fn process_activity_chunk(
     job_id: &str,
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
+    let started = Instant::now();
     let context = ProcessingChunkContext::new(app, job_id, &chunk);
     tracing::info!(
         recording_id = %chunk.recording_id,
@@ -100,6 +104,7 @@ async fn process_activity_chunk(
                 recording_id = %chunk.recording_id,
                 job_id = %job_id,
                 chunk_id = %chunk.id,
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_activity_chunk_succeeded"
             );
             context.emit_processing_state();
@@ -115,6 +120,7 @@ async fn process_activity_chunk(
                 job_id = %job_id,
                 chunk_id = %chunk.id,
                 error_code = %error.code,
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_activity_chunk_failed"
             );
             context.emit_processing_state();
@@ -128,6 +134,7 @@ async fn process_visual_chunk(
     job_id: &str,
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
+    let started = Instant::now();
     let context = ProcessingChunkContext::new(app, job_id, &chunk);
     tracing::info!(
         recording_id = %chunk.recording_id,
@@ -154,6 +161,7 @@ async fn process_visual_chunk(
                 job_id = %job_id,
                 chunk_id = %chunk.id,
                 source_kind = %chunk.source_kind,
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_visual_chunk_succeeded"
             );
             context.emit_processing_state();
@@ -170,6 +178,7 @@ async fn process_visual_chunk(
                 chunk_id = %chunk.id,
                 source_kind = %chunk.source_kind,
                 error_code = %error.code,
+                elapsed_ms = elapsed_ms(started),
                 "ai_processing_visual_chunk_failed"
             );
             context.emit_processing_state();

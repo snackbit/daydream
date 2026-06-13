@@ -1,5 +1,5 @@
 import type {
-  AiProviderKind,
+  AiAssetProviderKind,
   AiTranscriptionBackend,
 } from './provider-kinds.js';
 
@@ -10,6 +10,12 @@ export type AiModelDownloadStatus =
   | 'failed'
   | 'missing'
   | 'queued';
+
+export type AiOcrDataStatus = AiModelDownloadStatus | 'partial';
+
+export type AiOcrDataSource = 'managed-best' | 'missing' | 'partial' | 'system';
+
+export type AiOcrRuntimeSource = 'managed' | 'missing' | 'system';
 
 export type AiModelSelfTestStatus = 'failed' | 'not-run' | 'passed' | 'running';
 
@@ -30,7 +36,7 @@ export interface AiModelAsset {
   id: string;
   label: string;
   localPath: string | null;
-  provider: AiProviderKind;
+  provider: AiAssetProviderKind;
   selfTestStatus: AiModelSelfTestStatus;
   sizeBytes: number | null;
   sourceUrl: string | null;
@@ -65,8 +71,22 @@ export interface AiLocalTranscriptionStatus {
   selfTestStatus: AiModelSelfTestStatus;
 }
 
+export interface AiOcrStatus {
+  dataSource: AiOcrDataSource;
+  dataDownloadStatus: AiOcrDataStatus;
+  dataPath: string | null;
+  enabled: boolean;
+  engine: string;
+  languages: string[];
+  runtimeDownloadStatus: AiModelDownloadStatus;
+  runtimePath: string | null;
+  runtimeSource: AiOcrRuntimeSource;
+  runtimeVersion: string | null;
+}
+
 export interface AiProviderStatus {
   localTranscription: AiLocalTranscriptionStatus;
+  ocr: AiOcrStatus;
   remoteTranscription: string;
   vision: string;
 }

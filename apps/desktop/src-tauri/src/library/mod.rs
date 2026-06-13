@@ -15,8 +15,9 @@ use crate::{
     playback_server::PlaybackServer,
     settings,
     storage::{
-        self, AppStorage, ProcessingChunkRow, ProcessingJobRow, RecordingRow, RecordingSegmentRow,
-        RecordingTrackRow, RedactionRow, TranscriptSegmentRow, TranscriptWordRow,
+        self, AppStorage, OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingRow,
+        RecordingSegmentRow, RecordingTrackRow, RedactionRow, TranscriptSegmentRow,
+        TranscriptWordRow, VlmObservationRow,
     },
 };
 

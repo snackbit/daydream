@@ -16,6 +16,8 @@ pub(in crate::ai) use transcript::transcript_for_recording;
 #[cfg(test)]
 pub(in crate::ai) use transcript::transcription_chunk_state;
 pub(crate) use transcript::visible_transcript_segments_for_recording;
-pub(in crate::ai) use visual::visual_observations_for_recording;
+pub(crate) use visual::{
+    visible_visual_observation_rows_for_recording, visual_observations_for_recording,
+};
 #[cfg(test)]
 pub(in crate::ai) use vlm::vlm_state_for_recording;

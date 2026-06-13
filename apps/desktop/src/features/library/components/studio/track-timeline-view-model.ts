@@ -72,6 +72,10 @@ export function useTrackTimelineViewModel({
     () => new Set(selection.redactionIds),
     [selection.redactionIds],
   );
+  const selectedVisualFrameIds = useMemo(
+    () => new Set(selection.visualFrameIds),
+    [selection.visualFrameIds],
+  );
   const selectedRangeRedactions = useMemo(
     () => redactionsIntersectingRanges(detail.redactions, selection.ranges),
     [detail.redactions, selection.ranges],
@@ -127,6 +131,7 @@ export function useTrackTimelineViewModel({
     selectedLaneIds,
     selectedRangeRedactions,
     selectedRedactionIds,
+    selectedVisualFrameIds,
     timelineViewportWidth,
     timelineWidthPx,
     totalDurationMs,

@@ -50,11 +50,7 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
         .max_parallel_jobs
         .saturating_sub(running.len() as u32) as usize;
     if available == 0 {
-        tracing::debug!(
-            running_job_count = running.len(),
-            max_parallel_jobs = app_settings.ai.processing.max_parallel_jobs,
-            "ai_processing_worker_capacity_full"
-        );
+        log_capacity_full_throttled(running.len(), app_settings.ai.processing.max_parallel_jobs);
         return Ok(());
     }
     let queued = storage
@@ -67,12 +63,7 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
             )
         })
         .map_err(storage_error)?;
-    tracing::debug!(
-        running_job_count = running.len(),
-        queued_job_count = queued.len(),
-        available_job_slots = available,
-        "ai_processing_worker_tick"
-    );
+    log_worker_tick(running.len(), queued.len(), available);
 
     for job in queued {
         let claimed = storage
@@ -133,4 +124,53 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
     }
 
     Ok(())
+}
+
+fn log_capacity_full_throttled(running_job_count: usize, max_parallel_jobs: u32) {
+    static LAST_LOGGED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let now = Instant::now();
+    let lock = LAST_LOGGED_AT.get_or_init(|| Mutex::new(None));
+    let Ok(mut last_logged_at) = lock.lock() else {
+        return;
+    };
+    if last_logged_at.is_some_and(|previous| now.duration_since(previous) < Duration::from_secs(10))
+    {
+        return;
+    }
+    *last_logged_at = Some(now);
+    tracing::debug!(
+        running_job_count,
+        max_parallel_jobs,
+        "ai_processing_worker_capacity_full"
+    );
+}
+
+fn log_worker_tick(running_job_count: usize, queued_job_count: usize, available_job_slots: usize) {
+    if queued_job_count > 0 {
+        tracing::debug!(
+            running_job_count,
+            queued_job_count,
+            available_job_slots,
+            "ai_processing_worker_tick"
+        );
+        return;
+    }
+
+    static LAST_IDLE_LOGGED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let now = Instant::now();
+    let lock = LAST_IDLE_LOGGED_AT.get_or_init(|| Mutex::new(None));
+    let Ok(mut last_logged_at) = lock.lock() else {
+        return;
+    };
+    if last_logged_at.is_some_and(|previous| now.duration_since(previous) < Duration::from_secs(10))
+    {
+        return;
+    }
+    *last_logged_at = Some(now);
+    tracing::debug!(
+        running_job_count,
+        queued_job_count,
+        available_job_slots,
+        "ai_processing_worker_tick"
+    );
 }

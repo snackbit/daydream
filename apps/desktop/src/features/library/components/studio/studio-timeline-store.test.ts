@@ -121,6 +121,7 @@ test('studio timeline store resets session edits when recording changes', () => 
     laneIds: [],
     redactionIds: [],
     ranges: [],
+    visualFrameIds: [],
   });
 });
 
@@ -134,6 +135,7 @@ test('studio timeline store keeps additive editor selection within one category'
     laneIds: ['video-0', 'desktop-audio-1'],
     redactionIds: [],
     ranges: [],
+    visualFrameIds: [],
   });
 
   const desktopClipId = studioClipId('desktop-audio-1', 'segment-1');
@@ -146,6 +148,7 @@ test('studio timeline store keeps additive editor selection within one category'
     laneIds: [],
     redactionIds: [],
     ranges: [],
+    visualFrameIds: [],
   });
 
   useStudioTimelineStore.getState().setTimeRangeSelection(
@@ -169,6 +172,7 @@ test('studio timeline store keeps additive editor selection within one category'
         startMs: 500,
       },
     ],
+    visualFrameIds: [],
   });
 });
 
@@ -241,6 +245,7 @@ test('studio timeline store reconciles same-recording refreshes', () => {
     laneIds: ['desktop-audio-1'],
     redactionIds: [],
     ranges: [],
+    visualFrameIds: [],
   });
 });
 

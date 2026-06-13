@@ -1,8 +1,8 @@
 use super::super::*;
 use super::{
     catalog_model, delete_file_if_exists, downloaded_bytes, emit_model_list, ensure_catalog_model,
-    model_path, model_source_url, partial_model_path, rollback_finalized_model_file,
-    save_catalog_model, sha1_file, CatalogModel, ModelAssetPatch,
+    is_whisper_model, model_path, partial_model_path, require_model_source_url,
+    rollback_finalized_model_file, save_catalog_model, sha1_file, CatalogModel, ModelAssetPatch,
 };
 
 pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
@@ -58,6 +58,7 @@ pub(in crate::ai) async fn run_model_download(
     let manager = app.state::<AiModelManager>();
     let final_path = model_path(app, catalog)?;
     let partial_path = partial_model_path(app, catalog)?;
+    let source_url = require_model_source_url(catalog)?;
     if let Some(parent) = final_path.parent() {
         fs::create_dir_all(parent).map_err(file_error)?;
     }
@@ -76,7 +77,7 @@ pub(in crate::ai) async fn run_model_download(
     let mut retried_without_range = false;
 
     loop {
-        let mut request = client.get(model_source_url(catalog));
+        let mut request = client.get(source_url.clone());
         if partial_len > 0 {
             request = request.header(RANGE, format!("bytes={partial_len}-"));
             if let Some(etag) = existing.as_ref().and_then(|row| row.etag.clone()) {
@@ -242,8 +243,8 @@ pub(in crate::ai) async fn finalize_model_download(
     let actual_sha1 = sha1_file(partial_path)?;
     if actual_sha1 != catalog.sha1 {
         return Err(AiError {
-            code: "ai_model_checksum_failed".to_string(),
-            message: format!("Model checksum verification failed for {}.", catalog.label),
+            code: checksum_failed_code(catalog).to_string(),
+            message: format!("Checksum verification failed for {}.", catalog.label),
         });
     }
     if manager.is_cancelled(catalog.id) {
@@ -256,20 +257,23 @@ pub(in crate::ai) async fn finalize_model_download(
         return Ok(());
     }
     let local_path = final_path.to_string_lossy().to_string();
-    let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-    let warmup = LocalTranscriptionWarmup {
-        local_backend: app_settings.ai.transcription.local_backend,
-        model_id: catalog.id.to_string(),
-        model_path: final_path.to_path_buf(),
-    };
-    let provider = app.state::<TranscriptionProviderManager>().inner().clone();
-    let self_test_error =
+    let self_test_error = if is_whisper_model(catalog) {
+        let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
+        let warmup = LocalTranscriptionWarmup {
+            local_backend: app_settings.ai.transcription.local_backend,
+            model_id: catalog.id.to_string(),
+            model_path: final_path.to_path_buf(),
+        };
+        let provider = app.state::<TranscriptionProviderManager>().inner().clone();
         match tauri::async_runtime::spawn_blocking(move || provider.warm_local_model(warmup)).await
         {
             Ok(Ok(())) => None,
             Ok(Err(error)) => Some(error.code),
             Err(_error) => Some("ai_model_self_test_failed".to_string()),
-        };
+        }
+    } else {
+        None
+    };
     if manager.is_cancelled(catalog.id) {
         save_cancelled_finalized_download(app, catalog, partial_path, final_path)?;
         return Ok(());
@@ -277,7 +281,9 @@ pub(in crate::ai) async fn finalize_model_download(
     storage
         .with_connection(|connection| {
             let timestamp_ms = now_ms();
-            let self_test_status = if self_test_error.is_some() {
+            let self_test_status = if !is_whisper_model(catalog) {
+                "not-run"
+            } else if self_test_error.is_some() {
                 "failed"
             } else {
                 "passed"
@@ -287,12 +293,16 @@ pub(in crate::ai) async fn finalize_model_download(
             } else {
                 "succeeded"
             };
-            let notification_title = if self_test_error.is_some() {
+            let notification_title = if !is_whisper_model(catalog) {
+                "AI asset download complete"
+            } else if self_test_error.is_some() {
                 "Model download complete; load test failed"
             } else {
                 "Model download complete"
             };
-            let notification_message = if let Some(error_code) = self_test_error.as_deref() {
+            let notification_message = if !is_whisper_model(catalog) {
+                format!("{} downloaded and verified.", catalog.label)
+            } else if let Some(error_code) = self_test_error.as_deref() {
                 format!(
                     "{} downloaded and verified, but load test failed: {}.",
                     catalog.label, error_code
@@ -333,6 +343,14 @@ pub(in crate::ai) async fn finalize_model_download(
     emit_model_list(app);
 
     Ok(())
+}
+
+fn checksum_failed_code(catalog: &CatalogModel) -> &'static str {
+    if catalog.provider == "local-tesseract-ocr" {
+        "ai_ocr_tesseract_checksum_failed"
+    } else {
+        "ai_model_checksum_failed"
+    }
 }
 
 pub(in crate::ai) fn save_cancelled_finalized_download(

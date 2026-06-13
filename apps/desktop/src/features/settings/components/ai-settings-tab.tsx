@@ -38,12 +38,16 @@ export function AiSettingsTab({
   transcriptionKeyDraft,
   visionKeyDraft,
 }: AiSettingsTabProps) {
+  const whisperModels = models.filter(
+    (model) => model.provider === 'local-whisper-cpp',
+  );
+
   return (
     <div className="grid gap-4">
       <AiTranscriptionCard
         draft={draft}
         limits={limits}
-        models={models}
+        models={whisperModels}
         onCancelModelDownload={onCancelModelDownload}
         onChangeTranscriptionKey={onChangeTranscriptionKey}
         onDeleteModel={onDeleteModel}
@@ -54,7 +58,7 @@ export function AiSettingsTab({
       />
 
       <AiModelCacheCard
-        models={models}
+        models={whisperModels}
         onCancelModelDownload={onCancelModelDownload}
         onDeleteModel={onDeleteModel}
         onDownloadModel={onDownloadModel}
@@ -62,8 +66,13 @@ export function AiSettingsTab({
 
       <AiVisionCard
         draft={draft}
+        models={models}
+        onCancelModelDownload={onCancelModelDownload}
         onChangeVisionKey={onChangeVisionKey}
+        onDeleteModel={onDeleteModel}
+        onDownloadModel={onDownloadModel}
         onUpdateDraft={onUpdateDraft}
+        providerStatus={providerStatus}
         visionKeyDraft={visionKeyDraft}
       />
 

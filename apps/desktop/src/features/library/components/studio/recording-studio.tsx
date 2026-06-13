@@ -4,6 +4,7 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   RecordingAiProcessingState,
+  RecordingVisualObservations,
 } from '@daydream/shared';
 import {
   ResizableHandle,
@@ -28,6 +29,7 @@ export interface RecordingStudioProps {
   ) => Promise<void>;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
+  visualObservations: RecordingVisualObservations | null;
 }
 
 export function RecordingStudio({
@@ -38,6 +40,7 @@ export function RecordingStudio({
   onUnredactRanges,
   playbackAssets,
   thumbnailStatus,
+  visualObservations,
 }: RecordingStudioProps) {
   const [mutedTrackIds, setMutedTrackIds] = useState<Set<string>>(
     () => new Set(),
@@ -88,6 +91,7 @@ export function RecordingStudio({
               playback={playback}
               playbackAssets={playbackAssets}
               thumbnailStatus={thumbnailStatus}
+              visualObservations={visualObservations}
               onCreateRedactions={onCreateRedactions}
               onUnredactRanges={onUnredactRanges}
               onToggleTrackMuted={toggleTrackMuted}
@@ -100,6 +104,7 @@ export function RecordingStudio({
         <StudioSidebar
           aiProcessingState={aiProcessingState}
           detail={detail}
+          visualObservations={visualObservations}
           onCreateRedactions={onCreateRedactions}
           onDeleteRedaction={onDeleteRedaction}
           onUnredactRanges={onUnredactRanges}

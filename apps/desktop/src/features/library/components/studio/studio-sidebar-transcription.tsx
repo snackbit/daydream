@@ -3,6 +3,7 @@ import type {
   RecordingTranscriptionChunkState,
   RecordingTranscriptionTrackState,
 } from '@daydream/shared';
+import { aiProcessingErrorSummary } from './ai-processing-error-copy';
 import { MetadataRow } from './studio-sidebar-section';
 import type {
   StudioLaneDraft,
@@ -14,19 +15,22 @@ export function TranscriptionTrackDetails({
 }: {
   track: RecordingTranscriptionTrackState;
 }) {
+  const errorCode =
+    track.chunks.find((chunk) => chunk.errorCode)?.errorCode ?? null;
+
   return (
     <div className="space-y-1 border-t pt-2">
       <MetadataRow label="Speech" value={track.statusLabel} />
       <MetadataRow label="Chunks" value={String(track.chunks.length)} />
       <MetadataRow label="Text" value={String(track.textSegmentCount)} />
-      {track.chunks.some((chunk) => chunk.errorCode) ? (
-        <MetadataRow
-          label="Error"
-          value={
-            track.chunks.find((chunk) => chunk.errorCode)?.errorCode ??
-            'Unknown'
-          }
-        />
+      {errorCode ? (
+        <>
+          <MetadataRow
+            label="Issue"
+            value={aiProcessingErrorSummary(errorCode)}
+          />
+          <MetadataRow label="Error" value={errorCode} />
+        </>
       ) : null}
     </div>
   );
@@ -46,12 +50,39 @@ export function TranscriptionChunkDetails({
     <div className="space-y-1 border-t pt-2">
       <MetadataRow label="Chunks" value={String(chunks.length)} />
       <MetadataRow label="State" value={chunkSummary(chunks)} />
+      {chunks.some((chunk) => chunk.errorCode) ? (
+        <MetadataRow label="Issue" value={chunkErrorSummary(chunks)} />
+      ) : null}
+      {chunks.some((chunk) => chunk.errorCode) ? (
+        <MetadataRow label="Error" value={chunkErrorCodeSummary(chunks)} />
+      ) : null}
       {chunks.some((chunk) => chunk.resultCode) ? (
         <MetadataRow label="Result" value={chunkSummaryByResultCode(chunks)} />
       ) : null}
       {text ? <MetadataRow label="Text" value={text} /> : null}
     </div>
   );
+}
+
+function chunkErrorSummary(chunks: RecordingTranscriptionChunkState[]): string {
+  const errorCode = chunks.find((chunk) => chunk.errorCode)?.errorCode;
+
+  return errorCode ? aiProcessingErrorSummary(errorCode) : 'Unknown';
+}
+
+function chunkErrorCodeSummary(
+  chunks: RecordingTranscriptionChunkState[],
+): string {
+  const counts = chunks.reduce<Record<string, number>>((summary, chunk) => {
+    if (chunk.errorCode) {
+      summary[chunk.errorCode] = (summary[chunk.errorCode] ?? 0) + 1;
+    }
+    return summary;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([state, count]) => `${state}: ${count}`)
+    .join(', ');
 }
 
 export function TranscriptionSelectionDetails({

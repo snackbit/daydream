@@ -27,6 +27,7 @@ pub struct DaydreamDiagnostics {
     pub debug_logging: DebugLoggingDiagnostics,
     pub latest_recording: LatestRecordingDiagnostics,
     pub media_writer: MediaWriterDiagnostics,
+    pub ocr: OcrDiagnostics,
     pub portal_restore_token: PortalRestoreTokenDiagnostics,
     pub recorder: RecorderBackendHealth,
     pub storage: StorageDiagnostics,
@@ -120,6 +121,22 @@ pub struct AiTranscriptTrackDiagnostics {
     pub source_role: String,
     pub text_char_count: usize,
     pub track_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrDiagnostics {
+    pub data_download_status: String,
+    pub data_path_present: bool,
+    pub data_source: String,
+    pub enabled: bool,
+    pub engine: String,
+    pub languages: Vec<String>,
+    pub runtime_download_status: String,
+    pub runtime_path: Option<String>,
+    pub runtime_path_present: bool,
+    pub runtime_source: String,
+    pub runtime_version: Option<String>,
 }
 
 #[derive(Serialize)]

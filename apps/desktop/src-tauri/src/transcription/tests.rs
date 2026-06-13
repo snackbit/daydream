@@ -16,7 +16,8 @@ use uuid::Uuid;
 use super::http::{find_bytes, parse_multipart_form};
 use super::local_server::LocalTranscriptionServer;
 use super::local_worker::{
-    LocalTranscriptionRunner, WhisperCppTranscriptionRunner, WhisperProcessTranscriptionRunner,
+    should_drop_cached_model_after_error, LocalTranscriptionRunner, WhisperCppTranscriptionRunner,
+    WhisperProcessTranscriptionRunner,
 };
 use super::provider::{
     is_local_model_ready_for_warmup, selected_transcription_provider, TranscriptionProviderKind,
@@ -26,6 +27,7 @@ use super::remote::{
     RemoteTranscriptionRequest, RestTranscriptionRequest,
 };
 use super::*;
+use crate::whisper_backend::WhisperExecutionBackend;
 use crate::{settings, storage};
 
 #[derive(Default)]
@@ -345,6 +347,28 @@ fn whisper_runner_honors_pre_cancelled_transcribe_without_loading_model() {
 
     assert_eq!(error.code, "ai_transcription_cancelled");
     let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn whisper_runner_drops_gpu_cache_after_provider_failure_only() {
+    let provider_failed = transcription_error(
+        "ai_transcription_provider_failed",
+        "Whisper transcription failed.",
+    );
+    let cancelled = transcription_error("ai_transcription_cancelled", "Cancelled.");
+
+    assert!(should_drop_cached_model_after_error(
+        WhisperExecutionBackend::Gpu,
+        &provider_failed
+    ));
+    assert!(!should_drop_cached_model_after_error(
+        WhisperExecutionBackend::Cpu,
+        &provider_failed
+    ));
+    assert!(!should_drop_cached_model_after_error(
+        WhisperExecutionBackend::Gpu,
+        &cancelled
+    ));
 }
 
 #[cfg(unix)]

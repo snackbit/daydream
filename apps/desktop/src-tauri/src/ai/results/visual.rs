@@ -1,11 +1,50 @@
 use super::super::*;
 use super::vlm::vlm_state_for_recording;
 
-pub(in crate::ai) fn visual_observations_for_recording(
+pub(crate) fn visual_observations_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingVisualObservations, AiError> {
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
+    let visible_rows = visible_visual_observation_rows_for_recording(storage, recording_id)?;
+    let vlm_chunks = visible_rows
+        .visual_chunks
+        .iter()
+        .filter(|chunk| chunk.source_kind == "vlm")
+        .cloned()
+        .collect::<Vec<_>>();
+    let vlm_state = vlm_state_for_recording(
+        &app_settings,
+        &vlm_chunks,
+        visible_rows.vlm_observations.len(),
+    );
+
+    Ok(RecordingVisualObservations {
+        ocr_regions: visible_rows
+            .ocr_regions
+            .into_iter()
+            .map(ocr_region_from_row)
+            .collect(),
+        recording_id: recording_id.to_string(),
+        vlm_state,
+        vlm_observations: visible_rows
+            .vlm_observations
+            .into_iter()
+            .map(vlm_observation_from_row)
+            .collect(),
+    })
+}
+
+pub(crate) struct VisibleVisualObservationRows {
+    pub(crate) ocr_regions: Vec<OcrRegionRow>,
+    pub(crate) vlm_observations: Vec<VlmObservationRow>,
+    visual_chunks: Vec<ProcessingChunkRow>,
+}
+
+pub(crate) fn visible_visual_observation_rows_for_recording(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<VisibleVisualObservationRows, AiError> {
     let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions) = storage
         .with_connection(|connection| {
             Ok((
@@ -25,25 +64,11 @@ pub(in crate::ai) fn visual_observations_for_recording(
         &recording_tracks,
         &redactions,
     );
-    let vlm_chunks = visual_chunks
-        .iter()
-        .filter(|chunk| chunk.source_kind == "vlm")
-        .cloned()
-        .collect::<Vec<_>>();
-    let vlm_state =
-        vlm_state_for_recording(&app_settings, &vlm_chunks, visible_vlm_observations.len());
 
-    Ok(RecordingVisualObservations {
-        ocr_regions: visible_ocr_regions
-            .into_iter()
-            .map(ocr_region_from_row)
-            .collect(),
-        recording_id: recording_id.to_string(),
-        vlm_state,
-        vlm_observations: visible_vlm_observations
-            .into_iter()
-            .map(vlm_observation_from_row)
-            .collect(),
+    Ok(VisibleVisualObservationRows {
+        ocr_regions: visible_ocr_regions,
+        visual_chunks,
+        vlm_observations: visible_vlm_observations,
     })
 }
 

@@ -14,6 +14,7 @@ pub(super) fn extract_visual_frames(
     chunk: &ProcessingChunkRow,
     recording_fps: f64,
     app_settings: &settings::AppSettings,
+    include_ocr_regions: bool,
     cancel: &AtomicBool,
 ) -> Result<ExtractedVisualFrameSet, AiError> {
     let video_stream_index = segment.video_stream_index.ok_or_else(|| {
@@ -50,6 +51,21 @@ pub(super) fn extract_visual_frames(
     )?);
     let fps = effective_frame_recognition_fps(app_settings, recording_fps);
     let output_pattern = temp_dir.path().join("frame-%06d.png");
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        source_kind = %chunk.source_kind,
+        segment_id = %segment.id,
+        video_stream_index,
+        slice_start_ms,
+        slice_duration_ms,
+        recording_fps,
+        recognition_fps = fps,
+        output_pattern = %output_pattern.display(),
+        "ai_processing_visual_extract_started"
+    );
+    let ffmpeg_started = Instant::now();
     let output = Command::new(ffmpeg::binary_path())
         .args([
             "-hide_banner",
@@ -71,8 +87,21 @@ pub(super) fn extract_visual_frames(
         .arg(&output_pattern)
         .output()
         .map_err(file_error)?;
+    let ffmpeg_elapsed_ms = elapsed_ms(ffmpeg_started);
     check_processing_cancel(cancel)?;
     if !output.status.success() {
+        tracing::warn!(
+            recording_id = %chunk.recording_id,
+            job_id = %chunk.job_id,
+            chunk_id = %chunk.id,
+            source_kind = %chunk.source_kind,
+            segment_id = %segment.id,
+            exit_code = ?output.status.code(),
+            stdout_bytes = output.stdout.len(),
+            stderr_bytes = output.stderr.len(),
+            elapsed_ms = ffmpeg_elapsed_ms,
+            "ai_processing_visual_extract_failed"
+        );
         return Err(ai_error(
             "ai_processing_visual_extract_failed",
             "Visual frame extraction failed.",
@@ -84,6 +113,16 @@ pub(super) fn extract_visual_frames(
         .map(|entry| entry.map(|entry| entry.path()).map_err(file_error))
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        source_kind = %chunk.source_kind,
+        segment_id = %segment.id,
+        extracted_frame_count = paths.len(),
+        elapsed_ms = ffmpeg_elapsed_ms,
+        "ai_processing_visual_extract_completed"
+    );
     let sample_interval_ms = frame_sample_interval_ms(fps);
     let tile_size = app_settings.ai.processing.visual_delta_tile_size_px.clamp(
         settings::MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
@@ -103,7 +142,14 @@ pub(super) fn extract_visual_frames(
     };
     let mut previous_signature = None::<String>;
     let mut previous_image = None::<VisualImage>;
-    let mut frames = Vec::new();
+    let mut ocr_frames = Vec::new();
+    let mut vlm_frames = Vec::new();
+    let mut skipped_duplicate_frame_count = 0usize;
+    let mut skipped_unchanged_frame_count = 0usize;
+    let mut full_frame_count = 0usize;
+    let mut crop_frame_count = 0usize;
+    let mut abrupt_transition_count = 0usize;
+    let selection_started = Instant::now();
     for (index, path) in paths.iter().enumerate() {
         check_processing_cancel(cancel)?;
         let timestamp = (chunk_start + (index as i64 * sample_interval_ms)).min(chunk_end);
@@ -125,6 +171,7 @@ pub(super) fn extract_visual_frames(
             && previous_signature.as_deref() == Some(signature.as_str())
             && !full_checkpoint
         {
+            skipped_duplicate_frame_count += 1;
             previous_signature = Some(signature);
             continue;
         }
@@ -137,21 +184,31 @@ pub(super) fn extract_visual_frames(
             x: 0,
             y: 0,
         };
-        let regions = if full_checkpoint {
+        let changed_pixel_ratio = previous_image
+            .as_ref()
+            .map(|previous| visual_changed_pixel_ratio(previous, &image));
+        let full_frame_due_to_change =
+            changed_pixel_ratio.is_some_and(|ratio| ratio >= VISUAL_FULL_FRAME_CHANGED_RATIO);
+        let regions = if full_checkpoint || full_frame_due_to_change {
             vec![full_region]
+        } else if !include_ocr_regions {
+            Vec::new()
         } else if let Some(previous) = previous_image.as_ref() {
             visual_delta_regions(previous, &image, tile_size)
         } else {
             vec![full_region]
         };
         if regions.is_empty() {
+            skipped_unchanged_frame_count += 1;
             previous_signature = Some(signature);
             previous_image = Some(image);
             continue;
         }
-        let abrupt_transition = previous_image.as_ref().is_some_and(|previous| {
-            visual_changed_pixel_ratio(previous, &image) >= VISUAL_ABRUPT_TRANSITION_RATIO
-        });
+        let abrupt_transition =
+            changed_pixel_ratio.is_some_and(|ratio| ratio >= VISUAL_ABRUPT_TRANSITION_RATIO);
+        if abrupt_transition {
+            abrupt_transition_count += 1;
+        }
         let before_context = abrupt_transition
             .then(|| {
                 index
@@ -169,8 +226,10 @@ pub(super) fn extract_visual_frames(
         for (region_index, region) in regions.into_iter().enumerate() {
             let is_full_region = region == full_region;
             let crop_path = if is_full_region {
+                full_frame_count += 1;
                 path.clone()
             } else {
+                crop_frame_count += 1;
                 let crop_path = temp_dir
                     .path()
                     .join(format!("frame-{index:06}-region-{region_index:03}.png"));
@@ -184,26 +243,52 @@ pub(super) fn extract_visual_frames(
             };
             let source_frame_ref =
                 source_frame_ref_for_region(&segment.id, timestamp, index, &region);
-            frames.push(ExtractedVisualFrame {
+            let frame = ExtractedVisualFrame {
                 abrupt_transition,
                 after_context: after_context.clone(),
                 before_context: before_context.clone(),
                 frame_timestamp_ms: timestamp,
-                full_checkpoint,
+                full_checkpoint: full_checkpoint || full_frame_due_to_change,
                 height,
                 path: crop_path,
                 region,
                 signature: region_signature,
                 source_frame_ref,
                 width,
-            });
+            };
+            if is_full_region {
+                vlm_frames.push(frame.clone());
+            }
+            ocr_frames.push(frame);
         }
         previous_signature = Some(signature);
         previous_image = Some(image);
     }
 
+    tracing::info!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        source_kind = %chunk.source_kind,
+        segment_id = %segment.id,
+        extracted_frame_count = paths.len(),
+        selected_frame_count = ocr_frames.len(),
+        ocr_frame_count = ocr_frames.len(),
+        vlm_frame_count = vlm_frames.len(),
+        full_frame_count,
+        crop_frame_count,
+        skipped_duplicate_frame_count,
+        skipped_unchanged_frame_count,
+        abrupt_transition_count,
+        sample_interval_ms,
+        tile_size_px = tile_size,
+        elapsed_ms = elapsed_ms(selection_started),
+        "ai_processing_visual_frame_selection_completed"
+    );
+
     Ok(ExtractedVisualFrameSet {
-        frames,
+        ocr_frames,
+        vlm_frames,
         _temp_dir: temp_dir,
     })
 }

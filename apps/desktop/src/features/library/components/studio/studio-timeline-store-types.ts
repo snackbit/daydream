@@ -26,6 +26,7 @@ export interface StudioSelection {
   laneIds: string[];
   redactionIds: string[];
   ranges: StudioTimeRangeSelection[];
+  visualFrameIds: string[];
 }
 
 export interface StudioTimelineState {
@@ -42,6 +43,7 @@ export interface StudioTimelineState {
   selectClip: (clipId: string, additive?: boolean) => void;
   selectLane: (trackId: string, additive?: boolean) => void;
   selectRedaction: (redactionId: string, additive?: boolean) => void;
+  selectVisualFrame: (visualFrameId: string, additive?: boolean) => void;
   setLaneColor: (trackId: string, colorId: string) => void;
   setSelection: (selection: StudioSelection) => void;
   setTimeRangeSelection: (
@@ -60,4 +62,5 @@ export const emptySelection: StudioSelection = {
   laneIds: [],
   redactionIds: [],
   ranges: [],
+  visualFrameIds: [],
 };

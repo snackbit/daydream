@@ -28,7 +28,8 @@ pub(in crate::ai) struct ExtractedVisualFrame {
 }
 
 pub(in crate::ai) struct ExtractedVisualFrameSet {
-    pub(in crate::ai) frames: Vec<ExtractedVisualFrame>,
+    pub(in crate::ai) ocr_frames: Vec<ExtractedVisualFrame>,
+    pub(in crate::ai) vlm_frames: Vec<ExtractedVisualFrame>,
     pub(in crate::ai) _temp_dir: TempProcessingDirectory,
 }
 
@@ -62,6 +63,13 @@ pub(in crate::ai) struct PendingVlmObservation {
     pub(in crate::ai) text: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::ai) struct PreviousVisualObservation {
+    pub(in crate::ai) frame_timestamp_ms: i64,
+    pub(in crate::ai) kind: String,
+    pub(in crate::ai) text: String,
+}
+
 #[derive(Clone, Debug)]
 pub(in crate::ai) struct VisionRequestConfig {
     pub(in crate::ai) api_key: String,
@@ -71,40 +79,16 @@ pub(in crate::ai) struct VisionRequestConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct VlmChatResponse {
-    pub(super) choices: Vec<VlmChatChoice>,
+pub(super) struct VlmChatCompletionResponse {
+    pub(super) choices: Vec<VlmChatCompletionChoice>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct VlmChatChoice {
-    pub(super) message: VlmChatMessage,
+pub(super) struct VlmChatCompletionChoice {
+    pub(super) message: VlmChatCompletionMessage,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct VlmChatMessage {
+pub(super) struct VlmChatCompletionMessage {
     pub(super) content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(in crate::ai) struct VlmObservationPayload {
-    pub(in crate::ai) observations: Vec<VlmObservationCandidate>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(in crate::ai) struct VlmObservationCandidate {
-    pub(in crate::ai) confidence: Option<f64>,
-    pub(in crate::ai) frame_timestamp_ms: i64,
-    pub(in crate::ai) kind: String,
-    pub(in crate::ai) region: VlmObservationRegion,
-    pub(in crate::ai) text: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(in crate::ai) struct VlmObservationRegion {
-    pub(in crate::ai) height: i64,
-    pub(in crate::ai) width: i64,
-    pub(in crate::ai) x: i64,
-    pub(in crate::ai) y: i64,
 }

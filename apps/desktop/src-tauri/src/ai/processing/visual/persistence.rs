@@ -88,24 +88,64 @@ pub(super) fn persist_visual_output(
     chunk: &ProcessingChunkRow,
     output: PendingVisualOutput,
 ) -> Result<(), AiError> {
-    storage
-        .with_connection_mut(|connection| {
-            let transaction = connection.transaction()?;
-            storage::delete_visual_output_for_chunks(
-                &transaction,
-                std::slice::from_ref(&chunk.id),
-            )?;
-            for region in output.ocr_regions {
-                storage::create_ocr_region(&transaction, &region)?;
-            }
-            for observation in output.vlm_observations {
-                storage::create_vlm_observation(&transaction, &observation)?;
-            }
-            for entry in output.frame_similarity_entries {
-                storage::create_frame_similarity_entry(&transaction, &entry)?;
-            }
-            transaction.commit()?;
+    let ocr_region_count = output.ocr_regions.len();
+    let vlm_observation_count = output.vlm_observations.len();
+    let frame_similarity_entry_count = output.frame_similarity_entries.len();
+    tracing::debug!(
+        recording_id = %chunk.recording_id,
+        job_id = %chunk.job_id,
+        chunk_id = %chunk.id,
+        source_kind = %chunk.source_kind,
+        ocr_region_count,
+        vlm_observation_count,
+        frame_similarity_entry_count,
+        "ai_processing_visual_persist_started"
+    );
+    let started = Instant::now();
+    let result = storage.with_connection_mut(|connection| {
+        let transaction = connection.transaction()?;
+        storage::delete_visual_output_for_chunks(&transaction, std::slice::from_ref(&chunk.id))?;
+        for region in output.ocr_regions {
+            storage::create_ocr_region(&transaction, &region)?;
+        }
+        for observation in output.vlm_observations {
+            storage::create_vlm_observation(&transaction, &observation)?;
+        }
+        for entry in output.frame_similarity_entries {
+            storage::create_frame_similarity_entry(&transaction, &entry)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => {
+            tracing::info!(
+                recording_id = %chunk.recording_id,
+                job_id = %chunk.job_id,
+                chunk_id = %chunk.id,
+                source_kind = %chunk.source_kind,
+                ocr_region_count,
+                vlm_observation_count,
+                frame_similarity_entry_count,
+                elapsed_ms = elapsed_ms(started),
+                "ai_processing_visual_persist_completed"
+            );
             Ok(())
-        })
-        .map_err(storage_error)
+        }
+        Err(error) => {
+            tracing::warn!(
+                recording_id = %chunk.recording_id,
+                job_id = %chunk.job_id,
+                chunk_id = %chunk.id,
+                source_kind = %chunk.source_kind,
+                ocr_region_count,
+                vlm_observation_count,
+                frame_similarity_entry_count,
+                error = %error,
+                elapsed_ms = elapsed_ms(started),
+                "ai_processing_visual_persist_failed"
+            );
+            Err(storage_error(error))
+        }
+    }
 }

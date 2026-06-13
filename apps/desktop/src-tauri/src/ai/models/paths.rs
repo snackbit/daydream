@@ -12,18 +12,44 @@ pub(in crate::ai) fn model_cache_dir(app: &AppHandle) -> Result<PathBuf, AiError
         .join("whisper.cpp"))
 }
 
+pub(in crate::ai) fn catalog_cache_dir(
+    app: &AppHandle,
+    catalog: &CatalogModel,
+) -> Result<PathBuf, AiError> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| AiError {
+            code: "ai_model_cache_unavailable".to_string(),
+            message: format!("Model cache directory is unavailable: {error}"),
+        })?
+        .join("models")
+        .join(catalog.cache_dir))
+}
+
 pub(in crate::ai) fn model_path(
     app: &AppHandle,
     catalog: &CatalogModel,
 ) -> Result<PathBuf, AiError> {
-    Ok(model_cache_dir(app)?.join(format!("ggml-{}.bin", catalog.id)))
+    if catalog.provider == "local-whisper-cpp" {
+        return Ok(model_cache_dir(app)?.join(catalog.filename));
+    }
+
+    Ok(catalog_cache_dir(app, catalog)?.join(catalog.filename))
 }
 
 pub(in crate::ai) fn partial_model_path(
     app: &AppHandle,
     catalog: &CatalogModel,
 ) -> Result<PathBuf, AiError> {
-    Ok(model_cache_dir(app)?.join(format!("ggml-{}.bin.part", catalog.id)))
+    Ok(model_path(app, catalog)?.with_extension(format!(
+        "{}part",
+        model_path(app, catalog)?
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| format!("{extension}."))
+            .unwrap_or_default()
+    )))
 }
 
 pub(in crate::ai) fn rollback_finalized_model_file(

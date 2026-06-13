@@ -1,11 +1,22 @@
+import { useMemo } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryRecordingDetail,
+  OcrRegion,
   RecordingAiProcessingState,
 } from '@daydream/shared';
-import { ShieldOff, ShieldX } from 'lucide-react';
+import { FileText, ShieldOff, ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatDuration, formatTimestamp } from '../../library-format';
 import { redactionsIntersectingRanges } from './studio-redactions';
 import { EditableLaneFields, trackKindLabel } from './studio-sidebar-editing';
@@ -22,9 +33,146 @@ import {
   type StudioLaneDraft,
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
+import type { StudioVisualFrame } from './studio-visual-observations';
 
 export interface StudioSidebarSegmentSelection extends StudioClipDraft {
   clipId: string;
+}
+
+export function StudioSidebarVisualFrameSection({
+  frame,
+}: {
+  frame: StudioVisualFrame;
+}) {
+  const ocrText = useMemo(
+    () => buildOcrText(frame.ocrRegions),
+    [frame.ocrRegions],
+  );
+
+  return (
+    <StudioSidebarSection
+      title={`Visual frame ${formatDuration(
+        frame.frameTimestampMs,
+      )} - ${formatDuration(frame.endTimestampMs)}`}
+    >
+      <MetadataRow
+        label="Sources"
+        value={`${frame.sourceFrameRefs.length} frame ${
+          frame.sourceFrameRefs.length === 1 ? 'ref' : 'refs'
+        }`}
+      />
+      <MetadataRow label="VLM" value={String(frame.vlmObservations.length)} />
+      <MetadataRow label="OCR" value={String(frame.ocrRegions.length)} />
+
+      <div className="space-y-2 border-t pt-2">
+        <div className="text-muted-foreground">Screen observations</div>
+        {frame.vlmObservations.length > 0 ? (
+          frame.vlmObservations.map((observation) => (
+            <div
+              className="bg-muted/60 rounded-sm border p-2 text-xs leading-5 whitespace-pre-wrap"
+              key={observation.id}
+            >
+              {observation.text}
+            </div>
+          ))
+        ) : (
+          <div className="text-muted-foreground rounded-sm border border-dashed p-2">
+            No VLM observation for this frame.
+          </div>
+        )}
+      </div>
+
+      <div className="border-t pt-2">
+        <VisualFrameOcrDialog frame={frame} ocrText={ocrText} />
+      </div>
+    </StudioSidebarSection>
+  );
+}
+
+function VisualFrameOcrDialog({
+  frame,
+  ocrText,
+}: {
+  frame: StudioVisualFrame;
+  ocrText: string;
+}) {
+  const title = `OCR text ${formatDuration(frame.frameTimestampMs)} - ${formatDuration(
+    frame.endTimestampMs,
+  )}`;
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          className="w-full justify-start"
+          disabled={frame.ocrRegions.length === 0}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <FileText data-icon="inline-start" />
+          OCR text ({frame.ocrRegions.length})
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[min(42rem,calc(100vh-2rem))] max-w-2xl grid-rows-[auto_minmax(0,1fr)]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            Text candidates reconstructed from Tesseract regions for this visual
+            frame.
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="min-h-0 rounded-sm border">
+          <div className="text-foreground p-3 text-xs leading-5 whitespace-pre-wrap">
+            {ocrText || 'No OCR text.'}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function buildOcrText(regions: OcrRegion[]): string {
+  const lines: Array<{ items: OcrRegion[]; y: number }> = [];
+  for (const region of [...regions].sort(compareOcrRegionReadingOrder)) {
+    const line = lines.find(
+      (candidate) =>
+        Math.abs(candidate.y - region.region.y) <=
+        Math.max(8, region.region.height * 0.6),
+    );
+
+    if (line) {
+      line.items.push(region);
+      line.y = Math.min(line.y, region.region.y);
+    } else {
+      lines.push({ items: [region], y: region.region.y });
+    }
+  }
+
+  return lines
+    .sort((left, right) => left.y - right.y)
+    .map((line) =>
+      line.items
+        .sort(compareOcrRegionReadingOrder)
+        .map((region) => region.text.trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+([,.;:!?%)\]])/g, '$1')
+        .replace(/([([{])\s+/g, '$1'),
+    )
+    .filter(Boolean)
+    .join('\n');
+}
+
+function compareOcrRegionReadingOrder(
+  left: OcrRegion,
+  right: OcrRegion,
+): number {
+  return (
+    left.region.y - right.region.y ||
+    left.region.x - right.region.x ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 export function StudioSidebarSectionLane({

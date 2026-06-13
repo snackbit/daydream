@@ -84,6 +84,7 @@ pub struct SaveAiProviderSecretResult {
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderStatus {
     pub local_transcription: AiLocalTranscriptionStatus,
+    pub ocr: AiOcrStatus,
     pub remote_transcription: String,
     pub vision: String,
 }
@@ -114,6 +115,21 @@ pub struct AiBackendStatus {
 pub struct AiTranscriptionLanguageStatus {
     pub id: String,
     pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiOcrStatus {
+    pub data_source: String,
+    pub data_download_status: String,
+    pub languages: Vec<String>,
+    pub data_path: Option<String>,
+    pub enabled: bool,
+    pub engine: String,
+    pub runtime_download_status: String,
+    pub runtime_path: Option<String>,
+    pub runtime_source: String,
+    pub runtime_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

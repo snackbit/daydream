@@ -25,9 +25,10 @@ pub(in crate::ai) use visual::process_visual_chunk_inner;
 #[cfg(test)]
 pub(in crate::ai) use visual::{
     effective_frame_recognition_fps, frame_sample_interval_ms, full_checkpoint_for_frame,
-    parse_tesseract_tsv, run_tesseract_ocr_with_binary, validate_vlm_observations,
-    visual_delta_regions, ExtractedVisualFrame, VisualImage, VlmObservationCandidate,
-    VlmObservationPayload, VlmObservationRegion,
+    parse_tesseract_tsv, run_tesseract_ocr_with_binary, tesseract_ocr_command_args_for_test,
+    validate_vlm_observation_text, vision_chat_completions_url, visual_delta_regions,
+    vlm_chat_completions_body, ExtractedVisualFrame, OcrCandidate, PreviousVisualObservation,
+    VisionRequestConfig, VisualImage,
 };
 pub(crate) use worker::enqueue_recording_ai_processing;
 pub(in crate::ai) use worker::{

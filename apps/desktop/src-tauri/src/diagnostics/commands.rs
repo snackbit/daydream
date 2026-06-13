@@ -5,6 +5,7 @@ use tauri::{Manager, State};
 use super::ai_processing::collect_ai_processing_diagnostics;
 use super::latest_recording::collect_latest_recording_diagnostics;
 use super::media_writer::collect_media_writer_diagnostics;
+use super::ocr::collect_ocr_diagnostics;
 use super::portal::collect_portal_restore_token_diagnostics;
 use super::types::{
     AppDiagnostics, DaydreamDiagnostics, DebugLogBundle, StorageDiagnostics, SystemDiagnostics,
@@ -54,6 +55,7 @@ async fn collect_diagnostics(
         debug_logging: telemetry::diagnostics(),
         latest_recording,
         media_writer: collect_media_writer_diagnostics(),
+        ocr: collect_ocr_diagnostics(&app, storage),
         portal_restore_token: collect_portal_restore_token_diagnostics(storage),
         recorder: recorder::collect_backend_health().await,
         storage: StorageDiagnostics {

@@ -97,6 +97,20 @@ export interface AiTranscriptTrackDiagnostics {
   trackId: string;
 }
 
+export interface OcrDiagnostics {
+  dataDownloadStatus: string;
+  dataPathPresent: boolean;
+  dataSource: string;
+  enabled: boolean;
+  engine: string;
+  languages: string[];
+  runtimeDownloadStatus: string;
+  runtimePath: string | null;
+  runtimePathPresent: boolean;
+  runtimeSource: string;
+  runtimeVersion: string | null;
+}
+
 export type SegmentProbeMetadata = Record<string, unknown>;
 
 export interface LatestSegmentDiagnostics {
@@ -144,6 +158,7 @@ export interface DaydreamDiagnostics {
   debugLogging: DebugLoggingDiagnostics;
   latestRecording: LatestRecordingDiagnostics;
   mediaWriter: MediaWriterDiagnostics;
+  ocr: OcrDiagnostics;
   portalRestoreToken: PortalRestoreTokenDiagnostics;
   recorder: RecorderBackendHealth;
   storage: StorageDiagnostics;

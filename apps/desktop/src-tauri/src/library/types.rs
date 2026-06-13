@@ -201,6 +201,7 @@ pub struct LibraryRecordingDebugData {
     pub(crate) processing_state: ai::RecordingAiProcessingState,
     pub(crate) raw: Value,
     pub(crate) recording_id: String,
+    pub(crate) visual_observations: ai::RecordingVisualObservations,
 }
 
 #[derive(Clone, Debug, Serialize)]

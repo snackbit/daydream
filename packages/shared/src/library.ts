@@ -1,4 +1,5 @@
 import type { RecordingAiProcessingState } from './ai.js';
+import type { RecordingVisualObservations } from './ai/visual.js';
 import type { RecorderSegmentState } from './recorder.js';
 
 export type LibraryRecordingAvailability =
@@ -130,6 +131,7 @@ export interface LibraryRecordingDebugData {
   processingState: RecordingAiProcessingState;
   raw: unknown;
   recordingId: string;
+  visualObservations: RecordingVisualObservations;
 }
 
 export interface LibraryWaveformRequest {
