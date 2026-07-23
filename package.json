@@ -1,7 +1,18 @@
 {
   "name": "daydream",
   "version": "0.1.0",
+  "description": "Local-first desktop recall assistant for answering \"what did I do today?\"",
   "private": true,
+  "author": "Felix Faust <daydream@turtledev.net>",
+  "license": "AGPL-3.0-or-later",
+  "homepage": "https://github.com/snackbit/daydream#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/snackbit/daydream.git"
+  },
+  "bugs": {
+    "url": "https://github.com/snackbit/daydream/issues"
+  },
   "packageManager": "yarn@4.16.0",
   "workspaces": [
     "apps/*",

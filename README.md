@@ -1,223 +1,199 @@
-# daydream
+# Daydream
 
-Daydream is a planned local-first desktop recall assistant. It is meant to help
-answer "what did I do today?" from private screen recordings, audio, activity
-signals, window context, OCR, transcription, visual model output, and searchable
-timeline annotations.
+Daydream is a local-first desktop recall assistant for answering one question:
+**what did I do today?**
 
-The app should run on private hardware and stay useful without requiring captured
-data to leave the machine.
+It records screen, audio, activity, and window context on hardware you control,
+then turns that evidence into a timeline you can review and process locally.
 
-## Repository Status
+![Daydream recording studio showing playback, redacted spans, audio waveforms, and activity lanes](docs/desktop-screenshot1.png)
 
-This repository is now scaffolded as a Yarn 4 monorepo with a Tauri 2 +
-React/Vite desktop app.
+> [!WARNING]
+> Daydream is a Linux-first developer alpha. There are no stable packaged
+> releases yet, and several product areas are still under active development.
 
-Implemented baseline:
+## What works today
 
-- `apps/desktop`: runnable desktop shell with Home, Capture, Library,
-  Diagnostics, and Settings navigation.
-- `apps/desktop/src-tauri`: Rust Tauri backend with a real diagnostics command.
-- Rust-owned SQLite persistence with embedded migrations and database health in
-  Diagnostics.
-- `packages/ffmpeg`: development FFmpeg resolver backed by `ffmpeg-static`.
-- `packages/shared`: shared diagnostics TypeScript types.
-- `packages/eslint-config` and `packages/tsconfig`: shared quality and compiler
-  config.
+- Multi-monitor capture through the Linux desktop portal and PipeWire.
+- A scene editor for arranging selected displays on one recording canvas.
+- Separate desktop and microphone audio streams in local MKV segments.
+- Explicit start, pause, resume, and stop controls.
+- Local Library playback with thumbnails, waveforms, track lanes, and source
+  timestamps.
+- Timeline redactions that exclude or invalidate overlapping derived results.
+- Protected-window rules that can pause capture or create automatic redactions.
+- Mouse, keyboard, frame-change, and window activity lanes without recording
+  typed text or pointer coordinates.
+- Resumable processing jobs for transcription, OCR, visual observations, and
+  activity analysis.
+- Local transcription through vendored `whisper.cpp`.
+- Tesseract OCR using system or managed language data.
+- Optional OpenAI-compatible remote transcription and vision endpoints.
+- Rust-owned SQLite storage with embedded migrations.
 
-Still out of scope / not implemented:
+## Recorded by Daydream
 
-- real screen/audio capture
-- record/pause/stop commands
-- scissors/redaction workflows
-- OCR, Whisper, VLM, embeddings, LLM digesting
-- searchable annotations and timeline playback
+The demonstration below was recorded by Daydream itself. The animation is
+silent; the original desktop and microphone tracks were not added to this
+repository.
 
-## Product Goal
+![Daydream recording its own Diagnostics, Settings, Notifications, and Capture screens](docs/daydream-demo.gif)
 
-Daydream records a workday on demand, lets the user remove sensitive spans before
-processing, then builds a searchable memory of the day. It should detect and
-timestamp things like:
+## Privacy model
 
-- tasks and todos mentioned in team conversations
-- "I have been working on..." status updates
-- active applications and focused windows
-- periods of active or idle computer use
-- visible UI text from screens
-- spoken desktop and microphone audio
-- visual context from screen frames
+Daydream handles screen recordings, audio, OCR, transcripts, window titles,
+activity patterns, and generated observations. The default architecture keeps
+that data on the local machine.
 
-The output should be a timeline that can be played back, searched, filtered, and
-summarized into a daily digest with links back to source timestamps.
+- Captured content is not uploaded by default.
+- Remote AI providers require explicit configuration.
+- API keys are stored through the backend rather than exposed to React.
+- Raw frames, audio, OCR text, transcripts, prompts, and window titles are not
+  written to normal logs.
+- Redacted ranges are excluded from later processing and hidden or invalidated
+  in derived results.
+- Input activity records timing and state, not key values, typed text, pointer
+  coordinates, or clicked content.
+- Recording state stays visible and user-controlled.
 
-## Planned Capabilities
+The codebase treats deletion and redaction as data-model concerns, not visual
+filters. Work is still ongoing to make physical media deletion and every
+downstream cleanup path equally complete.
 
-- Desktop app built with Tauri 2.
-- Yarn-based JavaScript/TypeScript tooling.
-- Embedded or app-managed FFmpeg so users do not need to install it manually.
-- Multi-screen recording.
-- Desktop audio and microphone audio recording, with streams kept distinct.
-- High-quality low-rate screen recording, roughly 1 FPS by default, tuned for
-  OCR accuracy and storage efficiency.
-- Keyboard and mouse activity instrumentation to infer active versus idle time.
-- Focused-window title, focused-window identity, and open-window inventory where
-  the OS allows it.
-- Pre-processing scissors/redaction so sensitive spans can be removed before
-  OCR, transcription, VLM inference, embeddings, or LLM summarization.
-- Local video/audio store for full-day recordings.
-- Chunking, frame extraction, OCR on retained frames, Whisper transcription, VLM
-  inference, and LLM digest generation.
-- SQLite metadata store.
-- LanceDB or Qdrant vector index behind a swappable local adapter.
-- Timeline playback with searchable annotations and timestamp provenance.
+## Current limits
 
-## Pipeline
+- Development and real capture testing currently focus on Linux, especially KDE
+  Plasma on Wayland. Windows and macOS capture adapters are not implemented.
+- The searchable day index, semantic search, daily digest, task extraction, and
+  cited question answering are planned work.
+- There is no stable installer, automatic updater, or supported release channel.
+- Some Linux capabilities depend on desktop portal, PipeWire, GStreamer,
+  Tesseract, input-device permissions, and compositor support.
+- Full GPU composition and hardware encoding remain future work.
+- Optional remote model endpoints can receive private content when the user
+  enables and configures them.
+
+## Architecture
+
+Daydream is a Yarn 4 monorepo:
+
+- `apps/desktop`: Tauri 2, React, Vite, Tailwind, shadcn components, TanStack
+  Router, and Zustand.
+- `apps/desktop/src-tauri`: Rust capture, playback, processing, settings,
+  diagnostics, and SQLite ownership.
+- `packages/shared`: TypeScript contracts shared across the desktop boundary.
+- `packages/ffmpeg`: development FFmpeg resolution through `ffmpeg-static`.
+- `packages/eslint-config` and `packages/tsconfig`: shared project tooling.
+
+The Linux recorder uses xdg-desktop-portal and PipeWire for screen sources,
+GStreamer for segmented media writing, and separate desktop and microphone
+audio tracks. Processing runs after capture in deterministic, resumable chunks.
 
 ```text
 capture
-  -> local video/audio store
-  -> scissors/redaction review
-  -> chunk planning
-  -> frame extraction
-  -> OCR and UI text extraction
-  -> Whisper transcription
-  -> VLM inference
-  -> activity and window metadata alignment
-  -> SQLite metadata and vector index writes
-  -> searchable timeline, annotations, tasks/todos, and daily digest
+  -> local MKV segments and activity metadata
+  -> redaction-aware chunk planning
+  -> transcription, OCR, activity, and optional vision processing
+  -> SQLite-backed timeline results
+  -> local playback and review
 ```
 
-Capture and processing should be separate phases. The normal workflow is to
-record a full day first, then process it later after the user has had a chance
-to cut sensitive spans.
-
-## Local-First Privacy Model
-
-Daydream handles extremely sensitive data: screens, audio, OCR text,
-transcripts, window titles, activity patterns, embeddings, and generated
-summaries.
-
-Baseline behavior should be local-first:
-
-- no captured data leaves the machine by default
-- raw screen/audio/text content is not logged by default
-- redacted spans are excluded from all downstream processing
-- deleting or cutting a span invalidates derived OCR, transcript, embedding,
-  annotation, and digest data for that span
-- remote model or sync features must be explicit opt-in work, not accidental
-  defaults
-
-## Target Stack
-
-- Desktop runtime: Tauri 2.
-- Language: TypeScript by default, with native modules where required.
-- Package manager: Yarn 4 via Corepack.
-- Capture and media: native screen/audio capture with a GStreamer media writer.
-- Speech: Whisper-style local transcription.
-- OCR: local OCR engine selected for accuracy on UI text.
-- Vision: local or explicitly configured VLM inference service.
-- Metadata: SQLite.
-- Vector search: LanceDB or Qdrant.
-- UI: timeline playback, search, annotation review, digest, and scissors tools.
+React does not access SQLite, native capture APIs, media writers, or model
+runtimes directly. Typed Tauri commands own those boundaries.
 
 ## Development
 
-Prerequisites:
+### Prerequisites
 
-- Node.js 22+
+- Node.js 22 or newer
 - Corepack
-- Rust/Cargo
-- Linux Tauri system libraries that provide `webkit2gtk-4.1.pc` and
-  `javascriptcoregtk-4.1.pc`
-- Linux GStreamer development headers and runtime plugins for the recorder media
-  writer. Debian/Ubuntu development hosts need:
-  `libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pulseaudio`.
-  Fedora/RPM-family development hosts need:
-  `gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly`.
-- CMake and libclang for the vendored `whisper.cpp` C API build and bindgen.
-  Debian/Ubuntu development hosts need `cmake clang libclang-dev`.
-  Fedora/RPM-family development hosts need `cmake clang-devel`.
+- Rust and Cargo
+- Linux Tauri development libraries for WebKitGTK 4.1
+- PipeWire and xdg-desktop-portal
+- GStreamer development headers and the base, good, bad, ugly, and PulseAudio
+  plugin sets
+- CMake, Clang, and libclang for the vendored `whisper.cpp` build
+- Tesseract for local OCR
 
-Install dependencies:
+On Debian or Ubuntu, the native development packages include:
+
+```bash
+sudo apt install \
+  libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libpipewire-0.3-dev \
+  libpulse-dev \
+  libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev \
+  libgstreamer-plugins-bad1.0-dev \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav \
+  gstreamer1.0-tools \
+  gstreamer1.0-pulseaudio \
+  cmake \
+  clang \
+  libclang-dev \
+  tesseract-ocr
+```
+
+Package names vary by distribution.
+
+### Install and run
 
 ```bash
 COREPACK_HOME=/tmp/corepack corepack yarn install
-```
-
-Run quality gates:
-
-```bash
-COREPACK_HOME=/tmp/corepack corepack yarn lint:fix
-COREPACK_HOME=/tmp/corepack corepack yarn lint
-COREPACK_HOME=/tmp/corepack corepack yarn typecheck
-COREPACK_HOME=/tmp/corepack corepack yarn test
-```
-
-Run the desktop app after Linux Tauri prerequisites are installed:
-
-```bash
 COREPACK_HOME=/tmp/corepack corepack yarn dev
 ```
 
-Run the frontend-only build:
+On Linux Wayland, the development launcher sets
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` by default to avoid known WebKitGTK DMA-BUF
+protocol failures.
+
+### Quality gates
 
 ```bash
-COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop build
-```
-
-Run Rust tests after Linux Tauri prerequisites are installed:
-
-```bash
+COREPACK_HOME=/tmp/corepack corepack yarn lint:fix
+COREPACK_HOME=/tmp/corepack corepack yarn check
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
-The Linux recorder writes MKV segments through GStreamer. Packaged Linux builds
-declare the required runtime plugin packages in
-`apps/desktop/src-tauri/tauri.conf.json`; AppImage builds enable Tauri's media
-framework bundling. Development hosts still need GStreamer headers because the
-Rust GStreamer crates are bindings to native libraries, not a bundled runtime.
+Some Rust transcription tests bind temporary loopback ports.
 
-On Linux Wayland, the dev launcher also defaults
-`WEBKIT_DISABLE_DMABUF_RENDERER=1`. This avoids WebKitGTK DMA-BUF protocol
-failures that can show up as `Gdk-Message: Error 71 (Protocol error)
-dispatching to Wayland display`, especially on NVIDIA/Wayland systems.
+## Project documents
 
-SQLite is opened by the Rust/Tauri backend on startup at
-`<app_data_dir>/daydream.sqlite3`. The backend applies embedded migrations,
-stores one connection in Tauri managed state, and exposes database health through
-Diagnostics. React does not access SQLite directly.
+Detailed design decisions and implementation history live under
+[`docs/milestones`](docs/milestones):
 
-## Native Permission Areas
+- [Recorder foundation](docs/milestones/m1-recorder-foundation.md)
+- [AI processing foundation](docs/milestones/m2-ai-processing-foundation.md)
+- [Track timeline editor](docs/milestones/m2.1-track-timeline-editor.md)
+- [Day index MVP plan](docs/milestones/m3-day-index-mvp.md)
+- [Protected-window recording rules](docs/protected-window-recording-rules.md)
 
-The implementation will need to handle platform-specific permissions and
-capabilities for:
+## Contributing and security
 
-- screen recording
-- microphone access
-- desktop audio capture
-- keyboard and mouse activity monitoring
-- accessibility APIs
-- focused-window metadata
-- open-window enumeration
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
 
-These integrations should be isolated behind typed adapters so OS-specific
-behavior does not leak through the full application.
-
-## Development Notes
-
-When the repository is scaffolded, prefer small, explicit boundaries:
-
-- capture adapters for OS and FFmpeg interaction
-- storage adapters for files and vector index writes, with SQLite owned by the
-  Rust backend
-- processing jobs for chunking, OCR, transcription, VLM, and LLM summarization
-- domain logic for redaction eligibility, timestamp alignment, annotation
-  merging, and digest construction
-- UI modules for timeline, playback, search, source review, and redaction
-
-See `AGENTS.md` for agent rules, privacy constraints, testing expectations, and
-future implementation guidance.
+Do not attach real recordings, screenshots, transcripts, OCR output, window
+titles, or unredacted logs to public issues. Report security problems privately
+as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-Private - All rights reserved
+Daydream is licensed under the
+[GNU Affero General Public License v3.0 or later](LICENSE).
+
+Copyright © 2026 Felix Faust.
+
+Third-party code, tools, models, and runtime components retain their own
+licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

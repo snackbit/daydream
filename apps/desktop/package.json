@@ -2,6 +2,12 @@
   "name": "@daydream/desktop",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/snackbit/daydream.git",
+    "directory": "apps/desktop"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
