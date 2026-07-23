@@ -26,25 +26,13 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
     let segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, recording_id))
         .map_err(storage_error)?;
-    if storage
-        .with_connection(|connection| storage::recording_has_redactions(connection, recording_id))
-        .map_err(storage_error)?
-    {
-        tracing::warn!(
-            recording_id = %recording_id,
-            "ai_processing_start_blocked_redactions"
-        );
-        return Err(save_readiness_failure(
-            storage,
-            recording_id,
-            "ai_processing_redactions_unsupported",
-            "AI processing is blocked for redacted recordings until redaction-aware chunk splitting is implemented.",
-        ));
-    }
-    let audio_plans = audio_chunk_plans(&segments);
-    let activity_plans = activity_chunk_plans(&segments, &app_settings);
-    let ocr_plans = visual_chunk_plans(&segments, &app_settings, "ocr");
-    let vlm_plans = visual_chunk_plans(&segments, &app_settings, "vlm");
+    let redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, recording_id))
+        .map_err(storage_error)?;
+    let audio_plans = audio_chunk_plans(&segments, &redactions);
+    let activity_plans = activity_chunk_plans(&segments, &app_settings, &redactions);
+    let ocr_plans = visual_chunk_plans(&segments, &app_settings, &redactions, "ocr");
+    let vlm_plans = visual_chunk_plans(&segments, &app_settings, &redactions, "vlm");
     let audio_chunk_count = audio_plans.len();
     let activity_chunk_count = activity_plans.len();
     let ocr_chunk_count = ocr_plans.len();

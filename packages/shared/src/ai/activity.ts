@@ -20,6 +20,7 @@ export interface RecordingActivity {
   events: ActivityEvent[];
   intervals: ActivityInterval[];
   recordingId: string;
+  windowSnapshots: ActivityWindowSnapshot[];
 }
 
 export interface ActivityEvent {
@@ -39,4 +40,22 @@ export interface ActivityCaptureState {
   recordingId: string;
   source: string | null;
   status: string | null;
+}
+
+export interface ActivityWindowSnapshot {
+  focusedWindowId: string | null;
+  id: string;
+  occurredAtMs: number;
+  offsetMs: number;
+  provider: string | null;
+  recordingId: string;
+  windows: ActivityWindowSnapshotWindow[];
+}
+
+export interface ActivityWindowSnapshotWindow {
+  appIdentity: string | null;
+  id: string;
+  processId: number | null;
+  processName: string | null;
+  title: string | null;
 }

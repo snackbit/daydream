@@ -1,4 +1,8 @@
-import type { AppSettingsState, RecorderScene } from '@daydream/shared';
+import type {
+  AppSettingsState,
+  RecorderScene,
+  RecordWindowProtectionSettings,
+} from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { useSettingsStore } from './settings-store';
 
@@ -28,6 +32,9 @@ const defaultAiSettings = {
       enabled: false,
       windowMs: 5_000,
     },
+    windows: {
+      enabled: true,
+    },
   },
   ocr: {
     enabled: true,
@@ -41,6 +48,8 @@ const defaultAiSettings = {
     maxFullFrameCheckpointsPerMinute: 2,
     maxParallelChunksPerJob: 1,
     maxParallelJobs: 1,
+    maxParallelOcrJobs: 1,
+    maxParallelVlmJobs: 1,
     periodicFullFrameIntervalMs: 60_000,
     visualDeltaTileSizePx: 64,
   },
@@ -67,6 +76,14 @@ const defaultAiSettings = {
   },
 } as const;
 
+const defaultWindowProtection: RecordWindowProtectionSettings = {
+  defaultAction: 'pause',
+  dwellMs: 2_000,
+  enabled: false,
+  mergeGapMs: 5_000,
+  rules: [],
+};
+
 const settingsState = {
   defaults: {
     ai: defaultAiSettings,
@@ -79,6 +96,7 @@ const settingsState = {
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
+      windowProtection: defaultWindowProtection,
     },
     storage: {
       retentionDays: 7,
@@ -102,6 +120,10 @@ const settingsState = {
         maxParallelChunksPerJobMin: 1,
         maxParallelJobsMax: 4,
         maxParallelJobsMin: 1,
+        maxParallelOcrJobsMax: 8,
+        maxParallelOcrJobsMin: 1,
+        maxParallelVlmJobsMax: 8,
+        maxParallelVlmJobsMin: 1,
         periodicFullFrameIntervalMsMax: 600_000,
         periodicFullFrameIntervalMsMin: 5_000,
         visualDeltaTileSizePxMax: 256,
@@ -123,6 +145,12 @@ const settingsState = {
       fpsMin: 1 / 60,
       videoBitrateKbpsMax: 10_000,
       videoBitrateKbpsMin: 250,
+      windowProtectionDwellMsMax: 30_000,
+      windowProtectionDwellMsMin: 250,
+      windowProtectionMergeGapMsMax: 120_000,
+      windowProtectionMergeGapMsMin: 0,
+      windowProtectionRuleCountMax: 100,
+      windowProtectionTextMaxChars: 160,
     },
     storage: {
       retentionDaysMax: 365,
@@ -142,6 +170,7 @@ const settingsState = {
     record: {
       fps: 0.5,
       videoBitrateKbps: 2_500,
+      windowProtection: defaultWindowProtection,
     },
     storage: {
       retentionDays: 14,

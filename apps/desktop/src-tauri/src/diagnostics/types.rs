@@ -70,6 +70,8 @@ pub struct AiProcessingSettingsDiagnostics {
     pub auto_start_after_recording: bool,
     pub max_parallel_chunks_per_job: u32,
     pub max_parallel_jobs: u32,
+    pub max_parallel_ocr_jobs: u32,
+    pub max_parallel_vlm_jobs: u32,
     pub transcription_max_initial_timestamp_seconds: f64,
     pub transcription_merge_gap_ms: u32,
     pub transcription_backend: String,

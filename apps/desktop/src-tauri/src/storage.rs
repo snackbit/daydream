@@ -12,6 +12,7 @@ mod ai;
 mod diagnostics;
 mod notifications;
 mod portal_tokens;
+mod protection_spans;
 mod recordings;
 mod redactions;
 mod scenes;
@@ -20,7 +21,8 @@ mod segments;
 mod settings;
 
 pub use ai::{
-    cancel_processing_chunks, claim_next_queued_processing_chunk, create_activity_interval,
+    cancel_processing_chunks, cancel_visual_frame_processing_states_for_chunk,
+    claim_next_queued_processing_chunk, claim_processing_chunk, create_activity_interval,
     create_capture_event, create_frame_similarity_entry, create_ocr_region,
     create_processing_chunk, create_processing_job, create_transcript_segment,
     create_transcript_word, create_vlm_observation, delete_activity_output_for_chunks,
@@ -30,16 +32,19 @@ pub use ai::{
     list_activity_intervals, list_ai_model_assets, list_capture_events, list_ocr_regions,
     list_processing_chunks, list_processing_chunks_by_status, list_processing_jobs,
     list_processing_jobs_by_status, list_recording_tracks, list_transcript_segments,
-    list_transcript_words, list_vlm_observations, processing_job_chunk_progress,
-    recording_has_redactions, requeue_processing_chunks, retry_processing_job_chunks,
-    save_ai_model_asset, update_processing_chunk_progress, update_processing_chunk_result_code,
-    update_processing_chunk_status, update_processing_job_status, upsert_recording_track,
-    ActivityIntervalRow, AiModelAssetRow, CaptureEventRow, CreateActivityIntervalInput,
-    CreateCaptureEventInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
-    CreateProcessingJobInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
-    CreateVisualRegionInput, OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow,
-    SaveAiModelAssetInput, TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
-    VlmObservationRow,
+    list_transcript_words, list_visual_frame_processing_states, list_vlm_observations,
+    processing_job_chunk_progress, recording_has_redactions, requeue_processing_chunks,
+    retry_processing_job_chunks, save_ai_model_asset, update_processing_chunk_progress,
+    update_processing_chunk_result_code, update_processing_chunk_status,
+    update_processing_chunk_status_if_active, update_processing_job_status,
+    update_visual_frame_processing_state_status, upsert_recording_track,
+    upsert_visual_frame_processing_state, ActivityIntervalRow, AiModelAssetRow, CaptureEventRow,
+    CreateActivityIntervalInput, CreateCaptureEventInput, CreateFrameSimilarityEntryInput,
+    CreateProcessingChunkInput, CreateProcessingJobInput, CreateTranscriptSegmentInput,
+    CreateTranscriptWordInput, CreateVisualFrameProcessingStateInput, CreateVisualRegionInput,
+    OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow, SaveAiModelAssetInput,
+    TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
+    VisualFrameProcessingStateRow, VlmObservationRow,
 };
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use notifications::{
@@ -50,6 +55,12 @@ pub use notifications::{
 pub use portal_tokens::{
     delete_portal_restore_token, get_portal_restore_token, mark_portal_restore_token_used,
     upsert_portal_restore_token, PortalRestoreTokenRow, LINUX_SCREENCAST_MONITOR_RESTORE_TOKEN_ID,
+};
+pub use protection_spans::{
+    close_recording_protection_span, create_recording_protection_span,
+    list_open_recording_protection_spans, list_recording_protection_spans,
+    mark_recording_protection_span_materialized, CreateRecordingProtectionSpanInput,
+    RecordingProtectionSpanRow,
 };
 pub use recordings::{
     create_recording, delete_recording, get_latest_recording_id, get_recording,

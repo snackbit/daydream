@@ -1,4 +1,7 @@
-import type { SaveAppSettingsInput } from '@daydream/shared';
+import type {
+  RecordWindowProtectionSettings,
+  SaveAppSettingsInput,
+} from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
   getAppSettings,
@@ -21,6 +24,14 @@ beforeEach(() => {
   invokeMock.mockReset();
 });
 
+const defaultWindowProtection: RecordWindowProtectionSettings = {
+  defaultAction: 'pause',
+  dwellMs: 2_000,
+  enabled: false,
+  mergeGapMs: 5_000,
+  rules: [],
+};
+
 test('settings client uses typed camelCase command names', async () => {
   const input: SaveAppSettingsInput = {
     settings: {
@@ -37,6 +48,9 @@ test('settings client uses typed camelCase command names', async () => {
             enabled: false,
             windowMs: 5_000,
           },
+          windows: {
+            enabled: true,
+          },
         },
         ocr: {
           enabled: true,
@@ -50,6 +64,8 @@ test('settings client uses typed camelCase command names', async () => {
           maxFullFrameCheckpointsPerMinute: 2,
           maxParallelChunksPerJob: 1,
           maxParallelJobs: 1,
+          maxParallelOcrJobs: 1,
+          maxParallelVlmJobs: 1,
           periodicFullFrameIntervalMs: 60_000,
           visualDeltaTileSizePx: 64,
         },
@@ -84,6 +100,7 @@ test('settings client uses typed camelCase command names', async () => {
       record: {
         fps: 0.2,
         videoBitrateKbps: 1_500,
+        windowProtection: defaultWindowProtection,
       },
       storage: {
         retentionDays: 7,

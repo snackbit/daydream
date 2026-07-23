@@ -49,6 +49,8 @@ export interface AiProcessingSettings {
   maxFullFrameCheckpointsPerMinute: number;
   maxParallelChunksPerJob: number;
   maxParallelJobs: number;
+  maxParallelOcrJobs: number;
+  maxParallelVlmJobs: number;
   periodicFullFrameIntervalMs: number;
   visualDeltaTileSizePx: number;
 }
@@ -57,6 +59,7 @@ export interface AiActivitySettings {
   frameDeltas: AiActivitySourceSettings;
   keyboard: AiActivityWindowSettings;
   mouse: AiActivityWindowSettings;
+  windows: AiActivitySourceSettings;
 }
 
 export interface AiActivitySourceSettings {
@@ -94,6 +97,10 @@ export interface AiProcessingLimits {
   maxParallelChunksPerJobMin: number;
   maxParallelJobsMax: number;
   maxParallelJobsMin: number;
+  maxParallelOcrJobsMax: number;
+  maxParallelOcrJobsMin: number;
+  maxParallelVlmJobsMax: number;
+  maxParallelVlmJobsMin: number;
   periodicFullFrameIntervalMsMax: number;
   periodicFullFrameIntervalMsMin: number;
   visualDeltaTileSizePxMax: number;

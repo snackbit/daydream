@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::timeline_lanes::ACTIVITY_TRACK_IDS;
 
 #[derive(Clone, Debug)]
 pub(in crate::ai) struct AudioChunkPlan {
@@ -22,7 +23,10 @@ pub(in crate::ai) struct VisualChunkPlan {
     pub(in crate::ai) start_offset_ms: i64,
 }
 
-pub(in crate::ai) fn audio_chunk_plans(segments: &[RecordingSegmentRow]) -> Vec<AudioChunkPlan> {
+pub(in crate::ai) fn audio_chunk_plans(
+    segments: &[RecordingSegmentRow],
+    redactions: &[RedactionRow],
+) -> Vec<AudioChunkPlan> {
     let mut playback_offset_ms = 0;
     let mut plans = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
@@ -46,6 +50,7 @@ pub(in crate::ai) fn audio_chunk_plans(segments: &[RecordingSegmentRow]) -> Vec<
                     "desktop-audio",
                     playback_offset_ms,
                     duration_ms.max(0),
+                    redactions,
                 );
             }
             if segment.microphone_audio_stream_index.is_some() {
@@ -55,6 +60,7 @@ pub(in crate::ai) fn audio_chunk_plans(segments: &[RecordingSegmentRow]) -> Vec<
                     "microphone",
                     playback_offset_ms,
                     duration_ms.max(0),
+                    redactions,
                 );
             }
             playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
@@ -67,6 +73,7 @@ pub(in crate::ai) fn audio_chunk_plans(segments: &[RecordingSegmentRow]) -> Vec<
 pub(in crate::ai) fn activity_chunk_plans(
     segments: &[RecordingSegmentRow],
     app_settings: &settings::AppSettings,
+    redactions: &[RedactionRow],
 ) -> Vec<ActivityChunkPlan> {
     if !app_settings.ai.activity.frame_deltas.enabled
         && !app_settings.ai.activity.keyboard.enabled
@@ -91,11 +98,15 @@ pub(in crate::ai) fn activity_chunk_plans(
             .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
             .unwrap_or(0);
         if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
-            plans.push(ActivityChunkPlan {
-                end_offset_ms: playback_offset_ms + duration_ms.max(0),
-                segment_id: segment.id.clone(),
-                start_offset_ms: playback_offset_ms,
-            });
+            let start_offset_ms = playback_offset_ms;
+            let end_offset_ms = playback_offset_ms + duration_ms.max(0);
+            if !redactions_overlap_any_activity(redactions, start_offset_ms, end_offset_ms) {
+                plans.push(ActivityChunkPlan {
+                    end_offset_ms,
+                    segment_id: segment.id.clone(),
+                    start_offset_ms,
+                });
+            }
             playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
     }
@@ -106,6 +117,7 @@ pub(in crate::ai) fn activity_chunk_plans(
 pub(in crate::ai) fn visual_chunk_plans(
     segments: &[RecordingSegmentRow],
     app_settings: &settings::AppSettings,
+    redactions: &[RedactionRow],
     source_kind: &str,
 ) -> Vec<VisualChunkPlan> {
     let enabled = match source_kind {
@@ -142,11 +154,20 @@ pub(in crate::ai) fn visual_chunk_plans(
             && segment.video_stream_index.is_some()
             && Path::new(&segment.file_path).is_file()
         {
-            plans.push(VisualChunkPlan {
-                end_offset_ms: playback_offset_ms + duration_ms.max(0),
-                segment_id: segment.id.clone(),
-                start_offset_ms: playback_offset_ms,
-            });
+            let start_offset_ms = playback_offset_ms;
+            let end_offset_ms = playback_offset_ms + duration_ms.max(0);
+            let track_id = segment
+                .video_stream_index
+                .map(|index| format!("video-{index}"));
+            if !track_id.as_deref().is_some_and(|track_id| {
+                redactions_overlap_track(redactions, track_id, start_offset_ms, end_offset_ms)
+            }) {
+                plans.push(VisualChunkPlan {
+                    end_offset_ms,
+                    segment_id: segment.id.clone(),
+                    start_offset_ms,
+                });
+            }
         }
         if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
             playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
@@ -162,18 +183,82 @@ pub(in crate::ai) fn append_audio_slice_plans(
     source_role: &str,
     playback_offset_ms: i64,
     duration_ms: i64,
+    redactions: &[RedactionRow],
 ) {
     let mut slice_start_ms = 0;
     while slice_start_ms < duration_ms {
         let slice_end_ms = (slice_start_ms + MAX_TRANSCRIPTION_CHUNK_DURATION_MS).min(duration_ms);
-        plans.push(AudioChunkPlan {
-            end_offset_ms: playback_offset_ms + slice_end_ms,
-            segment_id: segment.id.clone(),
-            source_role: source_role.to_string(),
-            start_offset_ms: playback_offset_ms + slice_start_ms,
-        });
+        let start_offset_ms = playback_offset_ms + slice_start_ms;
+        let end_offset_ms = playback_offset_ms + slice_end_ms;
+        let track_id = audio_library_track_id(segment, source_role);
+        if !track_id.as_deref().is_some_and(|track_id| {
+            redactions_overlap_track(redactions, track_id, start_offset_ms, end_offset_ms)
+        }) {
+            plans.push(AudioChunkPlan {
+                end_offset_ms,
+                segment_id: segment.id.clone(),
+                source_role: source_role.to_string(),
+                start_offset_ms,
+            });
+        }
         slice_start_ms = slice_end_ms;
     }
+}
+
+fn audio_library_track_id(segment: &RecordingSegmentRow, source_role: &str) -> Option<String> {
+    match source_role {
+        "desktop-audio" => segment
+            .desktop_audio_stream_index
+            .map(|index| format!("desktop-audio-{index}")),
+        "microphone" => segment
+            .microphone_audio_stream_index
+            .map(|index| format!("microphone-{index}")),
+        _ => None,
+    }
+}
+
+fn redactions_overlap_any_activity(
+    redactions: &[RedactionRow],
+    start_offset_ms: i64,
+    end_offset_ms: i64,
+) -> bool {
+    redactions.iter().any(|redaction| {
+        redaction_overlaps(redaction, start_offset_ms, end_offset_ms)
+            && (redaction_track_ids(redaction).is_empty()
+                || ACTIVITY_TRACK_IDS
+                    .iter()
+                    .any(|track_id| redaction_targets_track(redaction, track_id)))
+    })
+}
+
+fn redactions_overlap_track(
+    redactions: &[RedactionRow],
+    track_id: &str,
+    start_offset_ms: i64,
+    end_offset_ms: i64,
+) -> bool {
+    redactions.iter().any(|redaction| {
+        redaction_overlaps(redaction, start_offset_ms, end_offset_ms)
+            && redaction_targets_track(redaction, track_id)
+    })
+}
+
+fn redaction_overlaps(redaction: &RedactionRow, start_offset_ms: i64, end_offset_ms: i64) -> bool {
+    start_offset_ms < redaction.end_offset_ms && end_offset_ms > redaction.start_offset_ms
+}
+
+fn redaction_targets_track(redaction: &RedactionRow, track_id: &str) -> bool {
+    let track_ids = redaction_track_ids(redaction);
+    track_ids.is_empty() || track_ids.iter().any(|candidate| candidate == track_id)
+}
+
+fn redaction_track_ids(redaction: &RedactionRow) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(&redaction.track_ids_json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|track_id| track_id.trim().to_string())
+        .filter(|track_id| !track_id.is_empty())
+        .collect()
 }
 
 pub(in crate::ai) fn playback_offset_for_segment(

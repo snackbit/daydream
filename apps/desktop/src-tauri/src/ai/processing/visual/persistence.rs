@@ -55,6 +55,77 @@ pub(super) fn frame_similarity_input(
     }
 }
 
+pub(super) fn queue_visual_frame_states(
+    app: &AppHandle,
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    frames: &[ExtractedVisualFrame],
+) -> Result<Vec<VisualFrameProcessingStateRow>, AiError> {
+    let timestamp_ms = now_ms();
+    let rows = storage
+        .with_connection(|connection| {
+            frames
+                .iter()
+                .map(|frame| {
+                    storage::upsert_visual_frame_processing_state(
+                        connection,
+                        &CreateVisualFrameProcessingStateInput {
+                            chunk_id: chunk.id.clone(),
+                            created_at_ms: timestamp_ms,
+                            error_code: None,
+                            frame_timestamp_ms: frame.frame_timestamp_ms,
+                            id: Uuid::now_v7().to_string(),
+                            job_id: chunk.job_id.clone(),
+                            output_count: 0,
+                            progress: 0.0,
+                            recording_id: chunk.recording_id.clone(),
+                            region_height: frame.region.height,
+                            region_width: frame.region.width,
+                            region_x: frame.region.x,
+                            region_y: frame.region.y,
+                            segment_id: chunk.segment_id.clone(),
+                            source_frame_ref: frame.source_frame_ref.clone(),
+                            source_kind: chunk.source_kind.clone(),
+                            status: "queued".to_string(),
+                            updated_at_ms: timestamp_ms,
+                        },
+                    )
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(storage_error)?;
+    emit_processing_state(app, &chunk.recording_id);
+    Ok(rows)
+}
+
+pub(super) fn mark_visual_frame_state(
+    app: &AppHandle,
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    frame_state_id: &str,
+    status: &str,
+    progress: f64,
+    error_code: Option<&str>,
+    output_count: i64,
+) -> Result<(), AiError> {
+    storage
+        .with_connection(|connection| {
+            storage::update_visual_frame_processing_state_status(
+                connection,
+                frame_state_id,
+                status,
+                progress,
+                error_code,
+                output_count,
+                now_ms(),
+            )
+            .map(|_row| ())
+        })
+        .map_err(storage_error)?;
+    emit_processing_state(app, &chunk.recording_id);
+    Ok(())
+}
+
 pub(super) fn vlm_observation_inputs(
     chunk: &ProcessingChunkRow,
     config: &VisionRequestConfig,

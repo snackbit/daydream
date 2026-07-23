@@ -9,7 +9,9 @@ use super::super::{
     manager::{unavailable_backend_health, RecorderManager},
     media_writer::MediaSegmentInput,
     types::{
-        AudioSourceList, CaptureSourceList, RecorderBackendHealth, RecorderError, RecorderScene,
+        AudioSourceList, CaptureSourceList, ProtectableWindowList, ProtectableWindowProviderStatus,
+        RecorderBackendHealth, RecorderError, RecorderScene, WindowMetadataSnapshot,
+        WindowProtectionStatus,
     },
 };
 
@@ -63,4 +65,34 @@ pub fn start_live_segment(
     _prepared: PreparedLiveCapture,
 ) -> Result<RecordingSegmentRuntime, RecorderError> {
     Err(unavailable_error())
+}
+
+pub fn list_protectable_windows() -> ProtectableWindowList {
+    ProtectableWindowList {
+        provider: None,
+        status: ProtectableWindowProviderStatus::UnsupportedPlatform,
+        windows: Vec::new(),
+    }
+}
+
+pub fn window_protection_status() -> WindowProtectionStatus {
+    WindowProtectionStatus {
+        message: "Protected-window detection is not implemented on this platform.".to_string(),
+        platform: std::env::consts::OS.to_string(),
+        provider: None,
+        status: ProtectableWindowProviderStatus::UnsupportedPlatform,
+    }
+}
+
+pub(crate) fn current_focused_window() -> Option<super::super::types::ProtectableWindow> {
+    None
+}
+
+pub(crate) fn window_metadata_snapshot() -> WindowMetadataSnapshot {
+    WindowMetadataSnapshot {
+        focused_window: None,
+        provider: None,
+        status: ProtectableWindowProviderStatus::UnsupportedPlatform,
+        windows: Vec::new(),
+    }
 }

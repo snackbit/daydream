@@ -284,6 +284,7 @@ beforeEach(() => {
     events: [],
     intervals: [],
     recordingId: 'recording-1',
+    windowSnapshots: [],
   });
   aiClient.getRecordingVisualObservations.mockResolvedValue({
     ocrRegions: [],
@@ -1112,6 +1113,7 @@ test('RecordingStudioScreen renders activity lanes and seeks from focus markers'
       },
     ],
     recordingId: 'recording-1',
+    windowSnapshots: [],
   } satisfies RecordingActivity);
 
   render(<RecordingStudioScreen />);
@@ -1178,12 +1180,14 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
       ],
       intervals: [],
       recordingId: 'recording-1',
+      windowSnapshots: [],
     } satisfies RecordingActivity)
     .mockResolvedValue({
       captureStates: [],
       events: [],
       intervals: [],
       recordingId: 'recording-1',
+      windowSnapshots: [],
     } satisfies RecordingActivity);
   client.createLibraryRedactions.mockResolvedValue(redactedDetail);
   render(<RecordingStudioScreen />);
@@ -1259,6 +1263,7 @@ test('RecordingStudioScreen reloads activity after deleting redactions', async (
     ],
     intervals: [],
     recordingId: 'recording-1',
+    windowSnapshots: [],
   } satisfies RecordingActivity;
   client.getLibraryRecording.mockResolvedValue(redactedDetail);
   client.deleteLibraryRedaction.mockResolvedValue(detail);
@@ -1268,12 +1273,14 @@ test('RecordingStudioScreen reloads activity after deleting redactions', async (
       events: [],
       intervals: [],
       recordingId: 'recording-1',
+      windowSnapshots: [],
     } satisfies RecordingActivity)
     .mockResolvedValueOnce({
       captureStates: [],
       events: [],
       intervals: [],
       recordingId: 'recording-1',
+      windowSnapshots: [],
     } satisfies RecordingActivity)
     .mockResolvedValue(restoredActivity);
   render(<RecordingStudioScreen />);
@@ -1310,6 +1317,7 @@ test('RecordingStudioScreen marks mouse and keyboard lanes when input capture wa
     events: [],
     intervals: [],
     recordingId: 'recording-1',
+    windowSnapshots: [],
   } satisfies RecordingActivity);
 
   render(<RecordingStudioScreen />);

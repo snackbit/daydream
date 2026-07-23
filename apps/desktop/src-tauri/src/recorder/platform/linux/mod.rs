@@ -4,6 +4,7 @@ mod fake;
 mod gpu_compositor;
 mod gpu_probe;
 mod portal;
+mod window_provider;
 
 use tauri::AppHandle;
 
@@ -14,8 +15,9 @@ use super::super::{
     manager::RecordingSegmentRuntime,
     media_writer::{self, MediaSegmentInput},
     types::{
-        AudioSourceList, RecorderAudioHealth, RecorderBackendComponentHealth,
-        RecorderBackendHealth, RecorderError, RecorderScene,
+        AudioSourceList, ProtectableWindowList, RecorderAudioHealth,
+        RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError, RecorderScene,
+        WindowProtectionStatus,
     },
 };
 
@@ -122,6 +124,22 @@ pub fn start_live_segment(
         PreparedLiveCapture::Fake(prepared) => fake::start_live_segment(input, prepared),
         PreparedLiveCapture::Portal(prepared) => capture::start_live_segment(input, prepared),
     }
+}
+
+pub fn list_protectable_windows() -> ProtectableWindowList {
+    window_provider::list_protectable_windows()
+}
+
+pub fn window_protection_status() -> WindowProtectionStatus {
+    window_provider::window_protection_status()
+}
+
+pub(crate) fn current_focused_window() -> Option<super::super::types::ProtectableWindow> {
+    window_provider::current_focused_window()
+}
+
+pub(crate) fn window_metadata_snapshot() -> super::super::types::WindowMetadataSnapshot {
+    window_provider::window_metadata_snapshot()
 }
 
 fn fake_backend_enabled() -> bool {

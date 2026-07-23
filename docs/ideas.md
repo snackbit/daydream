@@ -5,17 +5,17 @@ revisiting later, but are not current implementation priorities.
 
 ## Desktop Metadata Ideas
 
-### Native focused window capture
+### Window metadata capture hardening
 
-Focused-window capture is out of scope for the current activity track work, but
-it should be revisited. A native adapter could record focused application and
-window title changes as `focused-window` capture events so playback can show
-task and context shifts alongside mouse and keyboard activity.
+Activity capture now records focused-window changes and deduplicated open-window
+inventory snapshots where the platform provider supports window metadata.
+Future hardening should add macOS and Windows providers, richer review UI for
+open-window snapshots, and physical deletion of any derived window metadata when
+redacted spans are cut.
 
-This needs explicit OS permission handling, visible recording state, platform
-adapters for macOS, Windows, and Linux, and redaction-aware deletion or
-invalidation. Window titles are private content, so they must not be logged or
-sent to remote services by default.
+Window titles and open-window inventories are private content. They must not be
+logged or sent to remote services by default, and Activity redactions must hide
+the corresponding focus events and inventory snapshots.
 
 ## Audio Capture Ideas
 

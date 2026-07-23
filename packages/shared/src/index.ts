@@ -50,6 +50,8 @@ export interface AiProcessingSettingsDiagnostics {
   autoStartAfterRecording: boolean;
   maxParallelChunksPerJob: number;
   maxParallelJobs: number;
+  maxParallelOcrJobs: number;
+  maxParallelVlmJobs: number;
   transcriptionBackend: AiTranscriptionBackend;
   transcriptionLanguage: string;
   transcriptionMaxInitialTimestampSeconds: number;
@@ -170,6 +172,7 @@ export * from './library.js';
 export * from './ai.js';
 export * from './settings.js';
 export * from './startup.js';
+export * from './window-protection.js';
 
 export interface DebugLoggingDiagnostics {
   enabled: boolean;

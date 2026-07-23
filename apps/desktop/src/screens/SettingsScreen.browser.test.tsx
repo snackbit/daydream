@@ -2,6 +2,7 @@ import type {
   AppSettingsState,
   InputActivityStatus,
   RecorderScene,
+  RecordWindowProtectionSettings,
 } from '@daydream/shared';
 import {
   cleanup,
@@ -36,7 +37,9 @@ const settingsClient = vi.hoisted(() => ({
   saveAppSettings: vi.fn(),
 }));
 const recorderClient = vi.hoisted(() => ({
+  getWindowProtectionStatus: vi.fn(),
   getRecorderScene: vi.fn(),
+  listProtectableWindows: vi.fn(),
 }));
 const router = vi.hoisted(() => {
   const blocker = {
@@ -81,6 +84,9 @@ const defaultAiSettings = {
       enabled: false,
       windowMs: 5_000,
     },
+    windows: {
+      enabled: true,
+    },
   },
   ocr: {
     enabled: true,
@@ -94,6 +100,8 @@ const defaultAiSettings = {
     maxFullFrameCheckpointsPerMinute: 2,
     maxParallelChunksPerJob: 1,
     maxParallelJobs: 1,
+    maxParallelOcrJobs: 1,
+    maxParallelVlmJobs: 1,
     periodicFullFrameIntervalMs: 60_000,
     visualDeltaTileSizePx: 64,
   },
@@ -120,6 +128,14 @@ const defaultAiSettings = {
   },
 } as const;
 
+const defaultWindowProtection: RecordWindowProtectionSettings = {
+  defaultAction: 'pause',
+  dwellMs: 2_000,
+  enabled: false,
+  mergeGapMs: 5_000,
+  rules: [],
+};
+
 const defaultSettingsState = {
   defaults: {
     ai: defaultAiSettings,
@@ -132,6 +148,7 @@ const defaultSettingsState = {
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
+      windowProtection: defaultWindowProtection,
     },
     storage: {
       retentionDays: 7,
@@ -155,6 +172,10 @@ const defaultSettingsState = {
         maxParallelChunksPerJobMin: 1,
         maxParallelJobsMax: 4,
         maxParallelJobsMin: 1,
+        maxParallelOcrJobsMax: 8,
+        maxParallelOcrJobsMin: 1,
+        maxParallelVlmJobsMax: 8,
+        maxParallelVlmJobsMin: 1,
         periodicFullFrameIntervalMsMax: 600_000,
         periodicFullFrameIntervalMsMin: 5_000,
         visualDeltaTileSizePxMax: 256,
@@ -176,6 +197,12 @@ const defaultSettingsState = {
       fpsMin: 1 / 60,
       videoBitrateKbpsMax: 10_000,
       videoBitrateKbpsMin: 250,
+      windowProtectionDwellMsMax: 30_000,
+      windowProtectionDwellMsMin: 250,
+      windowProtectionMergeGapMsMax: 120_000,
+      windowProtectionMergeGapMsMin: 0,
+      windowProtectionRuleCountMax: 100,
+      windowProtectionTextMaxChars: 160,
     },
     storage: {
       retentionDaysMax: 365,
@@ -195,6 +222,7 @@ const defaultSettingsState = {
     record: {
       fps: 0.2,
       videoBitrateKbps: 1_500,
+      windowProtection: defaultWindowProtection,
     },
     storage: {
       retentionDays: 7,
@@ -305,6 +333,12 @@ beforeEach(() => {
   });
   settingsClient.resetAppSettings.mockResolvedValue(defaultSettingsState);
   recorderClient.getRecorderScene.mockResolvedValue(scene);
+  recorderClient.getWindowProtectionStatus.mockResolvedValue({
+    message: 'Focused-window detection is available through X11.',
+    platform: 'linux',
+    provider: 'linux-x11',
+    status: 'available',
+  });
   aiClient.listAiModels.mockResolvedValue({ models: aiModels });
   aiClient.listenToAiModelsChanged.mockResolvedValue(vi.fn());
   aiClient.getAiProviderStatus.mockResolvedValue({
@@ -419,6 +453,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
         record: {
           fps: 2,
           videoBitrateKbps: 2_000,
+          windowProtection: defaultWindowProtection,
         },
         storage: {
           retentionDays: 30,
@@ -436,6 +471,7 @@ test('SettingsScreen edits record and storage settings then resets them', async 
         record: {
           fps: 2,
           videoBitrateKbps: 2_000,
+          windowProtection: defaultWindowProtection,
         },
         storage: {
           retentionDays: 30,
@@ -460,6 +496,60 @@ test('SettingsScreen edits record and storage settings then resets them', async 
     expect(settingsClient.resetAppSettings).toHaveBeenCalled(),
   );
   expect(await screen.findByText('Settings reset.')).toBeTruthy();
+});
+
+test('SettingsScreen shows protected-window provider failures', async () => {
+  const message =
+    'Focused-window detection requires a Wayland compositor that exposes wlr-foreign-toplevel-management or KDE KWin scripting.';
+  const windowProtection: RecordWindowProtectionSettings = {
+    ...defaultWindowProtection,
+    enabled: true,
+    rules: [
+      {
+        action: 'inherit',
+        appIdentity: 'org.example.Secret',
+        enabled: true,
+        id: 'protected-rule-1',
+        label: 'Secret app',
+        processName: null,
+        titleMatcher: null,
+      },
+    ],
+  };
+  settingsClient.getAppSettings.mockResolvedValue({
+    ...defaultSettingsState,
+    settings: {
+      ...defaultSettingsState.settings,
+      record: {
+        ...defaultSettingsState.settings.record,
+        windowProtection,
+      },
+    },
+  });
+  recorderClient.getWindowProtectionStatus.mockResolvedValue({
+    message,
+    platform: 'linux',
+    provider: 'linux-wayland',
+    status: 'provider-unavailable',
+  });
+  recorderClient.listProtectableWindows.mockResolvedValue({
+    provider: 'linux-wayland',
+    status: 'provider-unavailable',
+    windows: [],
+  });
+
+  render(<SettingsScreen />);
+
+  await openRecordSettingsTab();
+  expect(
+    await screen.findByText('Protected-window automation unavailable'),
+  ).toBeTruthy();
+  expect(screen.getByText(message)).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Pick window' }));
+
+  expect(await screen.findByText('Window picker unavailable')).toBeTruthy();
+  expect(screen.getAllByText(message).length).toBeGreaterThanOrEqual(1);
 });
 
 test('SettingsScreen confirms cleanup before saving deletion-causing storage settings', async () => {
@@ -678,6 +768,9 @@ test('SettingsScreen saves AI slider values', async () => {
   const mouseActivityWindow = screen.getByRole('slider', {
     name: 'Mouse activity window',
   });
+  const windowActivity = screen.getByRole('checkbox', {
+    name: /Use window activity/i,
+  });
 
   expect(screen.getByText('1 frame every 5 seconds')).toBeTruthy();
   expect(
@@ -695,6 +788,7 @@ test('SettingsScreen saves AI slider values', async () => {
   expect(deltaTileSize.getAttribute('aria-valuenow')).toBe('64');
   expect(keyboardActivityWindow.getAttribute('aria-valuenow')).toBe('30000');
   expect(mouseActivityWindow.getAttribute('aria-valuenow')).toBe('5000');
+  expect(windowActivity.getAttribute('aria-checked')).toBe('true');
 
   parallelJobs.focus();
   fireEvent.keyDown(parallelJobs, { key: 'ArrowRight' });
@@ -708,6 +802,7 @@ test('SettingsScreen saves AI slider values', async () => {
   fireEvent.keyDown(keyboardActivityWindow, { key: 'ArrowRight' });
   mouseActivityWindow.focus();
   fireEvent.keyDown(mouseActivityWindow, { key: 'ArrowRight' });
+  fireEvent.click(windowActivity);
 
   await waitFor(() =>
     expect(fullFrameInterval.getAttribute('aria-valuenow')).toBe('60500'),
@@ -731,6 +826,9 @@ test('SettingsScreen saves AI slider values', async () => {
             mouse: {
               ...defaultAiSettings.activity.mouse,
               windowMs: 6_000,
+            },
+            windows: {
+              enabled: false,
             },
           },
           processing: {
@@ -888,6 +986,7 @@ test('SettingsScreen saves dirty settings before leaving', async () => {
         record: {
           fps: 0.2,
           videoBitrateKbps: 2_000,
+          windowProtection: defaultWindowProtection,
         },
         storage: defaultSettingsState.settings.storage,
       },

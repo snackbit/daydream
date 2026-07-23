@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -31,10 +31,11 @@ use crate::{
         self, ActivityIntervalRow, AiModelAssetRow, AppStorage, CaptureEventRow,
         CreateActivityIntervalInput, CreateFrameSimilarityEntryInput, CreateProcessingChunkInput,
         CreateProcessingJobInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
-        CreateVisualRegionInput, NotificationRow, OcrRegionRow, ProcessingChunkRow,
-        ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow, RedactionRow,
-        SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow, TranscriptWordRow,
-        UpsertRecordingTrackInput, VlmObservationRow,
+        CreateVisualFrameProcessingStateInput, CreateVisualRegionInput, NotificationRow,
+        OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingSegmentRow, RecordingTrackRow,
+        RedactionRow, SaveAiModelAssetInput, SaveAppSettingInput, TranscriptSegmentRow,
+        TranscriptWordRow, UpsertRecordingTrackInput, VisualFrameProcessingStateRow,
+        VlmObservationRow,
     },
     transcription::{
         self, LocalTranscriptionWarmup, TranscriptionProviderManager, TranscriptionRequest,
@@ -101,7 +102,8 @@ pub use types::{
     RecordingTranscriptSegment, RecordingTranscriptTrack, RecordingTranscriptWord,
     RecordingTranscriptionChunkState, RecordingTranscriptionTrackState,
     RecordingVisualObservations, SaveAiProviderSecretInput, SaveAiProviderSecretResult,
-    SelfTestAiModelInput, StartRecordingAiProcessingInput, VisualRegion, VlmObservation, VlmState,
+    SelfTestAiModelInput, StartRecordingAiProcessingInput, VisualFrameProcessingState,
+    VisualRegion, VlmObservation, VlmState,
 };
 
 fn storage_error(error: rusqlite::Error) -> AiError {

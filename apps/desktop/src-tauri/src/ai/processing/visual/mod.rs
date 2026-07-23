@@ -1,5 +1,6 @@
 use super::super::*;
 
+mod concurrency;
 mod extraction;
 mod image;
 mod ocr;
@@ -7,6 +8,7 @@ mod persistence;
 mod types;
 mod vlm;
 
+use concurrency::{acquire_ocr_permit, acquire_vlm_permit};
 use extraction::extract_visual_frames;
 #[cfg(test)]
 pub(in crate::ai) use extraction::{
@@ -20,12 +22,15 @@ pub(in crate::ai) use ocr::{
     parse_tesseract_tsv, run_tesseract_ocr_with_binary, tesseract_ocr_command_args_for_test,
 };
 use persistence::{
-    frame_similarity_input, ocr_region_inputs, persist_visual_output, vlm_observation_inputs,
-    PendingVisualOutput,
+    frame_similarity_input, mark_visual_frame_state, ocr_region_inputs, persist_visual_output,
+    queue_visual_frame_states, vlm_observation_inputs, PendingVisualOutput,
 };
-pub(in crate::ai) use types::{ExtractedVisualFrame, OcrCandidate, PreviousVisualObservation};
 #[cfg(test)]
-pub(in crate::ai) use types::{VisionRequestConfig, VisualImage};
+pub(in crate::ai) use types::VisualImage;
+pub(in crate::ai) use types::{
+    ExtractedVisualFrame, OcrCandidate, PendingVlmObservation, PreviousVisualObservation,
+    VisionRequestConfig,
+};
 use vlm::{request_vlm_observations, vision_provider_ready, vision_request_config};
 #[cfg(test)]
 pub(in crate::ai) use vlm::{
@@ -165,7 +170,7 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     } else {
         None
     };
-    let mut previous_observations = if is_vlm_chunk {
+    let previous_observations = if is_vlm_chunk {
         let previous_started = Instant::now();
         let observations = previous_visual_observations(&storage, &chunk.recording_id)?;
         tracing::info!(
@@ -219,97 +224,49 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
                 "ai_processing_visual_vlm_no_full_frames"
             );
         }
-        for (frame_index, frame) in frame_set.vlm_frames.iter().enumerate() {
-            check_processing_cancel(&cancel)?;
-            log_visual_frame_started(chunk, frame_index, frame);
-            let ocr_started = Instant::now();
-            let (ocr_regions, ocr_source) = persisted_ocr_candidates
-                .get(&frame.frame_timestamp_ms)
-                .filter(|regions| !regions.is_empty())
-                .map(|regions| (regions.clone(), "persisted"))
-                .unwrap_or_else(|| match run_tesseract_ocr(app, frame.path(), frame) {
-                    Ok(regions) => (regions, "fallback-tesseract"),
-                    Err(error) => {
-                        tracing::warn!(
-                            recording_id = %chunk.recording_id,
-                            job_id = %chunk.job_id,
-                            chunk_id = %chunk.id,
-                            frame_index,
-                            frame_timestamp_ms = frame.frame_timestamp_ms,
-                            source_frame_ref = %frame.source_frame_ref,
-                            error_code = %error.code,
-                            "ai_processing_visual_vlm_ocr_context_failed"
-                        );
-                        (Vec::new(), "missing")
-                    }
-                });
-            let frame_ocr_elapsed_ms = elapsed_ms(ocr_started);
-            ocr_elapsed_ms = ocr_elapsed_ms.saturating_add(frame_ocr_elapsed_ms);
-            ocr_candidate_count = ocr_candidate_count.saturating_add(ocr_regions.len());
-            let recent_observations =
-                recent_visual_observations(&previous_observations, frame.frame_timestamp_ms);
-            let vlm_started = Instant::now();
-            let observations =
-                request_vlm_observations(config, frame, &ocr_regions, &recent_observations).await?;
-            let frame_vlm_elapsed_ms = elapsed_ms(vlm_started);
-            vlm_elapsed_ms = vlm_elapsed_ms.saturating_add(frame_vlm_elapsed_ms);
-            vlm_observation_count = vlm_observation_count.saturating_add(observations.len());
-            update_visual_chunk_progress(app, &storage, chunk, frame_index + 1, frame_count)?;
-            tracing::info!(
-                recording_id = %chunk.recording_id,
-                job_id = %chunk.job_id,
-                chunk_id = %chunk.id,
-                source_kind = %chunk.source_kind,
-                frame_index,
-                frame_timestamp_ms = frame.frame_timestamp_ms,
-                source_frame_ref = %frame.source_frame_ref,
-                ocr_source,
-                ocr_candidate_count = ocr_regions.len(),
-                recent_observation_count = recent_observations.len(),
-                vlm_observation_count = observations.len(),
-                ocr_elapsed_ms = frame_ocr_elapsed_ms,
-                vlm_elapsed_ms = frame_vlm_elapsed_ms,
-                "ai_processing_visual_frame_completed"
-            );
-            previous_observations.extend(observations.iter().map(|observation| {
-                PreviousVisualObservation {
-                    frame_timestamp_ms: observation.frame_timestamp_ms,
-                    kind: observation.observation_kind.clone(),
-                    text: observation.text.clone(),
-                }
-            }));
+        let frame_results = process_vlm_frames(
+            app,
+            &storage,
+            chunk,
+            config,
+            frame_set.vlm_frames.clone(),
+            persisted_ocr_candidates,
+            previous_observations,
+            app_settings.ai.processing.max_parallel_ocr_jobs as usize,
+            app_settings.ai.processing.max_parallel_vlm_jobs as usize,
+            cancel.clone(),
+        )
+        .await?;
+        for result in frame_results {
+            ocr_elapsed_ms = ocr_elapsed_ms.saturating_add(result.ocr_elapsed_ms);
+            vlm_elapsed_ms = vlm_elapsed_ms.saturating_add(result.vlm_elapsed_ms);
+            ocr_candidate_count = ocr_candidate_count.saturating_add(result.ocr_candidate_count);
+            vlm_observation_count = vlm_observation_count.saturating_add(result.observations.len());
             pending_output
                 .vlm_observations
-                .extend(vlm_observation_inputs(chunk, config, observations));
+                .extend(vlm_observation_inputs(chunk, config, result.observations));
         }
     } else {
-        let frame_count = frame_set.ocr_frames.len();
-        for (frame_index, frame) in frame_set.ocr_frames.iter().enumerate() {
-            check_processing_cancel(&cancel)?;
-            log_visual_frame_started(chunk, frame_index, frame);
-            let ocr_started = Instant::now();
-            let ocr_regions = run_tesseract_ocr(app, frame.path(), frame)?;
-            let frame_ocr_elapsed_ms = elapsed_ms(ocr_started);
-            ocr_elapsed_ms = ocr_elapsed_ms.saturating_add(frame_ocr_elapsed_ms);
-            ocr_candidate_count = ocr_candidate_count.saturating_add(ocr_regions.len());
-            pending_output
-                .ocr_regions
-                .extend(ocr_region_inputs(chunk, frame, &ocr_regions));
+        let frame_results = process_ocr_frames(
+            app,
+            &storage,
+            chunk,
+            frame_set.ocr_frames.clone(),
+            app_settings.ai.processing.max_parallel_ocr_jobs as usize,
+            cancel.clone(),
+        )
+        .await?;
+        for result in frame_results {
+            ocr_elapsed_ms = ocr_elapsed_ms.saturating_add(result.ocr_elapsed_ms);
+            ocr_candidate_count = ocr_candidate_count.saturating_add(result.regions.len());
+            pending_output.ocr_regions.extend(ocr_region_inputs(
+                chunk,
+                &result.frame,
+                &result.regions,
+            ));
             pending_output
                 .frame_similarity_entries
-                .push(frame_similarity_input(chunk, frame));
-            update_visual_chunk_progress(app, &storage, chunk, frame_index + 1, frame_count)?;
-            tracing::info!(
-                recording_id = %chunk.recording_id,
-                job_id = %chunk.job_id,
-                chunk_id = %chunk.id,
-                source_kind = %chunk.source_kind,
-                frame_index,
-                frame_timestamp_ms = frame.frame_timestamp_ms,
-                ocr_candidate_count = ocr_regions.len(),
-                ocr_elapsed_ms = frame_ocr_elapsed_ms,
-                "ai_processing_visual_frame_completed"
-            );
+                .push(frame_similarity_input(chunk, &result.frame));
         }
     }
 
@@ -361,6 +318,315 @@ fn log_visual_frame_started(
         abrupt_transition = frame.abrupt_transition,
         "ai_processing_visual_frame_started"
     );
+}
+
+struct ProcessedOcrFrame {
+    frame: ExtractedVisualFrame,
+    frame_index: usize,
+    ocr_elapsed_ms: u64,
+    regions: Vec<OcrCandidate>,
+}
+
+struct ProcessedVlmFrame {
+    frame_index: usize,
+    observations: Vec<PendingVlmObservation>,
+    ocr_candidate_count: usize,
+    ocr_elapsed_ms: u64,
+    vlm_elapsed_ms: u64,
+}
+
+async fn process_ocr_frames(
+    app: &AppHandle,
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    frames: Vec<ExtractedVisualFrame>,
+    max_parallel_ocr_jobs: usize,
+    cancel: Arc<AtomicBool>,
+) -> Result<Vec<ProcessedOcrFrame>, AiError> {
+    let total_frame_count = frames.len();
+    let frame_states = queue_visual_frame_states(app, storage, chunk, &frames)?;
+    let completed_count = Arc::new(AtomicUsize::new(0));
+    let local_limit = max_parallel_ocr_jobs.max(1);
+    let results = futures_util::stream::iter(frames.into_iter().enumerate().zip(frame_states))
+        .map(|((frame_index, frame), frame_state)| {
+            let app = app.clone();
+            let chunk = chunk.clone();
+            let cancel = cancel.clone();
+            let completed_count = completed_count.clone();
+            async move {
+                check_processing_cancel(&cancel)?;
+                let _permit = acquire_ocr_permit(local_limit).await;
+                check_processing_cancel(&cancel)?;
+                let storage = app.state::<AppStorage>();
+                mark_visual_frame_state(
+                    &app,
+                    &storage,
+                    &chunk,
+                    &frame_state.id,
+                    "running",
+                    0.5,
+                    None,
+                    0,
+                )?;
+                log_visual_frame_started(&chunk, frame_index, &frame);
+                let ocr_started = Instant::now();
+                let app_for_ocr = app.clone();
+                let frame_for_ocr = frame.clone();
+                let regions_result = tauri::async_runtime::spawn_blocking(move || {
+                    run_tesseract_ocr(&app_for_ocr, frame_for_ocr.path(), &frame_for_ocr)
+                })
+                .await
+                .map_err(|error| {
+                    ai_error(
+                        "ai_ocr_tesseract_worker_failed",
+                        &format!("Tesseract OCR worker failed: {error}"),
+                    )
+                })?;
+                let frame_ocr_elapsed_ms = elapsed_ms(ocr_started);
+                match regions_result {
+                    Ok(regions) => {
+                        mark_visual_frame_state(
+                            &app,
+                            &storage,
+                            &chunk,
+                            &frame_state.id,
+                            "succeeded",
+                            1.0,
+                            None,
+                            regions.len() as i64,
+                        )?;
+                        let completed = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        update_visual_chunk_progress(
+                            &app,
+                            &storage,
+                            &chunk,
+                            completed,
+                            total_frame_count,
+                        )?;
+                        tracing::info!(
+                            recording_id = %chunk.recording_id,
+                            job_id = %chunk.job_id,
+                            chunk_id = %chunk.id,
+                            source_kind = %chunk.source_kind,
+                            frame_index,
+                            frame_timestamp_ms = frame.frame_timestamp_ms,
+                            ocr_candidate_count = regions.len(),
+                            ocr_elapsed_ms = frame_ocr_elapsed_ms,
+                            "ai_processing_visual_frame_completed"
+                        );
+                        Ok(ProcessedOcrFrame {
+                            frame,
+                            frame_index,
+                            ocr_elapsed_ms: frame_ocr_elapsed_ms,
+                            regions,
+                        })
+                    }
+                    Err(error) => {
+                        let _ = mark_visual_frame_state(
+                            &app,
+                            &storage,
+                            &chunk,
+                            &frame_state.id,
+                            "failed",
+                            0.0,
+                            Some(&error.code),
+                            0,
+                        );
+                        Err(error)
+                    }
+                }
+            }
+        })
+        .buffer_unordered(local_limit)
+        .collect::<Vec<Result<ProcessedOcrFrame, AiError>>>()
+        .await;
+    let mut output = Vec::with_capacity(results.len());
+    let mut first_error = None;
+    for result in results {
+        match result {
+            Ok(frame) => output.push(frame),
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    output.sort_by_key(|frame| frame.frame_index);
+    Ok(output)
+}
+
+async fn process_vlm_frames(
+    app: &AppHandle,
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    config: &VisionRequestConfig,
+    frames: Vec<ExtractedVisualFrame>,
+    persisted_ocr_candidates: BTreeMap<i64, Vec<OcrCandidate>>,
+    previous_observations: Vec<PreviousVisualObservation>,
+    max_parallel_ocr_jobs: usize,
+    max_parallel_vlm_jobs: usize,
+    cancel: Arc<AtomicBool>,
+) -> Result<Vec<ProcessedVlmFrame>, AiError> {
+    let total_frame_count = frames.len();
+    let frame_states = queue_visual_frame_states(app, storage, chunk, &frames)?;
+    let completed_count = Arc::new(AtomicUsize::new(0));
+    let local_limit = max_parallel_vlm_jobs.max(1);
+    let persisted_ocr_candidates = Arc::new(persisted_ocr_candidates);
+    let previous_observations = Arc::new(previous_observations);
+    let config = Arc::new(config.clone());
+    let results = futures_util::stream::iter(frames.into_iter().enumerate().zip(frame_states))
+        .map(|((frame_index, frame), frame_state)| {
+            let app = app.clone();
+            let chunk = chunk.clone();
+            let cancel = cancel.clone();
+            let completed_count = completed_count.clone();
+            let config = config.clone();
+            let persisted_ocr_candidates = persisted_ocr_candidates.clone();
+            let previous_observations = previous_observations.clone();
+            async move {
+                check_processing_cancel(&cancel)?;
+                let storage = app.state::<AppStorage>();
+                let _vlm_permit = acquire_vlm_permit(max_parallel_vlm_jobs.max(1)).await;
+                check_processing_cancel(&cancel)?;
+                mark_visual_frame_state(
+                    &app,
+                    &storage,
+                    &chunk,
+                    &frame_state.id,
+                    "running",
+                    0.5,
+                    None,
+                    0,
+                )?;
+                log_visual_frame_started(&chunk, frame_index, &frame);
+                let ocr_started = Instant::now();
+                let (ocr_regions, ocr_source) = vlm_ocr_context_for_frame(
+                    &app,
+                    &frame,
+                    &persisted_ocr_candidates,
+                    max_parallel_ocr_jobs,
+                    cancel.clone(),
+                )
+                .await;
+                let frame_ocr_elapsed_ms = elapsed_ms(ocr_started);
+                let recent_observations =
+                    recent_visual_observations(&previous_observations, frame.frame_timestamp_ms);
+                let vlm_started = Instant::now();
+                let observations =
+                    request_vlm_observations(&config, &frame, &ocr_regions, &recent_observations)
+                        .await;
+                let frame_vlm_elapsed_ms = elapsed_ms(vlm_started);
+                match observations {
+                    Ok(observations) => {
+                        mark_visual_frame_state(
+                            &app,
+                            &storage,
+                            &chunk,
+                            &frame_state.id,
+                            "succeeded",
+                            1.0,
+                            None,
+                            observations.len() as i64,
+                        )?;
+                        let completed = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        update_visual_chunk_progress(
+                            &app,
+                            &storage,
+                            &chunk,
+                            completed,
+                            total_frame_count,
+                        )?;
+                        tracing::info!(
+                            recording_id = %chunk.recording_id,
+                            job_id = %chunk.job_id,
+                            chunk_id = %chunk.id,
+                            source_kind = %chunk.source_kind,
+                            frame_index,
+                            frame_timestamp_ms = frame.frame_timestamp_ms,
+                            source_frame_ref = %frame.source_frame_ref,
+                            ocr_source,
+                            ocr_candidate_count = ocr_regions.len(),
+                            recent_observation_count = recent_observations.len(),
+                            vlm_observation_count = observations.len(),
+                            ocr_elapsed_ms = frame_ocr_elapsed_ms,
+                            vlm_elapsed_ms = frame_vlm_elapsed_ms,
+                            "ai_processing_visual_frame_completed"
+                        );
+                        Ok(ProcessedVlmFrame {
+                            frame_index,
+                            observations,
+                            ocr_candidate_count: ocr_regions.len(),
+                            ocr_elapsed_ms: frame_ocr_elapsed_ms,
+                            vlm_elapsed_ms: frame_vlm_elapsed_ms,
+                        })
+                    }
+                    Err(error) => {
+                        let _ = mark_visual_frame_state(
+                            &app,
+                            &storage,
+                            &chunk,
+                            &frame_state.id,
+                            "failed",
+                            0.0,
+                            Some(&error.code),
+                            0,
+                        );
+                        Err(error)
+                    }
+                }
+            }
+        })
+        .buffer_unordered(local_limit)
+        .collect::<Vec<Result<ProcessedVlmFrame, AiError>>>()
+        .await;
+    let mut output = Vec::with_capacity(results.len());
+    let mut first_error = None;
+    for result in results {
+        match result {
+            Ok(frame) => output.push(frame),
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    output.sort_by_key(|frame| frame.frame_index);
+    Ok(output)
+}
+
+async fn vlm_ocr_context_for_frame(
+    app: &AppHandle,
+    frame: &ExtractedVisualFrame,
+    persisted_ocr_candidates: &BTreeMap<i64, Vec<OcrCandidate>>,
+    max_parallel_ocr_jobs: usize,
+    cancel: Arc<AtomicBool>,
+) -> (Vec<OcrCandidate>, &'static str) {
+    if let Some(regions) = persisted_ocr_candidates
+        .get(&frame.frame_timestamp_ms)
+        .filter(|regions| !regions.is_empty())
+    {
+        return (regions.clone(), "persisted");
+    }
+
+    let _permit = acquire_ocr_permit(max_parallel_ocr_jobs.max(1)).await;
+    if check_processing_cancel(&cancel).is_err() {
+        return (Vec::new(), "missing");
+    }
+    let app_for_ocr = app.clone();
+    let frame_for_ocr = frame.clone();
+    let regions = tauri::async_runtime::spawn_blocking(move || {
+        run_tesseract_ocr(&app_for_ocr, frame_for_ocr.path(), &frame_for_ocr)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok);
+
+    match regions {
+        Some(regions) => (regions, "fallback-tesseract"),
+        None => (Vec::new(), "missing"),
+    }
 }
 
 fn update_visual_chunk_progress(

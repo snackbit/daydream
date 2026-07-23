@@ -8,12 +8,14 @@ use crate::{
 
 use super::super::{
     activity_input,
+    errors::{dependency_error, window_protection_unavailable_error},
     manager::{now_ms, RecorderManager, RecordingSegmentRuntime},
     platform,
     types::{
-        PauseRecordingInput, RecorderError, RecorderStatus, ResumeRecordingInput,
-        StartRecordingInput, StopRecordingInput,
+        PauseRecordingInput, ProtectableWindowProviderStatus, RecorderError, RecorderStatus,
+        ResumeRecordingInput, StartRecordingInput, StopRecordingInput,
     },
+    window_protection,
 };
 
 pub async fn start_recording<R: tauri::Runtime>(
@@ -24,6 +26,7 @@ pub async fn start_recording<R: tauri::Runtime>(
 ) -> Result<RecorderStatus, RecorderError> {
     let timestamp_ms = now_ms();
     info!(scene_id = %input.scene_id, "recorder_start_requested");
+    ensure_window_protection_provider_available(&storage)?;
     manager.stop_preview(timestamp_ms)?;
     manager.begin_selecting(&input.scene_id, timestamp_ms)?;
 
@@ -85,7 +88,30 @@ pub async fn start_recording<R: tauri::Runtime>(
         "recorder_start_succeeded"
     );
 
-    manager.activate_pending_recording(pending, media, now_ms())
+    let status = manager.activate_pending_recording(pending, media, now_ms())?;
+    attach_window_protection_monitor(&app, &storage, &status);
+
+    Ok(status)
+}
+
+fn ensure_window_protection_provider_available(storage: &AppStorage) -> Result<(), RecorderError> {
+    let app_settings = settings::load_app_settings(storage).map_err(|error| {
+        dependency_error(
+            "recorder_settings_unavailable",
+            format!("Recorder settings failed: {}", error.message),
+        )
+    })?;
+    let protection = &app_settings.record.window_protection;
+    if !protection.enabled || protection.rules.iter().all(|rule| !rule.enabled) {
+        return Ok(());
+    }
+
+    let status = platform::window_protection_status();
+    if status.status == ProtectableWindowProviderStatus::Available {
+        Ok(())
+    } else {
+        Err(window_protection_unavailable_error(&status))
+    }
 }
 
 pub fn pause_recording<R: tauri::Runtime>(
@@ -162,6 +188,70 @@ pub fn stop_recording<R: tauri::Runtime>(
     Ok(status)
 }
 
+pub(crate) fn request_auto_pause<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    recording_id: &str,
+) -> bool {
+    let manager = app.state::<RecorderManager>();
+    let Ok(status) = manager.begin_pause_recording(recording_id, now_ms()) else {
+        return false;
+    };
+    if status.finalization.is_some() {
+        spawn_lifecycle_completion(
+            app.clone(),
+            recording_id.to_string(),
+            RecorderLifecycleCompletion::Pause,
+        );
+    }
+    true
+}
+
+pub(crate) fn request_auto_resume<R: tauri::Runtime>(app: &AppHandle<R>, recording_id: &str) {
+    let app = app.clone();
+    let recording_id = recording_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        let timestamp_ms = now_ms();
+        let storage = app.state::<AppStorage>();
+        let manager = app.state::<RecorderManager>();
+        let Ok(active) = manager.begin_resume_selecting(&recording_id, timestamp_ms) else {
+            return;
+        };
+        let pending =
+            match manager.prepare_resume_segment_start(&storage, active.clone(), timestamp_ms) {
+                Ok(pending) => pending,
+                Err(_error) => {
+                    let _ = manager.restore_paused_after_selecting(active, now_ms());
+                    return;
+                }
+            };
+        let prepared = match platform::prepare_live_capture(&storage, &pending.scene).await {
+            Ok(prepared) => prepared,
+            Err(_error) => {
+                let _ = manager.restore_paused_after_selecting(pending.active.clone(), now_ms());
+                return;
+            }
+        };
+        if manager
+            .create_pending_segment_rows(&storage, &pending)
+            .is_err()
+        {
+            let _ = manager.restore_paused_after_selecting(pending.active.clone(), now_ms());
+            return;
+        }
+        let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
+            Ok(media) => media,
+            Err(error) => {
+                let _ = manager.fail_pending_segment(&storage, &pending, now_ms(), &error);
+                return;
+            }
+        };
+        attach_activity_monitor(&app, &storage, &recording_id, &mut media);
+        if let Ok(status) = manager.activate_pending_segment(pending, media, now_ms()) {
+            let _ = app.emit(super::RECORDER_STATUS_CHANGED_EVENT, status);
+        }
+    });
+}
+
 fn attach_activity_monitor(
     app: &AppHandle<impl tauri::Runtime>,
     storage: &AppStorage,
@@ -189,6 +279,33 @@ fn attach_activity_monitor(
     media.attach_activity_monitor(monitor);
 }
 
+fn attach_window_protection_monitor<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    storage: &AppStorage,
+    status: &RecorderStatus,
+) {
+    let Some(recording_id) = status.active_recording_id.clone() else {
+        return;
+    };
+    let Ok(app_settings) = settings::load_app_settings(storage) else {
+        warn!("Window protection monitor skipped because settings failed to load.");
+        return;
+    };
+    let recording_started_at_ms = storage
+        .with_connection(|connection| storage::get_recording(connection, &recording_id))
+        .ok()
+        .and_then(|recording| recording.started_at_ms)
+        .and_then(|started_at_ms| u64::try_from(started_at_ms).ok())
+        .unwrap_or_else(now_ms);
+
+    window_protection::start_window_protection_monitor(
+        app.clone(),
+        recording_id,
+        recording_started_at_ms,
+        app_settings.record.window_protection,
+    );
+}
+
 #[derive(Clone, Copy)]
 enum RecorderLifecycleCompletion {
     Pause,
@@ -208,6 +325,19 @@ fn spawn_lifecycle_completion<R: tauri::Runtime>(
                 manager.complete_pause_recording(&storage, &recording_id, now_ms())
             }
             RecorderLifecycleCompletion::Stop => {
+                if let Ok(recording) = storage
+                    .with_connection(|connection| storage::get_recording(connection, &recording_id))
+                {
+                    let recording_started_at_ms =
+                        recording.started_at_ms.unwrap_or(now_ms() as i64);
+                    let end_offset_ms = now_ms() as i64 - recording_started_at_ms;
+                    let _ = window_protection::close_open_protection_spans(
+                        &storage,
+                        &recording_id,
+                        end_offset_ms.max(0),
+                        now_ms() as i64,
+                    );
+                }
                 manager.complete_stop_recording(&storage, &recording_id, now_ms())
             }
         };
@@ -230,6 +360,7 @@ fn spawn_lifecycle_completion<R: tauri::Runtime>(
             let _ = app.emit(super::RECORDER_STATUS_CHANGED_EVENT, status);
         }
         if matches!(completion, RecorderLifecycleCompletion::Stop) {
+            let _ = window_protection::materialize_closed_protection_spans(&storage, &recording_id);
             maybe_auto_start_ai_processing(&app, &storage, &recording_id);
         }
     });

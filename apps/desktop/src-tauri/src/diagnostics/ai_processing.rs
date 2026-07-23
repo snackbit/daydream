@@ -22,6 +22,8 @@ pub(super) fn collect_ai_processing_diagnostics(
                 auto_start_after_recording: settings.ai.processing.auto_start_after_recording,
                 max_parallel_chunks_per_job: settings.ai.processing.max_parallel_chunks_per_job,
                 max_parallel_jobs: settings.ai.processing.max_parallel_jobs,
+                max_parallel_ocr_jobs: settings.ai.processing.max_parallel_ocr_jobs,
+                max_parallel_vlm_jobs: settings.ai.processing.max_parallel_vlm_jobs,
                 transcription_max_initial_timestamp_seconds: settings
                     .ai
                     .transcription

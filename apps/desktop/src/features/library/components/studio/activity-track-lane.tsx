@@ -329,7 +329,7 @@ function FocusActivityMarker({
   return (
     <button
       aria-label={title}
-      className="absolute top-1/2 z-20 h-4 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-rose-700 bg-rose-500 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
+      className="absolute top-1/2 z-20 h-4 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-rose-700 bg-rose-500 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
       data-library-action
       style={{ left }}
       title={title}

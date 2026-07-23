@@ -26,6 +26,37 @@ export interface ExpertSettings {
 export interface RecordSettings {
   fps: number;
   videoBitrateKbps: number;
+  windowProtection: RecordWindowProtectionSettings;
+}
+
+export type ProtectedWindowAction = 'pause' | 'redact';
+
+export type ProtectedWindowRuleAction = 'inherit' | ProtectedWindowAction;
+
+export type ProtectedWindowTitleMatcherKind = 'contains' | 'regex';
+
+export interface ProtectedWindowTitleMatcher {
+  caseSensitive: boolean;
+  kind: ProtectedWindowTitleMatcherKind;
+  value: string;
+}
+
+export interface ProtectedWindowRule {
+  action: ProtectedWindowRuleAction;
+  appIdentity?: string | null;
+  enabled: boolean;
+  id: string;
+  label: string;
+  processName?: string | null;
+  titleMatcher?: ProtectedWindowTitleMatcher | null;
+}
+
+export interface RecordWindowProtectionSettings {
+  defaultAction: ProtectedWindowAction;
+  dwellMs: number;
+  enabled: boolean;
+  mergeGapMs: number;
+  rules: ProtectedWindowRule[];
 }
 
 export interface StorageSettings {
@@ -42,6 +73,12 @@ export interface AppSettingsLimits {
 export interface RecordSettingsLimits {
   fpsMax: number;
   fpsMin: number;
+  windowProtectionDwellMsMax: number;
+  windowProtectionDwellMsMin: number;
+  windowProtectionMergeGapMsMax: number;
+  windowProtectionMergeGapMsMin: number;
+  windowProtectionRuleCountMax: number;
+  windowProtectionTextMaxChars: number;
   videoBitrateKbpsMax: number;
   videoBitrateKbpsMin: number;
 }

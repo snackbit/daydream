@@ -1,4 +1,5 @@
 use crate::whisper_backend;
+use std::collections::BTreeSet;
 
 use super::{defaults::*, types::*};
 
@@ -17,6 +18,7 @@ pub(super) fn validate_settings(settings: AppSettings) -> Result<AppSettings, Ap
         MAX_VIDEO_BITRATE_KBPS,
         "Video bitrate must be between 250 and 10000 kbps.",
     )?;
+    validate_window_protection_settings(&settings.record.window_protection)?;
     validate_u32_range(
         "storage.retentionDays",
         settings.storage.retention_days,
@@ -33,6 +35,92 @@ pub(super) fn validate_settings(settings: AppSettings) -> Result<AppSettings, Ap
     validate_ai_settings(&settings.ai)?;
 
     Ok(settings)
+}
+
+fn validate_window_protection_settings(
+    settings: &RecordWindowProtectionSettings,
+) -> Result<(), AppSettingsError> {
+    validate_u32_range(
+        "record.windowProtection.dwellMs",
+        settings.dwell_ms,
+        MIN_WINDOW_PROTECTION_DWELL_MS,
+        MAX_WINDOW_PROTECTION_DWELL_MS,
+        "Protected window dwell must be between 250 ms and 30 seconds.",
+    )?;
+    validate_u32_range(
+        "record.windowProtection.mergeGapMs",
+        settings.merge_gap_ms,
+        MIN_WINDOW_PROTECTION_MERGE_GAP_MS,
+        MAX_WINDOW_PROTECTION_MERGE_GAP_MS,
+        "Protected window merge gap must be between 0 and 120 seconds.",
+    )?;
+    if settings.rules.len() > MAX_WINDOW_PROTECTION_RULE_COUNT {
+        return Err(validation_error(
+            "record.windowProtection.rules",
+            "Protected window rule count exceeds the maximum.",
+        ));
+    }
+
+    let mut ids = BTreeSet::new();
+    for (index, rule) in settings.rules.iter().enumerate() {
+        let prefix = format!("record.windowProtection.rules.{index}");
+        validate_required_text(
+            &format!("{prefix}.id"),
+            &rule.id,
+            MAX_WINDOW_PROTECTION_TEXT_CHARS,
+        )?;
+        validate_required_text(
+            &format!("{prefix}.label"),
+            &rule.label,
+            MAX_WINDOW_PROTECTION_TEXT_CHARS,
+        )?;
+        if !ids.insert(rule.id.trim()) {
+            return Err(validation_error(
+                &format!("{prefix}.id"),
+                "Protected window rule IDs must be unique.",
+            ));
+        }
+        validate_optional_text(
+            &format!("{prefix}.appIdentity"),
+            rule.app_identity.as_deref(),
+            MAX_WINDOW_PROTECTION_TEXT_CHARS,
+        )?;
+        validate_optional_text(
+            &format!("{prefix}.processName"),
+            rule.process_name.as_deref(),
+            MAX_WINDOW_PROTECTION_TEXT_CHARS,
+        )?;
+        if rule.enabled
+            && empty_optional_text(rule.app_identity.as_deref())
+            && empty_optional_text(rule.process_name.as_deref())
+            && rule
+                .title_matcher
+                .as_ref()
+                .is_none_or(|matcher| matcher.value.trim().is_empty())
+        {
+            return Err(validation_error(
+                &format!("{prefix}.matchers"),
+                "Enabled protected window rules need an app, process, or title matcher.",
+            ));
+        }
+        if let Some(matcher) = &rule.title_matcher {
+            validate_required_text(
+                &format!("{prefix}.titleMatcher.value"),
+                &matcher.value,
+                MAX_WINDOW_PROTECTION_TEXT_CHARS,
+            )?;
+            if matcher.kind == ProtectedWindowTitleMatcherKind::Regex {
+                regex::Regex::new(&matcher.value).map_err(|_error| {
+                    validation_error(
+                        &format!("{prefix}.titleMatcher.value"),
+                        "Protected window title regex is invalid.",
+                    )
+                })?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
@@ -120,6 +208,21 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
         MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
         "Max parallel chunks per job must be between 1 and 8.",
+    )?;
+    let max_visual_parallel_jobs = available_cpu_core_count();
+    validate_u32_range(
+        "ai.processing.maxParallelOcrJobs",
+        settings.processing.max_parallel_ocr_jobs,
+        MIN_AI_MAX_PARALLEL_OCR_JOBS,
+        max_visual_parallel_jobs,
+        "Max parallel OCR jobs must be between 1 and the CPU core count.",
+    )?;
+    validate_u32_range(
+        "ai.processing.maxParallelVlmJobs",
+        settings.processing.max_parallel_vlm_jobs,
+        MIN_AI_MAX_PARALLEL_VLM_JOBS,
+        max_visual_parallel_jobs,
+        "Max parallel VLM jobs must be between 1 and the CPU core count.",
     )?;
     validate_f64_range(
         "ai.processing.frameRecognitionFps",
@@ -253,6 +356,21 @@ fn validate_optional_text(
     }
 
     Err(validation_error(field, "Setting value is too long."))
+}
+
+fn validate_required_text(
+    field: &str,
+    value: &str,
+    max_chars: usize,
+) -> Result<(), AppSettingsError> {
+    if value.trim().is_empty() {
+        return Err(validation_error(field, "Setting value is required."));
+    }
+    validate_optional_text(field, Some(value), max_chars)
+}
+
+fn empty_optional_text(value: Option<&str>) -> bool {
+    value.is_none_or(|value| value.trim().is_empty())
 }
 
 fn validate_f64_range(

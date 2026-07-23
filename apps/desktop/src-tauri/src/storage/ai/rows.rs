@@ -62,6 +62,31 @@ pub(super) fn vlm_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<V
     })
 }
 
+pub(super) fn visual_frame_processing_state_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<VisualFrameProcessingStateRow> {
+    Ok(VisualFrameProcessingStateRow {
+        id: row.get(0)?,
+        recording_id: row.get(1)?,
+        job_id: row.get(2)?,
+        chunk_id: row.get(3)?,
+        source_kind: row.get(4)?,
+        segment_id: row.get(5)?,
+        frame_timestamp_ms: row.get(6)?,
+        source_frame_ref: row.get(7)?,
+        region_x: row.get(8)?,
+        region_y: row.get(9)?,
+        region_width: row.get(10)?,
+        region_height: row.get(11)?,
+        status: row.get(12)?,
+        progress: row.get(13)?,
+        error_code: row.get(14)?,
+        output_count: row.get(15)?,
+        created_at_ms: row.get(16)?,
+        updated_at_ms: row.get(17)?,
+    })
+}
+
 pub(super) fn recording_track_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecordingTrackRow> {
     Ok(RecordingTrackRow {
         id: row.get(0)?,

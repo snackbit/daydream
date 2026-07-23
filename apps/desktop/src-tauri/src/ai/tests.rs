@@ -1020,6 +1020,30 @@ fn activity_queries_hide_lane_scoped_redactions_without_deleting_rows() {
                     recording_id: fixture.recording_id.clone(),
                 },
             )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "open-windows".to_string(),
+                    occurred_at_ms: 2_500,
+                    offset_ms: 1_500,
+                    payload_json: r#"{"provider":"linux-test","focusedWindowId":"hidden","windows":[{"id":"hidden","appIdentity":"Hidden Editor","processName":"editor","processId":42,"title":"Secrets.md"}]}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
+            storage::create_capture_event(
+                connection,
+                &storage::CreateCaptureEventInput {
+                    id: Uuid::now_v7().to_string(),
+                    kind: "open-windows".to_string(),
+                    occurred_at_ms: 3_500,
+                    offset_ms: 2_500,
+                    payload_json: r#"{"provider":"linux-test","focusedWindowId":"visible","windows":[{"id":"visible","appIdentity":"Visible Editor","processName":"editor","processId":42,"title":"Notes.md"}]}"#
+                        .to_string(),
+                    recording_id: fixture.recording_id.clone(),
+                },
+            )?;
             storage::create_redaction(
                 connection,
                 &storage::CreateRedactionInput {
@@ -1063,7 +1087,7 @@ fn activity_queries_hide_lane_scoped_redactions_without_deleting_rows() {
                 storage::list_capture_events(
                     connection,
                     &recording_id,
-                    &["focused-window"],
+                    &["focused-window", "open-windows"],
                     0,
                     10_000,
                 )?
@@ -1072,7 +1096,7 @@ fn activity_queries_hide_lane_scoped_redactions_without_deleting_rows() {
         })
         .expect("stored activity counts");
 
-    assert_eq!(stored_counts, (2, 2));
+    assert_eq!(stored_counts, (2, 4));
     let interval_ranges = activity
         .intervals
         .iter()
@@ -1100,6 +1124,16 @@ fn activity_queries_hide_lane_scoped_redactions_without_deleting_rows() {
         Some("Visible Editor")
     );
     assert_eq!(activity.events[0].title.as_deref(), Some("Notes.md"));
+    assert_eq!(activity.window_snapshots.len(), 1);
+    assert_eq!(
+        activity.window_snapshots[0].focused_window_id.as_deref(),
+        Some("visible")
+    );
+    assert_eq!(activity.window_snapshots[0].windows.len(), 1);
+    assert_eq!(
+        activity.window_snapshots[0].windows[0].title.as_deref(),
+        Some("Notes.md")
+    );
 }
 
 #[test]
@@ -1911,7 +1945,7 @@ fn audio_chunk_plans_split_long_segments_by_source_and_preserve_pause_gap() {
         state: "failed",
     });
 
-    let plans = audio_chunk_plans(&[segment_1.clone(), segment_2.clone(), failed_segment]);
+    let plans = audio_chunk_plans(&[segment_1.clone(), segment_2.clone(), failed_segment], &[]);
     let desktop_segment_1 = plans
         .iter()
         .filter(|plan| plan.segment_id == "segment-1" && plan.source_role == "desktop-audio")
@@ -1947,6 +1981,76 @@ fn audio_chunk_plans_split_long_segments_by_source_and_preserve_pause_gap() {
         playback_offset_for_segment(&[segment_1, segment_2], "segment-2"),
         Some(segment_1_duration_ms + pause_after_segment_1_ms)
     );
+}
+
+#[test]
+fn chunk_plans_skip_all_tracks_for_redacted_ranges() {
+    let dir = test_temp_path("chunk-plans-all-track-redaction");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let segment_path = dir.join("segment.mkv");
+    fs::write(&segment_path, b"segment").expect("write segment");
+    let segment = test_segment(TestSegmentInput {
+        desktop_audio_stream_index: Some(1),
+        duration_ms: 10_000,
+        id: "segment-1",
+        microphone_audio_stream_index: Some(2),
+        path: &segment_path,
+        segment_index: 1,
+        started_at_ms: 1_000,
+        state: "finalized",
+    });
+    let redaction = test_redaction(0, 10_000, "[]");
+    let settings = settings::default_settings();
+
+    assert!(audio_chunk_plans(
+        std::slice::from_ref(&segment),
+        std::slice::from_ref(&redaction)
+    )
+    .is_empty());
+    assert!(visual_chunk_plans(
+        std::slice::from_ref(&segment),
+        &settings,
+        std::slice::from_ref(&redaction),
+        "ocr",
+    )
+    .is_empty());
+    assert!(activity_chunk_plans(&[segment], &settings, &[redaction]).is_empty());
+
+    delete_file_if_exists(&segment_path).expect("delete segment");
+}
+
+#[test]
+fn chunk_plans_skip_only_matching_media_tracks_for_track_redactions() {
+    let dir = test_temp_path("chunk-plans-track-redaction");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let segment_path = dir.join("segment.mkv");
+    fs::write(&segment_path, b"segment").expect("write segment");
+    let segment = test_segment(TestSegmentInput {
+        desktop_audio_stream_index: Some(1),
+        duration_ms: 10_000,
+        id: "segment-1",
+        microphone_audio_stream_index: Some(2),
+        path: &segment_path,
+        segment_index: 1,
+        started_at_ms: 1_000,
+        state: "finalized",
+    });
+    let redaction = test_redaction(0, 10_000, r#"["desktop-audio-1"]"#);
+    let settings = settings::default_settings();
+
+    let audio_plans = audio_chunk_plans(
+        std::slice::from_ref(&segment),
+        std::slice::from_ref(&redaction),
+    );
+    assert_eq!(audio_plans.len(), 1);
+    assert_eq!(audio_plans[0].source_role, "microphone");
+
+    assert_eq!(
+        visual_chunk_plans(&[segment], &settings, &[redaction], "ocr").len(),
+        1
+    );
+
+    delete_file_if_exists(&segment_path).expect("delete segment");
 }
 
 #[test]
@@ -2482,5 +2586,17 @@ fn test_segment(input: TestSegmentInput<'_>) -> RecordingSegmentRow {
         started_at_ms: input.started_at_ms,
         state: input.state.to_string(),
         video_stream_index: Some(0),
+    }
+}
+
+fn test_redaction(start_offset_ms: i64, end_offset_ms: i64, track_ids_json: &str) -> RedactionRow {
+    RedactionRow {
+        created_at_ms: 1,
+        end_offset_ms,
+        id: "redaction-1".to_string(),
+        reason: None,
+        recording_id: "recording-1".to_string(),
+        start_offset_ms,
+        track_ids_json: track_ids_json.to_string(),
     }
 }

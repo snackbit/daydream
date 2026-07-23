@@ -6,6 +6,7 @@ mod health;
 mod lifecycle;
 mod preview;
 mod scene;
+mod window_protection;
 
 pub use audio::*;
 pub use capture::*;
@@ -15,3 +16,4 @@ pub use health::*;
 pub use lifecycle::*;
 pub use preview::*;
 pub use scene::*;
+pub use window_protection::*;

@@ -4,26 +4,29 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-    acknowledge_notifications, apply_migrations, claim_next_queued_processing_chunk,
-    collect_database_diagnostics_from_connection, create_activity_interval,
-    create_frame_similarity_entry, create_ocr_region, create_processing_chunk, create_recording,
-    create_recording_segment, create_redaction, create_transcript_segment, create_transcript_word,
-    create_vlm_observation, delete_all_notifications, delete_notifications,
-    delete_notifications_older_than, delete_portal_restore_token, delete_recording,
-    delete_redaction, dismiss_notification, enable_connection_pragmas, fail_recording_segment,
-    finalize_recording_segment, get_app_setting, get_latest_recorder_scene, get_notification,
-    get_recorder_scene, get_recording, list_app_settings, list_notifications,
-    list_processing_chunks_by_status, list_processing_jobs_by_status, list_recording_segments,
-    list_redactions, mark_portal_restore_token_used, mark_recording_completed,
+    acknowledge_notifications, apply_migrations, cancel_visual_frame_processing_states_for_chunk,
+    claim_next_queued_processing_chunk, collect_database_diagnostics_from_connection,
+    create_activity_interval, create_frame_similarity_entry, create_ocr_region,
+    create_processing_chunk, create_recording, create_recording_segment, create_redaction,
+    create_transcript_segment, create_transcript_word, create_vlm_observation,
+    delete_all_notifications, delete_notifications, delete_notifications_older_than,
+    delete_portal_restore_token, delete_recording, delete_redaction, dismiss_notification,
+    enable_connection_pragmas, fail_recording_segment, finalize_recording_segment, get_app_setting,
+    get_latest_recorder_scene, get_notification, get_recorder_scene, get_recording,
+    list_app_settings, list_notifications, list_processing_chunks_by_status,
+    list_processing_jobs_by_status, list_recording_segments, list_redactions,
+    list_visual_frame_processing_states, mark_portal_restore_token_used, mark_recording_completed,
     mark_recording_started, migrations, recover_interrupted_recordings, rename_recording,
     reset_app_settings, retry_processing_job_chunks, save_ai_model_asset, save_app_settings,
     save_notification, save_recorder_scene, save_unseen_notification,
-    update_processing_chunk_result_code, update_recording_status, upsert_portal_restore_token,
-    AppStorage, CreateActivityIntervalInput, CreateFrameSimilarityEntryInput,
-    CreateProcessingChunkInput, CreateRecordingInput, CreateRecordingSegmentInput,
-    CreateRedactionInput, CreateTranscriptSegmentInput, CreateTranscriptWordInput,
-    CreateVisualRegionInput, FailRecordingSegmentInput, FinalizeRecordingSegmentInput,
-    SaveAiModelAssetInput, SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
+    update_processing_chunk_result_code, update_recording_status,
+    update_visual_frame_processing_state_status, upsert_portal_restore_token,
+    upsert_visual_frame_processing_state, AppStorage, CreateActivityIntervalInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateRecordingInput,
+    CreateRecordingSegmentInput, CreateRedactionInput, CreateTranscriptSegmentInput,
+    CreateTranscriptWordInput, CreateVisualFrameProcessingStateInput, CreateVisualRegionInput,
+    FailRecordingSegmentInput, FinalizeRecordingSegmentInput, SaveAiModelAssetInput,
+    SaveAppSettingInput, SaveNotificationInput, SaveRecorderSceneInput,
     SaveRecorderSceneSourceInput,
 };
 
@@ -41,7 +44,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 17);
+    assert_eq!(schema_version, 19);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -52,6 +55,7 @@ fn migration_creates_core_tables_and_schema_version() {
     assert_eq!(table_counts["recorder_scene_sources"], 0);
     assert_eq!(table_counts["recorder_portal_restore_tokens"], 0);
     assert_eq!(table_counts["redactions"], 0);
+    assert_eq!(table_counts["recording_protection_spans"], 0);
     assert_eq!(table_counts["capture_events"], 0);
     assert_eq!(table_counts["processing_jobs"], 0);
     assert_eq!(table_counts["processing_chunks"], 0);
@@ -61,6 +65,7 @@ fn migration_creates_core_tables_and_schema_version() {
     assert_eq!(table_counts["ocr_regions"], 0);
     assert_eq!(table_counts["vlm_observations"], 0);
     assert_eq!(table_counts["frame_similarity_entries"], 0);
+    assert_eq!(table_counts["visual_frame_processing_states"], 0);
 }
 
 #[test]
@@ -678,6 +683,113 @@ fn claim_next_queued_processing_chunk_marks_one_chunk_running() {
     assert!(claimed_again.is_none());
     assert_eq!(running_chunks.len(), 1);
     assert_eq!(queued_chunks.len(), 0);
+}
+
+#[test]
+fn visual_frame_processing_state_tracks_progress_and_cleans_with_chunk() {
+    let connection = migrated_memory_connection();
+    let recording_id = create_test_recording(&connection);
+    let job_id = Uuid::now_v7().to_string();
+    let chunk_id = Uuid::now_v7().to_string();
+
+    connection
+        .execute(
+            r#"
+            INSERT INTO processing_jobs (
+                id,
+                recording_id,
+                kind,
+                status,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES (?1, ?2, 'ai-processing', 'running', 1, 1)
+            "#,
+            (&job_id, &recording_id),
+        )
+        .expect("insert processing job");
+    create_processing_chunk(
+        &connection,
+        &CreateProcessingChunkInput {
+            attempt_count: 0,
+            created_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            error_code: None,
+            id: chunk_id.clone(),
+            job_id: job_id.clone(),
+            progress: 0.0,
+            recording_id: recording_id.clone(),
+            result_code: None,
+            segment_id: None,
+            source_kind: "ocr".to_string(),
+            start_offset_ms: Some(0),
+            status: "running".to_string(),
+            track_id: None,
+            updated_at_ms: 1,
+        },
+    )
+    .expect("insert running processing chunk");
+
+    let frame = upsert_visual_frame_processing_state(
+        &connection,
+        &CreateVisualFrameProcessingStateInput {
+            chunk_id: chunk_id.clone(),
+            created_at_ms: 2,
+            error_code: None,
+            frame_timestamp_ms: 500,
+            id: Uuid::now_v7().to_string(),
+            job_id: job_id.clone(),
+            output_count: 0,
+            progress: 0.0,
+            recording_id: recording_id.clone(),
+            region_height: 720,
+            region_width: 1280,
+            region_x: 0,
+            region_y: 0,
+            segment_id: None,
+            source_frame_ref: "segment:one:offset:500:frame:0".to_string(),
+            source_kind: "ocr".to_string(),
+            status: "queued".to_string(),
+            updated_at_ms: 2,
+        },
+    )
+    .expect("insert frame state");
+
+    let running = update_visual_frame_processing_state_status(
+        &connection,
+        &frame.id,
+        "running",
+        0.5,
+        None,
+        0,
+        3,
+    )
+    .expect("mark frame running");
+    let succeeded = update_visual_frame_processing_state_status(
+        &connection,
+        &frame.id,
+        "succeeded",
+        1.0,
+        None,
+        4,
+        4,
+    )
+    .expect("mark frame succeeded");
+    cancel_visual_frame_processing_states_for_chunk(&connection, &chunk_id, 5)
+        .expect("cancel active frame states");
+    let rows =
+        list_visual_frame_processing_states(&connection, &recording_id).expect("list frame states");
+
+    assert_eq!(running.status, "running");
+    assert_eq!(succeeded.status, "succeeded");
+    assert_eq!(succeeded.output_count, 4);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "succeeded");
+
+    super::delete_visual_output_for_chunks(&connection, std::slice::from_ref(&chunk_id))
+        .expect("delete visual outputs");
+    let rows = list_visual_frame_processing_states(&connection, &recording_id)
+        .expect("list frame states after cleanup");
+    assert!(rows.is_empty());
 }
 
 #[test]
@@ -1411,7 +1523,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 17);
+    assert_eq!(schema_version, 19);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);

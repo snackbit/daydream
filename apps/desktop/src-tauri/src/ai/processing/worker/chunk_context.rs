@@ -29,9 +29,10 @@ impl<'a> ProcessingChunkContext<'a> {
     }
 
     pub(super) fn mark_succeeded(&self, result_code: Option<&str>) -> Result<(), AiError> {
-        self.storage
+        let updated = self
+            .storage
             .with_connection(|connection| {
-                storage::update_processing_chunk_status(
+                let updated = storage::update_processing_chunk_status_if_active(
                     connection,
                     &self.chunk.id,
                     "succeeded",
@@ -39,30 +40,37 @@ impl<'a> ProcessingChunkContext<'a> {
                     None,
                     now_ms(),
                 )?;
-                if let Some(result_code) = result_code {
-                    storage::update_processing_chunk_result_code(
-                        connection,
-                        &self.chunk.id,
-                        Some(result_code),
-                        now_ms(),
-                    )?;
+                if updated.status == "succeeded" {
+                    if let Some(result_code) = result_code {
+                        storage::update_processing_chunk_result_code(
+                            connection,
+                            &self.chunk.id,
+                            Some(result_code),
+                            now_ms(),
+                        )?;
+                    }
                 }
-                Ok(())
+                Ok(updated)
             })
             .map_err(storage_error)?;
-        save_job_progress_notification(&self.storage, self.job_id)
+        if updated.status == "succeeded" {
+            save_job_progress_notification(&self.storage, self.job_id)?;
+        }
+        Ok(())
     }
 
     pub(super) fn requeue_paused(&self) -> Result<(), AiError> {
-        self.update_status("queued", 0.0, None)
+        self.update_status("queued", 0.0, None).map(|_updated| ())
     }
 
     pub(super) fn mark_cancelled(&self) -> Result<(), AiError> {
         self.update_status("cancelled", 0.0, Some("ai_processing_cancelled"))
+            .map(|_updated| ())
     }
 
     pub(super) fn mark_failed(&self, error_code: &str) -> Result<(), AiError> {
         self.update_status("failed", 0.0, Some(error_code))
+            .map(|_updated| ())
     }
 
     fn update_status(
@@ -70,10 +78,17 @@ impl<'a> ProcessingChunkContext<'a> {
         status: &str,
         progress: f64,
         error_code: Option<&str>,
-    ) -> Result<(), AiError> {
+    ) -> Result<ProcessingChunkRow, AiError> {
         self.storage
             .with_connection(|connection| {
-                storage::update_processing_chunk_status(
+                if matches!(status, "cancelled" | "failed") {
+                    storage::cancel_visual_frame_processing_states_for_chunk(
+                        connection,
+                        &self.chunk.id,
+                        now_ms(),
+                    )?;
+                }
+                storage::update_processing_chunk_status_if_active(
                     connection,
                     &self.chunk.id,
                     status,
@@ -81,7 +96,6 @@ impl<'a> ProcessingChunkContext<'a> {
                     error_code,
                     now_ms(),
                 )
-                .map(|_row| ())
             })
             .map_err(storage_error)
     }

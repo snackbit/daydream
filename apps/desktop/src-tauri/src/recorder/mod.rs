@@ -16,6 +16,7 @@ mod storage_mapping;
 #[cfg(test)]
 mod tests;
 mod types;
+mod window_protection;
 
 pub use manager::RecorderManager;
 pub use types::*;
@@ -48,6 +49,16 @@ pub fn get_recorder_recording_stats(
     manager: State<'_, RecorderManager>,
 ) -> Result<Option<RecorderRecordingStats>, RecorderError> {
     commands::get_recorder_recording_stats(storage, manager)
+}
+
+#[tauri::command(rename = "listProtectableWindows")]
+pub fn list_protectable_windows() -> ProtectableWindowList {
+    commands::list_protectable_windows()
+}
+
+#[tauri::command(rename = "getWindowProtectionStatus")]
+pub fn get_window_protection_status() -> WindowProtectionStatus {
+    commands::get_window_protection_status()
 }
 
 #[tauri::command(rename = "getCaptureSources")]

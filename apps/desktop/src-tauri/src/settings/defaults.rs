@@ -6,6 +6,14 @@ pub const MAX_RECORD_FPS: f64 = 5.0;
 pub const DEFAULT_VIDEO_BITRATE_KBPS: u32 = 1_500;
 pub const MIN_VIDEO_BITRATE_KBPS: u32 = 250;
 pub const MAX_VIDEO_BITRATE_KBPS: u32 = 10_000;
+pub const DEFAULT_WINDOW_PROTECTION_DWELL_MS: u32 = 2_000;
+pub const MIN_WINDOW_PROTECTION_DWELL_MS: u32 = 250;
+pub const MAX_WINDOW_PROTECTION_DWELL_MS: u32 = 30_000;
+pub const DEFAULT_WINDOW_PROTECTION_MERGE_GAP_MS: u32 = 5_000;
+pub const MIN_WINDOW_PROTECTION_MERGE_GAP_MS: u32 = 0;
+pub const MAX_WINDOW_PROTECTION_MERGE_GAP_MS: u32 = 120_000;
+pub const MAX_WINDOW_PROTECTION_RULE_COUNT: usize = 100;
+pub const MAX_WINDOW_PROTECTION_TEXT_CHARS: usize = 160;
 pub const DEFAULT_STORAGE_RETENTION_DAYS: u32 = 7;
 pub const MIN_STORAGE_RETENTION_DAYS: u32 = 1;
 pub const MAX_STORAGE_RETENTION_DAYS: u32 = 365;
@@ -24,6 +32,8 @@ pub const MAX_AI_MAX_PARALLEL_JOBS: u32 = 4;
 pub const DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
 pub const MIN_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 1;
 pub const MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB: u32 = 8;
+pub const MIN_AI_MAX_PARALLEL_OCR_JOBS: u32 = 1;
+pub const MIN_AI_MAX_PARALLEL_VLM_JOBS: u32 = 1;
 pub const DEFAULT_AI_FRAME_RECOGNITION_FPS: f64 = DEFAULT_RECORD_FPS;
 pub const MIN_AI_FRAME_RECOGNITION_FPS: f64 = MIN_RECORD_FPS;
 pub const MAX_AI_FRAME_RECOGNITION_FPS: f64 = MAX_RECORD_FPS;
@@ -49,6 +59,17 @@ pub const DEFAULT_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 3.0;
 pub const MIN_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 1.0;
 pub const MAX_AI_TRANSCRIPTION_MAX_INITIAL_TIMESTAMP_SECONDS: f64 = 10.0;
 
+pub fn available_cpu_core_count() -> u32 {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .max(1) as u32
+}
+
+pub fn default_visual_frame_parallel_jobs() -> u32 {
+    available_cpu_core_count().div_ceil(4).max(1)
+}
+
 pub fn default_settings() -> AppSettings {
     AppSettings {
         ai: default_ai_settings(),
@@ -57,11 +78,22 @@ pub fn default_settings() -> AppSettings {
         record: RecordSettings {
             fps: DEFAULT_RECORD_FPS,
             video_bitrate_kbps: DEFAULT_VIDEO_BITRATE_KBPS,
+            window_protection: default_window_protection_settings(),
         },
         storage: StorageSettings {
             retention_days: DEFAULT_STORAGE_RETENTION_DAYS,
             size_limit_bytes: DEFAULT_STORAGE_SIZE_LIMIT_BYTES,
         },
+    }
+}
+
+pub fn default_window_protection_settings() -> RecordWindowProtectionSettings {
+    RecordWindowProtectionSettings {
+        default_action: ProtectedWindowAction::Pause,
+        dwell_ms: DEFAULT_WINDOW_PROTECTION_DWELL_MS,
+        enabled: false,
+        merge_gap_ms: DEFAULT_WINDOW_PROTECTION_MERGE_GAP_MS,
+        rules: Vec::new(),
     }
 }
 
@@ -77,6 +109,7 @@ pub fn default_ai_settings() -> AiSettings {
                 enabled: false,
                 window_ms: DEFAULT_AI_MOUSE_WINDOW_MS,
             },
+            windows: AiActivitySourceSettings { enabled: true },
         },
         ocr: AiOcrSettings {
             enabled: true,
@@ -89,7 +122,9 @@ pub fn default_ai_settings() -> AiSettings {
             frame_similarity_enabled: true,
             max_full_frame_checkpoints_per_minute: DEFAULT_AI_MAX_FULL_FRAME_CHECKPOINTS_PER_MINUTE,
             max_parallel_chunks_per_job: DEFAULT_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
+            max_parallel_ocr_jobs: default_visual_frame_parallel_jobs(),
             max_parallel_jobs: DEFAULT_AI_MAX_PARALLEL_JOBS,
+            max_parallel_vlm_jobs: default_visual_frame_parallel_jobs(),
             periodic_full_frame_interval_ms: DEFAULT_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
             visual_delta_tile_size_px: DEFAULT_AI_VISUAL_DELTA_TILE_SIZE_PX,
         },
@@ -137,6 +172,10 @@ pub fn settings_limits() -> AppSettingsLimits {
                 max_parallel_chunks_per_job_max: MAX_AI_MAX_PARALLEL_CHUNKS_PER_JOB,
                 max_parallel_jobs_min: MIN_AI_MAX_PARALLEL_JOBS,
                 max_parallel_jobs_max: MAX_AI_MAX_PARALLEL_JOBS,
+                max_parallel_ocr_jobs_min: MIN_AI_MAX_PARALLEL_OCR_JOBS,
+                max_parallel_ocr_jobs_max: available_cpu_core_count(),
+                max_parallel_vlm_jobs_min: MIN_AI_MAX_PARALLEL_VLM_JOBS,
+                max_parallel_vlm_jobs_max: available_cpu_core_count(),
                 periodic_full_frame_interval_ms_min: MIN_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
                 periodic_full_frame_interval_ms_max: MAX_AI_PERIODIC_FULL_FRAME_INTERVAL_MS,
                 visual_delta_tile_size_px_min: MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
@@ -158,6 +197,12 @@ pub fn settings_limits() -> AppSettingsLimits {
         record: RecordSettingsLimits {
             fps_min: MIN_RECORD_FPS,
             fps_max: MAX_RECORD_FPS,
+            window_protection_dwell_ms_min: MIN_WINDOW_PROTECTION_DWELL_MS,
+            window_protection_dwell_ms_max: MAX_WINDOW_PROTECTION_DWELL_MS,
+            window_protection_merge_gap_ms_min: MIN_WINDOW_PROTECTION_MERGE_GAP_MS,
+            window_protection_merge_gap_ms_max: MAX_WINDOW_PROTECTION_MERGE_GAP_MS,
+            window_protection_rule_count_max: MAX_WINDOW_PROTECTION_RULE_COUNT,
+            window_protection_text_max_chars: MAX_WINDOW_PROTECTION_TEXT_CHARS,
             video_bitrate_kbps_min: MIN_VIDEO_BITRATE_KBPS,
             video_bitrate_kbps_max: MAX_VIDEO_BITRATE_KBPS,
         },

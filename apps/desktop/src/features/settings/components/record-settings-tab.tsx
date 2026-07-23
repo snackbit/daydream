@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { formatFps } from '@/features/settings/settings-format';
+import { ProtectedWindowSettingsCard } from './protected-window-settings-card';
 
 export type CadenceMode = 'fps' | 'seconds';
 
@@ -162,6 +163,12 @@ export function RecordSettingsTab({
             />
             <SummaryMetric label="One hour estimate" value={oneHourEstimate} />
           </div>
+
+          <ProtectedWindowSettingsCard
+            draft={draft}
+            limits={limits}
+            onUpdateDraft={onUpdateDraft}
+          />
         </FieldGroup>
       </CardContent>
     </Card>

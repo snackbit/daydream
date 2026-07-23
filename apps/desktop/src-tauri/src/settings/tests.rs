@@ -14,6 +14,28 @@ fn load_app_settings_returns_defaults_without_saved_row() {
 }
 
 #[test]
+fn visual_frame_parallel_defaults_track_cpu_limits() {
+    let defaults = default_settings();
+    let limits = settings_limits();
+    let cpu_count = available_cpu_core_count();
+
+    assert_eq!(
+        defaults.ai.processing.max_parallel_ocr_jobs,
+        default_visual_frame_parallel_jobs()
+    );
+    assert_eq!(
+        defaults.ai.processing.max_parallel_vlm_jobs,
+        default_visual_frame_parallel_jobs()
+    );
+    assert!(defaults.ai.processing.max_parallel_ocr_jobs >= 1);
+    assert!(defaults.ai.processing.max_parallel_ocr_jobs <= cpu_count);
+    assert_eq!(limits.ai.processing.max_parallel_ocr_jobs_min, 1);
+    assert_eq!(limits.ai.processing.max_parallel_vlm_jobs_min, 1);
+    assert_eq!(limits.ai.processing.max_parallel_ocr_jobs_max, cpu_count);
+    assert_eq!(limits.ai.processing.max_parallel_vlm_jobs_max, cpu_count);
+}
+
+#[test]
 fn load_app_settings_returns_saved_values() {
     let storage = storage::test_storage(PathBuf::from("/tmp/daydream.sqlite3"));
     storage

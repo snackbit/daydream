@@ -21,6 +21,11 @@ pub(crate) fn processing_state_for_recording(
     } else {
         Vec::new()
     };
+    let visual_frame_rows = storage
+        .with_connection(|connection| {
+            storage::list_visual_frame_processing_states(connection, recording_id)
+        })
+        .map_err(storage_error)?;
     let transcript = transcript_for_recording(storage, recording_id)?;
     let recording_segments = storage
         .with_connection(|connection| storage::list_recording_segments(connection, recording_id))
@@ -47,6 +52,10 @@ pub(crate) fn processing_state_for_recording(
         recording_id: recording_id.to_string(),
         transcript,
         transcription_tracks,
+        visual_frames: visual_frame_rows
+            .into_iter()
+            .map(visual_frame_processing_state_from_row)
+            .collect(),
     })
 }
 
@@ -66,6 +75,33 @@ pub(in crate::ai) fn processing_chunk_from_row(row: ProcessingChunkRow) -> Proce
         start_offset_ms: row.start_offset_ms,
         status: row.status,
         track_id: row.track_id,
+        updated_at_ms: row.updated_at_ms,
+    }
+}
+
+pub(in crate::ai) fn visual_frame_processing_state_from_row(
+    row: VisualFrameProcessingStateRow,
+) -> VisualFrameProcessingState {
+    VisualFrameProcessingState {
+        chunk_id: row.chunk_id,
+        created_at_ms: row.created_at_ms,
+        error_code: row.error_code,
+        frame_timestamp_ms: row.frame_timestamp_ms,
+        id: row.id,
+        job_id: row.job_id,
+        output_count: row.output_count,
+        progress: row.progress,
+        recording_id: row.recording_id,
+        region: VisualRegion {
+            height: row.region_height,
+            width: row.region_width,
+            x: row.region_x,
+            y: row.region_y,
+        },
+        segment_id: row.segment_id,
+        source_frame_ref: row.source_frame_ref,
+        source_kind: row.source_kind,
+        status: row.status,
         updated_at_ms: row.updated_at_ms,
     }
 }

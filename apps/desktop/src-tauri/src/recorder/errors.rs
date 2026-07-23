@@ -1,6 +1,6 @@
 use rusqlite::Error as SqliteError;
 
-use super::types::{RecorderError, RecorderErrorCategory};
+use super::types::{RecorderError, RecorderErrorCategory, WindowProtectionStatus};
 
 #[allow(dead_code)]
 const RECORDER_BACKEND_NOT_IMPLEMENTED: &str = "recorder_backend_not_implemented";
@@ -48,6 +48,20 @@ pub(crate) fn dependency_error(code: &str, message: impl Into<String>) -> Record
         code: code.to_string(),
         details: None,
         message: message.into(),
+    }
+}
+
+pub(crate) fn window_protection_unavailable_error(
+    status: &WindowProtectionStatus,
+) -> RecorderError {
+    RecorderError {
+        category: RecorderErrorCategory::Unavailable,
+        code: "recorder_window_protection_unavailable".to_string(),
+        details: None,
+        message: format!(
+            "Protected-window automation is enabled, but focused-window detection is unavailable: {}",
+            status.message
+        ),
     }
 }
 

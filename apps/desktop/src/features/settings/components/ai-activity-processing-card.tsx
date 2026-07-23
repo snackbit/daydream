@@ -17,6 +17,7 @@ import {
   updateAiKeyboardActivity,
   updateAiMouseActivity,
   updateAiProcessing,
+  updateAiWindowActivity,
 } from '@/features/settings/settings-draft-updaters';
 import { formatFps } from '@/features/settings/settings-format';
 import { CheckboxField, SliderField } from './ai-settings-fields';
@@ -111,6 +112,30 @@ export function AiActivityProcessingCard({
               value={draft.ai.processing.maxParallelChunksPerJob}
             />
             <SliderField
+              label="OCR jobs"
+              max={limits.ai.processing.maxParallelOcrJobsMax}
+              min={limits.ai.processing.maxParallelOcrJobsMin}
+              onChange={(value) => {
+                updateAiProcessing(onUpdateDraft, (current) => ({
+                  ...current,
+                  maxParallelOcrJobs: value,
+                }));
+              }}
+              value={draft.ai.processing.maxParallelOcrJobs}
+            />
+            <SliderField
+              label="VLM jobs"
+              max={limits.ai.processing.maxParallelVlmJobsMax}
+              min={limits.ai.processing.maxParallelVlmJobsMin}
+              onChange={(value) => {
+                updateAiProcessing(onUpdateDraft, (current) => ({
+                  ...current,
+                  maxParallelVlmJobs: value,
+                }));
+              }}
+              value={draft.ai.processing.maxParallelVlmJobs}
+            />
+            <SliderField
               label="Frame recognition FPS"
               max={limits.ai.processing.frameRecognitionFpsMax}
               min={limits.ai.processing.frameRecognitionFpsMin}
@@ -178,6 +203,17 @@ export function AiActivityProcessingCard({
               />
             ) : null}
           </div>
+          <CheckboxField
+            checked={draft.ai.activity.windows.enabled}
+            description="Capture focused-window changes and open-window inventory changes for the Activity lane."
+            label="Use window activity"
+            onCheckedChange={(checked) => {
+              updateAiWindowActivity(onUpdateDraft, (current) => ({
+                ...current,
+                enabled: checked,
+              }));
+            }}
+          />
           <CheckboxField
             checked={draft.ai.activity.keyboard.enabled}
             description="Linux uses privileged /dev/input timing only; key values and typed text are not stored."

@@ -171,6 +171,26 @@ pub struct ProcessingChunk {
     pub updated_at_ms: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualFrameProcessingState {
+    pub chunk_id: String,
+    pub created_at_ms: i64,
+    pub error_code: Option<String>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub output_count: i64,
+    pub progress: f64,
+    pub recording_id: String,
+    pub region: VisualRegion,
+    pub segment_id: Option<String>,
+    pub source_frame_ref: String,
+    pub source_kind: String,
+    pub status: String,
+    pub updated_at_ms: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProcessingJobsInput {
@@ -209,6 +229,7 @@ pub struct RecordingAiProcessingState {
     pub recording_id: String,
     pub transcript: RecordingTranscript,
     pub transcription_tracks: Vec<RecordingTranscriptionTrackState>,
+    pub visual_frames: Vec<VisualFrameProcessingState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -289,6 +310,7 @@ pub struct RecordingActivity {
     pub events: Vec<ActivityEvent>,
     pub intervals: Vec<ActivityInterval>,
     pub recording_id: String,
+    pub window_snapshots: Vec<ActivityWindowSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -325,6 +347,28 @@ pub struct ActivityCaptureState {
     pub recording_id: String,
     pub source: Option<String>,
     pub status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityWindowSnapshot {
+    pub focused_window_id: Option<String>,
+    pub id: String,
+    pub occurred_at_ms: i64,
+    pub offset_ms: i64,
+    pub provider: Option<String>,
+    pub recording_id: String,
+    pub windows: Vec<ActivityWindowSnapshotWindow>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityWindowSnapshotWindow {
+    pub app_identity: Option<String>,
+    pub id: String,
+    pub process_id: Option<u32>,
+    pub process_name: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

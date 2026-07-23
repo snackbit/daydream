@@ -122,6 +122,8 @@ pub fn run() {
             recorder::get_recorder_status,
             recorder::get_recorder_performance_stats,
             recorder::get_recorder_recording_stats,
+            recorder::list_protectable_windows,
+            recorder::get_window_protection_status,
             recorder::get_capture_sources,
             recorder::get_recorder_scene,
             recorder::select_capture_sources,

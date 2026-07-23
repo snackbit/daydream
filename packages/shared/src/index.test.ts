@@ -53,6 +53,8 @@ test('diagnostics shape supports unavailable media writer state', () => {
         autoStartAfterRecording: true,
         maxParallelChunksPerJob: 1,
         maxParallelJobs: 1,
+        maxParallelOcrJobs: 1,
+        maxParallelVlmJobs: 1,
         transcriptionBackend: 'cpu',
         transcriptionLanguage: 'auto',
         transcriptionMaxInitialTimestampSeconds: 3,

@@ -29,6 +29,7 @@ fn apply_setting_row(
         "expert.enabled" => settings.expert.enabled = setting_value(row)?,
         "record.fps" => settings.record.fps = setting_value(row)?,
         "record.videoBitrateKbps" => settings.record.video_bitrate_kbps = setting_value(row)?,
+        "record.windowProtection" => settings.record.window_protection = setting_value(row)?,
         "storage.retentionDays" => settings.storage.retention_days = setting_value(row)?,
         "storage.sizeLimitBytes" => settings.storage.size_limit_bytes = setting_value(row)?,
         "ai.transcription.provider" => settings.ai.transcription.provider = setting_value(row)?,
@@ -84,6 +85,9 @@ fn apply_setting_row(
         "ai.processing.maxParallelChunksPerJob" => {
             settings.ai.processing.max_parallel_chunks_per_job = setting_value(row)?;
         }
+        "ai.processing.maxParallelOcrJobs" => {
+            settings.ai.processing.max_parallel_ocr_jobs = setting_value(row)?;
+        }
         "ai.processing.frameRecognitionFps" => {
             settings.ai.processing.frame_recognition_fps = setting_value(row)?;
         }
@@ -99,6 +103,9 @@ fn apply_setting_row(
         "ai.processing.maxFullFrameCheckpointsPerMinute" => {
             settings.ai.processing.max_full_frame_checkpoints_per_minute = setting_value(row)?;
         }
+        "ai.processing.maxParallelVlmJobs" => {
+            settings.ai.processing.max_parallel_vlm_jobs = setting_value(row)?;
+        }
         "ai.processing.visualDeltaTileSizePx" => {
             settings.ai.processing.visual_delta_tile_size_px = setting_value(row)?;
         }
@@ -112,6 +119,9 @@ fn apply_setting_row(
         "ai.activity.mouse.windowMs" => settings.ai.activity.mouse.window_ms = setting_value(row)?,
         "ai.activity.frameDeltas.enabled" => {
             settings.ai.activity.frame_deltas.enabled = setting_value(row)?;
+        }
+        "ai.activity.windows.enabled" => {
+            settings.ai.activity.windows.enabled = setting_value(row)?;
         }
         _ => {}
     }
@@ -150,6 +160,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "record.videoBitrateKbps",
             &settings.record.video_bitrate_kbps,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "record.windowProtection",
+            &settings.record.window_protection,
             false,
             timestamp_ms,
         )?,
@@ -298,6 +314,12 @@ pub(super) fn settings_to_storage_inputs(
             timestamp_ms,
         )?,
         setting_input(
+            "ai.processing.maxParallelOcrJobs",
+            &settings.ai.processing.max_parallel_ocr_jobs,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
             "ai.processing.frameRecognitionFps",
             &settings.ai.processing.frame_recognition_fps,
             false,
@@ -324,6 +346,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "ai.processing.maxFullFrameCheckpointsPerMinute",
             &settings.ai.processing.max_full_frame_checkpoints_per_minute,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.maxParallelVlmJobs",
+            &settings.ai.processing.max_parallel_vlm_jobs,
             false,
             timestamp_ms,
         )?,
@@ -360,6 +388,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "ai.activity.frameDeltas.enabled",
             &settings.ai.activity.frame_deltas.enabled,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.activity.windows.enabled",
+            &settings.ai.activity.windows.enabled,
             false,
             timestamp_ms,
         )?,

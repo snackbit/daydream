@@ -65,6 +65,29 @@ export interface ProcessingChunk {
   updatedAtMs: number;
 }
 
+export interface VisualFrameProcessingState {
+  chunkId: string;
+  createdAtMs: number;
+  errorCode: string | null;
+  frameTimestampMs: number;
+  id: string;
+  jobId: string;
+  outputCount: number;
+  progress: number;
+  recordingId: string;
+  region: {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  };
+  segmentId: string | null;
+  sourceFrameRef: string;
+  sourceKind: 'ocr' | 'vlm';
+  status: ProcessingChunkStatus;
+  updatedAtMs: number;
+}
+
 export interface ProcessingJobList {
   jobs: ProcessingJob[];
 }
@@ -91,4 +114,5 @@ export interface RecordingAiProcessingState {
   recordingId: string;
   transcript: RecordingTranscript;
   transcriptionTracks?: RecordingTranscriptionTrackState[];
+  visualFrames?: VisualFrameProcessingState[];
 }

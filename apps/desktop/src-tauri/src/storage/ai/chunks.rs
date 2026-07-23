@@ -278,6 +278,33 @@ pub fn claim_next_queued_processing_chunk(
     get_processing_chunk(connection, &chunk.id)
 }
 
+pub fn claim_processing_chunk(
+    connection: &Connection,
+    chunk_id: &str,
+    progress: f64,
+    timestamp_ms: i64,
+) -> rusqlite::Result<Option<ProcessingChunkRow>> {
+    let updated = connection.execute(
+        r#"
+        UPDATE processing_chunks
+        SET status = 'running',
+            progress = ?2,
+            error_code = NULL,
+            result_code = NULL,
+            attempt_count = attempt_count + 1,
+            updated_at_ms = ?3
+        WHERE id = ?1
+            AND status = 'queued'
+        "#,
+        params![chunk_id, progress, timestamp_ms],
+    )?;
+    if updated == 0 {
+        return Ok(None);
+    }
+
+    get_processing_chunk(connection, chunk_id)
+}
+
 pub fn update_processing_chunk_status(
     connection: &Connection,
     id: &str,
@@ -296,6 +323,31 @@ pub fn update_processing_chunk_status(
             attempt_count = CASE WHEN ?2 = 'running' THEN attempt_count + 1 ELSE attempt_count END,
             updated_at_ms = ?5
         WHERE id = ?1
+        "#,
+        params![id, status, progress, error_code, timestamp_ms],
+    )?;
+
+    get_processing_chunk(connection, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
+}
+
+pub fn update_processing_chunk_status_if_active(
+    connection: &Connection,
+    id: &str,
+    status: &str,
+    progress: f64,
+    error_code: Option<&str>,
+    timestamp_ms: i64,
+) -> rusqlite::Result<ProcessingChunkRow> {
+    connection.execute(
+        r#"
+        UPDATE processing_chunks
+        SET status = ?2,
+            progress = ?3,
+            error_code = ?4,
+            result_code = NULL,
+            updated_at_ms = ?5
+        WHERE id = ?1
+            AND status = 'running'
         "#,
         params![id, status, progress, error_code, timestamp_ms],
     )?;
@@ -407,6 +459,21 @@ pub fn cancel_processing_chunks(
         params.push(status);
     }
 
+    let frame_state_sql = format!(
+        r#"
+        UPDATE visual_frame_processing_states
+        SET status = 'cancelled',
+            error_code = 'ai_processing_cancelled',
+            updated_at_ms = ?2
+        WHERE chunk_id IN (
+            SELECT id FROM processing_chunks
+            WHERE job_id = ?1
+                AND status IN ({placeholders})
+        )
+            AND status IN ('queued', 'running')
+        "#,
+    );
+    connection.execute(&frame_state_sql, params.as_slice())?;
     connection.execute(&sql, params.as_slice())
 }
 
@@ -469,9 +536,12 @@ pub fn delete_visual_output_for_chunks(
     let vlm_sql = format!("DELETE FROM vlm_observations WHERE chunk_id IN ({placeholders})");
     let similarity_sql =
         format!("DELETE FROM frame_similarity_entries WHERE chunk_id IN ({placeholders})");
+    let frame_state_sql =
+        format!("DELETE FROM visual_frame_processing_states WHERE chunk_id IN ({placeholders})");
     let deleted = connection.execute(&ocr_sql, params.as_slice())?
         + connection.execute(&vlm_sql, params.as_slice())?
-        + connection.execute(&similarity_sql, params.as_slice())?;
+        + connection.execute(&similarity_sql, params.as_slice())?
+        + connection.execute(&frame_state_sql, params.as_slice())?;
 
     Ok(deleted)
 }

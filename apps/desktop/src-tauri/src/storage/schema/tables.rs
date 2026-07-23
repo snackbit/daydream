@@ -1,4 +1,4 @@
-pub(in crate::storage) const CORE_TABLES: [&str; 19] = [
+pub(in crate::storage) const CORE_TABLES: [&str; 21] = [
     "app_settings",
     "ai_model_assets",
     "notifications",
@@ -10,6 +10,7 @@ pub(in crate::storage) const CORE_TABLES: [&str; 19] = [
     "recorder_portal_restore_tokens",
     "redactions",
     "capture_events",
+    "recording_protection_spans",
     "processing_jobs",
     "processing_chunks",
     "transcript_segments",
@@ -18,4 +19,5 @@ pub(in crate::storage) const CORE_TABLES: [&str; 19] = [
     "ocr_regions",
     "vlm_observations",
     "frame_similarity_entries",
+    "visual_frame_processing_states",
 ];

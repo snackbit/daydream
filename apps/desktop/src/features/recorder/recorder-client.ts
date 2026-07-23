@@ -4,6 +4,7 @@ import type {
   AudioSourceList,
   CaptureSourceList,
   PauseRecordingInput,
+  ProtectableWindowList,
   RecorderPerformanceStats,
   RecorderPreviewFrame,
   RecorderPreviewStatus,
@@ -16,6 +17,7 @@ import type {
   StartRecorderPreviewInput,
   StartRecordingInput,
   StopRecordingInput,
+  WindowProtectionStatus,
 } from '@daydream/shared';
 
 export const recorderStatusChangedEvent = 'recorder-status-changed';
@@ -31,6 +33,14 @@ export async function getRecorderPerformanceStats(): Promise<RecorderPerformance
 
 export async function getRecorderRecordingStats(): Promise<RecorderRecordingStats | null> {
   return invoke<RecorderRecordingStats | null>('getRecorderRecordingStats');
+}
+
+export async function listProtectableWindows(): Promise<ProtectableWindowList> {
+  return invoke<ProtectableWindowList>('listProtectableWindows');
+}
+
+export async function getWindowProtectionStatus(): Promise<WindowProtectionStatus> {
+  return invoke<WindowProtectionStatus>('getWindowProtectionStatus');
 }
 
 export async function getCaptureSources(): Promise<CaptureSourceList> {

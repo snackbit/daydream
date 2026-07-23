@@ -1,4 +1,5 @@
 import type {
+  AiActivitySourceSettings,
   AiActivityWindowSettings,
   AiOcrSettings,
   AiProcessingSettings,
@@ -92,6 +93,22 @@ export function updateAiMouseActivity(
       activity: {
         ...current.ai.activity,
         mouse: updater(current.ai.activity.mouse),
+      },
+    },
+  }));
+}
+
+export function updateAiWindowActivity(
+  onUpdateDraft: UpdateSettingsDraft,
+  updater: (windows: AiActivitySourceSettings) => AiActivitySourceSettings,
+) {
+  onUpdateDraft((current) => ({
+    ...current,
+    ai: {
+      ...current.ai,
+      activity: {
+        ...current.ai.activity,
+        windows: updater(current.ai.activity.windows),
       },
     },
   }));

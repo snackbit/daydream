@@ -8,7 +8,10 @@ use super::super::{
     errors::storage_error,
     manager::{now_ms, RecorderManager},
     platform,
-    types::{RecorderError, RecorderPerformanceStats, RecorderRecordingStats, RecorderStatus},
+    types::{
+        ProtectableWindowList, RecorderError, RecorderPerformanceStats, RecorderRecordingStats,
+        RecorderStatus, WindowProtectionStatus,
+    },
 };
 
 pub async fn get_recorder_status(
@@ -28,6 +31,14 @@ pub fn get_recorder_recording_stats(
     manager: State<'_, RecorderManager>,
 ) -> Result<Option<RecorderRecordingStats>, RecorderError> {
     collect_recorder_recording_stats(&storage, &manager, now_ms())
+}
+
+pub fn list_protectable_windows() -> ProtectableWindowList {
+    platform::list_protectable_windows()
+}
+
+pub fn get_window_protection_status() -> WindowProtectionStatus {
+    platform::window_protection_status()
 }
 
 pub(crate) fn collect_recorder_recording_stats(

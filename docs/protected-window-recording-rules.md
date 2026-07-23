@@ -2,6 +2,11 @@
 
 Date: 2026-06-13
 
+Status: Implemented for settings, X11 focused-window detection, Wayland
+focused-window detection through wlr metadata or KDE KWin scripting, automatic
+pause/redaction span handling, and redaction-aware AI planning. Windows, macOS,
+physical media cutting, and an audit view remain follow-ups.
+
 ## Summary
 
 Add recording settings that pause recording or create automatic redactions when
@@ -101,8 +106,11 @@ Linux first:
 
 - X11: use EWMH `_NET_ACTIVE_WINDOW`, `_NET_CLIENT_LIST`, `_NET_WM_NAME`,
   `_NET_WM_PID`, and class/process metadata where available.
-- Wayland: use `wlr-foreign-toplevel-management` when the compositor supports
-  it.
+- Wayland: use `wlr-foreign-toplevel-management` where the compositor advertises
+  it. On KDE/Plasma Wayland sessions without that protocol, load a KWin script
+  bridge that sends focused/open-window snapshots to Daydream over session
+  D-Bus. Return a typed provider-unavailable state when the session does not
+  expose either supported focused-window metadata path.
 - Return typed unavailable errors when the session does not expose active
   window metadata.
 
@@ -204,7 +212,8 @@ Frontend tests:
 Manual checks:
 
 - Linux X11 active-window detection.
-- Linux Wayland supported compositor path.
+- Linux Wayland supported compositor path through wlr metadata or KDE KWin
+  scripting.
 - Linux Wayland unsupported compositor state.
 - Recording does not auto-resume after a user manual pause.
 

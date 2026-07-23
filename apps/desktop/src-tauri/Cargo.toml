@@ -38,8 +38,9 @@ png = "0.18.1"
 futures-util = "0.3.31"
 hex = "0.4.3"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+regex = "1"
 sha1 = "0.10.6"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-log = "0.2"
@@ -60,3 +61,7 @@ gstreamer = "0.24"
 gstreamer-app = "0.24"
 gstreamer-pbutils = "0.24"
 evdev = "0.13.2"
+x11-dl = "2.21.0"
+wayland-client = "0.31.14"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+zbus = "5.16.0"

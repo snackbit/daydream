@@ -10,7 +10,8 @@ use super::{
     manager::{RecorderManager, RecordingSegmentRuntime},
     media_writer::MediaSegmentInput,
     types::{
-        AudioSourceList, CaptureSourceList, RecorderBackendHealth, RecorderError, RecorderScene,
+        AudioSourceList, CaptureSourceList, ProtectableWindowList, RecorderBackendHealth,
+        RecorderError, RecorderScene, WindowMetadataSnapshot, WindowProtectionStatus,
     },
 };
 
@@ -62,4 +63,20 @@ pub fn start_live_segment(
     prepared: PreparedLiveCapture,
 ) -> Result<RecordingSegmentRuntime, RecorderError> {
     imp::start_live_segment(input, prepared)
+}
+
+pub fn list_protectable_windows() -> ProtectableWindowList {
+    imp::list_protectable_windows()
+}
+
+pub fn window_protection_status() -> WindowProtectionStatus {
+    imp::window_protection_status()
+}
+
+pub(crate) fn current_focused_window() -> Option<super::types::ProtectableWindow> {
+    imp::current_focused_window()
+}
+
+pub(crate) fn window_metadata_snapshot() -> WindowMetadataSnapshot {
+    imp::window_metadata_snapshot()
 }

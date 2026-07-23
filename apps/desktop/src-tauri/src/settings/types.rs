@@ -87,7 +87,9 @@ pub struct AiProcessingSettings {
     pub frame_similarity_enabled: bool,
     pub max_full_frame_checkpoints_per_minute: u32,
     pub max_parallel_chunks_per_job: u32,
+    pub max_parallel_ocr_jobs: u32,
     pub max_parallel_jobs: u32,
+    pub max_parallel_vlm_jobs: u32,
     pub periodic_full_frame_interval_ms: u32,
     pub visual_delta_tile_size_px: u32,
 }
@@ -98,6 +100,7 @@ pub struct AiActivitySettings {
     pub frame_deltas: AiActivitySourceSettings,
     pub keyboard: AiActivityWindowSettings,
     pub mouse: AiActivityWindowSettings,
+    pub windows: AiActivitySourceSettings,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,6 +121,59 @@ pub struct AiActivityWindowSettings {
 pub struct RecordSettings {
     pub fps: f64,
     pub video_bitrate_kbps: u32,
+    pub window_protection: RecordWindowProtectionSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtectedWindowAction {
+    Pause,
+    Redact,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtectedWindowRuleAction {
+    Inherit,
+    Pause,
+    Redact,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProtectedWindowTitleMatcherKind {
+    Contains,
+    Regex,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectedWindowTitleMatcher {
+    pub case_sensitive: bool,
+    pub kind: ProtectedWindowTitleMatcherKind,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectedWindowRule {
+    pub action: ProtectedWindowRuleAction,
+    pub app_identity: Option<String>,
+    pub enabled: bool,
+    pub id: String,
+    pub label: String,
+    pub process_name: Option<String>,
+    pub title_matcher: Option<ProtectedWindowTitleMatcher>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordWindowProtectionSettings {
+    pub default_action: ProtectedWindowAction,
+    pub dwell_ms: u32,
+    pub enabled: bool,
+    pub merge_gap_ms: u32,
+    pub rules: Vec<ProtectedWindowRule>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +223,10 @@ pub struct AiProcessingLimits {
     pub max_parallel_chunks_per_job_max: u32,
     pub max_parallel_jobs_min: u32,
     pub max_parallel_jobs_max: u32,
+    pub max_parallel_ocr_jobs_min: u32,
+    pub max_parallel_ocr_jobs_max: u32,
+    pub max_parallel_vlm_jobs_min: u32,
+    pub max_parallel_vlm_jobs_max: u32,
     pub periodic_full_frame_interval_ms_min: u32,
     pub periodic_full_frame_interval_ms_max: u32,
     pub visual_delta_tile_size_px_min: u32,
@@ -187,6 +247,12 @@ pub struct AiActivityLimits {
 pub struct RecordSettingsLimits {
     pub fps_min: f64,
     pub fps_max: f64,
+    pub window_protection_dwell_ms_min: u32,
+    pub window_protection_dwell_ms_max: u32,
+    pub window_protection_merge_gap_ms_min: u32,
+    pub window_protection_merge_gap_ms_max: u32,
+    pub window_protection_rule_count_max: usize,
+    pub window_protection_text_max_chars: usize,
     pub video_bitrate_kbps_min: u32,
     pub video_bitrate_kbps_max: u32,
 }

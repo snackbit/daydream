@@ -299,3 +299,47 @@ pub struct CreateFrameSimilarityEntryInput {
     pub signature: String,
     pub source_frame_ref: String,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CreateVisualFrameProcessingStateInput {
+    pub chunk_id: String,
+    pub created_at_ms: i64,
+    pub error_code: Option<String>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub output_count: i64,
+    pub progress: f64,
+    pub recording_id: String,
+    pub region_height: i64,
+    pub region_width: i64,
+    pub region_x: i64,
+    pub region_y: i64,
+    pub segment_id: Option<String>,
+    pub source_frame_ref: String,
+    pub source_kind: String,
+    pub status: String,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VisualFrameProcessingStateRow {
+    pub chunk_id: String,
+    pub created_at_ms: i64,
+    pub error_code: Option<String>,
+    pub frame_timestamp_ms: i64,
+    pub id: String,
+    pub job_id: String,
+    pub output_count: i64,
+    pub progress: f64,
+    pub recording_id: String,
+    pub region_height: i64,
+    pub region_width: i64,
+    pub region_x: i64,
+    pub region_y: i64,
+    pub segment_id: Option<String>,
+    pub source_frame_ref: String,
+    pub source_kind: String,
+    pub status: String,
+    pub updated_at_ms: i64,
+}
