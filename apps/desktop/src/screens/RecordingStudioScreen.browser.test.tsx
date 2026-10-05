@@ -1215,9 +1215,13 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
       'A browser checkout page is visible with a payment form and order summary.',
     ),
   ).toBeTruthy();
+  expect(screen.queryByLabelText('Recognized text')).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
   expect((await screen.findByLabelText('Recognized text')).textContent).toBe(
     'Checkout Total',
   );
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.queryByText('Frame reference')).toBeNull();
 });
 
@@ -1430,7 +1434,11 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
   fireEvent.click(
     await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
   );
+  expect(screen.queryByText('private screen secret')).toBeNull();
+  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
   expect(await screen.findByText('private screen secret')).toBeTruthy();
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.queryByText('Frame reference')).toBeNull();
 
   const timeline = await screen.findByLabelText('Track timeline');
@@ -3819,9 +3827,15 @@ test.each([false, true])(
           documentId: `sample-${timestampMs}`,
         }),
       );
+      expect(screen.queryByLabelText('Recognized text')).toBeNull();
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Read OCR text' }),
+      );
       expect(
         (await screen.findByLabelText('Recognized text')).textContent,
       ).toBe('Identical literal meeting text');
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       expect(
         screen
           .getByRole('slider', { name: 'Playback position' })

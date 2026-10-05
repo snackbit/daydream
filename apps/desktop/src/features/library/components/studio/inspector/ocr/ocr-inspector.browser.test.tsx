@@ -149,27 +149,37 @@ test('a dense OCR frame is readable, searchable, copyable and source linked with
     />,
   );
   const text = await screen.findByRole('tabpanel', { name: 'Text' });
-  expect(
-    (await within(text).findByLabelText('Recognized text')).textContent,
-  ).toContain('Word0 Word1 Word2');
+  await within(text).findByRole('button', { name: 'Copy OCR text' });
+  expect(screen.queryByLabelText('Recognized text')).toBeNull();
   expect(screen.queryByText('Chunk ID')).toBeNull();
   expect(screen.queryByText('Frame reference')).toBeNull();
   expect(screen.getByText(/1 uncertain word/i)).toBeTruthy();
-  fireEvent.change(screen.getByRole('textbox', { name: 'Find OCR text' }), {
-    target: { value: 'Word499' },
-  });
-  expect(await screen.findByText(/1 match/i)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Copy OCR text' }));
   await waitFor(() => expect(ipc.copy).toHaveBeenCalledWith(document.text));
   fireEvent.click(screen.getByRole('button', { name: 'Jump to frame' }));
   expect(seek).toHaveBeenCalledWith(500);
-  fireEvent.click(screen.getByRole('button', { name: 'Expand OCR text' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Read OCR text' }));
   expect(
     await screen.findByRole('dialog', { name: 'OCR reading view' }),
   ).toBeTruthy();
   const readingText = screen.getByLabelText('OCR reading text');
   await waitFor(() => expect(window.document.activeElement).toBe(readingText));
   expect(screen.queryByRole('tooltip')).toBeNull();
+  expect(screen.getByLabelText('Recognized text').textContent).toContain(
+    'Word0 Word1 Word2',
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Find OCR text' }), {
+    target: { value: 'Word499' },
+  });
+  expect(await screen.findByText(/1 match/i)).toBeTruthy();
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Copy OCR text',
+    }),
+  );
+  await waitFor(() =>
+    expect(ipc.copy).toHaveBeenNthCalledWith(2, document.text),
+  );
   const dialog = screen.getByRole('dialog', { name: 'OCR reading view' });
   const lastWord = within(dialog).getByText('Word499', { selector: 'mark' });
   await expect.element(lastWord).not.toBeInViewport();
@@ -181,8 +191,9 @@ test('a dense OCR frame is readable, searchable, copyable and source linked with
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(window.document.activeElement).toBe(
-    screen.getByRole('button', { name: 'Expand OCR text' }),
+    screen.getByRole('button', { name: 'Read OCR text' }),
   );
+  expect(screen.queryByLabelText('Recognized text')).toBeNull();
   const uncertain = screen.getByRole('button', { name: 'Uncertain OCR words' });
   uncertain.focus();
   expect(await screen.findByRole('tooltip')).toBeTruthy();
@@ -293,7 +304,7 @@ test('Changes preserves a changed digit, groups supporting samples and selects s
       onSeek={seek}
     />,
   );
-  await screen.findByLabelText('Recognized text');
+  await screen.findByRole('button', { name: 'Read OCR text' });
   expect(
     ipc.invoke.mock.calls.filter(([command]) => command === 'getOcrHistory'),
   ).toHaveLength(0);
@@ -305,11 +316,14 @@ test('Changes preserves a changed digit, groups supporting samples and selects s
   fireEvent.click(within(changes).getByRole('button', { name: /Meeting 17/ }));
   expect(seek).toHaveBeenCalledWith(100);
   openTab('Text');
+  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
   await waitFor(() =>
     expect(screen.getByLabelText('Recognized text').textContent).toBe(
       previous.text,
     ),
   );
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.getByText(/Reconstructed from legacy OCR/)).toBeTruthy();
   openTab('Changes');
   fireEvent.click(
@@ -349,9 +363,12 @@ test('literal Vision OCR keeps unknown confidence honest and exposes raw details
       onSeek={vi.fn()}
     />,
   );
+  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
   expect((await screen.findByLabelText('Recognized text')).textContent).toBe(
     vision.text,
   );
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.getByText('Confidence unknown')).toBeTruthy();
   expect(screen.queryByText(/OCR processing failed/)).toBeNull();
   expect(screen.queryByText('Provider')).toBeNull();
@@ -508,16 +525,14 @@ test('a privacy change closes copied reading content and clears selected history
       onSeek={vi.fn()}
     />,
   );
-  await screen.findByLabelText('Recognized text');
+  await screen.findByRole('button', { name: 'Read OCR text' });
   openTab('Changes');
   fireEvent.click(
     await screen.findByRole('button', { name: /Private meeting 17/ }),
   );
   expect(await screen.findByText(/Revision at/)).toBeTruthy();
   openTab('Text');
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Expand OCR text' }),
-  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
   expect(await screen.findByRole('dialog')).toBeTruthy();
   ipc.invoke.mockRejectedValue(new Error('Private results unavailable'));
   rerender(

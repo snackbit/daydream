@@ -8,9 +8,11 @@ is ordinary feature work, not a new milestone. The final UI verification record 
 
 ## User workflow
 
-Selecting a recognized visual frame opens readable full-frame text in the Inspector.
-The OCR surface separates Text, Changes and Details. Text follows document reading
-order; Changes shows source-linked temporal revisions; Details keeps provenance,
+Selecting a recognized visual frame opens a compact OCR summary in the Inspector.
+Full text is hidden until the user chooses Read OCR text; the reader provides
+search, copying and bounded scrolling. The OCR surface separates Text, Changes
+and Details. Text follows document reading order; Changes shows source-linked
+temporal revisions; Details keeps provenance,
 engine and available confidence/geometry. A raw word dump is not the primary view.
 Retain uncertain words and label uncertainty instead of silently deleting them.
 

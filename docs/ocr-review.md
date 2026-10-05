@@ -134,3 +134,18 @@ The user then clarified that restoring tiny point markers is insufficient: the o
   These overlapping test sets are not summed as unique coverage.
 - Hosted-model accuracy, real WebKit playback and OS capture remain untested manual
   boundaries. The existing bundle-size and GLib advisory limitations remain.
+
+## On-demand reading refinement
+
+The Inspector now shows a compact word/uncertainty summary and Read OCR text/Copy
+actions. Selecting a frame does not render its recognized text. Full text and Find
+are available in the explicit reading dialog; Copy works from either surface, and
+closing the dialog removes the text from the Inspector again.
+
+The default-hidden assertion was observed failing before the change. The updated
+OCR/Studio Browser workflows pass 80 tests, including search, exact full-text copy,
+source navigation, revision selection and privacy clearing. The final root check
+passes 348 tests, lint and all typechecks; production build and diff checks pass.
+Public-app light/dark screenshots at 1440/620 show the compact default with zero
+runtime errors: `/tmp/daydream-ocr-on-demand-light` and
+`/tmp/daydream-ocr-on-demand-dark`.

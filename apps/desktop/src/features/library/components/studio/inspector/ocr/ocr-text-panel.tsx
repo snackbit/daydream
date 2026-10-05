@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { OcrDocument } from '@daydream/shared';
 import { Copy, Expand, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,10 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
   );
   const matches = ocrMatchCount(document.text, query);
   const uncertain = uncertainOcrWordCount(document);
+  const wordCount = useMemo(
+    () => document.text.trim().split(/\s+/u).filter(Boolean).length,
+    [document.text],
+  );
   const copy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(document.text);
@@ -58,35 +62,11 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
           </p>
         ) : null}
         <div className="flex gap-1">
-          <div className="relative min-w-0 flex-1">
-            <Search
-              aria-hidden
-              className="text-muted-foreground absolute top-1/2 left-2 size-3 -translate-y-1/2"
-            />
-            <Input
-              aria-label="Find OCR text"
-              className="h-7 pl-6"
-              onChange={changeQuery}
-              placeholder="Find text…"
-              value={query}
-            />
-          </div>
-          <Button
-            aria-label="Copy OCR text"
-            onClick={copy}
-            size="icon-sm"
-            variant="outline"
-          >
-            <Copy aria-hidden className="size-3" />
-          </Button>
           <Dialog>
             <DialogTrigger asChild>
-              <Button
-                aria-label="Expand OCR text"
-                size="icon-sm"
-                variant="outline"
-              >
+              <Button className="min-w-0 flex-1" size="sm" variant="outline">
                 <Expand aria-hidden className="size-3" />
+                Read OCR text
               </Button>
             </DialogTrigger>
             <DialogContent
@@ -101,6 +81,45 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
                     : 'Literal recognized text from the selected source frame.'}
                 </DialogDescription>
               </DialogHeader>
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search
+                    aria-hidden
+                    className="text-muted-foreground absolute top-1/2 left-2 size-3 -translate-y-1/2"
+                  />
+                  <Input
+                    aria-label="Find OCR text"
+                    className="h-7 pl-6"
+                    onChange={changeQuery}
+                    placeholder="Find text…"
+                    value={query}
+                  />
+                </div>
+                <Button
+                  aria-label="Copy OCR text"
+                  onClick={copy}
+                  size="icon-sm"
+                  variant="outline"
+                >
+                  <Copy aria-hidden className="size-3" />
+                </Button>
+                {query.trim() ? (
+                  <span
+                    className="text-muted-foreground shrink-0 text-[10px]"
+                    role="status"
+                  >
+                    {matches} {matches === 1 ? 'match' : 'matches'}
+                  </span>
+                ) : null}
+              </div>
+              {copyStatus !== 'idle' ? (
+                <p
+                  className="text-muted-foreground shrink-0 text-[10px]"
+                  role="status"
+                >
+                  {copyStatus === 'copied' ? 'Text copied' : 'Copy failed'}
+                </p>
+              ) : null}
               <ScrollArea
                 className="min-h-0 flex-1 overflow-hidden"
                 data-testid="ocr-reading-scroll"
@@ -115,16 +134,22 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
               </ScrollArea>
             </DialogContent>
           </Dialog>
+          <Button
+            aria-label="Copy OCR text"
+            onClick={copy}
+            size="icon-sm"
+            variant="outline"
+          >
+            <Copy aria-hidden className="size-3" />
+          </Button>
         </div>
         <div
           className="text-muted-foreground flex flex-wrap gap-x-3 text-[10px]"
           aria-live="polite"
         >
-          {query.trim() ? (
-            <span>
-              {matches} {matches === 1 ? 'match' : 'matches'}
-            </span>
-          ) : null}
+          <span>
+            {wordCount.toLocaleString()} {wordCount === 1 ? 'word' : 'words'}
+          </span>
           {uncertain > 0 ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -140,7 +165,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
               </TooltipTrigger>
               <TooltipContent>
                 Tesseract scored these words below 0.5. Their original text
-                remains visible and copyable.
+                remains available in the reading view and when copied.
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -154,7 +179,6 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
             <span>Copy failed</span>
           ) : null}
         </div>
-        <OcrReadableText document={document} query={query} />
       </div>
     </TooltipProvider>
   );
