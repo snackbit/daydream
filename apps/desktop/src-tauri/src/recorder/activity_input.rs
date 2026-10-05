@@ -262,12 +262,10 @@ fn classify_evdev_event(
     match summary {
         evdev::EventSummary::Key(_event, code, value) if *value != 0 => {
             let label = format!("{code:?}");
-            if mouse_enabled && label.starts_with("BTN_") {
-                Some("mouse-activity")
-            } else if keyboard_enabled {
-                Some("keyboard-activity")
+            if label.starts_with("BTN_") {
+                mouse_enabled.then_some("mouse-activity")
             } else {
-                None
+                keyboard_enabled.then_some("keyboard-activity")
             }
         }
         evdev::EventSummary::RelativeAxis(_, _, value)
@@ -513,9 +511,58 @@ mod tests {
         ProtectableWindow, ProtectableWindowProviderStatus, WindowMetadataSnapshot,
     };
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn placeholder_keeps_module_testable() {
-        assert_eq!(super::ACTIVITY_BUCKET_MS, 500);
+    fn evdev_capture_toggles_exclude_disabled_mouse_buttons_without_reclassification() {
+        for value in [1, 2] {
+            let event: evdev::InputEvent =
+                evdev::KeyEvent::new(evdev::KeyCode::BTN_LEFT, value).into();
+            let summary = event.destructure();
+            assert_eq!(
+                super::classify_evdev_event(&summary, true, false),
+                None,
+                "a disabled mouse event cannot become keyboard activity"
+            );
+            assert_eq!(super::classify_evdev_event(&summary, false, false), None);
+            assert_eq!(
+                super::classify_evdev_event(&summary, true, true),
+                Some("mouse-activity")
+            );
+            assert_eq!(
+                super::classify_evdev_event(&summary, false, true),
+                Some("mouse-activity")
+            );
+        }
+        let release: evdev::InputEvent = evdev::KeyEvent::new(evdev::KeyCode::BTN_LEFT, 0).into();
+        assert_eq!(
+            super::classify_evdev_event(&release.destructure(), true, true),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn evdev_capture_toggles_keep_keyboard_events_separate_from_mouse_activity() {
+        for value in [1, 2] {
+            let event: evdev::InputEvent =
+                evdev::KeyEvent::new(evdev::KeyCode::KEY_A, value).into();
+            let summary = event.destructure();
+            assert_eq!(super::classify_evdev_event(&summary, false, true), None);
+            assert_eq!(super::classify_evdev_event(&summary, false, false), None);
+            assert_eq!(
+                super::classify_evdev_event(&summary, true, false),
+                Some("keyboard-activity")
+            );
+            assert_eq!(
+                super::classify_evdev_event(&summary, true, true),
+                Some("keyboard-activity")
+            );
+        }
+        let release: evdev::InputEvent = evdev::KeyEvent::new(evdev::KeyCode::KEY_A, 0).into();
+        assert_eq!(
+            super::classify_evdev_event(&release.destructure(), true, true),
+            None
+        );
     }
 
     #[test]

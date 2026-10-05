@@ -116,3 +116,38 @@ artifact smoke test, DMA-BUF-only portal session or audio/video alignment check.
 The provider-failure behavior is deliberately terminal for the current recording;
 the user can repair permissions/provider availability and start a new recording.
 V1 redactions continue to preserve original media bytes as documented.
+
+## Additional pre-existing issue: input toggle classification
+
+This follow-up was found after the original fourteen-issue cleanup and is
+separate from the five immutable native baseline findings above. It was present
+in the committed cleanup baseline `b5ca37d` at
+`recorder/activity_input.rs:265-268`.
+
+Priority: Medium. Category: Security. With keyboard activity enabled and mouse
+activity disabled, `BTN_*` presses fell through the disabled mouse branch and
+became keyboard activity. Mouse-button timing was therefore recorded despite
+the mouse capture toggle being off.
+
+Fix: classify button events first and consult only the mouse toggle for them.
+Nonbutton keys consult only the keyboard toggle. This is a small correction at
+the existing classifier boundary; it adds no capture state or persistence flow.
+
+Replaced the constant-only placeholder test with two pure regressions using real
+evdev `KeyEvent`/`InputEvent` metadata. Coverage includes all keyboard/mouse toggle
+combinations, button and keyboard presses, repeats, and excluded releases.
+
+- Red: `CARGO_HOME=/tmp/daydream-cargo-home CARGO_BUILD_JOBS=2 cargo test --locked
+  --manifest-path apps/desktop/src-tauri/Cargo.toml evdev_capture_toggles --
+  --test-threads=2` failed for the intended disabled-mouse case:
+  `Some("keyboard-activity")` instead of `None`; the keyboard case passed.
+  Log `/tmp/daydream-native-input-red.log`.
+- Green: the same focused command passed both tests without warnings.
+  Log `/tmp/daydream-native-input-green.log`.
+- Targeted `rustfmt --edition 2021 --config skip_children=true --check
+  apps/desktop/src-tauri/src/recorder/activity_input.rs`: passed.
+- `CARGO_HOME=/tmp/daydream-cargo-home CARGO_BUILD_JOBS=2 cargo clippy --locked
+  --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings`:
+  passed without warnings; log `/tmp/daydream-native-input-clippy.log`.
+  No new full-suite run was requested
+  for this bounded classifier follow-up. No real input devices were opened.
