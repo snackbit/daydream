@@ -27,15 +27,15 @@ export function StorageSettingsTab({
   onUpdateDraft,
 }: StorageSettingsTabProps) {
   return (
-    <Card>
-      <CardHeader>
+    <Card size="sm">
+      <CardHeader className="px-3">
         <CardTitle>Storage/Library</CardTitle>
         <CardDescription>
           Local retention and storage cap for the recording library.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <FieldGroup>
+      <CardContent className="px-3">
+        <FieldGroup className="gap-x-6 md:grid md:grid-cols-2">
           <Field>
             <FieldLabel htmlFor="settings-retention-days">
               Recording retention

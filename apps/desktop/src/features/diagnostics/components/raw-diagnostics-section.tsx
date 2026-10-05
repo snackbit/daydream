@@ -11,11 +11,13 @@ export function RawDiagnosticsSection({
   status,
 }: RawDiagnosticsSectionProps) {
   return (
-    <div className="bg-card border p-4">
-      <h2 className="text-sm font-medium">Raw diagnostics</h2>
-      <pre className="bg-muted mt-3 max-h-96 overflow-auto p-3 text-xs leading-5">
+    <details className="border-y py-2">
+      <summary className="cursor-pointer text-xs font-medium">
+        Raw diagnostics JSON
+      </summary>
+      <pre className="bg-muted mt-2 max-h-72 overflow-auto p-2 text-[10px] leading-4">
         {JSON.stringify(diagnostics ?? { status }, null, 2)}
       </pre>
-    </div>
+    </details>
   );
 }

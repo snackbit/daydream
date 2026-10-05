@@ -243,6 +243,25 @@ test('NotificationCenter shows older seen notification count when there is no ne
   ).toBeTruthy();
 });
 
+test('NotificationCenter exposes a visible retry after local history load fails', async () => {
+  client.getNotifications
+    .mockRejectedValueOnce(new Error('Local notification history unavailable.'))
+    .mockResolvedValueOnce({ notifications: [notification] });
+
+  render(<NotificationCenter />);
+
+  const trigger = await screen.findByRole('button', { name: 'Notifications' });
+  fireEvent.click(trigger);
+
+  expect(
+    await screen.findByText('Local notification history unavailable.'),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+  expect(await screen.findByText('Download unavailable')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 test('NotificationCenter keeps ongoing downloads unread and not dismissable', async () => {
   client.getNotifications.mockResolvedValueOnce({
     notifications: [activeNotification],

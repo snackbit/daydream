@@ -8,26 +8,31 @@ import { Slider } from '@/components/ui/slider';
 
 export function RemoteProviderFields({
   baseUrl,
+  dataSentLabel,
   hasSavedKey,
   keyDraft,
+  localAlternativeDescription,
   onBaseUrlChange,
   onKeyChange,
   prefix,
 }: {
   baseUrl: string;
+  dataSentLabel: string;
   hasSavedKey: boolean;
   keyDraft: string;
+  localAlternativeDescription: string;
   onBaseUrlChange: (value: string) => void;
   onKeyChange: (value: string) => void;
   prefix: string;
 }) {
   return (
     <>
-      <Alert variant="destructive">
-        <AlertTitle>Remote provider</AlertTitle>
+      <Alert>
+        <AlertTitle>Remote provider selected</AlertTitle>
         <AlertDescription>
-          Remote processing can send private recordings and derived text outside
-          this device in later gates. API keys are encrypted locally.
+          {dataSentLabel} will be sent to the configured provider when you
+          process a recording. {localAlternativeDescription} API keys are
+          encrypted locally.
         </AlertDescription>
       </Alert>
       <Field>

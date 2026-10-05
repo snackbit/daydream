@@ -1,10 +1,7 @@
 import type { RecorderSceneSource } from '@daydream/shared';
-import { MousePointer2, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Monitor, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { formatPixels } from '@/features/recorder/scene-layout';
-import { cn } from '@/lib/utils';
 
 export interface SceneSourceListProps {
   deleteDisabled?: boolean;
@@ -23,72 +20,65 @@ export function SceneSourceList({
 }: SceneSourceListProps) {
   if (sources.length === 0) {
     return (
-      <Card size="sm">
-        <CardContent className="text-muted-foreground text-xs">
-          No monitor sources selected.
-        </CardContent>
-      </Card>
+      <p className="text-muted-foreground border-y py-2 text-xs">
+        No monitor sources selected.
+      </p>
     );
   }
 
   return (
-    <div className="grid gap-2">
+    <div className="divide-y border-y">
       {sources.map((source) => {
         const isSelected = selectedSceneSourceId === source.id;
+        const handleSelect = () => onSelect(source.id);
+        const handleDelete = () => onDelete(source.id);
 
         return (
-          <Card
-            className={cn(
-              'transition-colors',
-              isSelected
-                ? 'border-primary bg-primary/5'
-                : 'hover:border-primary/40 hover:bg-muted',
-            )}
+          <div
+            className="group/source hover:bg-muted/60 data-[selected=true]:border-l-primary data-[selected=true]:bg-accent/30 flex items-center gap-2 border-l-2 border-l-transparent px-2 py-1.5 transition-colors"
+            data-selected={isSelected}
             key={source.id}
-            size="sm"
           >
-            <CardContent className="flex items-center gap-2">
-              <button
-                aria-label={`Focus ${source.displayName}`}
-                aria-pressed={isSelected}
-                className="min-w-0 flex-1 text-left"
-                onClick={() => onSelect(source.id)}
-                type="button"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium">
-                      {source.displayName}
-                    </div>
-                    <div className="text-muted-foreground mt-1 font-mono text-xs">
-                      {formatPixels(source.rect.width)} x{' '}
-                      {formatPixels(source.rect.height)}
-                    </div>
-                  </div>
-                  {isSelected ? (
-                    <Badge className="gap-1" variant="default">
-                      <MousePointer2 className="size-2.5" />
-                      Focused
-                    </Badge>
-                  ) : (
-                    <span className="text-muted-foreground shrink-0 text-[0.625rem]">
-                      Click to focus
-                    </span>
-                  )}
-                </div>
-              </button>
-              <Button
-                aria-label={`Delete ${source.displayName}`}
-                disabled={deleteDisabled}
-                onClick={() => onDelete(source.id)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <Trash2 className="size-3" />
-              </Button>
-            </CardContent>
-          </Card>
+            <Button
+              aria-label={`Focus ${source.displayName}`}
+              aria-pressed={isSelected}
+              className="h-auto min-w-0 flex-1 justify-start gap-2 rounded-sm px-0 py-0 text-left font-normal whitespace-normal hover:bg-transparent"
+              onClick={handleSelect}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Monitor
+                aria-hidden="true"
+                className="text-muted-foreground size-3.5 shrink-0"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium">
+                  {source.displayName}
+                </span>
+                <span className="text-muted-foreground block font-mono text-[10px] tabular-nums">
+                  {formatPixels(source.rect.width)} x{' '}
+                  {formatPixels(source.rect.height)}
+                </span>
+              </span>
+              <span className="text-muted-foreground hidden shrink-0 text-[10px] group-data-[selected=true]/source:block">
+                Focused
+              </span>
+              <span className="text-muted-foreground hidden shrink-0 text-[10px] group-data-[selected=false]/source:block">
+                Click to focus
+              </span>
+            </Button>
+            <Button
+              aria-label={`Delete ${source.displayName}`}
+              disabled={deleteDisabled}
+              onClick={handleDelete}
+              size="icon-xs"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </div>
         );
       })}
     </div>

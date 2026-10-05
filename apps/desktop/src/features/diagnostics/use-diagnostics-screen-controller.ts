@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { DaydreamDiagnostics } from '@daydream/shared';
-import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 import { getDebugLogBundle } from './diagnostics-client';
 import { useDiagnosticsStore } from './diagnostics-store';
 
@@ -28,7 +27,6 @@ export interface DiagnosticsScreenController {
 export function useDiagnosticsScreenController(
   debugEnabled: boolean,
 ): DiagnosticsScreenController {
-  const runAsyncAction = useAsyncErrorBoundary();
   const diagnostics = useDiagnosticsStore((state) => state.diagnostics);
   const error = useDiagnosticsStore((state) => state.error);
   const load = useDiagnosticsStore((state) => state.load);
@@ -38,9 +36,9 @@ export function useDiagnosticsScreenController(
 
   useEffect(() => {
     if (debugEnabled && status === 'idle') {
-      runAsyncAction(load);
+      void load().catch(() => undefined);
     }
-  }, [debugEnabled, load, runAsyncAction, status]);
+  }, [debugEnabled, load, status]);
 
   const copyRawDiagnosticsJson = useCallback(async () => {
     if (!diagnostics) {
@@ -66,8 +64,8 @@ export function useDiagnosticsScreenController(
   }, []);
 
   const refresh = useCallback(() => {
-    runAsyncAction(load);
-  }, [load, runAsyncAction]);
+    void load().catch(() => undefined);
+  }, [load]);
 
   return {
     actions: {

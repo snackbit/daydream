@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
@@ -22,6 +23,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
 import { isStudioActivityLaneKind } from './studio-activity-lanes';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
 import {
@@ -54,6 +56,9 @@ export function TrackTimeline({
   detail,
   mutedTrackIds,
   onCreateRedactions,
+  onClearInspectorSelection,
+  onInspectActivity,
+  onInspectTranscript,
   onUnredactRanges,
   onToggleTrackMuted,
   playback,
@@ -68,6 +73,9 @@ export function TrackTimeline({
   onCreateRedactions: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
+  onClearInspectorSelection: () => void;
+  onInspectActivity: (selection: StudioInspectorSelection) => void;
+  onInspectTranscript: (selection: StudioInspectorSelection) => void;
   onUnredactRanges: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
@@ -139,8 +147,8 @@ export function TrackTimeline({
     }),
   );
   const {
-    handleTimelinePointerDown,
-    handleTimelinePointerEnd,
+    handleTimelinePointerDown: handleSelectionPointerDown,
+    handleTimelinePointerEnd: handleSelectionPointerEnd,
     handleTimelinePointerMove,
     timelineMsFromClientX,
   } = useTrackTimelineSelection({
@@ -182,7 +190,37 @@ export function TrackTimeline({
     if (!event.over) {
       return;
     }
+    onClearInspectorSelection();
     moveLane(String(event.active.id), String(event.over.id));
+  }
+
+  function handleTimelinePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (
+      !(event.target instanceof Element) ||
+      !event.target.closest('[data-library-action]')
+    ) {
+      onClearInspectorSelection();
+    }
+    handleSelectionPointerDown(event);
+  }
+
+  function handleTimelinePointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    handleSelectionPointerEnd(event);
+  }
+
+  function handleSelectClip(clipId: string, additive: boolean) {
+    onClearInspectorSelection();
+    selectClip(clipId, additive);
+  }
+
+  function handleSelectLane(trackId: string, additive: boolean) {
+    onClearInspectorSelection();
+    selectLane(trackId, additive);
+  }
+
+  function handleSelectRedaction(redactionId: string, additive: boolean) {
+    onClearInspectorSelection();
+    selectRedaction(redactionId, additive);
   }
 
   async function redactSelection() {
@@ -205,13 +243,21 @@ export function TrackTimeline({
     frame: StudioVisualFrame,
     additive: boolean,
   ) {
+    onClearInspectorSelection();
     selectVisualFrame(frame.id, additive);
     actions.seekTimeline(frame.frameTimestampMs, { resume: false });
     setFollowPlayhead(true);
   }
 
-  function selectActivityEventForInspection(event: { offsetMs: number }) {
-    actions.seekTimeline(event.offsetMs, { resume: false });
+  function handleInspectActivity(selection: StudioInspectorSelection) {
+    onInspectActivity(selection);
+    actions.seekTimeline(selection.timelineOffsetMs, { resume: false });
+    setFollowPlayhead(true);
+  }
+
+  function selectTranscriptForInspection(selection: StudioInspectorSelection) {
+    onInspectTranscript(selection);
+    actions.seekTimeline(selection.timelineOffsetMs, { resume: false });
     setFollowPlayhead(true);
   }
 
@@ -305,9 +351,9 @@ export function TrackTimeline({
                         viewModel.rangesByLaneId.get(lane.trackId) ?? []
                       }
                       totalDurationMs={viewModel.totalDurationMs}
-                      onSelectActivityEvent={selectActivityEventForInspection}
-                      onSelectLane={selectLane}
-                      onSelectRedaction={selectRedaction}
+                      onInspectActivity={handleInspectActivity}
+                      onSelectLane={handleSelectLane}
+                      onSelectRedaction={handleSelectRedaction}
                     />
                   );
                 }
@@ -316,6 +362,12 @@ export function TrackTimeline({
                 );
                 if (!track) {
                   return null;
+                }
+
+                function handleSelectTranscript(
+                  transcript: StudioInspectorSelection,
+                ) {
+                  selectTranscriptForInspection(transcript);
                 }
 
                 return (
@@ -338,9 +390,10 @@ export function TrackTimeline({
                     track={track}
                     waveformTiles={waveformTiles}
                     visualFrames={visualFrames}
-                    onSelectClip={selectClip}
-                    onSelectLane={selectLane}
-                    onSelectRedaction={selectRedaction}
+                    onInspectTranscript={handleSelectTranscript}
+                    onSelectClip={handleSelectClip}
+                    onSelectLane={handleSelectLane}
+                    onSelectRedaction={handleSelectRedaction}
                     onSelectVisualFrame={selectVisualFrameForInspection}
                     onToggleTrackMuted={onToggleTrackMuted}
                   />

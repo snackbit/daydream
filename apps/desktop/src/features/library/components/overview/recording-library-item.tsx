@@ -1,20 +1,10 @@
-import type { MouseEvent } from 'react';
-import { Link } from '@tanstack/react-router';
+import { useCallback, type MouseEvent } from 'react';
 import type {
   LibraryRecordingSummary,
   LibraryRecordingViewMode,
 } from '@daydream/shared';
-import { Lock, Pencil, Play, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
+import { Clock3, FileWarning } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -32,139 +22,198 @@ import { cn } from '@/lib/utils';
 import {
   isRecordingDeletable,
   isRecordingRenameable,
-  recordingTitle,
+  isRecordingSelectable,
 } from './library-overview-utils';
+import { RecordingLibraryItemActions } from './recording-library-item-actions';
+import type { LibraryOverviewActions } from './use-library-overview-controller';
 
 interface RecordingLibraryItemProps {
+  actions: Pick<
+    LibraryOverviewActions,
+    | 'openRecording'
+    | 'requestRecordingDelete'
+    | 'requestRecordingRename'
+    | 'selectRecording'
+    | 'setRecordingSelected'
+  >;
   isSelected: boolean;
-  onDelete: () => void;
-  onOpen: () => void;
-  onRename: () => void;
-  onSelect: (event: MouseEvent<HTMLElement>) => void;
   recording: LibraryRecordingSummary;
   thumbnailPath: string | null;
   viewMode: LibraryRecordingViewMode;
 }
 
 export function RecordingLibraryItem({
+  actions,
   isSelected,
-  onDelete,
-  onOpen,
-  onRename,
-  onSelect,
   recording,
   thumbnailPath,
   viewMode,
 }: RecordingLibraryItemProps) {
-  const playable = recording.availability === 'available';
-  const locked = recording.availability === 'locked';
-  const displayTitle = recordingTitle(recording);
+  const {
+    openRecording,
+    requestRecordingDelete,
+    requestRecordingRename,
+    selectRecording,
+    setRecordingSelected,
+  } = actions;
+  const displayTitle = recording.title ?? 'Recording';
   const timestampTitle = formatTimestamp(recording.startedAtMs);
+  const actionTitle = `${displayTitle}, ${timestampTitle}`;
+  const playable = recording.availability === 'available';
+
+  const handleSelect = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      if (!isLibraryAction(event.target)) {
+        selectRecording(recording, event);
+      }
+    },
+    [recording, selectRecording],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      if (!isSelected && isRecordingSelectable(recording)) {
+        selectRecording(recording, event);
+      }
+    },
+    [isSelected, recording, selectRecording],
+  );
+
+  const handleOpenFromDoubleClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      if (!isLibraryAction(event.target)) {
+        openRecording(recording);
+      }
+    },
+    [openRecording, recording],
+  );
+
+  const handleDelete = useCallback(() => {
+    requestRecordingDelete(recording);
+  }, [recording, requestRecordingDelete]);
+
+  const handleOpen = useCallback(() => {
+    openRecording(recording);
+  }, [openRecording, recording]);
+
+  const handleRename = useCallback(() => {
+    requestRecordingRename(recording);
+  }, [recording, requestRecordingRename]);
+
+  const handleSelectionChange = useCallback(
+    (checked: boolean | 'indeterminate') => {
+      setRecordingSelected(recording, checked === true);
+    },
+    [recording, setRecordingSelected],
+  );
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <Card
-          aria-disabled={locked}
-          aria-selected={isSelected}
+        <article
           className={cn(
-            'cursor-default',
-            viewMode === 'list'
-              ? 'grid grid-cols-[12rem_1fr] gap-0 py-0'
-              : 'py-0',
-            locked && 'opacity-75',
-            isSelected && 'ring-primary ring-2',
+            'hover:bg-muted/35 data-[selected=true]:bg-muted/60 min-w-0 border-b transition-colors',
+            viewMode === 'grid'
+              ? 'flex flex-col'
+              : 'flex items-center gap-3 px-2 py-2',
           )}
-          onClick={(event) => {
-            if (event.target instanceof Element) {
-              if (event.target.closest('[data-library-action]')) {
-                return;
-              }
-            }
-            onSelect(event);
-          }}
-          onContextMenu={(event) => {
-            if (!isSelected && !locked) {
-              onSelect(event);
-            }
-          }}
-          onDoubleClick={(event) => {
-            if (event.target instanceof Element) {
-              if (event.target.closest('[data-library-action]')) {
-                return;
-              }
-            }
-            onOpen();
-          }}
+          data-selected={isSelected}
+          onClick={handleSelect}
+          onContextMenu={handleContextMenu}
+          onDoubleClick={handleOpenFromDoubleClick}
         >
           <RecordingThumbnail
+            displayTitle={displayTitle}
             recording={recording}
             thumbnailPath={thumbnailPath}
+            viewMode={viewMode}
           />
-          <div className="flex min-w-0 flex-col">
-            <CardHeader className="min-w-0 pt-4">
-              <CardTitle className="truncate">{displayTitle}</CardTitle>
-              <CardDescription>
-                {recording.title ? `${timestampTitle} · ` : null}
-                {formatDuration(recording.durationMs)} ·{' '}
-                {recording.segmentCount} segment
-                {recording.segmentCount === 1 ? '' : 's'} ·{' '}
-                {formatFileSize(recording.sizeBytes)}
-              </CardDescription>
-              <CardAction>
-                <Badge variant={playable ? 'secondary' : 'outline'}>
-                  {locked ? <Lock data-icon="inline-start" /> : null}
-                  {availabilityLabel(recording.availability)}
-                </Badge>
-              </CardAction>
-            </CardHeader>
-            <CardContent className="flex flex-1 items-end justify-between gap-3 pb-4">
-              <div className="text-muted-foreground min-w-0 text-xs">
-                {recording.missingReasons[0] ?? recording.status}
-              </div>
-              {playable ? (
-                <Button asChild className="gap-2" size="sm">
-                  <Link
-                    data-library-action
-                    params={{ recordingId: recording.id }}
-                    to="/library/$recordingId"
-                  >
-                    <Play className="size-3.5" />
-                    Play
-                  </Link>
-                </Button>
-              ) : (
-                <Button
-                  className="gap-2"
-                  data-library-action
-                  disabled
-                  size="sm"
-                  variant="outline"
+          <div
+            className={cn(
+              'min-w-0 gap-x-2.5 gap-y-1.5',
+              viewMode === 'grid'
+                ? 'grid grid-cols-[16px_minmax(0,1fr)] px-2 py-2.5 sm:px-3'
+                : 'flex flex-1 items-center gap-3 px-1 py-0.5',
+            )}
+          >
+            <Checkbox
+              aria-label={`Select ${actionTitle}`}
+              checked={isSelected}
+              className="mt-0.5"
+              data-library-action
+              disabled={!isRecordingSelectable(recording)}
+              onCheckedChange={handleSelectionChange}
+            />
+
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <span
+                  className={cn(
+                    'min-w-0 text-xs leading-4 font-medium',
+                    viewMode === 'grid' ? 'line-clamp-2' : 'truncate',
+                  )}
                 >
-                  <Play className="size-3.5" />
-                  Play
-                </Button>
-              )}
-            </CardContent>
+                  {displayTitle}
+                </span>
+                <RecordingAvailability recording={recording} />
+              </div>
+              <div className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap gap-x-1.5 text-[10px] leading-4 tabular-nums">
+                <span>{timestampTitle}</span>
+                <span aria-hidden="true">·</span>
+                <span>{formatDuration(recording.durationMs)}</span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {recording.segmentCount}{' '}
+                  {recording.segmentCount === 1 ? 'segment' : 'segments'}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>{formatFileSize(recording.sizeBytes)}</span>
+              </div>
+              {recording.missingReasons[0] ? (
+                <p className="text-muted-foreground mt-0.5 truncate text-[11px]">
+                  {recording.missingReasons[0]}
+                </p>
+              ) : null}
+            </div>
+
+            <div
+              className={
+                viewMode === 'grid'
+                  ? 'col-start-2 flex justify-end border-t pt-1'
+                  : ''
+              }
+            >
+              <RecordingLibraryItemActions
+                deletable={isRecordingDeletable(recording)}
+                onDelete={handleDelete}
+                onOpen={handleOpen}
+                onRename={handleRename}
+                playable={playable}
+                playUnavailableReason={
+                  recording.availability === 'locked'
+                    ? 'Recording is still in progress.'
+                    : (recording.missingReasons[0] ??
+                      availabilityLabel(recording.availability))
+                }
+                recordingTitle={actionTitle}
+                renameable={isRecordingRenameable(recording)}
+              />
+            </div>
           </div>
-        </Card>
+        </article>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem
-          className="gap-2"
           disabled={!isRecordingRenameable(recording)}
-          onSelect={onRename}
+          onSelect={handleRename}
         >
-          <Pencil className="size-3.5" />
           Rename recording
         </ContextMenuItem>
         <ContextMenuItem
-          className="gap-2"
           disabled={!isRecordingDeletable(recording)}
-          onSelect={onDelete}
+          onSelect={handleDelete}
           variant="destructive"
         >
-          <Trash2 className="size-3.5" />
           Delete recording
         </ContextMenuItem>
       </ContextMenuContent>
@@ -173,35 +222,96 @@ export function RecordingLibraryItem({
 }
 
 function RecordingThumbnail({
+  displayTitle,
   recording,
   thumbnailPath,
+  viewMode,
 }: {
+  displayTitle: string;
   recording: LibraryRecordingSummary;
   thumbnailPath: string | null;
+  viewMode: LibraryRecordingViewMode;
 }) {
+  const sizeClassName =
+    viewMode === 'grid'
+      ? 'aspect-video w-full'
+      : 'aspect-video w-24 shrink-0 sm:w-28';
+
+  if (recording.availability === 'locked') {
+    return (
+      <div
+        className={cn(
+          'bg-muted text-muted-foreground flex items-center justify-center gap-1.5 text-[11px]',
+          sizeClassName,
+        )}
+      >
+        <Clock3 aria-hidden="true" className="size-3" />
+        Recording
+      </div>
+    );
+  }
+
   if (recording.availability !== 'available') {
     return (
-      <div className="bg-muted text-muted-foreground flex aspect-video min-h-28 items-center justify-center text-xs">
-        {recording.availability === 'locked'
-          ? 'Recording in progress'
-          : 'Missing video files'}
+      <div
+        className={cn(
+          'bg-muted text-muted-foreground flex items-center justify-center gap-1.5 text-[11px]',
+          sizeClassName,
+        )}
+      >
+        <FileWarning aria-hidden="true" className="size-3" />
+        Files unavailable
       </div>
     );
   }
 
   if (!thumbnailPath) {
     return (
-      <div className="bg-muted text-muted-foreground flex aspect-video min-h-28 items-center justify-center text-xs">
-        Thumbnail loading...
+      <div
+        aria-label={`Preparing preview for ${displayTitle}`}
+        className={cn(
+          'bg-muted text-muted-foreground flex items-center justify-center text-[11px]',
+          sizeClassName,
+        )}
+        role="status"
+      >
+        Preparing preview…
       </div>
     );
   }
 
   return (
     <img
-      aria-label="Recording thumbnail preview"
-      className="aspect-video min-h-28 w-full bg-black object-cover"
+      alt={`Preview of ${displayTitle}`}
+      className={cn('bg-black object-cover', sizeClassName)}
       src={localAssetUrl(thumbnailPath)}
     />
+  );
+}
+
+function RecordingAvailability({
+  recording,
+}: {
+  recording: LibraryRecordingSummary;
+}) {
+  const availability = recording.availability;
+  const textClassName =
+    availability === 'locked'
+      ? 'text-primary'
+      : availability === 'missing-files'
+        ? 'text-destructive'
+        : 'text-muted-foreground';
+
+  return (
+    <span className={cn('shrink-0 text-[10px]', textClassName)}>
+      {availabilityLabel(availability)}
+    </span>
+  );
+}
+
+function isLibraryAction(target: EventTarget): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('[data-library-action]') !== null
   );
 }

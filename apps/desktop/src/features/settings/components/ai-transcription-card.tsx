@@ -71,7 +71,7 @@ export function AiTranscriptionCard({
   ];
 
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <CardTitle>Transcription</CardTitle>
         <CardDescription>
@@ -240,8 +240,10 @@ export function AiTranscriptionCard({
             <>
               <RemoteProviderFields
                 baseUrl={transcription.remoteBaseUrl ?? ''}
+                dataSentLabel="Recorded audio for transcription"
                 hasSavedKey={Boolean(transcription.remoteApiKeyRef)}
                 keyDraft={transcriptionKeyDraft}
+                localAlternativeDescription="Choose Local Whisper to keep speech-to-text on this device."
                 onBaseUrlChange={(value) => {
                   updateAiTranscription(onUpdateDraft, (current) => ({
                     ...current,

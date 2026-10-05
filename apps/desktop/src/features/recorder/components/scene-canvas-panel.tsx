@@ -6,7 +6,6 @@ import type {
 } from '@daydream/shared';
 import { CircleDotDashed } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Card, CardContent } from '@/components/ui/card';
 import { SceneCanvas } from './scene-canvas';
 import { SceneControls } from './scene-controls';
 
@@ -35,11 +34,9 @@ export function SceneCanvasPanel({
 }: SceneCanvasPanelProps) {
   if (!scene) {
     return (
-      <Card>
-        <CardContent className="text-muted-foreground text-sm">
-          Loading recorder workspace.
-        </CardContent>
-      </Card>
+      <div className="text-muted-foreground p-3 text-xs" role="status">
+        Loading recorder workspace.
+      </div>
     );
   }
 
@@ -81,57 +78,51 @@ function RecordingInProgressPanel({
   recordingStatsError: string | null;
 }) {
   return (
-    <div className="flex h-full min-h-[320px] w-full items-center justify-center p-6">
-      <section
-        aria-label="Recording in progress"
-        className="bg-background w-full max-w-2xl border p-6 shadow-sm"
-      >
-        <div className="flex items-start gap-3">
-          <span className="bg-destructive/10 text-destructive flex size-10 shrink-0 items-center justify-center rounded-full">
-            <CircleDotDashed className="size-5" aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold tracking-normal">
-              Recording in progress
-            </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Preview is disabled while capture is writing local segment files.
-            </p>
-          </div>
+    <section
+      aria-label="Recording in progress"
+      className="flex h-full min-h-[16rem] w-full flex-col"
+    >
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <CircleDotDashed
+          className="text-destructive size-4 shrink-0"
+          aria-hidden="true"
+        />
+        <div className="min-w-0">
+          <h2 className="text-xs font-semibold">Recording in progress</h2>
+          <p className="text-muted-foreground text-[10px]">
+            Preview pauses while local segments are written.
+          </p>
         </div>
+      </div>
 
-        <dl className="mt-6 grid gap-3 sm:grid-cols-2">
-          <RecordingStat
-            label="Segment"
-            value={formatSegment(recordingStats)}
-          />
-          <RecordingStat
-            label="Segment time"
-            value={formatSegmentDuration(recordingStats)}
-          />
-          <RecordingStat
-            label="Segment size"
-            value={formatOptionalSize(recordingStats?.activeSegmentSizeBytes)}
-          />
-          <RecordingStat
-            label="Total size"
-            value={formatRequiredSize(recordingStats?.totalSizeBytes)}
-          />
-          <RecordingStat
-            className="sm:col-span-2"
-            label="Recording started"
-            value={formatTimestamp(recordingStats?.recordingStartedAtMs)}
-          />
-        </dl>
+      <dl className="text-foreground flex flex-wrap gap-x-5 gap-y-2 px-3 py-2 text-xs">
+        <RecordingStat label="Segment" value={formatSegment(recordingStats)} />
+        <RecordingStat
+          label="Segment time"
+          value={formatSegmentDuration(recordingStats)}
+        />
+        <RecordingStat
+          label="Segment size"
+          value={formatOptionalSize(recordingStats?.activeSegmentSizeBytes)}
+        />
+        <RecordingStat
+          label="Total size"
+          value={formatRequiredSize(recordingStats?.totalSizeBytes)}
+        />
+        <RecordingStat
+          className="basis-full sm:basis-auto"
+          label="Started"
+          value={formatTimestamp(recordingStats?.recordingStartedAtMs)}
+        />
+      </dl>
 
-        {recordingStatsError ? (
-          <Alert className="mt-6" variant="destructive">
-            <AlertTitle>Stats unavailable</AlertTitle>
-            <AlertDescription>{recordingStatsError}</AlertDescription>
-          </Alert>
-        ) : null}
-      </section>
-    </div>
+      {recordingStatsError ? (
+        <Alert className="m-2" variant="destructive">
+          <AlertTitle>Stats unavailable</AlertTitle>
+          <AlertDescription>{recordingStatsError}</AlertDescription>
+        </Alert>
+      ) : null}
+    </section>
   );
 }
 
@@ -145,11 +136,9 @@ function RecordingStat({
   value: string;
 }) {
   return (
-    <div className={className}>
-      <dt className="text-muted-foreground text-xs font-medium tracking-normal uppercase">
-        {label}
-      </dt>
-      <dd className="mt-1 text-sm font-medium tabular-nums">{value}</dd>
+    <div className={`flex min-w-0 items-baseline gap-1.5 ${className ?? ''}`}>
+      <dt className="text-muted-foreground shrink-0 text-[10px]">{label}</dt>
+      <dd className="min-w-0 text-[11px] font-medium tabular-nums">{value}</dd>
     </div>
   );
 }

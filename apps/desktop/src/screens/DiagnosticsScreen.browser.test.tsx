@@ -7,6 +7,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -227,7 +228,7 @@ test('DiagnosticsScreen shows GPU capture probe details', async () => {
   expect(await screen.findByText('GPU capture')).toBeTruthy();
 
   const recorderCard = screen.getByRole('heading', {
-    name: 'Recorder Backend',
+    name: 'Recorder backend',
   }).parentElement;
 
   if (!recorderCard) {
@@ -262,7 +263,7 @@ test('DiagnosticsScreen copies debug log bundle to the clipboard', async () => {
   render(<DiagnosticsScreen />);
 
   const copyButton = await screen.findByRole('button', {
-    name: 'Copy Debug Bundle',
+    name: 'Copy bundle',
   });
   fireEvent.click(copyButton);
 
@@ -272,4 +273,48 @@ test('DiagnosticsScreen copies debug log bundle to the clipboard', async () => {
   expect(writeText).toHaveBeenCalledWith(
     expect.stringContaining('recorder_start_requested'),
   );
+});
+
+test('DiagnosticsScreen keeps its shell and retries after the initial device probe fails', async () => {
+  client.getDiagnostics
+    .mockRejectedValueOnce(new Error('Device probe unavailable.'))
+    .mockResolvedValueOnce(diagnostics);
+
+  render(<DiagnosticsScreen />);
+
+  expect(await screen.findByText('Could not refresh diagnostics')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Diagnostics' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+  expect(
+    await screen.findByRole('heading', { name: 'Runtime overview' }),
+  ).toBeTruthy();
+  await waitFor(() => expect(client.getDiagnostics).toHaveBeenCalledTimes(2));
+});
+
+test('DiagnosticsScreen preserves loaded facts and exposes retry after refresh fails', async () => {
+  useDiagnosticsStore.setState({
+    diagnostics,
+    error: null,
+    status: 'ready',
+  });
+  client.getDiagnostics.mockRejectedValueOnce(
+    new Error('Device probe temporarily unavailable.'),
+  );
+
+  render(<DiagnosticsScreen />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+  expect(
+    await screen.findByText('Device probe temporarily unavailable.'),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('heading', { name: 'Runtime overview' }),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(
+    await screen.findByRole('heading', { name: 'Runtime overview' }),
+  ).toBeTruthy();
+  await waitFor(() => expect(client.getDiagnostics).toHaveBeenCalledTimes(2));
 });

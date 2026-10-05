@@ -15,6 +15,7 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
 import { CaptureScreen } from './CaptureScreen';
 
@@ -153,7 +154,8 @@ const audioSources: AudioSourceList = {
   ],
 };
 
-beforeEach(() => {
+beforeEach(async () => {
+  await page.viewport(1440, 960);
   vi.resetAllMocks();
   useRecorderWorkspaceStore.setState(
     useRecorderWorkspaceStore.getInitialState(),
@@ -196,16 +198,37 @@ afterEach(() => {
   cleanup();
 });
 
+async function addFirstAvailableAudioSource() {
+  fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
+  const dialog = await screen.findByRole('dialog', {
+    name: /add audio source/i,
+  });
+  fireEvent.click(within(dialog).getByRole('button', { name: /^add$/i }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: /add audio source/i }),
+    ).toBeNull(),
+  );
+}
+
 test('CaptureScreen renders selected sources and explicitly saves the scene', async () => {
   render(<CaptureScreen />);
 
-  expect(await screen.findAllByText('Monitor 1')).toHaveLength(3);
+  expect(await screen.findAllByText('Monitor 1')).toHaveLength(2);
   expect(
     document.querySelector('[data-slot="resizable-panel-group"]'),
   ).toBeTruthy();
   expect(screen.getByText('Status: idle')).toBeTruthy();
-  expect(screen.getByText('Record defaults: Settings')).toBeTruthy();
+  expect(screen.getByText('Save the scene before recording.')).toBeTruthy();
   expect(screen.getAllByText('1440 x 900')).toHaveLength(3);
+  expect(screen.getByRole('spinbutton', { name: 'X' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Y' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'W' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'H' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Left' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Top' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Right' })).toBeTruthy();
+  expect(screen.getByRole('spinbutton', { name: 'Bottom' })).toBeTruthy();
   expect(screen.getByText('Original')).toBeTruthy();
   expect(screen.getByText('100%')).toBeTruthy();
   expect(screen.getByRole('button', { name: /^fit$/i })).toBeTruthy();
@@ -307,6 +330,20 @@ test('CaptureScreen renders selected sources and explicitly saves the scene', as
     }),
   );
   expect(screen.getByText('Scene saved')).toBeTruthy();
+});
+
+test('CaptureScreen explains the media writer blocker for a saved scene', async () => {
+  client.getRecorderScene.mockResolvedValue(sceneFixture(['saved-main']));
+
+  render(<CaptureScreen />);
+
+  expect(
+    await screen.findByText('Media writer is not wired yet.'),
+  ).toBeTruthy();
+  expect(
+    (screen.getByRole('button', { name: /^start$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
 });
 
 test('CaptureScreen asks before refreshing a duplicate-looking monitor', async () => {
@@ -581,7 +618,7 @@ test('CaptureScreen renders a saved scene on startup without adding sources', as
 
   render(<CaptureScreen />);
 
-  expect(await screen.findAllByText('Saved monitor')).toHaveLength(3);
+  expect(await screen.findAllByText('Saved monitor')).toHaveLength(2);
   expect(client.selectCaptureSources).not.toHaveBeenCalled();
   expect(screen.getByText('Scene saved')).toBeTruthy();
 });
@@ -894,10 +931,7 @@ test('CaptureScreen reconciles a protected-window pause on return without discar
         .disabled,
     ).toBe(false),
   );
-  expect(
-    (screen.getByRole('button', { name: /^Pause$/i }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(true);
+  expect(screen.queryByRole('button', { name: /^Pause$/i })).toBeNull();
   expect(client.getRecorderScene).toHaveBeenCalledTimes(1);
   expect(screen.getByText('Status: paused')).toBeTruthy();
 });
@@ -942,6 +976,11 @@ test('CaptureScreen adds and deletes optional audio sources', async () => {
   expect(within(dialog).getByLabelText(/audio source/i)).toBeTruthy();
 
   fireEvent.click(within(dialog).getByRole('button', { name: /^add$/i }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: /add audio source/i }),
+    ).toBeNull(),
+  );
 
   expect(useRecorderWorkspaceStore.getState().desktopAudioSourceId).toBe(
     'desktop',
@@ -960,12 +999,7 @@ test('CaptureScreen saves and reloads selected audio sources', async () => {
 
   await screen.findByRole('button', { name: /add audio source/i });
 
-  fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
-  fireEvent.click(
-    within(
-      await screen.findByRole('dialog', { name: /add audio source/i }),
-    ).getByRole('button', { name: /^add$/i }),
-  );
+  await addFirstAvailableAudioSource();
 
   expect(useRecorderWorkspaceStore.getState().desktopAudioSourceId).toBe(
     'desktop',
@@ -1058,10 +1092,7 @@ test('CaptureScreen shows saving banner while stop finalization is finishing', a
     (screen.getByRole('button', { name: /start/i }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
-  expect(
-    (screen.getByRole('button', { name: /pause/i }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(true);
+  expect(screen.queryByRole('button', { name: /pause/i })).toBeNull();
   expect(
     (
       screen.getByRole('button', {
@@ -1112,6 +1143,11 @@ test('CaptureScreen audio picker shows every unadded device', async () => {
       await screen.findByRole('dialog', { name: /add audio source/i }),
     ).getByRole('button', { name: /^add$/i }),
   );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: /add audio source/i }),
+    ).toBeNull(),
+  );
   expect(useRecorderWorkspaceStore.getState().desktopAudioSourceId).toBe(
     'desktop',
   );
@@ -1144,6 +1180,11 @@ test('CaptureScreen audio picker shows every unadded device', async () => {
     screen.getByRole('option', { name: 'Secondary desktop monitor' }),
   );
   fireEvent.click(within(dialog).getByRole('button', { name: /^add$/i }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: /add audio source/i }),
+    ).toBeNull(),
+  );
 
   expect(useRecorderWorkspaceStore.getState().desktopAudioSourceId).toBe(
     'secondary-desktop',
@@ -1158,19 +1199,9 @@ test('CaptureScreen disables audio add when no eligible devices remain', async (
 
   await screen.findByRole('button', { name: /add audio source/i });
 
-  fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
-  fireEvent.click(
-    within(
-      await screen.findByRole('dialog', { name: /add audio source/i }),
-    ).getByRole('button', { name: /^add$/i }),
-  );
+  await addFirstAvailableAudioSource();
 
-  fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
-  fireEvent.click(
-    within(
-      await screen.findByRole('dialog', { name: /add audio source/i }),
-    ).getByRole('button', { name: /^add$/i }),
-  );
+  await addFirstAvailableAudioSource();
 
   fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
   const dialog = await screen.findByRole('dialog', {

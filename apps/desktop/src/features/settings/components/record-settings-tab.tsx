@@ -44,15 +44,15 @@ export function RecordSettingsTab({
     cadenceMode === 'seconds' ? 1 / draft.record.fps : draft.record.fps;
 
   return (
-    <Card>
-      <CardHeader>
+    <Card size="sm">
+      <CardHeader className="px-3">
         <CardTitle>Record</CardTitle>
         <CardDescription>
           Frame cadence and video bitrate for new recordings.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <FieldGroup>
+      <CardContent className="px-3">
+        <FieldGroup className="gap-x-6 md:grid md:grid-cols-2">
           <Field>
             <FieldLabel id="settings-frame-cadence-label">
               Frame cadence
@@ -155,7 +155,7 @@ export function RecordSettingsTab({
             </FieldDescription>
           </Field>
 
-          <div className="grid gap-3 border p-4 text-sm md:grid-cols-3">
+          <div className="grid grid-cols-3 gap-2 border-y py-2 text-xs md:col-span-2">
             <SummaryMetric label="Scene" value={sceneDimensions} />
             <SummaryMetric
               label="Configured cadence"
@@ -164,11 +164,13 @@ export function RecordSettingsTab({
             <SummaryMetric label="One hour estimate" value={oneHourEstimate} />
           </div>
 
-          <ProtectedWindowSettingsCard
-            draft={draft}
-            limits={limits}
-            onUpdateDraft={onUpdateDraft}
-          />
+          <div className="md:col-span-2">
+            <ProtectedWindowSettingsCard
+              draft={draft}
+              limits={limits}
+              onUpdateDraft={onUpdateDraft}
+            />
+          </div>
         </FieldGroup>
       </CardContent>
     </Card>
@@ -183,7 +185,7 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="mt-1 text-sm font-medium">{value}</p>
+      <p className="mt-0.5 text-xs font-medium tabular-nums">{value}</p>
     </div>
   );
 }

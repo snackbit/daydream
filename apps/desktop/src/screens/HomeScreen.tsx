@@ -1,65 +1,47 @@
-import { Activity, LockKeyhole, ScanText, Video } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { ArrowUpRight, LockKeyhole } from 'lucide-react';
 import { PageHeader, PageLayout } from '@/app/PageLayout';
-
-const readinessItems = [
-  {
-    icon: Video,
-    label: 'Capture',
-    value: 'Planned',
-  },
-  {
-    icon: ScanText,
-    label: 'OCR every retained frame',
-    value: 'Planned',
-  },
-  {
-    icon: Activity,
-    label: 'Activity and window metadata',
-    value: 'Planned',
-  },
-  {
-    icon: LockKeyhole,
-    label: 'Local-first privacy',
-    value: 'Default',
-  },
-];
+import { Button } from '@/components/ui/button';
+import { RecentRecordingsSection } from '@/features/home/components/recent-recordings-section';
+import { useHomeRecordingsController } from '@/features/home/use-home-recordings-controller';
 
 export function HomeScreen() {
+  const recordings = useHomeRecordingsController();
+
   return (
-    <PageLayout>
+    <PageLayout className="gap-5">
       <PageHeader
-        title="Daydream desktop scaffold"
-        description={
-          <>
-            This shell is ready for Linux/Wayland-first capture work. The first
-            implemented backend command is diagnostics with a real media writer
-            probe; recording, storage, redaction, OCR, transcription, and
-            indexing remain intentionally stubbed.
-          </>
+        title="Home"
+        description="Start a visible capture when you need one. Review finished sessions in your local Library."
+        actions={
+          <Button asChild className="gap-1.5">
+            <Link to="/capture">
+              Prepare capture
+              <ArrowUpRight aria-hidden="true" className="size-3.5" />
+            </Link>
+          </Button>
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-2">
-        {readinessItems.map((item) => {
-          const Icon = item.icon;
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-8">
+        <RecentRecordingsSection
+          actions={recordings.actions}
+          model={recordings.model}
+        />
 
-          return (
-            <div
-              className="bg-card text-card-foreground border p-4"
-              key={item.label}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Icon className="text-primary size-4" />
-                  <span className="text-sm font-medium">{item.label}</span>
-                </div>
-                <span className="text-muted-foreground text-xs">
-                  {item.value}
-                </span>
-              </div>
-            </div>
-          );
-        })}
+        <aside className="border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
+          <h2 className="flex items-center gap-2 text-[13px] font-semibold tracking-tight">
+            <LockKeyhole aria-hidden="true" className="size-3.5" />
+            Data stays local
+          </h2>
+          <p className="text-muted-foreground mt-1.5 text-xs leading-5">
+            Recording files stay on this device. Settings identifies optional
+            remote AI providers and the data they can receive.
+          </p>
+          <Button asChild className="mt-2 h-7 px-0" size="sm" variant="link">
+            <Link to="/settings">Open Settings</Link>
+          </Button>
+        </aside>
       </div>
     </PageLayout>
   );

@@ -8,26 +8,40 @@ import {
   Maximize,
   Pause,
   Play,
+  RefreshCw,
   SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Slider } from '@/components/ui/slider';
 import { formatDuration, formatTimestamp } from '../../library-format';
 import { SegmentScrubber } from './segment-scrubber';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
 
 export function StudioPlayer({
   detail,
+  onRefreshPlayback,
   playback,
   playbackAssets,
 }: {
   detail: LibraryRecordingDetail;
+  onRefreshPlayback: () => void;
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
 }) {
   const { actions, state } = playback;
+  function handleRetryPlayback() {
+    actions.seekTimeline(state.displayedTimelineMs, { resume: true });
+  }
+
+  function handleVolumeChange(values: number[]) {
+    const [volume] = values;
+    if (volume !== undefined) {
+      actions.setVolume(volume);
+    }
+  }
 
   if (detail.availability !== 'available' || !state.currentSegment) {
     const locked = detail.availability === 'locked';
@@ -48,6 +62,15 @@ export function StudioPlayer({
               : 'This recording exists in the database, but Daydream cannot find the local MKV files needed for playback.'}
           </p>
         </div>
+        <Button
+          className="gap-2"
+          size="sm"
+          variant="outline"
+          onClick={onRefreshPlayback}
+        >
+          <RefreshCw className="size-3.5" />
+          Retry loading
+        </Button>
       </div>
     );
   }
@@ -62,6 +85,15 @@ export function StudioPlayer({
           Daydream is preparing browser-playable media from the local MKV
           segment.
         </p>
+        <Button
+          className="gap-2"
+          size="sm"
+          variant="outline"
+          onClick={onRefreshPlayback}
+        >
+          <RefreshCw className="size-3.5" />
+          Retry loading
+        </Button>
       </div>
     );
   }
@@ -80,6 +112,15 @@ export function StudioPlayer({
               'Daydream could not create playable media for this segment.'}
           </p>
         </div>
+        <Button
+          className="gap-2"
+          size="sm"
+          variant="outline"
+          onClick={onRefreshPlayback}
+        >
+          <RefreshCw className="size-3.5" />
+          Retry loading
+        </Button>
       </div>
     );
   }
@@ -127,9 +168,19 @@ export function StudioPlayer({
           />
         ))}
         {state.redactedVideoActive ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-neutral-700 text-sm font-medium text-white">
+          <div
+            aria-label="Redacted video"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-neutral-700 text-sm font-medium text-white"
+            role="group"
+          >
             <div>Redacted</div>
-            {state.nextUnredactedVideoTimelineMs !== null ? (
+            {state.redactionCountdownSeconds !== null ? (
+              <div role="status">
+                Skipping in {state.redactionCountdownSeconds}{' '}
+                {state.redactionCountdownSeconds === 1 ? 'second' : 'seconds'}
+              </div>
+            ) : null}
+            {state.redactionSkipTargetMs !== null ? (
               <Button
                 className="gap-2"
                 size="sm"
@@ -176,6 +227,15 @@ export function StudioPlayer({
               <p className="mt-1 max-w-md text-xs text-white/70">
                 {state.playbackError}
               </p>
+              <Button
+                className="mt-3 gap-2"
+                size="sm"
+                variant="secondary"
+                onClick={handleRetryPlayback}
+              >
+                <RefreshCw className="size-3.5" />
+                Retry playback
+              </Button>
             </div>
           </div>
         ) : null}
@@ -183,6 +243,7 @@ export function StudioPlayer({
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-white/10 bg-black/90 p-3">
         <SegmentScrubber
+          privacy={detail}
           currentTimelineMs={Math.min(
             state.displayedTimelineMs,
             state.totalDurationMs,
@@ -255,17 +316,14 @@ export function StudioPlayer({
                 <Volume2 className="size-4" />
               )}
             </Button>
-            <input
+            <Slider
               aria-label="Volume"
-              className="w-24 accent-white"
+              className="w-24"
               max={1}
               min={0}
               step={0.05}
-              type="range"
-              value={state.volume}
-              onChange={(event) =>
-                actions.setVolume(Number(event.currentTarget.value))
-              }
+              value={[state.volume]}
+              onValueChange={handleVolumeChange}
             />
             <Button
               aria-label="Fullscreen"

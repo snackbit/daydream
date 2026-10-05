@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import type { AudioSource, AudioSourceRole } from '@daydream/shared';
 import { Mic, MonitorSpeaker, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogClose,
@@ -68,39 +67,39 @@ export function AudioSourceList({
 
   if (selectedSources.length === 0) {
     return (
-      <Card size="sm">
-        <CardContent className="text-muted-foreground text-xs">
-          No audio sources selected.
-        </CardContent>
-      </Card>
+      <p className="text-muted-foreground border-y py-2 text-xs">
+        No audio sources selected.
+      </p>
     );
   }
 
   return (
-    <div className="grid gap-2">
-      {selectedSources.map(({ role, source }) => (
-        <Card key={role} size="sm">
-          <CardContent className="flex items-center gap-2">
+    <div className="divide-y border-y">
+      {selectedSources.map(({ role, source }) => {
+        const handleRemove = () => onSelectAudioSource(role, null);
+
+        return (
+          <div className="flex items-center gap-2 px-2 py-1.5" key={role}>
             <AudioRoleIcon role={role} />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium">{audioRoleLabels[role]}</div>
-              <div className="text-muted-foreground truncate text-xs">
+              <div className="text-muted-foreground truncate text-[10px]">
                 {source.displayName}
               </div>
             </div>
             <Button
               aria-label={`Delete ${audioRoleLabels[role]} audio`}
               disabled={disabled}
-              onClick={() => onSelectAudioSource(role, null)}
+              onClick={handleRemove}
               size="icon-xs"
               type="button"
               variant="ghost"
             >
               <Trash2 className="size-3" />
             </Button>
-          </CardContent>
-        </Card>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -22,6 +22,44 @@ export function sortRecordings(
   });
 }
 
+export interface RecordingDateGroup {
+  id: string;
+  label: string;
+  recordings: LibraryRecordingSummary[];
+}
+
+export function groupRecordingsByDate(
+  recordings: LibraryRecordingSummary[],
+  sortKey: LibraryRecordingSortKey,
+  nowMs: number,
+): RecordingDateGroup[] {
+  if (sortKey !== 'started') {
+    return [{ id: 'all', label: 'All recordings', recordings }];
+  }
+
+  const today = startOfLocalDay(nowMs);
+  const yesterday = today - 86_400_000;
+  const groups = new Map<string, RecordingDateGroup>();
+
+  for (const recording of recordings) {
+    const timestamp = recording.startedAtMs;
+    const id = timestamp === null ? 'unknown-date' : localDateKey(timestamp);
+    const label =
+      timestamp === null
+        ? 'Date unavailable'
+        : recordingDateLabel(timestamp, today, yesterday);
+    const group = groups.get(id);
+
+    if (group) {
+      group.recordings.push(recording);
+    } else {
+      groups.set(id, { id, label, recordings: [recording] });
+    }
+  }
+
+  return [...groups.values()];
+}
+
 export function selectedRange(
   recordings: LibraryRecordingSummary[],
   anchorId: string,
@@ -88,4 +126,40 @@ export function keepThumbnailPaths(
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function recordingDateLabel(
+  timestampMs: number,
+  todayMs: number,
+  yesterdayMs: number,
+): string {
+  const day = startOfLocalDay(timestampMs);
+
+  if (day === todayMs) {
+    return 'Today';
+  }
+  if (day === yesterdayMs) {
+    return 'Yesterday';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(timestampMs);
+}
+
+function localDateKey(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function startOfLocalDay(timestampMs: number): number {
+  const date = new Date(timestampMs);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
 }

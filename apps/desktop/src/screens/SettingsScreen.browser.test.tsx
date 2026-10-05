@@ -608,6 +608,11 @@ test('SettingsScreen saves remote transcription settings through encrypted key r
 
   await openAiSettingsTab();
   await selectRemoteTranscriptionProvider();
+  expect(
+    await screen.findByText(
+      /recorded audio for transcription will be sent to the configured provider/i,
+    ),
+  ).toBeTruthy();
   fireEvent.change(await screen.findByLabelText('Base URL'), {
     target: { value: 'https://localhost:11434/v1' },
   });
@@ -645,6 +650,19 @@ test('SettingsScreen saves remote transcription settings through encrypted key r
     }),
   );
   expect(screen.queryByDisplayValue('sk-private')).toBeNull();
+});
+
+test('SettingsScreen explains which retained data is sent by remote vision', async () => {
+  render(<SettingsScreen />);
+
+  await openAiSettingsTab();
+  await selectOption('Vision provider', 'OpenAI-compatible');
+
+  expect(
+    await screen.findByText(
+      /retained screen frames and ocr text will be sent to the configured provider/i,
+    ),
+  ).toBeTruthy();
 });
 
 test('SettingsScreen toggles checkbox fields from their description text', async () => {

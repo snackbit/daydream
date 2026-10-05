@@ -32,7 +32,7 @@ export function AiModelCacheCard({
   onDownloadModel,
 }: AiModelCacheCardProps) {
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <CardTitle>Whisper Model Cache</CardTitle>
         <CardDescription>

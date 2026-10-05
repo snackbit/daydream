@@ -1,25 +1,24 @@
 import type {
   LibraryRecordingSegment,
   LibraryRecordingTrack,
-  ProcessingChunk,
-  RecordingAiProcessingState,
   RecordingTranscriptSegment,
   RecordingTranscriptionChunkState,
-  RecordingTranscriptionTrackState,
 } from '@daydream/shared';
+import { Button } from '@/components/ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { formatDuration } from '../../library-format';
 import { aiProcessingErrorDetails } from './ai-processing-error-copy';
+import { type DerivedAiLane } from './derived-ai-lane-model';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { TRACK_DERIVED_LANE_HEIGHT_PX } from './track-timeline-math';
 
-export interface DerivedAiLane {
-  chunks: RecordingTranscriptionChunkState[];
-  description: string;
-  label: string;
-  status: string;
-  statusLabel: string;
-  trackState: RecordingTranscriptionTrackState | null;
-}
-
+export { buildDerivedLane } from './derived-ai-lane-model';
+export type { DerivedAiLane } from './derived-ai-lane-model';
 type SegmentTranscriptionDisplayItem =
   | {
       chunk: RecordingTranscriptionChunkState;
@@ -36,160 +35,21 @@ type SegmentTranscriptionDisplayItem =
       kind: 'transcript-segment';
       startOffsetMs: number;
       text: string;
+      transcriptSegment: RecordingTranscriptSegment;
     };
-
-export function buildDerivedLane({
-  aiProcessingState,
-  track,
-}: {
-  aiProcessingState: RecordingAiProcessingState | null;
-  track: LibraryRecordingTrack;
-}): DerivedAiLane {
-  if (track.kind === 'video') {
-    return {
-      chunks: [],
-      description: 'OCR and VLM processing are not implemented yet.',
-      label: 'OCR + VLM',
-      status: 'not-implemented',
-      statusLabel: 'OCR and VLM pending',
-      trackState: null,
-    };
-  }
-
-  const trackState =
-    aiProcessingState?.transcriptionTracks?.find(
-      (candidate) =>
-        candidate.libraryTrackId === track.id ||
-        candidate.sourceRole === track.kind,
-    ) ?? null;
-  if (!trackState && aiProcessingState) {
-    const chunks = legacyTranscriptionChunks(aiProcessingState, track);
-
-    return {
-      chunks,
-      description: `${track.label} transcription`,
-      label: 'Transcription',
-      status: legacyStatus(chunks),
-      statusLabel: legacyStatusLabel(chunks),
-      trackState: null,
-    };
-  }
-
-  return {
-    chunks: trackState?.chunks ?? [],
-    description: trackState?.description ?? `${track.label} transcription`,
-    label: 'Transcription',
-    status: trackState?.status ?? 'ready',
-    statusLabel: trackState?.statusLabel ?? 'Ready to process',
-    trackState,
-  };
-}
-
-function legacyTranscriptionChunks(
-  aiProcessingState: RecordingAiProcessingState,
-  track: LibraryRecordingTrack,
-): RecordingTranscriptionChunkState[] {
-  const transcriptSegments =
-    aiProcessingState.transcript.tracks.find(
-      (transcriptTrack) =>
-        transcriptTrack.trackId === track.id ||
-        transcriptTrack.sourceRole === track.kind,
-    )?.segments ?? [];
-
-  return aiProcessingState.chunks
-    .filter(
-      (chunk) =>
-        chunk.sourceKind === 'audio' &&
-        (chunk.trackId === track.id || chunk.trackId === track.kind),
-    )
-    .map((chunk) => legacyTranscriptionChunk(chunk, transcriptSegments));
-}
-
-function legacyTranscriptionChunk(
-  chunk: ProcessingChunk,
-  transcriptSegments: RecordingTranscriptSegment[],
-): RecordingTranscriptionChunkState {
-  const startMs = chunk.startOffsetMs ?? 0;
-  const endMs = chunk.endOffsetMs ?? startMs;
-  const chunkTranscriptSegments = transcriptSegments.filter(
-    (segment) => segment.startOffsetMs < endMs && segment.endOffsetMs > startMs,
-  );
-  const text = chunkTranscriptSegments
-    .map((segment) => segment.text.trim())
-    .filter(Boolean)
-    .join(' ');
-  const result =
-    chunk.status === 'succeeded'
-      ? chunk.resultCode === 'skipped-silence'
-        ? 'skipped-silence'
-        : text
-          ? 'text'
-          : 'no-speech'
-      : chunk.status;
-
-  return {
-    attemptCount: chunk.attemptCount,
-    endOffsetMs: chunk.endOffsetMs,
-    errorCode: chunk.errorCode,
-    id: chunk.id,
-    progress: chunk.progress,
-    result,
-    resultCode: chunk.resultCode,
-    segmentId: chunk.segmentId,
-    startOffsetMs: chunk.startOffsetMs,
-    status: chunk.status,
-    text: text || null,
-    transcriptSegments: chunkTranscriptSegments,
-  };
-}
-
-function legacyStatus(chunks: RecordingTranscriptionChunkState[]): string {
-  if (chunks.length === 0) {
-    return 'ready';
-  }
-  if (
-    chunks.some(
-      (chunk) => chunk.result === 'queued' || chunk.result === 'running',
-    )
-  ) {
-    return 'in-progress';
-  }
-  if (chunks.some((chunk) => chunk.result === 'failed')) {
-    return 'failed';
-  }
-  if (chunks.some((chunk) => chunk.result === 'cancelled')) {
-    return 'cancelled';
-  }
-  return chunks.some((chunk) => chunk.result === 'text')
-    ? 'complete'
-    : 'no-speech';
-}
-
-function legacyStatusLabel(chunks: RecordingTranscriptionChunkState[]): string {
-  switch (legacyStatus(chunks)) {
-    case 'in-progress':
-      return 'Transcription in progress';
-    case 'failed':
-      return 'Transcription failed';
-    case 'cancelled':
-      return 'Transcription cancelled';
-    case 'complete':
-      return 'Transcription complete';
-    case 'no-speech':
-      return 'No speech detected';
-    default:
-      return 'Ready to process';
-  }
-}
 
 export function SegmentTranscriptionLayer({
   color,
   lane,
   segment,
+  track,
+  onInspectTranscript,
 }: {
   color: string;
   lane: DerivedAiLane;
   segment: LibraryRecordingSegment;
+  track: LibraryRecordingTrack;
+  onInspectTranscript: (selection: StudioInspectorSelection) => void;
 }) {
   const segmentStartMs = segment.playbackOffsetMs;
   const segmentDurationMs = Math.max(1, segment.durationMs ?? 0);
@@ -221,6 +81,8 @@ export function SegmentTranscriptionLayer({
           key={item.id}
           segmentDurationMs={segmentDurationMs}
           segmentStartMs={segmentStartMs}
+          track={track}
+          onInspectTranscript={onInspectTranscript}
         />
       ))}
     </div>
@@ -245,6 +107,7 @@ function transcriptionDisplayItems(
       kind: 'transcript-segment' as const,
       startOffsetMs: transcriptSegment.startOffsetMs,
       text: transcriptSegment.text,
+      transcriptSegment,
     }));
 
   if (transcriptSegments.length > 0) {
@@ -268,11 +131,15 @@ function SegmentTranscriptionItem({
   item,
   segmentDurationMs,
   segmentStartMs,
+  track,
+  onInspectTranscript,
 }: {
   color: string;
   item: SegmentTranscriptionDisplayItem;
   segmentDurationMs: number;
   segmentStartMs: number;
+  track: LibraryRecordingTrack;
+  onInspectTranscript: (selection: StudioInspectorSelection) => void;
 }) {
   const chunk = item.chunk;
   const startMs = Math.max(
@@ -287,27 +154,79 @@ function SegmentTranscriptionItem({
   const width = Math.max(1, ((endMs - startMs) / segmentDurationMs) * 100);
   const textItem =
     item.kind === 'transcript-segment' || chunk.result === 'text';
+  const style = {
+    backgroundColor: textItem
+      ? `color-mix(in oklch, ${color} 20%, var(--color-card))`
+      : undefined,
+    left: `${left}%`,
+    width: `${width}%`,
+  };
+  const className = cn(
+    'absolute top-1 bottom-1 overflow-hidden rounded-sm border text-[0.625rem] font-medium',
+    (chunk.result === 'queued' || chunk.result === 'running') &&
+      'border-primary/50 bg-primary/10 text-foreground',
+    (chunk.result === 'failed' || chunk.result === 'cancelled') &&
+      'border-destructive/60 bg-destructive/10 text-destructive',
+    chunk.result === 'no-speech' &&
+      'border-muted-foreground/50 bg-muted text-muted-foreground',
+    chunk.result === 'skipped-silence' &&
+      'border-border bg-muted/60 text-muted-foreground',
+    textItem && 'border-border/70 bg-card/90 text-foreground',
+  );
+
+  function handleInspect() {
+    if (item.kind !== 'transcript-segment') {
+      return;
+    }
+    const sourceRole = transcriptionSourceRole(track.kind);
+    onInspectTranscript({
+      chunkResult: chunk.result,
+      confidence: item.transcriptSegment.confidence,
+      endOffsetMs: item.transcriptSegment.endOffsetMs,
+      kind: 'transcript-segment',
+      model: item.transcriptSegment.model,
+      provider: item.transcriptSegment.provider,
+      segmentId: item.transcriptSegment.segmentId,
+      sourceRole,
+      startOffsetMs: item.transcriptSegment.startOffsetMs,
+      text: item.transcriptSegment.text,
+      timelineOffsetMs: item.transcriptSegment.startOffsetMs,
+      trackId: track.id,
+      trackLabel: track.label,
+    });
+  }
+
+  if (item.kind === 'transcript-segment') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            aria-label={`Inspect ${track.label} transcript ${formatDuration(startMs)} to ${formatDuration(endMs)}`}
+            className={cn(
+              className,
+              'justify-start rounded-sm px-1 py-0 text-left font-normal whitespace-normal hover:brightness-105',
+            )}
+            data-library-action
+            data-transcript-segment-id={item.transcriptSegment.id}
+            style={style}
+            title={item.text}
+            type="button"
+            variant="ghost"
+            onClick={handleInspect}
+          >
+            <span className="block w-full truncate text-left">{item.text}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{`${track.label} · ${formatDuration(startMs)}–${formatDuration(endMs)}`}</TooltipContent>
+      </Tooltip>
+    );
+  }
 
   return (
     <div
       aria-label={itemLabel(item)}
-      className={cn(
-        'absolute top-1 bottom-1 overflow-hidden rounded-sm border text-[0.625rem] font-medium opacity-50',
-        (chunk.result === 'queued' || chunk.result === 'running') &&
-          'ai-processing-construction border-amber-500/70',
-        (chunk.result === 'failed' || chunk.result === 'cancelled') &&
-          'border-destructive bg-destructive text-destructive-foreground',
-        chunk.result === 'no-speech' &&
-          'border-muted-foreground/50 bg-muted text-muted-foreground',
-        chunk.result === 'skipped-silence' &&
-          'border-sky-700/50 bg-sky-700/15 text-sky-950 dark:text-sky-100',
-        textItem && 'border-transparent text-white',
-      )}
-      style={{
-        backgroundColor: textItem ? color : undefined,
-        left: `${left}%`,
-        width: `${width}%`,
-      }}
+      className={className}
+      style={style}
       title={itemTitle(item)}
     >
       {textItem ? (
@@ -315,6 +234,12 @@ function SegmentTranscriptionItem({
       ) : null}
     </div>
   );
+}
+
+function transcriptionSourceRole(
+  trackKind: LibraryRecordingTrack['kind'],
+): 'desktop-audio' | 'microphone' {
+  return trackKind === 'microphone' ? 'microphone' : 'desktop-audio';
 }
 
 function itemLabel(item: SegmentTranscriptionDisplayItem): string {

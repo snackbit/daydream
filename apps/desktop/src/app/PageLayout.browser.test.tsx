@@ -11,7 +11,7 @@ afterEach(() => {
   cleanup();
 });
 
-test('PageLayout keeps document route spacing consistent', () => {
+test('PageLayout presents a semantic page heading, description, and action', () => {
   render(
     <PageLayout>
       <PageHeader
@@ -22,20 +22,14 @@ test('PageLayout keeps document route spacing consistent', () => {
     </PageLayout>,
   );
 
-  const page = screen
-    .getByRole('heading', { name: 'Layout title' })
-    .closest('section');
-
-  expect(page?.className).toContain(
-    'mx-auto flex w-full max-w-5xl flex-col gap-6 p-6',
-  );
-  expect(screen.getByText('Layout description').className).toContain(
-    'text-muted-foreground mt-2 max-w-3xl text-sm leading-6',
-  );
+  expect(
+    screen.getByRole('heading', { name: 'Layout title', level: 1 }),
+  ).toBeTruthy();
+  expect(screen.getByText('Layout description')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Action' })).toBeTruthy();
 });
 
-test('NarrowPageLayout and FullHeightLayout expose route variants', () => {
+test('NarrowPageLayout and FullHeightLayout retain their page content', () => {
   render(
     <>
       <NarrowPageLayout>
@@ -47,13 +41,8 @@ test('NarrowPageLayout and FullHeightLayout expose route variants', () => {
     </>,
   );
 
+  expect(screen.getByRole('heading', { name: 'Narrow title' })).toBeTruthy();
   expect(
-    screen.getByRole('heading', { name: 'Narrow title' }).closest('section')
-      ?.className,
-  ).toContain('mx-auto flex w-full max-w-3xl flex-col gap-3 p-6');
-  expect(
-    screen
-      .getByRole('heading', { name: 'Full height title' })
-      .closest('section')?.className,
-  ).toContain('flex min-h-full flex-col');
+    screen.getByRole('heading', { name: 'Full height title' }),
+  ).toBeTruthy();
 });

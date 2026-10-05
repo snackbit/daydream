@@ -23,7 +23,7 @@ export function formatTimestamp(timestampMs: number | null): string {
 
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: 'medium',
-    timeStyle: 'short',
+    timeStyle: 'medium',
   }).format(new Date(timestampMs));
 }
 

@@ -1,33 +1,9 @@
-import { RotateCcw, Save } from 'lucide-react';
-import { PageHeader, PageLayout } from '@/app/PageLayout';
+import { LoaderCircle, RotateCcw, Save } from 'lucide-react';
+import { PageLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { FieldSet } from '@/components/ui/field';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
-import { GeneralSettingsTab } from '@/features/settings/components/general-settings-tab';
-import {
-  cadenceModeForFps,
-  RecordSettingsTab,
-} from '@/features/settings/components/record-settings-tab';
-import { SettingsLeaveDialog } from '@/features/settings/components/settings-leave-dialog';
-import { StorageSettingsTab } from '@/features/settings/components/storage-settings-tab';
-import {
-  estimateOneHourRecordingBytes,
-  formatSceneDimensions,
-  formatStorageSize,
-} from '@/features/settings/settings-format';
-import { formatSessionCount } from '@/features/settings/settings-screen-utils';
+import { SettingsScreenDialogs } from '@/features/settings/screen/settings-screen-dialogs';
+import { SettingsScreenTabs } from '@/features/settings/screen/settings-screen-tabs';
 import { settingsAiModelActions } from '@/features/settings/use-settings-ai-controller';
 import { useSettingsScreenController } from '@/features/settings/use-settings-screen-controller';
 
@@ -72,107 +48,114 @@ export function SettingsScreen() {
   } = useSettingsScreenController();
   const { cancelAiModelDownload, deleteAiModel, downloadAiModel } =
     settingsAiModelActions;
+  function handleCancelAiModelDownload(modelId: string) {
+    void runAiModelAction(() => cancelAiModelDownload({ modelId }));
+  }
+
+  function handleDeleteAiModel(modelId: string) {
+    void runAiModelAction(() => deleteAiModel({ modelId }));
+  }
+
+  function handleDownloadAiModel(modelId: string) {
+    void runAiModelAction(() => downloadAiModel({ modelId }));
+  }
+
+  function handleRequestSave() {
+    void requestSave();
+  }
+
+  function handleOpenReset() {
+    setResetOpen(true);
+  }
+
+  function handleResetLeaveBlocker() {
+    blocker.reset?.();
+  }
+
+  const remoteProcessingEnabled = Boolean(
+    draft &&
+    (draft.ai.transcription.provider === 'openai-compatible' ||
+      draft.ai.vision.provider === 'openai-compatible'),
+  );
+  const saveStatus = saving
+    ? 'Saving changes…'
+    : busy
+      ? 'Checking storage changes…'
+      : validationError
+        ? 'Review settings before saving'
+        : canSave
+          ? 'Unsaved changes'
+          : successMessage
+            ? 'Saved just now'
+            : loadStatus === 'ready'
+              ? 'All changes saved'
+              : 'Loading settings';
 
   return (
-    <PageLayout>
-      <PageHeader
-        title="Settings"
-        description="Capture and library defaults stored locally in Daydream."
-        actions={
-          <>
-            <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-              <DialogTrigger asChild>
-                <Button disabled={busy || !draft} variant="outline">
-                  <RotateCcw className="size-3.5" />
-                  Reset
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Reset settings?</DialogTitle>
-                  <DialogDescription>
-                    This restores capture and storage settings to defaults. It
-                    does not delete recordings or scenes.
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button disabled={busy} variant="outline">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <Button
-                    disabled={busy}
-                    onClick={() => void requestReset()}
-                    variant="destructive"
-                  >
-                    Reset settings
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-            <Button disabled={!canSave} onClick={() => void requestSave()}>
+    <PageLayout className="max-w-6xl gap-3 lg:gap-3">
+      <div className="bg-background/95 sticky top-0 z-20 -mx-4 -mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <h1 className="text-[13px] font-semibold">Settings</h1>
+          <span
+            aria-live="polite"
+            className={
+              validationError
+                ? 'text-destructive text-xs'
+                : 'text-muted-foreground text-xs'
+            }
+            role="status"
+          >
+            {saving || busy ? (
+              <LoaderCircle className="mr-1 inline size-3 animate-spin" />
+            ) : null}
+            {saveStatus}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            disabled={busy || !draft}
+            onClick={handleOpenReset}
+            size="sm"
+            variant="outline"
+          >
+            <RotateCcw className="size-3" />
+            Reset
+          </Button>
+          <Button disabled={!canSave} onClick={handleRequestSave} size="sm">
+            {saving || busy ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
               <Save className="size-3.5" />
-              Save
-            </Button>
-          </>
-        }
-      />
+            )}
+            {saving ? 'Saving…' : busy ? 'Checking…' : 'Save'}
+          </Button>
+        </div>
+        <p className="text-muted-foreground w-full text-[10px] leading-4">
+          {remoteProcessingEnabled
+            ? 'Remote AI is selected. Review the data sent in AI/LLM.'
+            : 'Local processing is the default. Remote AI is opt-in in AI/LLM.'}
+        </p>
+      </div>
 
-      <Dialog
-        open={Boolean(cleanupConfirmation)}
-        onOpenChange={(open) => {
-          if (!open) {
-            dismissCleanupConfirmation();
-          }
+      <SettingsScreenDialogs
+        actions={{
+          confirmCleanup,
+          discardAndLeaveSettings,
+          dismissCleanupConfirmation,
+          requestReset,
+          resetLeaveBlocker: handleResetLeaveBlocker,
+          saveAndLeaveSettings,
+          setResetOpen,
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete old recordings?</DialogTitle>
-            <DialogDescription>
-              This would delete{' '}
-              {cleanupConfirmation
-                ? formatSessionCount(cleanupConfirmation.preview.recordingCount)
-                : '0 sessions'}{' '}
-              ({formatStorageSize(cleanupConfirmation?.preview.sizeBytes ?? 0)})
-              from the local library.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              disabled={saving}
-              onClick={dismissCleanupConfirmation}
-              variant="outline"
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={saving}
-              onClick={() => void confirmCleanup()}
-              variant="destructive"
-            >
-              {cleanupConfirmation?.action === 'reset'
-                ? 'Delete and reset'
-                : 'Delete and save'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <SettingsLeaveDialog
-        busy={busy}
-        canSave={canSave}
-        onDiscard={discardAndLeaveSettings}
-        onOpenChange={(open) => {
-          if (!open && !busy) {
-            blocker.reset?.();
-          }
+        model={{
+          blockerStatus: blocker.status,
+          busy,
+          canSave,
+          cleanupConfirmation,
+          resetOpen,
+          saving,
+          validationError,
         }}
-        onSave={() => void saveAndLeaveSettings()}
-        onStay={() => blocker.reset?.()}
-        open={blocker.status === 'blocked' && !cleanupConfirmation}
-        validationError={validationError}
       />
 
       {error ? (
@@ -205,74 +188,33 @@ export function SettingsScreen() {
             : 'Loading settings.'}
         </div>
       ) : (
-        <FieldSet disabled={busy} aria-busy={busy}>
-          <Tabs defaultValue="general">
-            <TabsList aria-label="Settings sections">
-              <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="record">Record</TabsTrigger>
-              <TabsTrigger value="storage">Storage/Library</TabsTrigger>
-              <TabsTrigger value="ai">AI/LLM</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="general">
-              <GeneralSettingsTab draft={draft} onUpdateDraft={updateDraft} />
-            </TabsContent>
-
-            <TabsContent value="record">
-              <RecordSettingsTab
-                cadenceMode={cadenceMode ?? cadenceModeForFps(draft.record.fps)}
-                draft={draft}
-                limits={settingsState.limits}
-                sceneDimensions={formatSceneDimensions(savedScene)}
-                oneHourEstimate={formatStorageSize(
-                  estimateOneHourRecordingBytes(draft, savedScene),
-                )}
-                onChangeCadenceMode={setCadenceMode}
-                onUpdateDraft={updateDraft}
-              />
-            </TabsContent>
-
-            <TabsContent value="storage">
-              <StorageSettingsTab
-                draft={draft}
-                limits={settingsState.limits}
-                onUpdateDraft={updateDraft}
-              />
-            </TabsContent>
-
-            <TabsContent value="ai">
-              <AiSettingsTab
-                draft={draft}
-                limits={settingsState.limits}
-                models={aiModels}
-                onCancelModelDownload={(modelId) =>
-                  void runAiModelAction(() =>
-                    cancelAiModelDownload({ modelId }),
-                  )
-                }
-                onChangeTranscriptionKey={setTranscriptionKeyDraft}
-                onChangeVisionKey={setVisionKeyDraft}
-                onDeleteModel={(modelId) =>
-                  void runAiModelAction(() => deleteAiModel({ modelId }))
-                }
-                onDownloadModel={(modelId) =>
-                  void runAiModelAction(() => downloadAiModel({ modelId }))
-                }
-                onRefreshInputActivityStatus={() =>
-                  void refreshInputActivityStatus()
-                }
-                onRepairInputActivity={() => void repairInputActivity()}
-                onUpdateDraft={updateDraft}
-                inputActivityRepairMessage={inputActivityRepairMessage}
-                inputActivityRepairing={inputActivityRepairing}
-                inputActivityStatus={inputActivityStatus}
-                providerStatus={aiProviderStatus}
-                transcriptionKeyDraft={transcriptionKeyDraft}
-                visionKeyDraft={visionKeyDraft}
-              />
-            </TabsContent>
-          </Tabs>
-        </FieldSet>
+        <SettingsScreenTabs
+          actions={{
+            cancelAiModelDownload: handleCancelAiModelDownload,
+            changeCadenceMode: setCadenceMode,
+            changeTranscriptionKey: setTranscriptionKeyDraft,
+            changeVisionKey: setVisionKeyDraft,
+            deleteAiModel: handleDeleteAiModel,
+            downloadAiModel: handleDownloadAiModel,
+            refreshInputActivityStatus: refreshInputActivityStatus,
+            repairInputActivity,
+            updateDraft,
+          }}
+          busy={busy}
+          model={{
+            aiModels,
+            aiProviderStatus,
+            cadenceMode,
+            draft,
+            inputActivityRepairMessage,
+            inputActivityRepairing,
+            inputActivityStatus,
+            limits: settingsState.limits,
+            savedScene,
+            transcriptionKeyDraft,
+            visionKeyDraft,
+          }}
+        />
       )}
     </PageLayout>
   );

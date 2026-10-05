@@ -1,7 +1,11 @@
+import { Link } from '@tanstack/react-router';
+import { AlertCircle, LoaderCircle, RotateCcw } from 'lucide-react';
 import { PageHeader, PageLayout } from '@/app/PageLayout';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DatabaseDiagnosticsSection } from '@/features/diagnostics/components/database-diagnostics-section';
 import { DiagnosticsHeaderActions } from '@/features/diagnostics/components/diagnostics-header-actions';
+import { DiagnosticsHealthSummary } from '@/features/diagnostics/components/diagnostics-health-summary';
 import { DiagnosticsSummarySections } from '@/features/diagnostics/components/diagnostics-summary-sections';
 import { PortalRestoreTokenDiagnosticsSection } from '@/features/diagnostics/components/portal-restore-token-diagnostics-section';
 import { RawDiagnosticsSection } from '@/features/diagnostics/components/raw-diagnostics-section';
@@ -26,7 +30,7 @@ export function DiagnosticsScreen() {
             Enable Debug in Settings to view runtime diagnostics.
           </p>
           <Button asChild className="w-fit" variant="outline">
-            <a href="/settings">Open Settings</a>
+            <Link to="/settings">Open Settings</Link>
           </Button>
         </div>
       </PageLayout>
@@ -37,13 +41,7 @@ export function DiagnosticsScreen() {
     <PageLayout>
       <PageHeader
         title="Diagnostics"
-        description={
-          <>
-            Runtime facts, media writer health, storage paths, and native
-            recorder capability probes. This screen is intentionally verbose for
-            early development.
-          </>
-        }
+        description="Runtime health and native recorder capability details for this device."
         actions={
           <DiagnosticsHeaderActions
             actions={diagnosticsController.actions}
@@ -53,22 +51,52 @@ export function DiagnosticsScreen() {
       />
 
       {error ? (
-        <div className="border-destructive/40 bg-destructive/10 text-destructive border p-4 text-sm">
-          {error}
+        <Alert className="p-3" variant="destructive">
+          <AlertCircle aria-hidden="true" className="size-3.5" />
+          <AlertTitle>Could not refresh diagnostics</AlertTitle>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <AlertDescription>{error}</AlertDescription>
+            <Button
+              onClick={diagnosticsController.actions.refresh}
+              size="sm"
+              variant="outline"
+            >
+              <RotateCcw aria-hidden="true" className="size-3" />
+              Try again
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+
+      {diagnosticsController.model.status === 'loading' && !diagnostics ? (
+        <div
+          aria-busy="true"
+          className="text-muted-foreground flex min-h-12 items-center gap-2 border-y px-2 text-xs"
+          role="status"
+        >
+          <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+          Loading device diagnostics…
         </div>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <DiagnosticsSummarySections diagnostics={diagnostics} />
-        <RecorderBackendDiagnosticsSection diagnostics={diagnostics} />
-        <DatabaseDiagnosticsSection diagnostics={diagnostics} />
-        <PortalRestoreTokenDiagnosticsSection diagnostics={diagnostics} />
-      </div>
+      {diagnostics ? (
+        <>
+          <DiagnosticsHealthSummary diagnostics={diagnostics} />
+          <div className="grid gap-x-6 gap-y-5 xl:grid-cols-2">
+            <DiagnosticsSummarySections diagnostics={diagnostics} />
+            <RecorderBackendDiagnosticsSection diagnostics={diagnostics} />
+            <DatabaseDiagnosticsSection diagnostics={diagnostics} />
+            <PortalRestoreTokenDiagnosticsSection diagnostics={diagnostics} />
+          </div>
+        </>
+      ) : null}
 
-      <RawDiagnosticsSection
-        diagnostics={diagnostics}
-        status={diagnosticsController.model.status}
-      />
+      {diagnostics ? (
+        <RawDiagnosticsSection
+          diagnostics={diagnostics}
+          status={diagnosticsController.model.status}
+        />
+      ) : null}
     </PageLayout>
   );
 }

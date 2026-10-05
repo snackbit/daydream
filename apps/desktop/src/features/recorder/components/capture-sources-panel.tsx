@@ -59,13 +59,13 @@ export function CaptureSourcesPanel({
 }: CaptureSourcesPanelProps) {
   return (
     <ScrollArea className="h-full">
-      <div className="p-4">
+      <div className="p-2.5">
         <DuplicateCaptureSourceDialog
           candidates={configurationLocked ? [] : pendingDuplicateCaptureSources}
           onResolve={onResolveDuplicateCaptureSource}
         />
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">Sources</h2>
+          <h2 className="text-xs font-semibold">Sources</h2>
           <Button
             aria-label="Add monitor sources"
             className="gap-2"
@@ -81,7 +81,7 @@ export function CaptureSourcesPanel({
           </Button>
         </div>
 
-        <div className="mt-3">
+        <div className="mt-2">
           <SceneSourceList
             deleteDisabled={configurationLocked}
             selectedSceneSourceId={selectedSceneSourceId}
@@ -91,10 +91,10 @@ export function CaptureSourcesPanel({
           />
         </div>
 
-        <Separator className="my-5" />
+        <Separator className="my-3" />
 
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">Audio</h2>
+          <h2 className="text-xs font-semibold">Audio</h2>
           <AudioSourcePickerDialog
             desktopAudioSourceId={desktopAudioSourceId}
             disabled={configurationLocked}
@@ -115,7 +115,7 @@ export function CaptureSourcesPanel({
             </Button>
           </AudioSourcePickerDialog>
         </div>
-        <div className="mt-3 grid gap-3">
+        <div className="mt-2">
           <AudioSourceList
             desktopAudioSourceId={desktopAudioSourceId}
             disabled={configurationLocked}

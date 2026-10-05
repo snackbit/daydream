@@ -12,6 +12,7 @@ import {
   nextUnredactedVideoTimelineMsForRedaction,
   REDACTION_START_GUARD_MS,
   redactedTracksAtTimelineMs,
+  redactedVideoEndTimelineMs,
   setsEqual,
 } from './recording-playback-redactions';
 
@@ -59,6 +60,9 @@ export function usePlaybackRedactionController({
   const redactedVideoActive = videoTrackIds.some((trackId) =>
     redactedTrackIds.has(trackId),
   );
+  const [redactionSkipTargetMs, setRedactionSkipTargetMs] = useState<
+    number | null
+  >(null);
   const [nextUnredactedVideoTimelineMs, setNextUnredactedVideoTimelineMs] =
     useState<number | null>(() =>
       redactedVideoActive
@@ -93,6 +97,16 @@ export function usePlaybackRedactionController({
             totalDurationMs,
           )
         : null;
+      setRedactionSkipTargetMs(
+        nextRedactedVideoActive
+          ? redactedVideoEndTimelineMs(
+              detail,
+              timelineMs,
+              videoTrackIds,
+              totalDurationMs,
+            )
+          : null,
+      );
       setNextUnredactedVideoTimelineMs((currentTarget) =>
         currentTarget === nextSkipTarget ? currentTarget : nextSkipTarget,
       );
@@ -189,6 +203,7 @@ export function usePlaybackRedactionController({
 
   return {
     nextUnredactedVideoTimelineMs,
+    redactionSkipTargetMs,
     redactedVideoActive,
     updateRedactionStateForTimeline,
     updateRedactionStateFromVideo,

@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { formatDuration, formatTimestamp } from '../../library-format';
+import { formatDuration } from '../../library-format';
 import { redactionsIntersectingRanges } from './studio-redactions';
 import { EditableLaneFields, trackKindLabel } from './studio-sidebar-editing';
 import { MetadataRow, StudioSidebarSection } from './studio-sidebar-section';
@@ -329,37 +329,6 @@ export function StudioSidebarComponentSelection({
           </Button>
         ) : null}
       </div>
-    </StudioSidebarSection>
-  );
-}
-
-export function StudioSidebarRecordingSection({
-  aiProcessingState,
-  detail,
-}: {
-  aiProcessingState: RecordingAiProcessingState | null;
-  detail: LibraryRecordingDetail;
-}) {
-  return (
-    <StudioSidebarSection title="Recording">
-      <MetadataRow label="Recording" value={detail.id} />
-      <MetadataRow
-        label="Started"
-        value={formatTimestamp(detail.startedAtMs)}
-      />
-      <MetadataRow label="Duration" value={formatDuration(detail.durationMs)} />
-      {aiProcessingState?.job ? (
-        <>
-          <MetadataRow label="AI job" value={aiProcessingState.job.status} />
-          <MetadataRow
-            label="Chunks"
-            value={String(aiProcessingState.chunks.length)}
-          />
-        </>
-      ) : null}
-      {aiProcessingState?.transcriptionTracks?.map((track) => (
-        <TranscriptionTrackDetails key={track.trackKey} track={track} />
-      ))}
     </StudioSidebarSection>
   );
 }

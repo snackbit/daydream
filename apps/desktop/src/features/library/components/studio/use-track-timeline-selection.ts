@@ -146,17 +146,27 @@ export function useTrackTimelineSelection({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    if (event.type === 'pointercancel') {
+      actions.cancelTimelineInput();
+      return;
+    }
     if (drag.selecting) {
       applyPointerRangeSelection(event, drag);
+      actions.cancelTimelineInput();
       return;
     }
 
     const nextTimelineMs = timelineMsFromClientX(event.clientX);
-    if (nextTimelineMs !== null && !drag.startedInLaneContent) {
-      clearSelection();
+    if (nextTimelineMs !== null) {
+      if (!drag.startedInLaneContent) {
+        clearSelection();
+      }
       actions.commitTimelineInput(nextTimelineMs);
       setFollowPlayhead(true);
+      return;
     }
+
+    actions.cancelTimelineInput();
   }
 
   function applyPointerRangeSelection(

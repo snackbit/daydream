@@ -1,8 +1,15 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { AppStartupStage } from '@daydream/shared';
-import { AlertCircle, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  RotateCcw,
+  Sparkles,
+} from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -18,6 +25,10 @@ export function AppStartupGate({ children }: AppStartupGateProps) {
   const initialize = useStartupStore((state) => state.initialize);
   const retry = useStartupStore((state) => state.retry);
   const status = useStartupStore((state) => state.status);
+
+  const handleRetry = useCallback(() => {
+    void retry();
+  }, [retry]);
 
   useEffect(() => {
     void initialize();
@@ -37,25 +48,46 @@ export function AppStartupGate({ children }: AppStartupGateProps) {
   const blockingError = status?.phase === 'error' ? status.error : null;
 
   return (
-    <main className="bg-background text-foreground flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-xl">
+    <main className="bg-background text-foreground flex min-h-screen items-center justify-center p-4 sm:p-8">
+      <Card className="shadow-primary/5 w-full max-w-xl shadow-lg">
         <CardHeader className="gap-2">
-          <div className="flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-3">
+            <span className="bg-primary text-primary-foreground flex size-10 items-center justify-center rounded-xl shadow-sm">
+              <Sparkles aria-hidden="true" className="size-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold tracking-tight">
+                Daydream
+              </div>
+              <Badge className="mt-1" variant="outline">
+                LOCAL WORKSPACE
+              </Badge>
+            </div>
+          </div>
+          <div aria-live="polite" className="flex items-center gap-2">
             {blockingError ? (
               <AlertCircle className="text-destructive size-5" />
             ) : (
               <Loader2 className="text-muted-foreground size-5 animate-spin" />
             )}
-            <CardTitle className="text-lg">
-              {blockingError ? 'Startup failed' : 'Starting Daydream'}
+            <CardTitle aria-level={1} className="text-lg" role="heading">
+              {blockingError
+                ? 'Could not finish startup'
+                : 'Preparing your workspace'}
             </CardTitle>
           </div>
           <p className="text-muted-foreground text-sm">
-            Preparing local storage, app services, and model-dependent tools.
+            Preparing local storage, capture services, and local processing
+            tools.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          {blockingError ? null : <Progress value={progress} />}
+          {blockingError ? null : (
+            <Progress
+              aria-label="Workspace startup progress"
+              value={progress}
+            />
+          )}
 
           {error ? (
             <Alert variant="destructive">
@@ -79,7 +111,7 @@ export function AppStartupGate({ children }: AppStartupGateProps) {
 
           {blockingError ? (
             <div className="flex justify-end">
-              <Button className="gap-2" onClick={() => void retry()}>
+              <Button className="gap-2" onClick={handleRetry}>
                 <RotateCcw className="size-4" />
                 Retry
               </Button>

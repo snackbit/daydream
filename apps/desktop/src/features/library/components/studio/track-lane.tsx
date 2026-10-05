@@ -1,7 +1,6 @@
 import {
   useRef,
   type ButtonHTMLAttributes,
-  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
 } from 'react';
@@ -11,11 +10,10 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTiles,
   RecordingAiProcessingState,
-  VisualFrameProcessingState,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
-import { formatDuration } from '../../library-format';
 import { buildDerivedLane } from './derived-ai-lane-strip';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import {
   studioClipId,
   studioColorById,
@@ -28,12 +26,11 @@ import { TrackClip } from './track-clip';
 import { TrackLaneHeader } from './track-lane-header';
 import { TrackClipMedia } from './track-lane-media';
 import { RedactionOverlay, TimeRangeOverlay } from './track-lane-overlays';
+import { VisualFrameSegments } from './track-lane-visual-markers';
 import {
   TRACK_LANE_HEIGHT_PX,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
 } from './track-timeline-math';
-
-type VisualFrameSource = 'mixed' | 'ocr' | 'vlm';
 
 export interface TrackLaneProps {
   aiProcessingState: RecordingAiProcessingState | null;
@@ -42,6 +39,7 @@ export interface TrackLaneProps {
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
   mutedTrackIds: Set<string>;
   onSelectClip: (clipId: string, additive: boolean) => void;
+  onInspectTranscript: (selection: StudioInspectorSelection) => void;
   onSelectLane: (trackId: string, additive: boolean) => void;
   onSelectRedaction: (redactionId: string, additive: boolean) => void;
   onToggleTrackMuted: (trackId: string) => void;
@@ -68,6 +66,7 @@ export function TrackLane({
   dragHandleProps,
   mutedTrackIds,
   onSelectClip,
+  onInspectTranscript,
   onSelectLane,
   onSelectRedaction,
   onToggleTrackMuted,
@@ -193,6 +192,7 @@ export function TrackLane({
               totalDurationMs={totalDurationMs}
               track={track}
               onSelectClip={onSelectClip}
+              onInspectTranscript={onInspectTranscript}
               derivedLane={derivedLane}
             >
               <TrackClipMedia
@@ -242,254 +242,4 @@ export function TrackLane({
       </div>
     </>
   );
-}
-
-function VisualFrameSegments({
-  selectedVisualFrameIds,
-  timelineWidthPx,
-  totalDurationMs,
-  visualFrameStates,
-  visualFrames,
-  onSelectVisualFrame,
-}: {
-  selectedVisualFrameIds: Set<string>;
-  timelineWidthPx: number;
-  totalDurationMs: number;
-  visualFrameStates: VisualFrameProcessingState[];
-  visualFrames: StudioVisualFrame[];
-  onSelectVisualFrame: (frame: StudioVisualFrame, additive: boolean) => void;
-}) {
-  const processingMarkers = visualProcessingMarkers({
-    visualFrameStates,
-    visualFrames,
-  });
-  if (visualFrames.length === 0 && processingMarkers.length === 0) {
-    return null;
-  }
-
-  return (
-    <>
-      {processingMarkers.map((marker) => (
-        <VisualProcessingMarker
-          key={marker.id}
-          marker={marker}
-          timelineWidthPx={timelineWidthPx}
-          totalDurationMs={totalDurationMs}
-        />
-      ))}
-      {visualFrames.map((frame) => {
-        const selected = selectedVisualFrameIds.has(frame.id);
-        const startMs = Math.max(0, frame.frameTimestampMs);
-        const endMs = Math.max(startMs + 1, frame.endTimestampMs);
-        const left =
-          (Math.min(startMs, totalDurationMs) / totalDurationMs) *
-          timelineWidthPx;
-        const width = Math.max(
-          4,
-          ((Math.min(endMs, totalDurationMs) -
-            Math.min(startMs, totalDurationMs)) /
-            totalDurationMs) *
-            timelineWidthPx,
-        );
-        const source = visualFrameSource(frame);
-        const title = visualFrameMarkerTitle(frame);
-
-        return (
-          <button
-            aria-label={title}
-            aria-pressed={selected}
-            className={cn(
-              'absolute bottom-1 z-20 h-6 overflow-hidden rounded-sm border px-1 text-[0.625rem] font-medium shadow-sm',
-              'focus-visible:ring-ring hover:brightness-95 focus-visible:ring-2 focus-visible:outline-none',
-              visualFrameMarkerClassName(source),
-              selected && 'ring-ring ring-2',
-            )}
-            data-library-action
-            data-visual-frame-source={source}
-            key={frame.id}
-            style={{
-              left,
-              width,
-              ...visualFrameMarkerStyle(source),
-            }}
-            title={title}
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectVisualFrame(
-                frame,
-                event.shiftKey || event.metaKey || event.ctrlKey,
-              );
-            }}
-          >
-            <span className="block truncate">
-              {formatVisualFrameMarkerTimestamp(frame.frameTimestampMs)}
-            </span>
-          </button>
-        );
-      })}
-    </>
-  );
-}
-
-interface VisualProcessingMarkerModel {
-  endTimestampMs: number;
-  id: string;
-  label: string;
-  sourceKind: 'ocr' | 'vlm';
-  status: VisualFrameProcessingState['status'];
-  timestampMs: number;
-}
-
-function visualProcessingMarkers({
-  visualFrameStates,
-  visualFrames,
-}: {
-  visualFrameStates: VisualFrameProcessingState[];
-  visualFrames: StudioVisualFrame[];
-}): VisualProcessingMarkerModel[] {
-  const outputKeys = new Set<string>();
-  for (const frame of visualFrames) {
-    if (frame.ocrRegions.length > 0) {
-      for (const sourceFrameRef of frame.sourceFrameRefs) {
-        outputKeys.add(`${sourceFrameRef}:ocr`);
-      }
-    }
-    if (frame.vlmObservations.length > 0) {
-      for (const sourceFrameRef of frame.sourceFrameRefs) {
-        outputKeys.add(`${sourceFrameRef}:vlm`);
-      }
-    }
-  }
-
-  return visualFrameStates
-    .filter(
-      (state) =>
-        state.status !== 'succeeded' ||
-        state.outputCount === 0 ||
-        !outputKeys.has(`${state.sourceFrameRef}:${state.sourceKind}`),
-    )
-    .map((state) => ({
-      endTimestampMs: state.frameTimestampMs + 1,
-      id: state.id,
-      label: visualProcessingMarkerLabel(state),
-      sourceKind: state.sourceKind,
-      status: state.status,
-      timestampMs: state.frameTimestampMs,
-    }))
-    .sort(
-      (left, right) =>
-        left.timestampMs - right.timestampMs ||
-        left.sourceKind.localeCompare(right.sourceKind) ||
-        left.id.localeCompare(right.id),
-    );
-}
-
-function VisualProcessingMarker({
-  marker,
-  timelineWidthPx,
-  totalDurationMs,
-}: {
-  marker: VisualProcessingMarkerModel;
-  timelineWidthPx: number;
-  totalDurationMs: number;
-}) {
-  const left =
-    (Math.min(marker.timestampMs, totalDurationMs) / totalDurationMs) *
-    timelineWidthPx;
-
-  return (
-    <div
-      aria-label={marker.label}
-      className={cn(
-        'absolute bottom-8 z-10 h-2 rounded-full border',
-        marker.sourceKind === 'ocr' && 'border-amber-500 bg-amber-300',
-        marker.sourceKind === 'vlm' && 'border-sky-500 bg-sky-300',
-        marker.status === 'queued' && 'opacity-45',
-        marker.status === 'running' && 'ai-processing-construction opacity-90',
-        marker.status === 'failed' &&
-          'border-destructive bg-destructive opacity-90',
-        marker.status === 'cancelled' &&
-          'border-muted-foreground bg-muted-foreground opacity-60',
-        marker.status === 'succeeded' && 'opacity-70',
-      )}
-      data-library-action
-      style={{
-        left,
-        width: Math.max(4, (1 / totalDurationMs) * timelineWidthPx),
-      }}
-      title={marker.label}
-    />
-  );
-}
-
-function visualProcessingMarkerLabel(
-  state: VisualFrameProcessingState,
-): string {
-  const kind = state.sourceKind === 'ocr' ? 'OCR' : 'VLM';
-  const timestamp = formatVisualFrameMarkerTimestamp(state.frameTimestampMs);
-  if (state.status === 'failed' && state.errorCode) {
-    return `${kind} frame ${timestamp} failed: ${state.errorCode}`;
-  }
-  if (state.status === 'succeeded') {
-    return `${kind} frame ${timestamp} processed, ${state.outputCount} outputs`;
-  }
-
-  return `${kind} frame ${timestamp} ${state.status}`;
-}
-
-function visualFrameSource(frame: StudioVisualFrame): VisualFrameSource {
-  const hasOcr = frame.ocrRegions.length > 0;
-  const hasVlm = frame.vlmObservations.length > 0;
-  if (hasOcr && hasVlm) {
-    return 'mixed';
-  }
-
-  return hasVlm ? 'vlm' : 'ocr';
-}
-
-function visualFrameMarkerClassName(source: VisualFrameSource): string {
-  switch (source) {
-    case 'mixed':
-      return 'border-cyan-600/90 bg-amber-100 text-slate-950 dark:border-cyan-300/80';
-    case 'vlm':
-      return 'border-sky-500/80 bg-sky-100/95 text-sky-950 dark:border-sky-300/80 dark:bg-sky-950/90 dark:text-sky-100';
-    case 'ocr':
-      return 'border-amber-500/80 bg-amber-100/95 text-amber-950 dark:border-amber-300/80 dark:bg-amber-950/90 dark:text-amber-100';
-  }
-}
-
-function visualFrameMarkerStyle(
-  source: VisualFrameSource,
-): CSSProperties | undefined {
-  if (source !== 'mixed') {
-    return undefined;
-  }
-
-  return {
-    backgroundImage:
-      'repeating-linear-gradient(135deg, rgb(254 243 199 / 0.95) 0, rgb(254 243 199 / 0.95) 6px, rgb(186 230 253 / 0.95) 6px, rgb(186 230 253 / 0.95) 12px)',
-  };
-}
-
-function formatVisualFrameMarkerTimestamp(timestampMs: number): string {
-  if (timestampMs < 60_000 && timestampMs % 1_000 !== 0) {
-    return `${(timestampMs / 1_000).toFixed(1)}s`;
-  }
-
-  return formatDuration(timestampMs);
-}
-
-function visualFrameMarkerTitle(frame: StudioVisualFrame): string {
-  const startSeconds = (frame.frameTimestampMs / 1_000).toFixed(1);
-  const endSeconds = (frame.endTimestampMs / 1_000).toFixed(1);
-  const vlmText =
-    frame.vlmObservations.length > 0
-      ? `${frame.vlmObservations.length} VLM`
-      : 'no VLM';
-  const ocrText = `${frame.ocrRegions.length} OCR ${
-    frame.ocrRegions.length === 1 ? 'candidate' : 'candidates'
-  }`;
-
-  return `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${ocrText}`;
 }

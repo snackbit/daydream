@@ -18,7 +18,7 @@ export function TimeRangeOverlay({
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-y-1 z-20 rounded-sm border border-red-500 bg-red-500/12"
+      className="border-primary/60 bg-primary/10 pointer-events-none absolute inset-y-1 z-20 rounded-sm border"
       style={{ left, width }}
     />
   );
@@ -49,9 +49,9 @@ export function RedactionOverlay({
       aria-label={`${trackLabel} redacted range`}
       aria-pressed={selected}
       className={cn(
-        'absolute inset-y-1 z-30 overflow-hidden rounded-sm border border-neutral-900 bg-neutral-700 text-left text-[0.625rem] font-medium text-white shadow-inner outline-none',
+        'border-destructive/70 bg-muted text-foreground absolute inset-y-1 z-30 overflow-hidden rounded-sm border text-left text-[0.625rem] font-medium outline-none',
         'focus-visible:ring-ring/40 focus-visible:ring-2',
-        selected && 'ring-ring ring-offset-background ring-2 ring-offset-1',
+        selected && 'ring-primary ring-offset-background ring-2 ring-offset-1',
       )}
       data-library-action
       style={{
@@ -68,7 +68,7 @@ export function RedactionOverlay({
         );
       }}
     >
-      <span className="absolute inset-x-0 top-0 flex h-4 items-center bg-neutral-950 px-1 text-white">
+      <span className="bg-destructive/15 text-destructive border-destructive/30 absolute inset-x-0 top-0 flex h-4 items-center border-b px-1">
         <span className="truncate">Redacted</span>
       </span>
       <span className="sr-only">

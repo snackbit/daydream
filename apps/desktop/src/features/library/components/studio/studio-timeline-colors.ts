@@ -6,7 +6,7 @@ export interface StudioTimelineColor {
   strong: string;
 }
 
-export const STUDIO_TIMELINE_COLORS: StudioTimelineColor[] = [
+const timelineColorIds: StudioTimelineColor[] = [
   {
     border: '#2563eb',
     fill: '#dbeafe',
@@ -176,6 +176,44 @@ export const STUDIO_TIMELINE_COLORS: StudioTimelineColor[] = [
     strong: '#075985',
   },
 ];
+
+const studioColorHues: Record<string, number> = {
+  amber: 82,
+  blue: 245,
+  chartreuse: 120,
+  cyan: 220,
+  emerald: 165,
+  fuchsia: 325,
+  gold: 90,
+  grape: 290,
+  green: 145,
+  indigo: 255,
+  lime: 120,
+  orange: 68,
+  pink: 350,
+  purple: 285,
+  red: 25,
+  rose: 12,
+  sea: 195,
+  sky: 225,
+  slate: 240,
+  steel: 230,
+  stone: 52,
+  tangerine: 60,
+  teal: 190,
+  violet: 275,
+};
+
+export const STUDIO_TIMELINE_COLORS = timelineColorIds.map((color) => {
+  const hue = studioColorHues[color.id] ?? 240;
+
+  return {
+    ...color,
+    border: `oklch(0.69 0.035 ${hue})`,
+    fill: `oklch(0.88 0.018 ${hue})`,
+    strong: `oklch(0.62 0.055 ${hue})`,
+  };
+});
 
 export function studioColorById(colorId: string): StudioTimelineColor {
   return (

@@ -1,13 +1,15 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import type {
   LibraryRecordingSegment,
   LibraryRecordingTrack,
 } from '@daydream/shared';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   SegmentTranscriptionLayer,
   type DerivedAiLane,
 } from './derived-ai-lane-strip';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import type { studioColorById } from './studio-timeline-store';
 import { TRACK_DERIVED_LANE_HEIGHT_PX } from './track-timeline-math';
 
@@ -17,6 +19,7 @@ export function TrackClip({
   color,
   derivedLane,
   onSelectClip,
+  onInspectTranscript,
   segment,
   selected,
   timelineWidthPx,
@@ -29,6 +32,7 @@ export function TrackClip({
   color: ReturnType<typeof studioColorById>;
   derivedLane: DerivedAiLane;
   onSelectClip: (clipId: string, additive: boolean) => void;
+  onInspectTranscript: (selection: StudioInspectorSelection) => void;
   segment: LibraryRecordingSegment;
   selected: boolean;
   timelineWidthPx: number;
@@ -39,19 +43,23 @@ export function TrackClip({
   const finalized = segment.fileExists && segment.state === 'finalized';
   const hasTranscriptionLayer = track.kind !== 'video';
 
+  function handleSelectClip(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    onSelectClip(clipId, event.shiftKey || event.metaKey || event.ctrlKey);
+  }
+
   return (
-    <button
-      aria-label={`${track.label} ${title}`}
-      aria-pressed={selected}
-      className={cn(
-        'absolute top-1 overflow-hidden rounded-sm border text-left shadow-xs transition-[border-color,box-shadow,transform] outline-none',
-        'focus-visible:ring-ring/40 focus-visible:ring-2',
-        selected && 'ring-ring ring-offset-background ring-2 ring-offset-1',
-        !finalized && 'opacity-60',
-      )}
+    <div
+      className="absolute top-1 overflow-hidden rounded-sm border transition-[border-color,box-shadow,transform]"
+      data-clip-id={clipId}
+      data-selected={selected}
       style={{
-        backgroundColor: finalized ? color.fill : 'hsl(var(--muted))',
-        borderColor: selected ? color.strong : color.border,
+        backgroundColor: finalized
+          ? `color-mix(in oklch, ${color.fill} 12%, var(--color-card))`
+          : 'var(--color-muted)',
+        borderColor: selected
+          ? 'var(--color-primary)'
+          : `color-mix(in oklch, ${color.border} 24%, var(--color-border))`,
         left: (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
         bottom: 4,
         width: Math.max(
@@ -59,35 +67,45 @@ export function TrackClip({
           ((segment.durationMs ?? 0) / totalDurationMs) * timelineWidthPx,
         ),
       }}
-      title={`${track.label} ${title}`}
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelectClip(clipId, event.shiftKey || event.metaKey || event.ctrlKey);
-      }}
     >
-      <div
-        className="absolute inset-x-0 top-0 z-10 flex h-4 items-center truncate px-1 text-[0.625rem] font-medium text-white"
-        data-library-action
-        style={{ backgroundColor: color.strong }}
+      <Button
+        aria-label={`${track.label} ${title}`}
+        aria-pressed={selected}
+        className={cn(
+          'absolute inset-0 z-0 flex h-full w-full flex-col items-stretch justify-start overflow-hidden rounded-sm px-0 py-0 text-left font-normal whitespace-normal outline-none',
+          'focus-visible:ring-ring/40 focus-visible:ring-2',
+          selected && 'ring-primary ring-1 ring-inset',
+          !finalized && 'opacity-60',
+        )}
+        title={`${track.label} ${title}`}
+        type="button"
+        variant="ghost"
+        onClick={handleSelectClip}
       >
-        <span className="truncate">{title}</span>
-      </div>
-      <div
-        className="bg-background/60 absolute inset-x-0 top-4 overflow-hidden"
-        style={{
-          bottom: hasTranscriptionLayer ? TRACK_DERIVED_LANE_HEIGHT_PX : 0,
-        }}
-      >
-        {children}
-      </div>
+        <div
+          className="bg-muted/80 text-foreground absolute inset-x-0 top-0 z-10 flex h-4 items-center truncate border-b px-1 text-[0.625rem] font-medium"
+          data-library-action
+        >
+          <span className="truncate">{title}</span>
+        </div>
+        <div
+          className="bg-background/60 absolute inset-x-0 top-4 overflow-hidden"
+          style={{
+            bottom: hasTranscriptionLayer ? TRACK_DERIVED_LANE_HEIGHT_PX : 0,
+          }}
+        >
+          {children}
+        </div>
+      </Button>
       {hasTranscriptionLayer ? (
         <SegmentTranscriptionLayer
-          color={color.strong}
+          color={`color-mix(in oklch, ${color.strong} 44%, var(--color-muted-foreground))`}
           lane={derivedLane}
           segment={segment}
+          track={track}
+          onInspectTranscript={onInspectTranscript}
         />
       ) : null}
-    </button>
+    </div>
   );
 }

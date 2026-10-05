@@ -15,28 +15,35 @@ export function DiagnosticsHeaderActions({
   model,
 }: DiagnosticsHeaderActionsProps) {
   return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex gap-2">
+    <div className="grid justify-items-start gap-1">
+      <div className="flex flex-wrap gap-1">
         <Button
-          className="gap-2"
+          className="gap-1.5"
           disabled={!model.diagnostics}
           onClick={() => void actions.copyDebugLogBundle()}
+          size="sm"
           variant="outline"
         >
-          <Clipboard className="size-3.5" />
-          Copy Debug Bundle
+          <Clipboard aria-hidden="true" className="size-3" />
+          Copy bundle
         </Button>
         <Button
-          className="gap-2"
+          className="gap-1.5"
           disabled={!model.diagnostics}
           onClick={() => void actions.copyRawDiagnosticsJson()}
+          size="sm"
           variant="outline"
         >
-          <Clipboard className="size-3.5" />
+          <Clipboard aria-hidden="true" className="size-3" />
           Copy JSON
         </Button>
-        <Button className="gap-2" onClick={actions.refresh} variant="outline">
-          <RefreshCw className="size-3.5" />
+        <Button
+          className="gap-1.5"
+          onClick={actions.refresh}
+          size="sm"
+          variant="outline"
+        >
+          <RefreshCw aria-hidden="true" className="size-3" />
           Refresh
         </Button>
       </div>

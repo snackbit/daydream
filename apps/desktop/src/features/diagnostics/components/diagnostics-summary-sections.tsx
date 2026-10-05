@@ -1,9 +1,7 @@
 import type { DaydreamDiagnostics } from '@daydream/shared';
 import { CheckCircle2, XCircle } from 'lucide-react';
-import {
-  DiagnosticRow,
-  MediaWriterCapabilityList,
-} from './diagnostic-primitives';
+import { DiagnosticCard, DiagnosticRow } from './diagnostic-primitives';
+import { MediaWriterCapabilityList } from './media-writer-capability-list';
 
 interface DiagnosticsSummarySectionsProps {
   diagnostics: DaydreamDiagnostics | null;
@@ -14,9 +12,8 @@ export function DiagnosticsSummarySections({
 }: DiagnosticsSummarySectionsProps) {
   return (
     <>
-      <div className="bg-card border p-4">
-        <h2 className="text-sm font-medium">Application</h2>
-        <dl className="mt-3 grid gap-2 text-sm">
+      <DiagnosticCard title="Application">
+        <dl className="grid gap-2 text-sm">
           <DiagnosticRow label="Name" value={diagnostics?.app.name ?? null} />
           <DiagnosticRow
             label="Identifier"
@@ -27,11 +24,10 @@ export function DiagnosticsSummarySections({
             value={diagnostics?.app.version ?? null}
           />
         </dl>
-      </div>
+      </DiagnosticCard>
 
-      <div className="bg-card border p-4">
-        <h2 className="text-sm font-medium">System</h2>
-        <dl className="mt-3 grid gap-2 text-sm">
+      <DiagnosticCard title="System">
+        <dl className="grid gap-2 text-sm">
           <DiagnosticRow
             label="Platform"
             value={diagnostics?.system.platform ?? null}
@@ -45,20 +41,19 @@ export function DiagnosticsSummarySections({
             value={diagnostics?.system.family ?? null}
           />
         </dl>
-      </div>
+      </DiagnosticCard>
 
-      <div className="bg-card border p-4">
-        <h2 className="text-sm font-medium">Media writer</h2>
-        <div className="mt-3 flex items-center gap-2 text-sm">
+      <DiagnosticCard title="Media writer">
+        <div className="flex items-center gap-2 text-sm">
           {diagnostics?.mediaWriter.available ? (
-            <CheckCircle2 className="text-primary size-4" />
+            <CheckCircle2 aria-hidden="true" className="text-primary size-4" />
           ) : (
-            <XCircle className="text-destructive size-4" />
+            <XCircle aria-hidden="true" className="text-destructive size-4" />
           )}
           <span>
             {diagnostics?.mediaWriter.available
               ? 'Available'
-              : 'Not available yet'}
+              : 'Not available on this system'}
           </span>
         </div>
         <dl className="mt-3 grid gap-2 text-sm">
@@ -71,39 +66,37 @@ export function DiagnosticsSummarySections({
             value={diagnostics?.mediaWriter.version ?? null}
           />
           <DiagnosticRow
-            label="Error"
             emptyValue="None"
+            label="Error"
             value={diagnostics?.mediaWriter.error ?? null}
           />
         </dl>
         <MediaWriterCapabilityList
           capabilities={diagnostics?.mediaWriter.capabilities ?? null}
         />
-      </div>
+      </DiagnosticCard>
 
-      <div className="bg-card border p-4">
-        <h2 className="text-sm font-medium">Storage</h2>
-        <dl className="mt-3 grid gap-2 text-sm">
+      <DiagnosticCard title="Storage">
+        <dl className="grid gap-2 text-sm">
           <DiagnosticRow
             label="App data"
             value={diagnostics?.storage.appDataDir ?? null}
           />
         </dl>
-      </div>
+      </DiagnosticCard>
 
-      <div className="bg-card border p-4 md:col-span-2">
-        <h2 className="text-sm font-medium">Debug logging</h2>
-        <div className="mt-3 flex items-center gap-2 text-sm">
+      <DiagnosticCard className="md:col-span-2" title="Debug logging">
+        <div className="flex items-center gap-2 text-sm">
           {diagnostics?.debugLogging.enabled ? (
-            <CheckCircle2 className="text-primary size-4" />
+            <CheckCircle2 aria-hidden="true" className="text-primary size-4" />
           ) : (
-            <XCircle className="text-destructive size-4" />
+            <XCircle aria-hidden="true" className="text-destructive size-4" />
           )}
           <span>
             {diagnostics?.debugLogging.enabled ? 'Enabled' : 'Not enabled'}
           </span>
         </div>
-        <dl className="mt-3 grid gap-2 text-sm">
+        <dl className="mt-3 grid gap-2 text-sm md:grid-cols-2">
           <DiagnosticRow
             label="File"
             value={diagnostics?.debugLogging.filePath ?? null}
@@ -127,7 +120,7 @@ export function DiagnosticsSummarySections({
             value={diagnostics?.debugLogging.retentionDays.toString() ?? null}
           />
         </dl>
-      </div>
+      </DiagnosticCard>
     </>
   );
 }

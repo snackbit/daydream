@@ -29,11 +29,12 @@ export function RecordingStudioScreen() {
   });
 
   return (
-    <FullHeightLayout>
+    <FullHeightLayout className="h-full min-h-0">
       <RecordingStudioToolbar
         aiProcessing={state.aiProcessing}
         debugEnabled={debugEnabled}
         detail={state.detail}
+        loadStatus={state.status}
         processingStartBusy={state.processingStartBusy}
         onDebug={() => setDebugDialogOpen(true)}
         onDelete={() => setDeleteDialogOpen(true)}
@@ -63,6 +64,7 @@ export function RecordingStudioScreen() {
           activity={state.activity.state}
           aiProcessingState={state.aiProcessing.state}
           detail={state.detail}
+          onRefreshPlayback={actions.load}
           onCreateRedactions={actions.createRedactions}
           onDeleteRedaction={actions.removeRedaction}
           onUnredactRanges={actions.unredactRanges}

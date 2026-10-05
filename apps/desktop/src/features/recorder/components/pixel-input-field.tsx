@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { formatPixels } from '@/features/recorder/scene-layout';
@@ -15,12 +16,15 @@ export function PixelInputField({
   onChange,
   value,
 }: PixelInputFieldProps) {
+  const id = useId();
+
   return (
     <Field>
-      <FieldLabel>{label}</FieldLabel>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input
         className="font-mono"
         disabled={disabled}
+        id={id}
         inputMode="numeric"
         onChange={(event) => onChange(pixelInputValue(event.target.value))}
         type="number"

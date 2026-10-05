@@ -5,10 +5,9 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { LoaderCircle, Pause, Play, Save, Square } from 'lucide-react';
-import { PageHeader } from '@/app/PageLayout';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { RecorderLifecycleAction } from '../recorder-workspace-store';
+import { getCaptureStartBlocker } from './capture-toolbar/start-blocker';
 
 export interface CaptureToolbarProps {
   configurationLocked: boolean;
@@ -45,46 +44,52 @@ export function CaptureToolbar({
 }: CaptureToolbarProps) {
   const activeLifecycleAction =
     pendingLifecycleAction ?? lifecycleActionFromStatus(status);
-  const startDisabled =
-    lifecycleLocked ||
-    !scene ||
-    scene.sources.length === 0 ||
-    isDirty ||
-    status?.state !== 'idle' ||
-    !status.backendHealth.portal.available ||
-    !status.backendHealth.pipewire.available ||
-    !status.backendHealth.mediaWriter.available;
   const pauseDisabled = lifecycleLocked || status?.state !== 'recording';
   const resumeDisabled = lifecycleLocked || status?.state !== 'paused';
   const stopDisabled =
     lifecycleLocked ||
     (status?.state !== 'recording' && status?.state !== 'paused');
+  const isRecording =
+    status?.state === 'recording' || status?.state === 'pausing';
+  const canStop = status?.state === 'recording' || status?.state === 'paused';
+  const canShowStart =
+    !isRecording && status?.state !== 'paused' && status?.state !== 'stopping';
+  const startBlocker = canShowStart
+    ? getCaptureStartBlocker({
+        isDirty,
+        lifecycleLocked,
+        loadStatus,
+        scene,
+        status,
+      })
+    : null;
+  const startDisabled = startBlocker !== null;
 
   return (
-    <div className="shrink-0 border-b p-6">
-      <PageHeader
-        title="Capture"
-        actions={
-          <>
-            <Button
-              className="gap-2"
-              disabled={
-                configurationLocked ||
-                lifecycleLocked ||
-                !scene ||
-                !isDirty ||
-                saveStatus === 'loading'
-              }
-              onClick={onSave}
-              variant="outline"
-            >
-              {saveStatus === 'loading' ? (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              ) : (
-                <Save className="size-3.5" />
-              )}
-              Save
-            </Button>
+    <div className="bg-background flex shrink-0 flex-col gap-1.5 border-b px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h1 className="text-sm font-semibold">Capture</h1>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button
+            className="gap-2"
+            disabled={
+              configurationLocked ||
+              lifecycleLocked ||
+              !scene ||
+              !isDirty ||
+              saveStatus === 'loading'
+            }
+            onClick={onSave}
+            variant="outline"
+          >
+            {saveStatus === 'loading' ? (
+              <LoaderCircle className="size-3.5 animate-spin" />
+            ) : (
+              <Save className="size-3.5" />
+            )}
+            Save
+          </Button>
+          {canShowStart ? (
             <Button
               className="gap-2"
               disabled={startDisabled}
@@ -97,6 +102,8 @@ export function CaptureToolbar({
               />
               {activeLifecycleAction === 'start' ? 'Starting' : 'Start'}
             </Button>
+          ) : null}
+          {isRecording ? (
             <Button
               className="gap-2"
               disabled={pauseDisabled}
@@ -110,6 +117,8 @@ export function CaptureToolbar({
               />
               {activeLifecycleAction === 'pause' ? 'Pausing' : 'Pause'}
             </Button>
+          ) : null}
+          {status?.state === 'paused' ? (
             <Button
               className="gap-2"
               disabled={resumeDisabled}
@@ -123,6 +132,8 @@ export function CaptureToolbar({
               />
               {activeLifecycleAction === 'resume' ? 'Resuming' : 'Resume'}
             </Button>
+          ) : null}
+          {canStop ? (
             <Button
               className="gap-2"
               disabled={stopDisabled}
@@ -136,27 +147,21 @@ export function CaptureToolbar({
               />
               {activeLifecycleAction === 'stop' ? 'Stopping' : 'Stop'}
             </Button>
-          </>
-        }
-      >
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Badge variant="secondary">
-            Status: {status?.state ?? loadStatus}
-          </Badge>
-          <Badge variant="outline">Record defaults: Settings</Badge>
-          <Badge variant="outline">Quality: balanced-ocr</Badge>
-          <Badge variant={isDirty ? 'destructive' : 'secondary'}>
-            {isDirty ? 'Unsaved scene' : 'Scene saved'}
-          </Badge>
-          <Badge
-            variant={
-              previewStatus?.state === 'error' ? 'destructive' : 'outline'
-            }
-          >
-            Preview: {previewLabel(previewStatus)}
-          </Badge>
+          ) : null}
         </div>
-      </PageHeader>
+      </div>
+      <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="text-foreground/85 font-medium">
+          Status: {status?.state ?? loadStatus}
+        </span>
+        <span>{isDirty ? 'Unsaved scene' : 'Scene saved'}</span>
+        <span>Preview: {previewLabel(previewStatus)}</span>
+        {startBlocker ? (
+          <span aria-live="polite" className="text-foreground/90" role="status">
+            {startBlocker}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

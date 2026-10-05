@@ -75,6 +75,10 @@ export interface LibraryOverviewActions {
     recording: LibraryRecordingSummary,
     event: MouseEvent<HTMLElement>,
   ) => void;
+  setRecordingSelected: (
+    recording: LibraryRecordingSummary,
+    selected: boolean,
+  ) => void;
   setRenameTitle: (title: string) => void;
   setSortKey: (sortKey: LibraryRecordingSortKey) => void;
   setViewMode: (viewMode: LibraryRecordingViewMode) => void;
@@ -107,7 +111,7 @@ export function useLibraryOverviewController(): LibraryOverviewController {
   const [thumbnailPaths, setThumbnailPaths] = useState<Record<string, string>>(
     {},
   );
-  const [viewMode, setViewMode] = useState<LibraryRecordingViewMode>('grid');
+  const [viewMode, setViewMode] = useState<LibraryRecordingViewMode>('list');
 
   const sortedRecordings = useMemo(
     () => sortRecordings(recordings, sortKey),
@@ -289,6 +293,22 @@ export function useLibraryOverviewController(): LibraryOverviewController {
     [selectionAnchorId, sortedRecordings],
   );
 
+  const setRecordingSelected = useCallback(
+    (recording: LibraryRecordingSummary, selected: boolean) => {
+      if (!isRecordingSelectable(recording)) {
+        return;
+      }
+
+      setSelectedIds((current) =>
+        selected
+          ? uniqueIds([...current, recording.id])
+          : current.filter((recordingId) => recordingId !== recording.id),
+      );
+      setSelectionAnchorId(recording.id);
+    },
+    [],
+  );
+
   const targetForRecordingDelete = useCallback(
     (
       recording: LibraryRecordingSummary,
@@ -390,6 +410,7 @@ export function useLibraryOverviewController(): LibraryOverviewController {
       requestRecordingRename,
       requestSelectedDelete,
       selectRecording,
+      setRecordingSelected,
       setRenameTitle,
       setSortKey,
       setViewMode,

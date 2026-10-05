@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
@@ -12,17 +19,22 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { StudioPlayer } from './studio-player';
 import { StudioSidebar } from './studio-sidebar';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import { buildStudioVisualFrames } from './studio-visual-observations';
 import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
+import { useStudioSpacePlayback } from './use-studio-space-playback';
 
 export interface RecordingStudioProps {
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
+  onRefreshPlayback: () => void;
   onCreateRedactions: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
@@ -39,6 +51,7 @@ export function RecordingStudio({
   activity,
   aiProcessingState,
   detail,
+  onRefreshPlayback,
   onCreateRedactions,
   onDeleteRedaction,
   onUnredactRanges,
@@ -46,9 +59,16 @@ export function RecordingStudio({
   thumbnailStatus,
   visualObservations,
 }: RecordingStudioProps) {
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
   const [mutedTrackIds, setMutedTrackIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [inspectorSelectionState, setInspectorSelectionState] = useState<{
+    recordingId: string;
+    redactionSignature: string;
+    selection: StudioInspectorSelection;
+  } | null>(null);
   const initializeTimeline = useStudioTimelineStore(
     (state) => state.initializeFromDetail,
   );
@@ -61,10 +81,76 @@ export function RecordingStudio({
     () => buildStudioVisualFrames(visualObservations, detail),
     [detail, visualObservations],
   );
+  const redactionSignature = useMemo(
+    () =>
+      detail.redactions
+        .map(
+          (redaction) =>
+            `${redaction.id}:${redaction.startOffsetMs}:${redaction.endOffsetMs}:${redaction.trackIds.join(',')}`,
+        )
+        .join('|'),
+    [detail.redactions],
+  );
+  const inspectorSelection =
+    inspectorSelectionState?.recordingId === detail.id &&
+    inspectorSelectionState.redactionSignature === redactionSignature
+      ? inspectorSelectionState.selection
+      : null;
+  const seekTimeline = playback.actions.seekTimeline;
+  const handleClearInspectorSelection = useCallback(() => {
+    setInspectorSelectionState(null);
+  }, []);
+  const handleInspectActivity = useCallback(
+    (selection: StudioInspectorSelection) => {
+      setInspectorSelectionState({
+        recordingId: detail.id,
+        redactionSignature,
+        selection,
+      });
+    },
+    [detail.id, redactionSignature],
+  );
+  const handleInspectTranscript = useCallback(
+    (selection: StudioInspectorSelection) => {
+      setInspectorSelectionState({
+        recordingId: detail.id,
+        redactionSignature,
+        selection,
+      });
+    },
+    [detail.id, redactionSignature],
+  );
+  const handleInspectorSeek = useCallback(
+    (timelineOffsetMs: number) => {
+      seekTimeline(timelineOffsetMs, { resume: false });
+    },
+    [seekTimeline],
+  );
+  useStudioSpacePlayback(playback.actions.togglePlayback);
 
   useEffect(() => {
     initializeTimeline(detail);
   }, [detail, initializeTimeline]);
+
+  useLayoutEffect(() => {
+    const element = layoutRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateLayout = (width: number) => setCompact(width < 896);
+    updateLayout(element.getBoundingClientRect().width);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        updateLayout(entry.contentRect.width);
+      }
+    });
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
 
   function toggleTrackMuted(trackId: string) {
     setMutedTrackIds((current) => {
@@ -80,45 +166,131 @@ export function RecordingStudio({
   }
 
   return (
-    <ResizablePanelGroup className="min-h-0 flex-1" orientation="horizontal">
-      <ResizablePanel defaultSize={74} minSize={50}>
-        <ResizablePanelGroup orientation="vertical">
-          <ResizablePanel defaultSize={68} minSize={45}>
-            <StudioPlayer
-              detail={detail}
-              playback={playback}
-              playbackAssets={playbackAssets}
-            />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={32} minSize={18}>
-            <TrackTimeline
-              activity={activity}
-              aiProcessingState={aiProcessingState}
-              detail={detail}
-              mutedTrackIds={mutedTrackIds}
-              playback={playback}
-              playbackAssets={playbackAssets}
-              thumbnailStatus={thumbnailStatus}
-              visualFrames={visualFrames}
-              onCreateRedactions={onCreateRedactions}
-              onUnredactRanges={onUnredactRanges}
-              onToggleTrackMuted={toggleTrackMuted}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel defaultSize={26} minSize={18}>
-        <StudioSidebar
-          aiProcessingState={aiProcessingState}
-          detail={detail}
-          visualFrames={visualFrames}
-          onCreateRedactions={onCreateRedactions}
-          onDeleteRedaction={onDeleteRedaction}
-          onUnredactRanges={onUnredactRanges}
-        />
-      </ResizablePanel>
-    </ResizablePanelGroup>
+    <TooltipProvider delayDuration={300}>
+      <div className="flex h-full min-h-0 w-full flex-1" ref={layoutRef}>
+        {compact ? (
+          <Tabs
+            className="flex min-h-0 flex-1 flex-col gap-0 overflow-y-auto"
+            defaultValue="timeline"
+          >
+            <div className="min-h-[12rem] flex-[3]">
+              <StudioPlayer
+                detail={detail}
+                onRefreshPlayback={onRefreshPlayback}
+                playback={playback}
+                playbackAssets={playbackAssets}
+              />
+            </div>
+            <TabsList
+              aria-label="Recording studio panels"
+              className="grid h-auto w-full shrink-0 grid-cols-2 rounded-none border-y p-1"
+            >
+              <TabsTrigger className="h-9 px-2 text-xs" value="timeline">
+                Timeline
+              </TabsTrigger>
+              <TabsTrigger className="h-9 px-2 text-xs" value="inspector">
+                Inspector
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent
+              className="flex min-h-[12rem] flex-[2] flex-col"
+              value="timeline"
+            >
+              <TrackTimeline
+                activity={activity}
+                aiProcessingState={aiProcessingState}
+                detail={detail}
+                mutedTrackIds={mutedTrackIds}
+                playback={playback}
+                playbackAssets={playbackAssets}
+                thumbnailStatus={thumbnailStatus}
+                visualFrames={visualFrames}
+                onCreateRedactions={onCreateRedactions}
+                onClearInspectorSelection={handleClearInspectorSelection}
+                onInspectActivity={handleInspectActivity}
+                onInspectTranscript={handleInspectTranscript}
+                onUnredactRanges={onUnredactRanges}
+                onToggleTrackMuted={toggleTrackMuted}
+              />
+            </TabsContent>
+            <TabsContent
+              className="flex min-h-[12rem] flex-[2] flex-col"
+              value="inspector"
+            >
+              <StudioSidebar
+                actions={{
+                  onClearActivitySelection: handleClearInspectorSelection,
+                  onCreateRedactions,
+                  onDeleteRedaction,
+                  onSeek: handleInspectorSeek,
+                  onUnredactRanges,
+                }}
+                model={{
+                  aiProcessingState,
+                  detail,
+                  selection: inspectorSelection,
+                  visualFrames,
+                }}
+              />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <ResizablePanelGroup
+            className="min-h-0 flex-1"
+            orientation="horizontal"
+          >
+            <ResizablePanel defaultSize={74} minSize={50}>
+              <ResizablePanelGroup orientation="vertical">
+                <ResizablePanel defaultSize={68} minSize={45}>
+                  <StudioPlayer
+                    detail={detail}
+                    onRefreshPlayback={onRefreshPlayback}
+                    playback={playback}
+                    playbackAssets={playbackAssets}
+                  />
+                </ResizablePanel>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={32} minSize={18}>
+                  <TrackTimeline
+                    activity={activity}
+                    aiProcessingState={aiProcessingState}
+                    detail={detail}
+                    mutedTrackIds={mutedTrackIds}
+                    playback={playback}
+                    playbackAssets={playbackAssets}
+                    thumbnailStatus={thumbnailStatus}
+                    visualFrames={visualFrames}
+                    onCreateRedactions={onCreateRedactions}
+                    onClearInspectorSelection={handleClearInspectorSelection}
+                    onInspectActivity={handleInspectActivity}
+                    onInspectTranscript={handleInspectTranscript}
+                    onUnredactRanges={onUnredactRanges}
+                    onToggleTrackMuted={toggleTrackMuted}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={26} minSize={18}>
+              <StudioSidebar
+                actions={{
+                  onClearActivitySelection: handleClearInspectorSelection,
+                  onCreateRedactions,
+                  onDeleteRedaction,
+                  onSeek: handleInspectorSeek,
+                  onUnredactRanges,
+                }}
+                model={{
+                  aiProcessingState,
+                  detail,
+                  selection: inspectorSelection,
+                  visualFrames,
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
+      </div>
+    </TooltipProvider>
   );
 }

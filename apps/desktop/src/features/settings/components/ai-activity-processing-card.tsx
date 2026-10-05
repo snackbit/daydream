@@ -44,7 +44,7 @@ export function AiActivityProcessingCard({
   onUpdateDraft,
 }: AiActivityProcessingCardProps) {
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <CardTitle>Activity and Processing</CardTitle>
         <CardDescription>

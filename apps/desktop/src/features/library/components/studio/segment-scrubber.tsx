@@ -7,33 +7,21 @@ import {
 } from 'react';
 import type {
   LibraryPlaybackAssets,
-  LibraryPlaybackSegment,
   LibraryRecordingSegment,
+  LibraryRecordingDetail,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
-import { formatDuration, formatTimestamp } from '../../library-format';
-import { segmentForTimeline } from '../../library-timeline';
-
-type TimelineRegion =
-  | {
-      endMs: number;
-      kind: 'pause';
-      segment: LibraryRecordingSegment;
-      startMs: number;
-    }
-  | {
-      endMs: number;
-      kind: 'segment';
-      segment: LibraryRecordingSegment;
-      startMs: number;
-    };
-
-interface HoverPreview {
-  label: string;
-  leftPercent: number;
-  thumbnailUrl: null | string;
-  title: string;
-}
+import { formatDuration } from '../../library-format';
+import { PlayerSeekbarRedactions } from './player-seekbar-redactions';
+import {
+  buildTimelineRegions,
+  previewForTimeline,
+  resolvePlayableTimelineMs,
+  timelineRegionLabel,
+  clampTimelineMs,
+  percentOf,
+  type HoverPreview,
+} from './segment-scrubber-model';
 
 export function SegmentScrubber({
   currentTimelineMs,
@@ -42,6 +30,7 @@ export function SegmentScrubber({
   playbackAssets,
   segments,
   totalDurationMs,
+  privacy,
 }: {
   currentTimelineMs: number;
   onCommit: (timelineMs: number) => void;
@@ -49,6 +38,7 @@ export function SegmentScrubber({
   playbackAssets: LibraryPlaybackAssets | null;
   segments: LibraryRecordingSegment[];
   totalDurationMs: number;
+  privacy: Pick<LibraryRecordingDetail, 'redactions' | 'tracks'>;
 }) {
   const scrubberRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -65,6 +55,25 @@ export function SegmentScrubber({
   }
 
   function updateHoverPreview(timelineMs: number) {
+    if (
+      privacy.redactions.some(
+        (redaction) =>
+          timelineMs >= redaction.startOffsetMs &&
+          timelineMs < redaction.endOffsetMs &&
+          privacy.tracks.some(
+            (track) =>
+              track.kind === 'video' && redaction.trackIds.includes(track.id),
+          ),
+      )
+    ) {
+      setHoverPreview({
+        label: formatDuration(timelineMs),
+        leftPercent: percentOf(timelineMs, totalDurationMs),
+        thumbnailUrl: null,
+        title: 'Redacted',
+      });
+      return;
+    }
     setHoverPreview(
       previewForTimeline(timelineMs, totalDurationMs, regions, playbackAssets),
     );
@@ -197,6 +206,10 @@ export function SegmentScrubber({
             className="absolute top-0 left-0 h-full bg-white"
             style={{ width: `${progressPercent}%` }}
           />
+          <PlayerSeekbarRedactions
+            detail={privacy}
+            totalDurationMs={totalDurationMs}
+          />
         </div>
         {segments.map((segment) => {
           const startPercent = percentOf(
@@ -232,148 +245,4 @@ export function SegmentScrubber({
       </div>
     </div>
   );
-}
-
-function buildTimelineRegions(
-  segments: LibraryRecordingSegment[],
-): TimelineRegion[] {
-  return segments.flatMap((segment) => {
-    const durationMs = segment.durationMs ?? 0;
-    const segmentStartMs = segment.playbackOffsetMs;
-    const segmentEndMs = segmentStartMs + durationMs;
-    const regions: TimelineRegion[] = [
-      {
-        endMs: segmentEndMs,
-        kind: 'segment',
-        segment,
-        startMs: segmentStartMs,
-      },
-    ];
-    const pauseEndMs = segmentEndMs + Math.max(0, segment.pauseAfterMs);
-    if (pauseEndMs > segmentEndMs) {
-      regions.push({
-        endMs: pauseEndMs,
-        kind: 'pause',
-        segment,
-        startMs: segmentEndMs,
-      });
-    }
-
-    return regions;
-  });
-}
-
-function previewForTimeline(
-  timelineMs: number,
-  totalDurationMs: number,
-  regions: TimelineRegion[],
-  playbackAssets: LibraryPlaybackAssets | null,
-): HoverPreview | null {
-  const clampedTimelineMs = clampTimelineMs(timelineMs, totalDurationMs);
-  const region = regionForTimeline(regions, clampedTimelineMs);
-  if (!region) {
-    return null;
-  }
-  const leftPercent = percentOf(clampedTimelineMs, totalDurationMs);
-  if (region.kind === 'pause') {
-    return {
-      label: `${formatDuration(region.endMs - region.startMs)} gap, resumes at ${formatTimestamp(
-        nextSegmentStart(region.segment, regions),
-      )}`,
-      leftPercent,
-      thumbnailUrl: null,
-      title: 'Paused',
-    };
-  }
-
-  const offsetMs = clampedTimelineMs - region.segment.playbackOffsetMs;
-  const playbackSegment = playbackAssets?.segments.find(
-    (segment) => segment.segmentId === region.segment.id,
-  );
-  const thumbnail = nearestThumbnail(playbackSegment, offsetMs);
-
-  return {
-    label: `Segment ${region.segment.segmentIndex} - ${formatDuration(offsetMs)}`,
-    leftPercent,
-    thumbnailUrl: thumbnail?.url ?? null,
-    title: formatDuration(clampedTimelineMs),
-  };
-}
-
-function regionForTimeline(
-  regions: TimelineRegion[],
-  timelineMs: number,
-): TimelineRegion | null {
-  return (
-    regions.find(
-      (region) => timelineMs >= region.startMs && timelineMs <= region.endMs,
-    ) ?? null
-  );
-}
-
-function resolvePlayableTimelineMs(
-  segments: LibraryRecordingSegment[],
-  timelineMs: number,
-): number {
-  const target = segmentForTimeline(segments, timelineMs);
-  if (!target) {
-    return timelineMs;
-  }
-  const segment = segments[target.index];
-  if (!segment) {
-    return timelineMs;
-  }
-
-  return segment.playbackOffsetMs + target.offsetMs;
-}
-
-function nearestThumbnail(
-  playbackSegment: LibraryPlaybackSegment | undefined,
-  offsetMs: number,
-) {
-  return playbackSegment?.thumbnails.reduce<
-    LibraryPlaybackSegment['thumbnails'][number] | undefined
-  >((nearest, thumbnail) => {
-    if (!nearest) {
-      return thumbnail;
-    }
-
-    return Math.abs(thumbnail.offsetMs - offsetMs) <
-      Math.abs(nearest.offsetMs - offsetMs)
-      ? thumbnail
-      : nearest;
-  }, undefined);
-}
-
-function nextSegmentStart(
-  segment: LibraryRecordingSegment,
-  regions: TimelineRegion[],
-): number | null {
-  const nextRegion = regions.find(
-    (region) =>
-      region.kind === 'segment' &&
-      region.segment.segmentIndex > segment.segmentIndex,
-  );
-
-  return nextRegion?.segment.startedAtMs ?? null;
-}
-
-function timelineRegionLabel(region: TimelineRegion): string {
-  if (region.kind === 'pause') {
-    return `Paused after segment ${region.segment.segmentIndex}`;
-  }
-
-  return `Segment ${region.segment.segmentIndex}`;
-}
-
-function clampTimelineMs(timelineMs: number, totalDurationMs: number): number {
-  return Math.max(0, Math.min(totalDurationMs, timelineMs));
-}
-
-function percentOf(value: number, total: number): number {
-  if (total <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(100, (value / total) * 100));
 }

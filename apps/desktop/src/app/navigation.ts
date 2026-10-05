@@ -9,33 +9,34 @@ export interface NavigationItem {
 
 export const navigationItems: NavigationItem[] = [
   {
-    description: 'Default workspace and capture readiness overview.',
+    description:
+      'A private workspace for capture, review, and privacy controls.',
     href: '/',
     icon: Home,
     label: 'Home',
   },
   {
-    description: 'Source selection, scene layout, and recorder controls.',
+    description: 'Choose sources, check permissions, and control recording.',
     href: '/capture',
     icon: Video,
     label: 'Capture',
   },
   {
     description:
-      'Future recordings, redactions, search, and playback timeline.',
+      'Review, rename, edit, and remove recordings saved on this device.',
     href: '/library',
     icon: Database,
     label: 'Library',
   },
   {
-    description: 'Runtime versions, binary paths, permissions, and probes.',
+    description: 'Runtime health, native capture support, and storage details.',
     href: '/diagnostics',
     icon: Activity,
     label: 'Diagnostics',
   },
   {
     description:
-      'Future capture quality, storage, models, and privacy settings.',
+      'Capture quality, storage, local models, and optional remote providers.',
     href: '/settings',
     icon: Settings,
     label: 'Settings',

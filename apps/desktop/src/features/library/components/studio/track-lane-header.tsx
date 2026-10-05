@@ -93,7 +93,9 @@ export function TrackLaneHeader({
                 'shrink-0 rounded-full',
                 compact ? 'size-2' : 'size-2.5',
               )}
-              style={{ backgroundColor: color.strong }}
+              style={{
+                backgroundColor: `color-mix(in oklch, ${color.strong} 42%, var(--color-muted-foreground))`,
+              }}
             />
             <span className="min-w-0">
               <span

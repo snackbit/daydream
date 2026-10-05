@@ -4,7 +4,8 @@ import {
   createRouter,
 } from '@tanstack/react-router';
 import { AppShell } from '@/app/AppShell';
-import { NarrowPageLayout } from '@/app/PageLayout';
+import { RouteErrorScreen } from '@/features/navigation/components/route-error-screen';
+import { RouteNotFoundScreen } from '@/features/navigation/components/route-not-found-screen';
 import { CaptureScreen } from '@/screens/CaptureScreen';
 import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
@@ -12,11 +13,11 @@ import { LibraryScreen } from '@/screens/LibraryScreen';
 import { NotificationsScreen } from '@/screens/NotificationsScreen';
 import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
 import { SettingsScreen } from '@/screens/SettingsScreen';
-import { unknownErrorMessage } from './lib/async-store-action';
 
 const rootRoute = createRootRoute({
   component: AppShell,
-  errorComponent: ({ error }) => <RouteErrorScreen error={error} />,
+  errorComponent: RouteErrorScreen,
+  notFoundComponent: RouteNotFoundScreen,
 });
 
 const homeRoute = createRoute({
@@ -72,22 +73,6 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 export const router = createRouter({ routeTree });
-
-function RouteErrorScreen({ error }: { error: unknown }) {
-  return (
-    <NarrowPageLayout>
-      <h1 className="text-xl font-semibold tracking-normal">
-        Something failed
-      </h1>
-      <p className="text-muted-foreground text-sm">
-        The last action failed before the screen could recover.
-      </p>
-      <pre className="bg-muted overflow-auto border p-3 text-xs">
-        {unknownErrorMessage(error)}
-      </pre>
-    </NarrowPageLayout>
-  );
-}
 
 declare module '@tanstack/react-router' {
   interface Register {

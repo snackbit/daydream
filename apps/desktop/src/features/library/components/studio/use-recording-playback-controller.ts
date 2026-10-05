@@ -7,6 +7,7 @@ import { segmentForTimeline, timelineDurationMs } from '../../library-timeline';
 import { usePlaybackMediaElements } from './recording-playback-media-elements';
 import { usePlaybackRedactionController } from './recording-playback-redaction-controller';
 import { usePlaybackResumeTimer } from './recording-playback-resume-timer';
+import { usePlaybackVideoRedactionSkip } from './use-redaction-auto-skip';
 
 export interface RecordingPlaybackSnapshot {
   displayedTimelineMs: number;
@@ -97,6 +98,7 @@ export function useRecordingPlaybackController({
     updateRedactionStateForTimeline,
     updateRedactionStateFromVideo,
     videoTimelineMs,
+    redactionSkipTargetMs,
   } = redaction;
   const streamStartSeconds = streamStartMs / 1000;
   const snapshot: RecordingPlaybackSnapshot = {
@@ -230,6 +232,7 @@ export function useRecordingPlaybackController({
       return;
     }
     if (video.paused) {
+      setScrubTimelineMs(null);
       setPlaybackEndedAtEnd(false);
       const played = await playMediaElements();
       playbackIntentRef.current = played;
@@ -251,12 +254,21 @@ export function useRecordingPlaybackController({
     seekTimeline(nextTimelineMs);
   }
 
-  function skipToNextUnredactedVideo() {
-    if (nextUnredactedVideoTimelineMs === null) {
-      return;
-    }
-    seekTimeline(nextUnredactedVideoTimelineMs);
+  function cancelTimelineInput() {
+    setScrubTimelineMs(null);
   }
+
+  const {
+    seconds: redactionCountdownSeconds,
+    manualSkip: skipToNextUnredactedVideo,
+  } = usePlaybackVideoRedactionSkip({
+    recordingId: detail.id,
+    targetMs: redactionSkipTargetMs,
+    seek: seekTimeline,
+    isPlaying,
+    timelineMs: currentTimelineMs,
+    seekRevision,
+  });
 
   const handleEnded = useCallback(() => {
     if (!currentSegment) {
@@ -343,6 +355,7 @@ export function useRecordingPlaybackController({
   return {
     actions: {
       commitTimelineInput,
+      cancelTimelineInput,
       handleEnded,
       handleTimelineInput,
       handleVideoCanPlay,
@@ -371,6 +384,8 @@ export function useRecordingPlaybackController({
       playableSegments,
       playbackError,
       redactedVideoActive,
+      redactionCountdownSeconds,
+      redactionSkipTargetMs,
       resumeProgress,
       snapshot,
       streamRevision,

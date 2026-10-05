@@ -54,7 +54,7 @@ export function AiSettingsTab({
   );
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-3">
       <AiTranscriptionCard
         draft={draft}
         limits={limits}

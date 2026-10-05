@@ -1,5 +1,9 @@
 import type { DaydreamDiagnostics } from '@daydream/shared';
-import { DiagnosticRow, HealthBlock } from './diagnostic-primitives';
+import {
+  DiagnosticCard,
+  DiagnosticRow,
+  HealthBlock,
+} from './diagnostic-primitives';
 
 interface RecorderBackendDiagnosticsSectionProps {
   diagnostics: DaydreamDiagnostics | null;
@@ -9,9 +13,8 @@ export function RecorderBackendDiagnosticsSection({
   diagnostics,
 }: RecorderBackendDiagnosticsSectionProps) {
   return (
-    <div className="bg-card border p-4 md:col-span-2">
-      <h2 className="text-sm font-medium">Recorder Backend</h2>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
+    <DiagnosticCard className="md:col-span-2" title="Recorder backend">
+      <div className="grid gap-3 md:grid-cols-2">
         <HealthBlock
           available={diagnostics?.recorder.portal.available ?? false}
           label="ScreenCast portal"
@@ -160,7 +163,7 @@ export function RecorderBackendDiagnosticsSection({
           />
         </HealthBlock>
       </div>
-    </div>
+    </DiagnosticCard>
   );
 }
 

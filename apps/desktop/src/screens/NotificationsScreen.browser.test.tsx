@@ -150,7 +150,7 @@ test('NotificationsScreen groups all notifications by local date', () => {
   expect(screen.getByText('New update')).toBeTruthy();
   expect(screen.getByText('Older update')).toBeTruthy();
   expect(screen.getByText('New')).toBeTruthy();
-  expect(screen.getByText('model-download')).toBeTruthy();
+  expect(screen.getByText('Model Download')).toBeTruthy();
 });
 
 test('NotificationsScreen permanently dismisses one or all notifications', async () => {
@@ -176,9 +176,7 @@ test('NotificationsScreen permanently dismisses one or all notifications', async
     }),
   );
 
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Dismiss all notifications' }),
-  );
+  fireEvent.click(screen.getByRole('button', { name: 'Clear 1 update' }));
 
   await waitFor(() =>
     expect(client.deleteNotifications).toHaveBeenLastCalledWith({
@@ -245,7 +243,30 @@ test('NotificationsScreen shows an empty history state', () => {
 
   render(<NotificationsScreen />);
 
-  expect(screen.getByText('No notifications yet.')).toBeTruthy();
+  expect(screen.getByRole('status').textContent).toContain('All caught up');
+});
+
+test('NotificationsScreen retries a failed history load and shows recovered updates', async () => {
+  vi.useRealTimers();
+  client.getNotifications
+    .mockRejectedValueOnce(new Error('Notifications are unavailable.'))
+    .mockResolvedValueOnce({ notifications: [unseenNotification] });
+  useNotificationsStore.setState({
+    aiModels: [],
+    error: null,
+    notifications: [],
+    status: 'idle',
+  });
+
+  render(<NotificationsScreen />);
+
+  expect(
+    await screen.findByText('Could not update notifications'),
+  ).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+  expect(await screen.findByText('New update')).toBeTruthy();
+  await waitFor(() => expect(client.getNotifications).toHaveBeenCalledTimes(2));
 });
 
 test('NotificationsScreen keeps ongoing downloads unread and undeletable', async () => {
@@ -267,7 +288,7 @@ test('NotificationsScreen keeps ongoing downloads unread and undeletable', async
     }),
   ).toBeNull();
   const dismissAllButton = screen.getByRole('button', {
-    name: 'Dismiss all notifications',
+    name: 'No updates to clear',
   }) as HTMLButtonElement;
   expect(dismissAllButton.disabled).toBe(true);
 });

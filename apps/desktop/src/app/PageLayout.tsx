@@ -10,7 +10,7 @@ export function PageLayout({ children, className }: LayoutProps) {
   return (
     <section
       className={cn(
-        'mx-auto flex w-full max-w-5xl flex-col gap-6 p-6',
+        'mx-auto flex min-h-full w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6',
         className,
       )}
     >
@@ -23,7 +23,7 @@ export function NarrowPageLayout({ children, className }: LayoutProps) {
   return (
     <section
       className={cn(
-        'mx-auto flex w-full max-w-3xl flex-col gap-3 p-6',
+        'mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 px-4 py-4 sm:px-5',
         className,
       )}
     >
@@ -34,7 +34,7 @@ export function NarrowPageLayout({ children, className }: LayoutProps) {
 
 export function FullHeightLayout({ children, className }: LayoutProps) {
   return (
-    <section className={cn('flex min-h-full flex-col', className)}>
+    <section className={cn('flex min-h-full min-w-0 flex-col', className)}>
       {children}
     </section>
   );
@@ -63,9 +63,11 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-normal">{title}</h1>
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          {title}
+        </h1>
         {description ? (
-          <p className="text-muted-foreground mt-2 max-w-3xl text-sm leading-6">
+          <p className="text-muted-foreground mt-1.5 max-w-3xl text-[13px] leading-5">
             {description}
           </p>
         ) : null}

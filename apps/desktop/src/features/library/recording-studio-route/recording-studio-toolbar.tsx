@@ -10,7 +10,6 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   availabilityLabel,
@@ -28,6 +27,7 @@ export function RecordingStudioToolbar({
   aiProcessing,
   debugEnabled,
   detail,
+  loadStatus,
   onDelete,
   onDebug,
   onRefresh,
@@ -38,6 +38,7 @@ export function RecordingStudioToolbar({
   aiProcessing: { state: RecordingAiProcessingState | null };
   debugEnabled: boolean;
   detail: LibraryRecordingDetail | null;
+  loadStatus: 'error' | 'idle' | 'loading' | 'ready';
   onDelete: () => void;
   onDebug: () => void;
   onRefresh: () => void;
@@ -71,17 +72,15 @@ export function RecordingStudioToolbar({
           : 'Process AI';
 
   return (
-    <div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
+    <div className="flex shrink-0 flex-col gap-3 border-b px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
       <div className="min-w-0">
-        <h1 className="truncate text-lg font-semibold tracking-normal">
+        <h1 className="text-sm font-semibold tracking-normal">
           {detail ? recordingTitle(detail) : 'Recording'}
         </h1>
-        <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs">
+        <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
           {detail ? (
             <>
-              <Badge variant="outline">
-                {availabilityLabel(detail.availability)}
-              </Badge>
+              <span>{availabilityLabel(detail.availability)}</span>
               {detail.title ? (
                 <span>{formatTimestamp(detail.startedAtMs)}</span>
               ) : null}
@@ -89,11 +88,15 @@ export function RecordingStudioToolbar({
               <span>{detail.segments.length} segments</span>
             </>
           ) : (
-            <span>Loading studio...</span>
+            <span>
+              {loadStatus === 'error'
+                ? 'Recording unavailable'
+                : 'Loading recording...'}
+            </span>
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 xl:justify-end">
         {detail ? (
           <Button
             className="gap-2"

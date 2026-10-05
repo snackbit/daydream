@@ -6,13 +6,16 @@ import {
 } from 'react';
 import type {
   ActivityCaptureState,
-  ActivityEvent,
   ActivityInterval,
   LibraryRecordingRedaction,
   RecordingActivity,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
-import { formatDuration } from '../../library-format';
+import {
+  ActivityIntervalSpan,
+  FocusActivityMarker,
+} from './activity-track-markers';
+import type { StudioInspectorSelection } from './studio-inspector-selection';
 import type {
   StudioLaneDraft,
   StudioTimeRangeSelection,
@@ -28,7 +31,7 @@ export interface ActivityTrackLaneProps {
   activity: RecordingActivity | null;
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
   lane: StudioLaneDraft;
-  onSelectActivityEvent: (event: ActivityEvent) => void;
+  onInspectActivity: (selection: StudioInspectorSelection) => void;
   onSelectLane: (trackId: string, additive: boolean) => void;
   onSelectRedaction: (redactionId: string, additive: boolean) => void;
   redactions: LibraryRecordingRedaction[];
@@ -43,7 +46,7 @@ export function ActivityTrackLane({
   activity,
   dragHandleProps,
   lane,
-  onSelectActivityEvent,
+  onInspectActivity,
   onSelectLane,
   onSelectRedaction,
   redactions,
@@ -143,7 +146,7 @@ export function ActivityTrackLane({
           redactions={laneRedactions}
           timelineWidthPx={timelineWidthPx}
           totalDurationMs={totalDurationMs}
-          onSelectActivityEvent={onSelectActivityEvent}
+          onInspectActivity={onInspectActivity}
         />
         {timeRanges.map((range) => (
           <TimeRangeOverlay
@@ -172,14 +175,14 @@ export function ActivityTrackLane({
 function ActivityLaneContent({
   activity,
   lane,
-  onSelectActivityEvent,
+  onInspectActivity,
   redactions,
   timelineWidthPx,
   totalDurationMs,
 }: {
   activity: RecordingActivity | null;
   lane: StudioLaneDraft;
-  onSelectActivityEvent: (event: ActivityEvent) => void;
+  onInspectActivity: (selection: StudioInspectorSelection) => void;
   redactions: LibraryRecordingRedaction[];
   timelineWidthPx: number;
   totalDurationMs: number;
@@ -193,9 +196,10 @@ function ActivityLaneContent({
             <FocusActivityMarker
               event={event}
               key={event.id}
+              lane={lane}
               timelineWidthPx={timelineWidthPx}
               totalDurationMs={totalDurationMs}
-              onSelectActivityEvent={onSelectActivityEvent}
+              onInspectActivity={onInspectActivity}
             />
           ))}
       </>
@@ -217,6 +221,20 @@ function ActivityLaneContent({
       ),
   );
 
+  function handleInspectInterval(interval: ActivityInterval) {
+    onInspectActivity({
+      endOffsetMs: interval.endOffsetMs,
+      kind: 'activity-interval',
+      score: interval.score,
+      sourceKind: interval.sourceKind,
+      startOffsetMs: interval.startOffsetMs,
+      state: interval.state,
+      timelineOffsetMs: interval.startOffsetMs,
+      trackId: lane.trackId,
+      trackLabel: lane.label,
+    });
+  }
+
   return (
     <>
       {unavailableCaptureState ? (
@@ -232,6 +250,7 @@ function ActivityLaneContent({
           lane={lane}
           timelineWidthPx={timelineWidthPx}
           totalDurationMs={totalDurationMs}
+          onInspect={handleInspectInterval}
         />
       ))}
     </>
@@ -271,85 +290,4 @@ function InputActivityUnavailableMarker({
       Unavailable
     </div>
   );
-}
-
-function ActivityIntervalSpan({
-  interval,
-  lane,
-  timelineWidthPx,
-  totalDurationMs,
-}: {
-  interval: ActivityInterval;
-  lane: StudioLaneDraft;
-  timelineWidthPx: number;
-  totalDurationMs: number;
-}) {
-  const startMs = Math.max(0, interval.startOffsetMs);
-  const endMs = Math.max(startMs + 1, interval.endOffsetMs);
-  const left =
-    (Math.min(startMs, totalDurationMs) / totalDurationMs) * timelineWidthPx;
-  const width = Math.max(
-    4,
-    ((Math.min(endMs, totalDurationMs) - Math.min(startMs, totalDurationMs)) /
-      totalDurationMs) *
-      timelineWidthPx,
-  );
-
-  return (
-    <div
-      aria-label={`${lane.label} activity ${formatDuration(startMs)} to ${formatDuration(endMs)}`}
-      className={cn(
-        'absolute top-1/2 h-2 -translate-y-1/2 rounded-full border shadow-sm',
-        lane.kind === 'activity-mouse'
-          ? 'border-emerald-600 bg-emerald-500/70'
-          : 'border-violet-600 bg-violet-500/70',
-      )}
-      style={{ left, width }}
-      title={`${lane.label} activity ${formatDuration(startMs)} - ${formatDuration(endMs)}`}
-    />
-  );
-}
-
-function FocusActivityMarker({
-  event,
-  onSelectActivityEvent,
-  timelineWidthPx,
-  totalDurationMs,
-}: {
-  event: ActivityEvent;
-  onSelectActivityEvent: (event: ActivityEvent) => void;
-  timelineWidthPx: number;
-  totalDurationMs: number;
-}) {
-  const left =
-    (Math.min(Math.max(0, event.offsetMs), totalDurationMs) / totalDurationMs) *
-    timelineWidthPx;
-  const title = focusActivityTitle(event);
-
-  return (
-    <button
-      aria-label={title}
-      className="absolute top-1/2 z-20 h-4 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-rose-700 bg-rose-500 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-      data-library-action
-      style={{ left }}
-      title={title}
-      type="button"
-      onClick={(clickEvent) => {
-        clickEvent.stopPropagation();
-        onSelectActivityEvent(event);
-      }}
-    >
-      <span className="sr-only">{title}</span>
-    </button>
-  );
-}
-
-function focusActivityTitle(event: ActivityEvent): string {
-  const parts = [
-    `Focus changed at ${formatDuration(event.offsetMs)}`,
-    event.applicationName,
-    event.title,
-  ].filter(Boolean);
-
-  return parts.join(' - ');
 }

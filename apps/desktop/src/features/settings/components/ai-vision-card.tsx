@@ -62,7 +62,7 @@ export function AiVisionCard({
   const systemRuntimeAvailable = ocrStatus?.runtimeSource === 'system';
 
   return (
-    <Card>
+    <Card size="sm">
       <CardHeader>
         <CardTitle>OCR and Vision</CardTitle>
         <CardDescription>
@@ -146,8 +146,10 @@ export function AiVisionCard({
             <>
               <RemoteProviderFields
                 baseUrl={vision.baseUrl ?? ''}
+                dataSentLabel="Retained screen frames and OCR text"
                 hasSavedKey={Boolean(vision.apiKeyRef)}
                 keyDraft={visionKeyDraft}
+                localAlternativeDescription="Choose Disabled to turn off remote visual model processing. OCR stays local."
                 onBaseUrlChange={(value) => {
                   updateAiVision(onUpdateDraft, (current) => ({
                     ...current,

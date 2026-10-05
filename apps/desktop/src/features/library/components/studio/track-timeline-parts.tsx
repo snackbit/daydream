@@ -41,8 +41,8 @@ export function TrackTimelineToolbar({
   zoomPercent: number;
 }) {
   return (
-    <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b px-3">
-      <div className="text-sm font-medium">Tracks</div>
+    <div className="flex h-8 shrink-0 items-center justify-between gap-2 border-b px-2.5">
+      <div className="text-xs font-semibold">Tracks</div>
       <div className="flex min-w-0 items-center gap-2">
         {hasTimeRangeSelection ? (
           <div className="flex shrink-0 items-center gap-1">
@@ -68,7 +68,7 @@ export function TrackTimelineToolbar({
             ) : null}
           </div>
         ) : null}
-        <div className="text-muted-foreground truncate text-xs">
+        <div className="text-muted-foreground truncate text-[10px]">
           {statusText}
         </div>
         <div
@@ -118,6 +118,7 @@ export function SortableTrackLane({
   onSelectRedaction,
   onSelectVisualFrame,
   onToggleTrackMuted,
+  onInspectTranscript,
   playbackAssets,
   selectedClipIds,
   selectedLane,
@@ -170,6 +171,7 @@ export function SortableTrackLane({
         track={track}
         waveformTiles={waveformTiles}
         visualFrames={visualFrames}
+        onInspectTranscript={onInspectTranscript}
         onSelectClip={onSelectClip}
         onSelectLane={onSelectLane}
         onSelectRedaction={onSelectRedaction}
@@ -183,7 +185,7 @@ export function SortableTrackLane({
 export function SortableActivityTrackLane({
   activity,
   lane,
-  onSelectActivityEvent,
+  onInspectActivity,
   onSelectLane,
   onSelectRedaction,
   redactions,
@@ -223,7 +225,7 @@ export function SortableActivityTrackLane({
         timelineWidthPx={timelineWidthPx}
         timeRanges={timeRanges}
         totalDurationMs={totalDurationMs}
-        onSelectActivityEvent={onSelectActivityEvent}
+        onInspectActivity={onInspectActivity}
         onSelectLane={onSelectLane}
         onSelectRedaction={onSelectRedaction}
       />
@@ -284,7 +286,7 @@ export function TimelineRangeLabels({
         return (
           <div
             aria-label="Selected time range"
-            className="pointer-events-none absolute top-0 z-40 rounded-b-sm bg-red-600 px-1 py-px text-[0.625rem] font-medium text-white shadow-sm"
+            className="bg-destructive/80 text-destructive-foreground pointer-events-none absolute top-0 z-40 rounded-b-sm px-1 py-px text-[0.625rem] font-medium"
             key={range.id}
             style={{
               left: TRACK_LABEL_WIDTH_PX + left + 4,

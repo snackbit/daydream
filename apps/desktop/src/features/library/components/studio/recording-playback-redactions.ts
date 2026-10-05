@@ -54,12 +54,28 @@ export function nextUnredactedVideoTimelineMsForRedaction(
   videoTrackIds: string[],
   totalDurationMs: number,
 ): number | null {
+  const target = redactedVideoEndTimelineMs(
+    detail,
+    timelineMs,
+    videoTrackIds,
+    totalDurationMs,
+  );
+  return target !== null && target < totalDurationMs ? target : null;
+}
+
+export function redactedVideoEndTimelineMs(
+  detail: LibraryRecordingDetail,
+  timelineMs: number,
+  videoTrackIds: string[],
+  totalDurationMs: number,
+): number | null {
   const videoTrackIdSet = new Set(videoTrackIds);
   if (videoTrackIdSet.size === 0) {
     return null;
   }
 
   let candidateMs = Math.max(0, timelineMs);
+  let intersects = false;
   let advanced = true;
   while (advanced) {
     advanced = false;
@@ -73,11 +89,12 @@ export function nextUnredactedVideoTimelineMsForRedaction(
       }
 
       candidateMs = Math.max(candidateMs, redaction.endOffsetMs);
+      intersects = true;
       advanced = true;
     }
   }
 
-  return candidateMs < totalDurationMs ? candidateMs : null;
+  return intersects ? Math.min(candidateMs, totalDurationMs) : null;
 }
 
 export function setsEqual(left: Set<string>, right: Set<string>): boolean {

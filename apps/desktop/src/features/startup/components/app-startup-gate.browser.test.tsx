@@ -1,5 +1,5 @@
 import type { AppStartupStatus } from '@daydream/shared';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { AppStartupGate } from './app-startup-gate';
 
@@ -35,7 +35,9 @@ test('startup gate renders loading state before the app shell', () => {
     </AppStartupGate>,
   );
 
-  expect(screen.getByText('Starting Daydream')).toBeDefined();
+  expect(
+    screen.getByRole('heading', { name: 'Preparing your workspace' }),
+  ).toBeDefined();
   expect(screen.queryByText('App shell')).toBeNull();
   expect(startupStore.initialize).toHaveBeenCalled();
 });
@@ -50,7 +52,9 @@ test('startup gate reveals children when startup is ready', () => {
   );
 
   expect(screen.getByText('App shell')).toBeDefined();
-  expect(screen.queryByText('Starting Daydream')).toBeNull();
+  expect(
+    screen.queryByRole('heading', { name: 'Preparing your workspace' }),
+  ).toBeNull();
 });
 
 test('startup gate keeps hard startup failures on the error screen', () => {
@@ -69,9 +73,13 @@ test('startup gate keeps hard startup failures on the error screen', () => {
     </AppStartupGate>,
   );
 
-  expect(screen.getByText('Startup failed')).toBeDefined();
+  expect(
+    screen.getByRole('heading', { name: 'Could not finish startup' }),
+  ).toBeDefined();
   expect(screen.getByText('Database migration failed.')).toBeDefined();
   expect(screen.queryByText('App shell')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(startupStore.retry).toHaveBeenCalledOnce();
 });
 
 function startupStatus(phase: AppStartupStatus['phase']): AppStartupStatus {

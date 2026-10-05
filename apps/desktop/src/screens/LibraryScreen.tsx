@@ -11,13 +11,11 @@ export function LibraryScreen() {
     <PageLayout>
       <PageHeader
         title="Library"
-        description="Local recordings stored on this machine."
-        actions={
-          <LibraryOverviewToolbar
-            actions={overview.actions}
-            model={overview.model}
-          />
-        }
+        description="Recording sessions saved on this device."
+      />
+      <LibraryOverviewToolbar
+        actions={overview.actions}
+        model={overview.model}
       />
       <LibraryOverviewContent
         actions={overview.actions}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { Notification } from '@daydream/shared';
 import { Bell, X } from 'lucide-react';
@@ -37,9 +37,20 @@ export function NotificationCenter() {
 
   useEffect(() => {
     if (status === 'idle') {
-      void load();
+      void load().catch(() => undefined);
     }
   }, [load, status]);
+
+  const handleRetry = useCallback(async () => {
+    await load().catch(() => undefined);
+    setPopoverNotifications(
+      useNotificationsStore
+        .getState()
+        .notifications.filter(
+          (notification) => notification.dismissedAtMs === null,
+        ),
+    );
+  }, [load]);
 
   const unseenNotifications = notifications.filter(
     (notification) => notification.dismissedAtMs === null,
@@ -61,7 +72,7 @@ export function NotificationCenter() {
     setPopoverNotifications(unseenNotifications);
     void acknowledge(
       unseenNotifications.map((notification) => notification.id),
-    );
+    ).catch(() => undefined);
   }
 
   function acknowledgeAndHide(notificationId: string) {
@@ -70,7 +81,7 @@ export function NotificationCenter() {
         (notification) => notification.id !== notificationId,
       ),
     );
-    void acknowledge([notificationId]);
+    void acknowledge([notificationId]).catch(() => undefined);
   }
 
   return (
@@ -84,13 +95,19 @@ export function NotificationCenter() {
         >
           <Bell className="size-4" />
           {unreadCount > 0 ? (
-            <Badge className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] leading-4">
+            <Badge
+              aria-hidden="true"
+              className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] leading-4"
+            >
               {unreadCount}
             </Badge>
           ) : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 p-0">
+      <PopoverContent
+        align="end"
+        className="w-[calc(100vw-1.5rem)] max-w-96 p-0"
+      >
         <div className="flex items-center justify-between border-b px-3 py-2">
           <div>
             <h2 className="text-sm font-medium">Notifications</h2>
@@ -111,18 +128,25 @@ export function NotificationCenter() {
         </div>
 
         {error ? (
-          <div className="text-destructive border-b px-3 py-2 text-xs">
-            {error}
+          <div className="flex items-start justify-between gap-2 border-b px-3 py-2">
+            <p className="text-destructive min-w-0 text-xs" role="alert">
+              {error}
+            </p>
+            <Button onClick={handleRetry} size="sm" variant="outline">
+              Retry
+            </Button>
           </div>
         ) : null}
 
         {visibleNotifications.length === 0 ? (
           <div className="text-muted-foreground px-3 py-6 text-sm">
-            {seenCount > 0
-              ? `No new notifications. ${seenCount} older seen ${
-                  seenCount === 1 ? 'notification is' : 'notifications are'
-                } in history.`
-              : 'No notifications.'}
+            {error
+              ? 'Status unavailable.'
+              : seenCount > 0
+                ? `No new notifications. ${seenCount} older seen ${
+                    seenCount === 1 ? 'notification is' : 'notifications are'
+                  } in history.`
+                : 'No notifications.'}
           </div>
         ) : (
           <ScrollArea className="max-h-96 overflow-auto">
@@ -169,7 +193,7 @@ export function NotificationCenter() {
                             onClick={() =>
                               void executeAction(notification.id, action.id, {
                                 acknowledgeResult: true,
-                              })
+                              }).catch(() => undefined)
                             }
                             size="sm"
                             variant={
