@@ -88,6 +88,7 @@ test('settings client uses typed camelCase command names', async () => {
           apiKeyRef: null,
           baseUrl: null,
           model: null,
+          observationsEnabled: false,
           provider: 'disabled',
         },
       },

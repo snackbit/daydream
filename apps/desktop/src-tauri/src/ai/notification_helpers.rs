@@ -65,7 +65,7 @@ pub(super) fn save_job_running_notification(
                 ProcessingNotificationInput {
                     actions: &processing_running_actions(&job.id),
                     job_id: Some(&job.id),
-                    message: "Audio transcription is running for this recording.",
+                    message: "AI processing is running for this recording.",
                     recording_id: &job.recording_id,
                     status: "running",
                     timestamp_ms: now_ms(),
@@ -98,7 +98,7 @@ pub(super) fn save_job_progress_notification(
                     actions: &processing_running_actions(job_id),
                     job_id: Some(job_id),
                     message: &format!(
-                        "Audio transcription is {percent}% complete ({succeeded}/{total} chunks)."
+                        "AI processing is {percent}% complete ({succeeded}/{total} chunks)."
                     ),
                     recording_id: &job.recording_id,
                     status: "running",

@@ -7,6 +7,8 @@ import type {
 import { AlertTriangle, Lock } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ocrFrameProcessingRevision } from '@/features/ai/ocr/ocr-processing-revision';
+import { OcrDocumentInspector } from './inspector/ocr/ocr-document-inspector';
 import { RecordingInspectorSummary } from './inspector/recording-inspector-summary';
 import { SelectedSourceInspector } from './inspector/selected-source-inspector';
 import { VisualSourceInspector } from './inspector/visual-source-inspector';
@@ -42,6 +44,8 @@ export interface StudioSidebarModel {
   detail: LibraryRecordingDetail;
   selection: StudioInspectorSelection | null;
   visualFrames: StudioVisualFrame[];
+  debugEnabled?: boolean;
+  timelineOffsetMs?: number;
 }
 
 export interface StudioSidebarProps {
@@ -138,6 +142,21 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
           ) : selectedVisualFrames.length > 0 ? (
             selectedVisualFrames.map((frame) => (
               <VisualSourceInspector
+                context={{
+                  recordingId: model.detail.id,
+                  sourceTrackId:
+                    frame.sourceTrackId ??
+                    model.detail.tracks.find((track) => track.kind === 'video')
+                      ?.id ??
+                    '',
+                  privacyRevision: JSON.stringify(model.detail.redactions),
+                  processingRevision: ocrFrameProcessingRevision(
+                    model.aiProcessingState,
+                    frame.frameTimestampMs,
+                    frame.segmentId,
+                  ),
+                  debugEnabled: model.debugEnabled === true,
+                }}
                 frame={frame}
                 key={frame.id}
                 onClear={clearSelection}
@@ -145,7 +164,33 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
               />
             ))
           ) : (
-            timelineContent
+            <>
+              {timelineContent}
+              {selectedLanes
+                .filter((lane) => lane.kind === 'video')
+                .map((lane) => (
+                  <OcrDocumentInspector
+                    context={{
+                      recordingId: model.detail.id,
+                      sourceTrackId: lane.trackId,
+                      privacyRevision: JSON.stringify(model.detail.redactions),
+                      processingRevision: ocrFrameProcessingRevision(
+                        model.aiProcessingState,
+                        Math.round(model.timelineOffsetMs ?? 0),
+                        undefined,
+                      ),
+                      debugEnabled: model.debugEnabled === true,
+                    }}
+                    key={JSON.stringify([
+                      lane.trackId,
+                      model.detail.id,
+                      model.detail.redactions,
+                    ])}
+                    onSeek={actions.onSeek}
+                    timestampMs={Math.round(model.timelineOffsetMs ?? 0)}
+                  />
+                ))}
+            </>
           )}
 
           {model.selection === null && !hasTimelineSelection ? (

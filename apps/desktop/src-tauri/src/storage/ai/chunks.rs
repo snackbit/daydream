@@ -521,6 +521,18 @@ pub fn delete_visual_output_for_chunks(
     connection: &Connection,
     chunk_ids: &[String],
 ) -> rusqlite::Result<usize> {
+    let deleted = delete_visual_attempt_output_for_chunks(connection, chunk_ids)?;
+    super::delete_ocr_documents_for_chunks(connection, chunk_ids)?;
+    Ok(deleted)
+}
+
+/// Retry clears current raw/attempt output while retaining already-committed
+/// successful OCR cache support. Current-attempt queries still hide that support
+/// until the restarted worker writes a fresh occurrence for its current attempt.
+fn delete_visual_attempt_output_for_chunks(
+    connection: &Connection,
+    chunk_ids: &[String],
+) -> rusqlite::Result<usize> {
     if chunk_ids.is_empty() {
         return Ok(0);
     }
@@ -559,7 +571,7 @@ pub fn retry_processing_job_chunks(
         .collect::<Vec<_>>();
     delete_transcript_output_for_chunks(connection, &chunk_ids)?;
     delete_activity_output_for_chunks(connection, &chunk_ids)?;
-    delete_visual_output_for_chunks(connection, &chunk_ids)?;
+    delete_visual_attempt_output_for_chunks(connection, &chunk_ids)?;
     requeue_processing_chunks(connection, job_id, &["failed", "cancelled"], timestamp_ms)?;
     update_processing_job_status(connection, job_id, "queued", None, timestamp_ms)
 }

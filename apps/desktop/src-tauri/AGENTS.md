@@ -32,8 +32,9 @@ The package declares Rust 1.95 minimum; check dependency MSRVs before upgrades.
   protection eligibility. Recheck after async boundaries when privacy state can
   change. Cancellation and restart recovery cannot strand jobs or expose old results.
 - Keep desktop and microphone audio distinguishable and aligned to source timeline.
-  OCR processes retained frames unless the task defines another policy; visual/model
-  observations, transcripts and summaries retain provenance and bounded inputs.
+  [Full-frame OCR](../../../docs/ocr-documents-design.md) recognizes each selected
+  sampled frame; descriptive observations keep their separate policy. All outputs
+  retain provenance and bounded inputs.
 - Validate remote/model output at runtime before storing/displaying structured facts.
   Optional remote calls require explicit configuration and labeled user control.
   Do not put sensitive content or provider bodies in ordinary errors/logs.

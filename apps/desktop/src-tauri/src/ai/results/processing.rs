@@ -114,7 +114,7 @@ pub(in crate::ai) fn processing_job_list_from_rows(
     }
 }
 
-fn processing_job_from_row(row: ProcessingJobRow) -> ProcessingJob {
+pub(crate) fn processing_job_from_row(row: ProcessingJobRow) -> ProcessingJob {
     ProcessingJob {
         created_at_ms: row.created_at_ms,
         error_code: row.error,

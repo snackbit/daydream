@@ -65,6 +65,8 @@ pub struct AiTranscriptionProviderSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiVisionProviderSettings {
+    #[serde(default)]
+    pub observations_enabled: bool,
     pub api_key_ref: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,

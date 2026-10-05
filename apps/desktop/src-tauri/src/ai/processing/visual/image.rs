@@ -8,7 +8,7 @@ pub(super) fn file_sha1(path: &Path) -> Result<String, AiError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-pub(super) fn decode_png_rgba(path: &Path) -> Result<VisualImage, AiError> {
+pub(in crate::ai) fn decode_png_rgba(path: &Path) -> Result<VisualImage, AiError> {
     let bytes = fs::read(path).map_err(file_error)?;
     let decoder = png::Decoder::new(Cursor::new(bytes));
     let mut reader = decoder.read_info().map_err(|_error| {

@@ -4,7 +4,7 @@ export type AiAssetProviderKind = AiProviderKind | 'local-tesseract-ocr';
 
 export type AiVisionProviderKind = 'disabled' | 'openai-compatible';
 
-export type AiOcrEngine = 'tesseract';
+export type AiOcrEngine = 'tesseract' | 'vision';
 
 export type AiTranscriptionBackend = 'cpu' | 'cuda' | 'vulkan';
 

@@ -66,8 +66,8 @@ export function AiActivityProcessingCard({
           />
           <CheckboxField
             checked={draft.ai.processing.frameSimilarityEnabled}
-            description="Skip visually similar frame regions between periodic full-frame passes."
-            label="Use frame similarity cache"
+            description="Reduce duplicate or visually unchanged work in screen observations. Vision OCR still checks every selected full frame and reuses results only for exact image matches."
+            label="Optimize screen observations"
             onCheckedChange={(checked) => {
               updateAiProcessing(onUpdateDraft, (current) => ({
                 ...current,

@@ -4,13 +4,13 @@ use super::types::*;
 
 pub(super) fn vision_provider_ready(app_settings: &settings::AppSettings) -> bool {
     app_settings.ai.vision.provider == "openai-compatible"
+        && app_settings.ai.vision.observations_enabled
         && app_settings.ai.vision.base_url.is_some()
         && app_settings.ai.vision.api_key_ref.is_some()
         && app_settings.ai.vision.model.is_some()
-        && app_settings.ai.ocr.enabled
 }
 
-pub(super) fn vision_request_config(
+pub(in crate::ai) fn vision_request_config(
     storage: &AppStorage,
     app_settings: &settings::AppSettings,
 ) -> Result<VisionRequestConfig, AiError> {

@@ -3,14 +3,20 @@ import { Button } from '@/components/ui/button';
 import type { StudioVisualFrame } from '../studio-visual-observations';
 import { formatTimelineOffset } from './inspector-format';
 import { InspectorField, InspectorSection } from './inspector-section';
+import {
+  OcrDocumentInspector,
+  type OcrInspectorContext,
+} from './ocr/ocr-document-inspector';
 
 export interface VisualSourceInspectorProps {
+  context: OcrInspectorContext;
   frame: StudioVisualFrame;
   onClear: () => void;
   onSeek: (timelineOffsetMs: number) => void;
 }
 
 export function VisualSourceInspector({
+  context,
   frame,
   onClear,
   onSeek,
@@ -18,7 +24,6 @@ export function VisualSourceInspector({
   const handleSeek = useCallback(() => {
     onSeek(frame.frameTimestampMs);
   }, [frame.frameTimestampMs, onSeek]);
-
   return (
     <>
       <InspectorSection title="Selected frame">
@@ -27,18 +32,7 @@ export function VisualSourceInspector({
             label="Time"
             value={formatTimelineOffset(frame.frameTimestampMs)}
           />
-          <InspectorField
-            label="Frame references"
-            value={frame.sourceFrameRefs.length.toString()}
-          />
-          <InspectorField
-            label="OCR regions"
-            value={frame.ocrRegions.length.toString()}
-          />
-          <InspectorField
-            label="Screen observations"
-            value={frame.vlmObservations.length.toString()}
-          />
+          <InspectorField label="Source" value={context.sourceTrackId} />
         </dl>
         <div className="flex gap-1 border-t pt-2">
           <Button
@@ -61,81 +55,32 @@ export function VisualSourceInspector({
           </Button>
         </div>
       </InspectorSection>
-
-      <InspectorSection title="OCR text">
-        {frame.ocrRegions.length > 0 ? (
-          <div className="divide-y">
-            {frame.ocrRegions.map((region) => (
-              <div className="grid gap-1 py-1.5 first:pt-0" key={region.id}>
-                <p className="text-[11px] leading-4 whitespace-pre-wrap">
-                  {region.text}
-                </p>
-                <dl className="grid gap-1">
-                  <InspectorField label="Provider" value={region.provider} />
-                  <InspectorField
-                    label="Model"
-                    value={region.model ?? 'Unavailable'}
-                  />
-                  <InspectorField
-                    label="Confidence"
-                    value={formatConfidence(region.confidence)}
-                  />
-                  <InspectorField
-                    label="Chunk ID"
-                    value={<code>{region.chunkId}</code>}
-                  />
-                  <InspectorField
-                    label="Frame reference"
-                    value={<code>{region.sourceFrameRef}</code>}
-                  />
-                </dl>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-[10px]">
-            No OCR regions for this frame.
-          </p>
-        )}
-      </InspectorSection>
-
+      <OcrDocumentInspector
+        context={context}
+        key={JSON.stringify([
+          context.recordingId,
+          context.sourceTrackId,
+          context.privacyRevision,
+          frame.frameTimestampMs,
+        ])}
+        onSeek={onSeek}
+        timestampMs={frame.frameTimestampMs}
+        documentId={frame.ocrDocumentId ?? null}
+      />
       <InspectorSection title="Screen observations">
         {frame.vlmObservations.length > 0 ? (
           <div className="divide-y">
             {frame.vlmObservations.map((observation) => (
-              <div
-                className="grid gap-1.5 py-1.5 first:pt-0"
-                key={observation.id}
-              >
-                <p className="text-[11px] leading-4 whitespace-pre-wrap">
+              <div className="space-y-1 py-2" key={observation.id}>
+                <p className="text-[11px] leading-5 break-words whitespace-pre-wrap">
                   {observation.text}
                 </p>
-                <dl className="grid gap-1">
-                  <InspectorField
-                    label="Observation"
-                    value={observation.observationKind}
-                  />
-                  <InspectorField
-                    label="Provider"
-                    value={observation.provider}
-                  />
-                  <InspectorField
-                    label="Model"
-                    value={observation.model ?? 'Unavailable'}
-                  />
-                  <InspectorField
-                    label="Confidence"
-                    value={formatConfidence(observation.confidence)}
-                  />
-                  <InspectorField
-                    label="Chunk ID"
-                    value={<code>{observation.chunkId}</code>}
-                  />
-                  <InspectorField
-                    label="Frame reference"
-                    value={<code>{observation.sourceFrameRef}</code>}
-                  />
-                </dl>
+                <p className="text-muted-foreground text-[10px]">
+                  {observation.observationKind === 'corrected-ocr'
+                    ? 'Visual-model OCR correction observation'
+                    : 'Visual-model screen observation'}{' '}
+                  · {observation.model ?? observation.provider}
+                </p>
               </div>
             ))}
           </div>
@@ -147,10 +92,4 @@ export function VisualSourceInspector({
       </InspectorSection>
     </>
   );
-}
-
-function formatConfidence(confidence: number | null): string {
-  return confidence === null
-    ? 'Not provided'
-    : confidence.toLocaleString(undefined, { maximumFractionDigits: 3 });
 }

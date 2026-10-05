@@ -20,6 +20,7 @@ mod schema;
 mod segments;
 mod settings;
 
+pub use ai::get_ocr_timeline_frames;
 pub use ai::{
     cancel_processing_chunks, cancel_visual_frame_processing_states_for_chunk,
     claim_next_queued_processing_chunk, claim_processing_chunk, create_activity_interval,
@@ -45,6 +46,15 @@ pub use ai::{
     OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow, SaveAiModelAssetInput,
     TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
     VisualFrameProcessingStateRow, VlmObservationRow,
+};
+pub use ai::{delete_ocr_documents_for_chunks, load_cached_ocr_document};
+pub use ai::{get_ocr_document, get_ocr_history};
+pub use ai::{
+    get_processing_job_ocr_config, normalize_ocr_text, save_ocr_frame_result,
+    save_processing_job_ocr_config,
+};
+pub use ai::{
+    OcrBlockInput, OcrCachedContent, OcrContentInput, OcrFrameInput, OcrWordHierarchy, OcrWordInput,
 };
 pub use diagnostics::{collect_database_diagnostics, DatabaseDiagnostics};
 pub use notifications::{

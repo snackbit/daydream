@@ -5,6 +5,8 @@ import type {
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
+import { visibleOcrTimelineFrames } from '@/features/ai/ocr/ocr-timeline-visibility';
+import { useOcrTimelineFrames } from '@/features/ai/ocr/use-ocr-timeline-frames';
 import {
   visibleActivity,
   visibleAiProcessingState,
@@ -60,6 +62,15 @@ export function useRecordingStudioController({
     recordingId,
     aiProcessing.state,
     redactionSignature,
+  );
+  const ocrTimeline = useOcrTimelineFrames(
+    recordingId,
+    redactionSignature,
+    aiProcessing.state,
+  );
+  const visibleOcrFrames = useMemo(
+    () => (detail ? visibleOcrTimelineFrames(detail, ocrTimeline.frames) : []),
+    [detail, ocrTimeline.frames],
   );
   const visibleActivityState = useMemo(
     () => (detail ? visibleActivity(detail, activity.state) : null),
@@ -256,8 +267,15 @@ export function useRecordingStudioController({
       aiProcessing.reload(),
       activity.reload(),
       visualObservations.reload(),
+      ocrTimeline.reload(),
     ]);
-  }, [activity.reload, aiProcessing.reload, load, visualObservations.reload]);
+  }, [
+    activity.reload,
+    aiProcessing.reload,
+    load,
+    ocrTimeline.reload,
+    visualObservations.reload,
+  ]);
 
   useEffect(() => {
     void Promise.resolve().then(load);
@@ -294,6 +312,9 @@ export function useRecordingStudioController({
         aiProcessing.error ??
         activity.error ??
         visualObservations.error,
+      ocrTimelineError: ocrTimeline.error,
+      ocrFrames: visibleOcrFrames,
+      ocrTimelineStatus: ocrTimeline.status,
       playbackAssets,
       processingStartBusy,
       status,

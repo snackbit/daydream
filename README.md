@@ -27,7 +27,8 @@ then turns that evidence into a timeline you can review and process locally.
 - Resumable processing jobs for transcription, OCR, visual observations, and
   activity analysis.
 - Local transcription through vendored `whisper.cpp`.
-- Tesseract OCR using system or managed language data.
+- Full-frame OCR documents from local Tesseract (default) or explicitly configured
+  Vision OCR, with readable text, source-linked revision history and details.
 - Optional OpenAI-compatible remote transcription and vision endpoints.
 - Rust-owned SQLite storage with embedded migrations.
 
@@ -54,6 +55,9 @@ that data on the local machine.
   in derived results.
 - Input activity records timing and state, not key values, typed text, pointer
   coordinates, or clicked content.
+- Vision OCR sends original full-frame images only when selected and configured;
+  it is independent of screen-observation processing. Existing OCR data is
+  reconstructed locally without an automatic remote request.
 - Recording state stays visible and user-controlled.
 
 The codebase treats deletion and redaction as data-model concerns, not visual
@@ -100,6 +104,14 @@ capture
 
 React does not access SQLite, native capture APIs, media writers, or model
 runtimes directly. Typed Tauri commands own those boundaries.
+
+OCR recognizes full snapshots at the configured frame-recognition sampling rate.
+Exact-image reuse reduces repeated engine calls while retaining sampled occurrences;
+whitespace-only text grouping preserves source timestamps and splits at redactions.
+Settings select the OCR engine separately from screen observations. Retry keeps a
+job's pinned configuration; explicit OCR reprocessing uses current settings without
+rerunning audio. See [OCR document behavior](docs/ocr-documents-design.md) for schema,
+legacy reconstruction, provider failure and privacy details.
 
 ## Development
 
@@ -182,6 +194,7 @@ Detailed design decisions and implementation history live under
 - [Track timeline editor](docs/milestones/m2.1-track-timeline-editor.md)
 - [Day index MVP plan](docs/milestones/m3-day-index-mvp.md)
 - [Protected-window recording rules](docs/protected-window-recording-rules.md)
+- [Full-frame OCR documents](docs/ocr-documents-design.md)
 
 ## Contributing and security
 

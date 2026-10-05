@@ -1,6 +1,10 @@
 mod activity;
 mod audio;
+mod ocr_documents;
 mod planning;
+pub(crate) use ocr_documents::capture_ocr_job_config;
+#[cfg(test)]
+pub(in crate::ai) use ocr_documents::infer_or_reuse_frame;
 mod temp_files;
 mod visual;
 mod worker;
@@ -34,6 +38,7 @@ pub(in crate::ai) use audio::{
     ffmpeg_audio_extract_args, persist_transcriptions_for_chunk, transcript_segment_offsets_ms,
     transcription_words_for_segment, PendingTranscription,
 };
+pub(crate) use ocr_documents::reprocess_recording_ocr;
 pub(in crate::ai) use planning::*;
 pub(in crate::ai) use temp_files::{
     processing_temp_audio_path, processing_temp_audio_range_path, processing_temp_visual_directory,

@@ -1,5 +1,6 @@
 use super::*;
 
+mod ocr_documents;
 mod privacy_regressions;
 use std::path::{Path, PathBuf};
 
@@ -464,6 +465,7 @@ fn vlm_state_reports_provider_and_chunk_states() {
 
     let mut configured = settings::default_settings();
     configured.ai.vision.provider = "openai-compatible".to_string();
+    configured.ai.vision.observations_enabled = true;
     configured.ai.vision.base_url = Some("http://localhost:11434/v1".to_string());
     configured.ai.vision.api_key_ref = Some("ai.secret.vision.test".to_string());
     configured.ai.vision.model = Some("llava".to_string());
@@ -510,6 +512,7 @@ fn vlm_state_reports_provider_and_chunk_states() {
 fn vlm_state_reports_unconfigured_provider_reasons() {
     let mut missing_base_url = settings::default_settings();
     missing_base_url.ai.vision.provider = "openai-compatible".to_string();
+    missing_base_url.ai.vision.observations_enabled = true;
 
     assert_eq!(
         vlm_state_for_recording(&missing_base_url, &[], 0),

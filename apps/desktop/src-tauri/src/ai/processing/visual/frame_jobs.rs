@@ -310,6 +310,11 @@ async fn vlm_ocr_context_for_frame(
     {
         return (regions.clone(), "persisted");
     }
+    if settings::load_app_settings(&app.state::<AppStorage>())
+        .is_ok_and(|settings| settings.ai.ocr.engine == "vision")
+    {
+        return (Vec::new(), "vision-document");
+    }
 
     let _permit = acquire_ocr_permit(max_parallel_ocr_jobs.max(1)).await;
     if check_processing_cancel(&cancel).is_err() {

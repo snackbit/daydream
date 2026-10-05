@@ -13,6 +13,7 @@ import type {
   RecordingActivity,
   RecordingAiProcessingState,
   RecordingVisualObservations,
+  OcrTimelineFrame,
 } from '@daydream/shared';
 import {
   ResizableHandle,
@@ -31,6 +32,7 @@ import { useRecordingPlaybackController } from './use-recording-playback-control
 import { useStudioSpacePlayback } from './use-studio-space-playback';
 
 export interface RecordingStudioProps {
+  debugEnabled?: boolean;
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
@@ -45,9 +47,11 @@ export interface RecordingStudioProps {
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   visualObservations: RecordingVisualObservations | null;
+  ocrFrames?: OcrTimelineFrame[];
 }
 
 export function RecordingStudio({
+  debugEnabled = false,
   activity,
   aiProcessingState,
   detail,
@@ -58,6 +62,7 @@ export function RecordingStudio({
   playbackAssets,
   thumbnailStatus,
   visualObservations,
+  ocrFrames = [],
 }: RecordingStudioProps) {
   const layoutRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
@@ -78,8 +83,8 @@ export function RecordingStudio({
     playbackAssets,
   });
   const visualFrames = useMemo(
-    () => buildStudioVisualFrames(visualObservations, detail),
-    [detail, visualObservations],
+    () => buildStudioVisualFrames(visualObservations, detail, ocrFrames),
+    [ocrFrames, detail, visualObservations],
   );
   const redactionSignature = useMemo(
     () =>
@@ -227,6 +232,8 @@ export function RecordingStudio({
                 }}
                 model={{
                   aiProcessingState,
+                  debugEnabled,
+                  timelineOffsetMs: playback.state.displayedTimelineMs,
                   detail,
                   selection: inspectorSelection,
                   visualFrames,
@@ -282,6 +289,8 @@ export function RecordingStudio({
                 }}
                 model={{
                   aiProcessingState,
+                  debugEnabled,
+                  timelineOffsetMs: playback.state.displayedTimelineMs,
                   detail,
                   selection: inspectorSelection,
                   visualFrames,

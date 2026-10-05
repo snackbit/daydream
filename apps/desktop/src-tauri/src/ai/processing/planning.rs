@@ -123,7 +123,7 @@ pub(in crate::ai) fn visual_chunk_plans(
     let enabled = match source_kind {
         "ocr" => app_settings.ai.ocr.enabled,
         "vlm" => {
-            app_settings.ai.ocr.enabled
+            app_settings.ai.vision.observations_enabled
                 && app_settings.ai.vision.provider == "openai-compatible"
                 && app_settings.ai.vision.base_url.is_some()
                 && app_settings.ai.vision.api_key_ref.is_some()

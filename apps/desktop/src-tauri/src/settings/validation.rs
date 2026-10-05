@@ -192,9 +192,32 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
     validate_one_of(
         "ai.ocr.engine",
         &settings.ocr.engine,
-        &["tesseract"],
-        "OCR engine must be Tesseract.",
+        &["tesseract", "vision"],
+        "OCR engine must be Tesseract or Vision.",
     )?;
+    if settings.ocr.engine == "vision"
+        && (settings.vision.provider != "openai-compatible"
+            || settings
+                .vision
+                .base_url
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            || settings
+                .vision
+                .api_key_ref
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            || settings
+                .vision
+                .model
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty()))
+    {
+        return Err(validation_error(
+            "ai.ocr.engine",
+            "Vision OCR requires a configured vision endpoint, model and key.",
+        ));
+    }
     validate_u32_range(
         "ai.processing.maxParallelJobs",
         settings.processing.max_parallel_jobs,

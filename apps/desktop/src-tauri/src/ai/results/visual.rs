@@ -5,8 +5,15 @@ pub(crate) fn visual_observations_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingVisualObservations, AiError> {
+    visual_observations_for_recording_with_regions(storage, recording_id, true)
+}
+pub(crate) fn visual_observations_for_recording_with_regions(
+    storage: &AppStorage,
+    recording_id: &str,
+    include_ocr_regions: bool,
+) -> Result<RecordingVisualObservations, AiError> {
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
-    let visible_rows = visible_visual_observation_rows_for_recording(storage, recording_id)?;
+    let visible_rows = visible_visual_rows(storage, recording_id, include_ocr_regions)?;
     let vlm_chunks = visible_rows
         .visual_chunks
         .iter()
@@ -45,11 +52,22 @@ pub(crate) fn visible_visual_observation_rows_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<VisibleVisualObservationRows, AiError> {
+    visible_visual_rows(storage, recording_id, true)
+}
+fn visible_visual_rows(
+    storage: &AppStorage,
+    recording_id: &str,
+    include_ocr_regions: bool,
+) -> Result<VisibleVisualObservationRows, AiError> {
     let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions, segments) =
         storage
             .with_connection(|connection| {
                 Ok((
-                    storage::list_ocr_regions(connection, recording_id)?,
+                    if include_ocr_regions {
+                        storage::list_ocr_regions(connection, recording_id)?
+                    } else {
+                        Vec::new()
+                    },
                     storage::list_vlm_observations(connection, recording_id)?,
                     list_visual_chunks_for_recording(connection, recording_id)?,
                     storage::list_recording_tracks(connection, recording_id)?,

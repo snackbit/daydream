@@ -6,6 +6,36 @@ use super::validation::validate_settings;
 use super::*;
 
 #[test]
+fn vision_ocr_is_selectable_without_enabling_screen_observations() {
+    let mut settings = default_settings();
+    settings.ai.ocr.engine = "vision".into();
+    settings.ai.vision.provider = "openai-compatible".into();
+    settings.ai.vision.base_url = Some("http://127.0.0.1:8080".into());
+    settings.ai.vision.api_key_ref = Some("ai.secret.vision.test".into());
+    settings.ai.vision.model = Some("vision-test".into());
+    assert!(validate_settings(settings).is_ok());
+}
+
+#[test]
+fn legacy_provider_configuration_migrates_independent_observation_flag() {
+    for provider in ["disabled", "openai-compatible"] {
+        let rows = vec![storage::AppSettingRow {
+            key: "ai.vision.provider".into(),
+            value_json: serde_json::to_string(provider).unwrap(),
+            is_sensitive: false,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        }];
+        let migrated = super::persistence::settings_from_storage_rows(rows).unwrap();
+        assert_eq!(
+            migrated.ai.vision.observations_enabled,
+            provider == "openai-compatible"
+        );
+        assert_eq!(migrated.ai.ocr.engine, "tesseract");
+    }
+}
+
+#[test]
 fn load_app_settings_returns_defaults_without_saved_row() {
     let storage = storage::test_storage(PathBuf::from("/tmp/daydream.sqlite3"));
     let settings = load_app_settings(&storage).expect("load settings");

@@ -144,6 +144,7 @@ pub fn default_ai_settings() -> AiSettings {
             word_timestamps_enabled: true,
         },
         vision: AiVisionProviderSettings {
+            observations_enabled: false,
             api_key_ref: None,
             base_url: None,
             model: None,

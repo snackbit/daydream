@@ -70,7 +70,8 @@ pub(in crate::ai) fn vlm_state_for_recording(
 }
 
 fn vlm_provider_status(app_settings: &settings::AppSettings) -> String {
-    if app_settings.ai.vision.provider == "disabled" {
+    if app_settings.ai.vision.provider == "disabled" || !app_settings.ai.vision.observations_enabled
+    {
         "disabled".to_string()
     } else if app_settings.ai.vision.base_url.is_none() {
         "missing-base-url".to_string()

@@ -124,6 +124,7 @@ const defaultAiSettings = {
     apiKeyRef: null,
     baseUrl: null,
     model: null,
+    observationsEnabled: false,
     provider: 'disabled',
   },
 } as const;
@@ -310,6 +311,34 @@ async function selectOption(label: string, option: string) {
 async function selectRemoteTranscriptionProvider() {
   await selectOption('Provider', 'OpenAI-compatible');
   await screen.findByLabelText('API key');
+}
+
+function settingsWithVision({
+  observationsEnabled,
+}: {
+  observationsEnabled: boolean;
+}): AppSettingsState {
+  return {
+    ...defaultSettingsState,
+    settings: {
+      ...defaultSettingsState.settings,
+      ai: {
+        ...defaultSettingsState.settings.ai,
+        ocr: {
+          ...defaultSettingsState.settings.ai.ocr,
+          engine: 'vision',
+        },
+        vision: {
+          ...defaultSettingsState.settings.ai.vision,
+          apiKeyRef: 'ai.secret.vision.saved',
+          baseUrl: 'https://localhost:11434/v1',
+          model: 'vision-model',
+          observationsEnabled,
+          provider: 'openai-compatible',
+        },
+      },
+    },
+  };
 }
 
 beforeEach(() => {
@@ -652,17 +681,174 @@ test('SettingsScreen saves remote transcription settings through encrypted key r
   expect(screen.queryByDisplayValue('sk-private')).toBeNull();
 });
 
-test('SettingsScreen explains which retained data is sent by remote vision', async () => {
+test('SettingsScreen configures Vision OCR with full-frame consent and a secret reference', async () => {
   render(<SettingsScreen />);
 
   await openAiSettingsTab();
+  await selectOption('Text recognition engine', 'Vision model');
+
+  expect(
+    screen.getByText(/Vision OCR is not ready until you configure/i),
+  ).toBeTruthy();
+  expect(screen.getByText(/will not fall back to Tesseract/i)).toBeTruthy();
+  expect(
+    screen.getByText(/OCR request ceiling: 12 sampled frames per minute/i),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: /Generate screen observations/ }),
+  );
+
   await selectOption('Vision provider', 'OpenAI-compatible');
+  fireEvent.change(await screen.findByLabelText('Base URL'), {
+    target: { value: 'https://localhost:11434/v1' },
+  });
+  fireEvent.change(screen.getByLabelText('Vision model'), {
+    target: { value: 'vision-model' },
+  });
+  fireEvent.change(screen.getByLabelText('API key'), {
+    target: { value: 'sk-private' },
+  });
 
   expect(
     await screen.findByText(
-      /retained screen frames and ocr text will be sent to the configured provider/i,
+      /original-size sampled frames will be sent for OCR/i,
     ),
   ).toBeTruthy();
+  expect(screen.getByText(/may incur provider charges/i)).toBeTruthy();
+  const visionDisclosure = screen
+    .getAllByRole('alert')
+    .find((alert) => alert.textContent?.includes('Remote provider selected'));
+  expect(visionDisclosure?.textContent).toMatch(
+    /retained screen frames and OCR text will be sent for screen observations/i,
+  );
+  const ocrDisclosure = screen
+    .getAllByRole('alert')
+    .find((alert) =>
+      alert.textContent?.includes('Vision OCR uses the shared remote endpoint'),
+    );
+  expect(ocrDisclosure?.textContent).toMatch(
+    /Enabled screen observations can add separate requests/i,
+  );
+
+  aiClient.saveAiProviderSecret.mockResolvedValueOnce({
+    secretRef: 'ai.secret.vision.saved',
+  });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(aiClient.saveAiProviderSecret).toHaveBeenCalledWith({
+      plaintext: 'sk-private',
+      role: 'vision',
+    }),
+  );
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        ai: expect.objectContaining({
+          ocr: expect.objectContaining({ engine: 'vision', enabled: true }),
+          vision: expect.objectContaining({
+            apiKeyRef: 'ai.secret.vision.saved',
+            provider: 'openai-compatible',
+          }),
+        }),
+      }),
+    }),
+  );
+  expect(
+    JSON.stringify(settingsClient.saveAppSettings.mock.calls[0]),
+  ).not.toContain('sk-private');
+  expect(screen.queryByDisplayValue('sk-private')).toBeNull();
+});
+
+test('turning off screen observations keeps the Vision OCR endpoint and saved key', async () => {
+  const savedVision = settingsWithVision({ observationsEnabled: true });
+  settingsClient.getAppSettings.mockResolvedValue(savedVision);
+
+  render(<SettingsScreen />);
+  await openAiSettingsTab();
+
+  const observations = screen.getByRole('checkbox', {
+    name: /Generate screen observations/,
+  });
+  expect(observations.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(observations);
+  expect(observations.getAttribute('aria-checked')).toBe('false');
+  expect(screen.getByPlaceholderText('Saved key present')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        ai: expect.objectContaining({
+          ocr: expect.objectContaining({ engine: 'vision', enabled: true }),
+          vision: expect.objectContaining({
+            apiKeyRef: 'ai.secret.vision.saved',
+            observationsEnabled: false,
+            provider: 'openai-compatible',
+          }),
+        }),
+      }),
+    }),
+  );
+  expect(aiClient.deleteAiProviderSecret).not.toHaveBeenCalled();
+  expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
+});
+
+test('switching OCR back to Tesseract leaves the configured Vision endpoint intact', async () => {
+  const savedVision = settingsWithVision({ observationsEnabled: false });
+  settingsClient.getAppSettings.mockResolvedValue(savedVision);
+
+  render(<SettingsScreen />);
+  await openAiSettingsTab();
+  await selectOption('Text recognition engine', 'Tesseract (local)');
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        ai: expect.objectContaining({
+          ocr: expect.objectContaining({ engine: 'tesseract', enabled: true }),
+          vision: expect.objectContaining({
+            apiKeyRef: 'ai.secret.vision.saved',
+            observationsEnabled: false,
+            provider: 'openai-compatible',
+          }),
+        }),
+      }),
+    }),
+  );
+  expect(aiClient.deleteAiProviderSecret).not.toHaveBeenCalled();
+});
+
+test('incomplete Vision OCR stays selected and surfaces native validation without fallback', async () => {
+  const message =
+    'Vision OCR requires a configured vision endpoint, model and key.';
+  settingsClient.saveAppSettings.mockRejectedValue(new Error(message));
+
+  render(<SettingsScreen />);
+  await openAiSettingsTab();
+  await selectOption('Text recognition engine', 'Vision model');
+
+  const engine = screen.getByRole('combobox', {
+    name: 'Text recognition engine',
+  });
+  expect(engine.textContent).toContain('Vision model');
+  expect(
+    screen.getByText(/Vision OCR is not ready until you configure/i),
+  ).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+  expect(await screen.findByText(message)).toBeTruthy();
+  expect(engine.textContent).toContain('Vision model');
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+    settings: expect.objectContaining({
+      ai: expect.objectContaining({
+        ocr: expect.objectContaining({ engine: 'vision' }),
+      }),
+    }),
+  });
 });
 
 test('SettingsScreen toggles checkbox fields from their description text', async () => {

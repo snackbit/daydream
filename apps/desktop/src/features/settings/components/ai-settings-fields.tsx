@@ -8,6 +8,7 @@ import { Slider } from '@/components/ui/slider';
 
 export function RemoteProviderFields({
   baseUrl,
+  customDisclosure,
   dataSentLabel,
   hasSavedKey,
   keyDraft,
@@ -17,6 +18,7 @@ export function RemoteProviderFields({
   prefix,
 }: {
   baseUrl: string;
+  customDisclosure?: string;
   dataSentLabel: string;
   hasSavedKey: boolean;
   keyDraft: string;
@@ -30,9 +32,9 @@ export function RemoteProviderFields({
       <Alert>
         <AlertTitle>Remote provider selected</AlertTitle>
         <AlertDescription>
-          {dataSentLabel} will be sent to the configured provider when you
-          process a recording. {localAlternativeDescription} API keys are
-          encrypted locally.
+          {customDisclosure ??
+            `${dataSentLabel} will be sent to the configured provider when you process a recording.`}{' '}
+          {localAlternativeDescription} API keys are encrypted locally.
         </AlertDescription>
       </Alert>
       <Field>

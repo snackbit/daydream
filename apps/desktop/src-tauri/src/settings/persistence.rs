@@ -12,9 +12,16 @@ pub(super) fn settings_from_storage_rows(
     rows: Vec<AppSettingRow>,
 ) -> Result<AppSettings, AppSettingsError> {
     let mut settings = default_settings();
+    let observations_flag_present = rows
+        .iter()
+        .any(|row| row.key == "ai.vision.observationsEnabled");
 
     for row in rows {
         apply_setting_row(&mut settings, &row)?;
+    }
+    if !observations_flag_present {
+        settings.ai.vision.observations_enabled =
+            settings.ai.vision.provider == "openai-compatible";
     }
 
     validate_settings(settings)
@@ -25,6 +32,9 @@ fn apply_setting_row(
     row: &AppSettingRow,
 ) -> Result<(), AppSettingsError> {
     match row.key.as_str() {
+        "ai.vision.observationsEnabled" => {
+            settings.ai.vision.observations_enabled = setting_value(row)?
+        }
         "debug.enabled" => settings.debug.enabled = setting_value(row)?,
         "expert.enabled" => settings.expert.enabled = setting_value(row)?,
         "record.fps" => settings.record.fps = setting_value(row)?,
@@ -262,6 +272,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "ai.vision.provider",
             &settings.ai.vision.provider,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.observationsEnabled",
+            &settings.ai.vision.observations_enabled,
             false,
             timestamp_ms,
         )?,

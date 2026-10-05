@@ -79,6 +79,8 @@ const TRANSCRIPTION_RESULT_SKIPPED_SILENCE: &str = "skipped-silence";
 pub(crate) mod commands;
 mod models;
 mod ocr_runtime;
+mod ocr_types;
+pub(crate) use ocr_types::*;
 mod processing;
 #[cfg(test)]
 pub(crate) use processing::cancel_job_if_inactive;
@@ -89,12 +91,13 @@ pub use models::{recover_model_downloads, AiModelManager};
 pub(crate) use ocr_runtime::*;
 pub(crate) use processing::cancel_recording_processing_for_privacy;
 pub(crate) use processing::enqueue_recording_ai_processing;
+pub(crate) use processing::reprocess_recording_ocr;
 use processing::*;
 use results::*;
 pub(crate) use results::{
-    emit_processing_state, processing_state_for_recording,
+    emit_processing_state, processing_job_from_row, processing_state_for_recording,
     visible_transcript_segments_for_recording, visible_visual_observation_rows_for_recording,
-    visual_observations_for_recording,
+    visual_observations_for_recording, visual_observations_for_recording_with_regions,
 };
 pub use types::{
     ActivityEvent, ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus,

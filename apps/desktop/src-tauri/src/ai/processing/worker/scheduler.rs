@@ -1,13 +1,33 @@
 use super::super::super::*;
 use super::execution::process_recording_ai_job;
 
+fn runnable_jobs(
+    connection: &rusqlite::Connection,
+    statuses: &[&str],
+    limit: Option<usize>,
+) -> rusqlite::Result<Vec<ProcessingJobRow>> {
+    let mut jobs = storage::list_processing_jobs_by_status(
+        connection,
+        AI_PROCESSING_JOB_KIND,
+        statuses,
+        limit,
+    )?;
+    jobs.extend(storage::list_processing_jobs_by_status(
+        connection, "ocr", statuses, limit,
+    )?);
+    jobs.sort_by_key(|job| job.updated_at_ms);
+    if let Some(limit) = limit {
+        jobs.truncate(limit);
+    }
+    Ok(jobs)
+}
+
 pub(in crate::ai) fn recover_stale_processing(storage: &AppStorage) -> Result<(), AiError> {
     storage
         .with_connection(|connection| {
             let timestamp_ms = now_ms();
-            let jobs = storage::list_processing_jobs_by_status(
+            let jobs = runnable_jobs(
                 connection,
-                AI_PROCESSING_JOB_KIND,
                 &[
                     "running",
                     "queued",
@@ -53,14 +73,7 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
     let storage = app.state::<AppStorage>();
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
     let running = storage
-        .with_connection(|connection| {
-            storage::list_processing_jobs_by_status(
-                connection,
-                AI_PROCESSING_JOB_KIND,
-                &["running"],
-                None,
-            )
-        })
+        .with_connection(|connection| runnable_jobs(connection, &["running"], None))
         .map_err(storage_error)?;
     let available = app_settings
         .ai
@@ -72,14 +85,7 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
         return Ok(());
     }
     let queued = storage
-        .with_connection(|connection| {
-            storage::list_processing_jobs_by_status(
-                connection,
-                AI_PROCESSING_JOB_KIND,
-                &["queued"],
-                Some(available),
-            )
-        })
+        .with_connection(|connection| runnable_jobs(connection, &["queued"], Some(available)))
         .map_err(storage_error)?;
     log_worker_tick(running.len(), queued.len(), available);
 

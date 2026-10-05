@@ -94,8 +94,8 @@ pub(super) fn extract_visual_frames(
             &format!("0:{video_stream_index}"),
             "-vf",
             &format!("fps={fps:.6}"),
-            "-vsync",
-            "0",
+            "-fps_mode",
+            "passthrough",
         ])
         .arg(&output_pattern)
         .output()

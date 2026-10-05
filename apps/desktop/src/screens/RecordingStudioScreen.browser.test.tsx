@@ -5,6 +5,9 @@ import type {
   RecordingActivity,
   RecordingAiProcessingState,
   RecordingVisualObservations,
+  OcrDocument,
+  ProcessingJob,
+  OcrTimelineFramePage,
 } from '@daydream/shared';
 import {
   act,
@@ -44,6 +47,15 @@ const aiClient = vi.hoisted(() => ({
   getRecordingVisualObservations: vi.fn(),
   listenToAiProcessingChanged: vi.fn(),
   startRecordingAiProcessing: vi.fn(),
+  retryProcessingJob: vi.fn(),
+  resumeProcessingJob: vi.fn(),
+}));
+
+const ocrClient = vi.hoisted(() => ({
+  getOcrTimelineFrames: vi.fn(),
+  getOcrDocument: vi.fn(),
+  getOcrHistory: vi.fn(),
+  reprocessRecordingOcr: vi.fn(),
 }));
 
 const router = vi.hoisted(() => ({
@@ -59,6 +71,7 @@ let layoutStylesheet: HTMLLinkElement | null = null;
 
 vi.mock('@/features/library/library-client', () => client);
 vi.mock('@/features/ai/ai-client', () => aiClient);
+vi.mock('@/features/ai/ocr/ocr-client', () => ocrClient);
 vi.mock('@/features/settings/use-debug-enabled', () => ({
   useDebugEnabled: () => false,
 }));
@@ -141,6 +154,44 @@ const allTimelineLaneIds = [
   'desktop-audio-1',
   'video-0',
 ];
+
+function legacyOcrDocument(text: string, timestampMs: number): OcrDocument {
+  return {
+    blocks: [
+      {
+        confidence: null,
+        id: 'legacy-block',
+        order: 0,
+        rawRegionIds: [],
+        region: null,
+        text,
+        words: [],
+      },
+    ],
+    cacheHit: false,
+    configFingerprint: 'legacy',
+    contentId: null,
+    engine: 'legacy',
+    errorCode: null,
+    frameTimestampMs: timestampMs,
+    height: null,
+    id: `legacy-${timestampMs}`,
+    model: 'tesseract',
+    observedEndMs: timestampMs,
+    observedStartMs: timestampMs,
+    occurrenceCount: 1,
+    provenance: 'reconstructed',
+    provider: 'tesseract',
+    recordingId: detail.id,
+    segmentId: 'segment-1',
+    sourceFrameRef: 'legacy-opaque-ref',
+    sourceTrackId: 'video-0',
+    status: 'succeeded',
+    supportTimestampsMs: [timestampMs],
+    text,
+    width: null,
+  };
+}
 
 const waveformTiles = {
   binMs: 10,
@@ -254,6 +305,20 @@ const longPlaybackAssets = {
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: null,
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
+  ocrClient.getOcrHistory.mockResolvedValue({ items: [], nextCursor: null });
+  ocrClient.getOcrTimelineFrames.mockResolvedValue({
+    recordingId: detail.id,
+    frames: [],
+    nextCursor: null,
+  });
+  ocrClient.reprocessRecordingOcr.mockResolvedValue(undefined);
+  aiClient.retryProcessingJob.mockResolvedValue(undefined);
+  aiClient.resumeProcessingJob.mockResolvedValue(undefined);
   useStudioTimelineStore.setState(
     useStudioTimelineStore.getInitialState(),
     true,
@@ -996,6 +1061,11 @@ test('RecordingStudioScreen explains local Whisper GPU failures in the inspector
 });
 
 test('RecordingStudioScreen shows visual frame details from video AI markers', async () => {
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: legacyOcrDocument('Checkout Total', 500),
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
   aiClient.getRecordingVisualObservations.mockResolvedValue({
     ocrRegions: [
       {
@@ -1145,11 +1215,10 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
       'A browser checkout page is visible with a payment form and order summary.',
     ),
   ).toBeTruthy();
-  expect(screen.getByText('Checkout')).toBeTruthy();
-  expect(screen.getByText('Total')).toBeTruthy();
-  expect(
-    screen.getAllByText('segment:segment-1:offset:500:frame:0').length,
-  ).toBeGreaterThan(0);
+  expect((await screen.findByLabelText('Recognized text')).textContent).toBe(
+    'Checkout Total',
+  );
+  expect(screen.queryByText('Frame reference')).toBeNull();
 });
 
 test('RecordingStudioScreen renders activity lanes and seeks from focus markers', async () => {
@@ -1230,6 +1299,13 @@ test('RecordingStudioScreen renders activity lanes and seeks from focus markers'
 });
 
 test('RecordingStudioScreen reloads activity after creating redactions', async () => {
+  ocrClient.getOcrDocument
+    .mockResolvedValueOnce({
+      document: legacyOcrDocument('private screen secret', 1_700),
+      recordingId: detail.id,
+      sourceTrackId: 'video-0',
+    })
+    .mockRejectedValue(new Error('Reload unavailable'));
   const redactedDetail = {
     ...detail,
     redactions: [
@@ -1355,9 +1431,7 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
     await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
   );
   expect(await screen.findByText('private screen secret')).toBeTruthy();
-  expect(
-    screen.getAllByText('segment:segment-1:offset:1700:frame:1').length,
-  ).toBeGreaterThan(0);
+  expect(screen.queryByText('Frame reference')).toBeNull();
 
   const timeline = await screen.findByLabelText('Track timeline');
   mockTimelineRect(timeline);
@@ -3583,4 +3657,275 @@ test('RecordingStudioScreen distinguishes desktop no-speech from microphone text
   expect(
     screen.queryByRole('region', { name: 'Microphone transcript' }),
   ).toBeNull();
+});
+
+test('RecordingStudioScreen exposes a pre-frame OCR failure from the real video source and retries its scoped job', async () => {
+  const job: ProcessingJob = {
+    createdAtMs: 1,
+    errorCode: 'ai_ocr_vision_unconfigured',
+    id: 'pre-frame-ocr-job',
+    kind: 'ocr',
+    progress: 0,
+    recordingId: detail.id,
+    status: 'failed',
+    updatedAtMs: 2,
+  };
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: null,
+    job,
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
+  render(<RecordingStudioScreen />);
+  await screen.findByText('Tracks');
+  expect(screen.queryByRole('button', { name: /visual frame/i })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Select Video' }));
+  expect(
+    await screen.findByText(/OCR processing failed for this source/),
+  ).toBeTruthy();
+  expect(ocrClient.getOcrDocument).toHaveBeenCalledWith({
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+    timestampMs: 0,
+    documentId: null,
+  });
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: null,
+    job: { ...job, status: 'queued', errorCode: null },
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry processing' }));
+  await waitFor(() =>
+    expect(aiClient.retryProcessingJob).toHaveBeenCalledExactlyOnceWith({
+      jobId: job.id,
+    }),
+  );
+  expect(await screen.findByText(/OCR processing is queued/)).toBeTruthy();
+  expect(ocrClient.reprocessRecordingOcr).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Recognized text')).toBeNull();
+});
+
+test.each([false, true])(
+  'RecordingStudioScreen preserves every legacy OCR sample even when text is identical and coarse progress exists: %s',
+  async (coarseProgress) => {
+    const sampledDetail = {
+      ...longDetail,
+      durationMs: 38_000,
+      segments: [{ ...longDetail.segments[0]!, durationMs: 38_000 }],
+    } satisfies LibraryRecordingDetail;
+    client.getLibraryRecording.mockResolvedValue(sampledDetail);
+    client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+    const frames = [0, 5_000, 10_000].map((frameTimestampMs) => ({
+      id: `sample-${frameTimestampMs}`,
+      recordingId: detail.id,
+      segmentId: 'segment-long',
+      sourceTrackId: 'video-0',
+      frameTimestampMs,
+      sampleEndMs: frameTimestampMs + 1,
+      sourceFrameRef: `opaque-sample-${frameTimestampMs}`,
+      status: 'succeeded' as const,
+      errorCode: null,
+      documentId: `sample-${frameTimestampMs}`,
+      ocrOutputCount: 1,
+      textEmpty: false,
+    }));
+    ocrClient.getOcrTimelineFrames.mockImplementation(
+      (input: { cursor?: { id: string; timestampMs: number } | null }) =>
+        Promise.resolve({
+          recordingId: detail.id,
+          frames:
+            coarseProgress && !input.cursor
+              ? frames.slice(0, 2)
+              : coarseProgress
+                ? frames.slice(2)
+                : frames,
+          nextCursor:
+            coarseProgress && !input.cursor
+              ? { id: frames[1]!.id, timestampMs: 5_000 }
+              : null,
+        } satisfies OcrTimelineFramePage),
+    );
+    aiClient.getRecordingAiProcessingState.mockResolvedValue({
+      chunks: [],
+      job: null,
+      recordingId: detail.id,
+      transcript: { recordingId: detail.id, tracks: [] },
+      visualFrames: coarseProgress
+        ? [
+            {
+              chunkId: 'coarse-chunk',
+              createdAtMs: 0,
+              errorCode: null,
+              frameTimestampMs: 0,
+              id: 'coarse-progress',
+              jobId: 'old-job',
+              outputCount: 500,
+              progress: 1,
+              recordingId: detail.id,
+              region: { x: 0, y: 0, width: 1920, height: 1080 },
+              segmentId: 'segment-long',
+              sourceFrameRef: 'opaque-coarse-progress',
+              sourceKind: 'ocr',
+              status: 'succeeded',
+              updatedAtMs: 1,
+            },
+          ]
+        : [],
+    } satisfies RecordingAiProcessingState);
+    ocrClient.getOcrDocument.mockImplementation(
+      (input: { timestampMs: number; documentId?: string | null }) =>
+        Promise.resolve({
+          document: {
+            ...legacyOcrDocument(
+              'Identical literal meeting text',
+              input.timestampMs,
+            ),
+            id: input.documentId ?? `sample-${input.timestampMs}`,
+            contentId: 'shared-image-content',
+            segmentId: 'segment-long',
+          },
+          job: null,
+          recordingId: detail.id,
+          sourceTrackId: 'video-0',
+        }),
+    );
+    render(<RecordingStudioScreen />);
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('button', { name: /Visual frame/i }),
+      ).toHaveLength(3),
+    );
+    expect(aiClient.getRecordingVisualObservations).toHaveBeenCalledWith({
+      recordingId: detail.id,
+      includeOcrRegions: false,
+    });
+    if (coarseProgress)
+      expect(ocrClient.getOcrTimelineFrames).toHaveBeenCalledWith({
+        recordingId: detail.id,
+        cursor: { id: 'sample-5000', timestampMs: 5_000 },
+        limit: 1_000,
+      });
+    for (const timestampMs of [0, 5_000, 10_000]) {
+      const marker = screen.getByRole('button', {
+        name: new RegExp(`Visual frame ${timestampMs / 1_000}\\.0s`),
+      });
+      fireEvent.click(marker);
+      await waitFor(() =>
+        expect(ocrClient.getOcrDocument).toHaveBeenCalledWith({
+          recordingId: detail.id,
+          sourceTrackId: 'video-0',
+          timestampMs,
+          documentId: `sample-${timestampMs}`,
+        }),
+      );
+      expect(
+        (await screen.findByLabelText('Recognized text')).textContent,
+      ).toBe('Identical literal meeting text');
+      expect(
+        screen
+          .getByRole('slider', { name: 'Playback position' })
+          .getAttribute('aria-valuenow'),
+      ).toBe(String(timestampMs));
+    }
+  },
+);
+
+test('RecordingStudioScreen cuts an actual OCR sample and ignores an older observation index that resolves afterward', async () => {
+  const sampledDetail = {
+    ...longDetail,
+    durationMs: 38_000,
+    segments: [{ ...longDetail.segments[0]!, durationMs: 38_000 }],
+  } satisfies LibraryRecordingDetail;
+  const frames = [0, 5_000, 10_000].map((frameTimestampMs) => ({
+    id: `sample-${frameTimestampMs}`,
+    recordingId: detail.id,
+    segmentId: 'segment-long',
+    sourceTrackId: 'video-0',
+    frameTimestampMs,
+    sampleEndMs: frameTimestampMs + 1,
+    sourceFrameRef: `opaque-sample-${frameTimestampMs}`,
+    status: 'succeeded' as const,
+    errorCode: null,
+    documentId: `sample-${frameTimestampMs}`,
+    ocrOutputCount: 1,
+    textEmpty: false,
+  }));
+  client.getLibraryRecording.mockResolvedValue(sampledDetail);
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+  ocrClient.getOcrTimelineFrames.mockResolvedValue({
+    recordingId: detail.id,
+    frames,
+    nextCursor: null,
+  });
+  client.createLibraryRedactions.mockResolvedValue({
+    ...sampledDetail,
+    redactions: [
+      {
+        id: 'cut-five',
+        createdAtMs: 1,
+        recordingId: detail.id,
+        startOffsetMs: 4_000,
+        endOffsetMs: 6_000,
+        reason: null,
+        trackIds: ['video-0'],
+      },
+    ],
+  });
+  render(<RecordingStudioScreen />);
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('button', { name: /Visual frame/i }),
+    ).toHaveLength(3),
+  );
+  const stale = deferred<OcrTimelineFramePage>();
+  ocrClient.getOcrTimelineFrames.mockReturnValue(stale.promise);
+  fireEvent.click(screen.getByRole('button', { name: /^Refresh$/i }));
+  await waitFor(() =>
+    expect(screen.getByText('Loading OCR observation index…')).toBeTruthy(),
+  );
+  ocrClient.getOcrTimelineFrames.mockResolvedValue({
+    recordingId: detail.id,
+    frames: frames.filter((frame) => frame.frameTimestampMs !== 5_000),
+    nextCursor: null,
+  });
+  const timeline = screen.getByLabelText('Track timeline');
+  mockTimelineRect(timeline);
+  const x = timelineClientXForMs(timeline, 5_000, 38_000);
+  const ruler = screen.getByLabelText('Time ruler');
+  fireEvent.pointerDown(ruler, {
+    button: 0,
+    clientX: x,
+    clientY: 12,
+    pointerId: 93,
+  });
+  fireEvent.pointerMove(timeline, {
+    button: 0,
+    clientX: timelineClientXForMs(timeline, 5_500, 38_000),
+    clientY: 12,
+    pointerId: 93,
+  });
+  fireEvent.pointerUp(timeline, {
+    button: 0,
+    clientX: timelineClientXForMs(timeline, 5_500, 38_000),
+    clientY: 12,
+    pointerId: 93,
+  });
+  fireEvent.click(screen.getAllByRole('button', { name: /^Redact$/i })[0]!);
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('button', { name: /Visual frame/i }),
+    ).toHaveLength(2),
+  );
+  stale.resolve({ recordingId: detail.id, frames, nextCursor: null });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: /Visual frame 5\.0s/i }),
+    ).toBeNull(),
+  );
+  expect(
+    screen
+      .getByRole('button', { name: /Visual frame 0\.0s/i })
+      .getAttribute('aria-label'),
+  ).toContain('observation');
 });

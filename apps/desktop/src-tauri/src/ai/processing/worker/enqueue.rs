@@ -7,6 +7,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
 ) -> Result<ProcessingJobRow, AiError> {
     tracing::info!(recording_id = %recording_id, "ai_processing_start_requested");
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
+    let ocr_config_json = capture_ocr_job_config(&app_settings)?;
     if !storage
         .with_connection(|connection| {
             crate::recording_privacy::protection_ready(connection, recording_id)
@@ -95,7 +96,9 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
     }
 
     let job = storage
-        .with_connection(|connection| {
+        .with_connection_mut(|database| {
+            let transaction = database.transaction()?;
+            let connection = &transaction;
             if let Some(existing) = storage::get_latest_processing_job_for_recording(
                 connection,
                 recording_id,
@@ -110,11 +113,13 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                 match existing.status.as_str() {
                     "queued" | "running" | "paused" | "succeeded" => return Ok(existing),
                     "failed" | "cancelled" => {
-                        return storage::retry_processing_job_chunks(
+                        let retried = storage::retry_processing_job_chunks(
                             connection,
                             &existing.id,
                             now_ms(),
-                        );
+                        )?;
+                        transaction.commit()?;
+                        return Ok(retried);
                     }
                     _ => {}
                 }
@@ -134,6 +139,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                     updated_at_ms: timestamp_ms,
                 },
             )?;
+            storage::save_processing_job_ocr_config(connection, &job.id, &ocr_config_json)?;
             let desktop_track = ensure_audio_track(
                 connection,
                 recording_id,
@@ -242,6 +248,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                 vlm_chunk_count,
                 "ai_processing_job_created"
             );
+            transaction.commit()?;
             Ok(job)
         })
         .map_err(storage_error)?;

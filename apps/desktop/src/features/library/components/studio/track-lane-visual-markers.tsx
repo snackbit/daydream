@@ -222,7 +222,7 @@ function visualProcessingMarkerLabel(
 }
 
 function visualFrameSource(frame: StudioVisualFrame): VisualFrameSource {
-  const hasOcr = frame.ocrRegions.length > 0;
+  const hasOcr = frame.ocrRegions.length > 0 || frame.ocrStatus;
   const hasVlm = frame.vlmObservations.length > 0;
   if (hasOcr && hasVlm) {
     return 'mixed';
@@ -270,9 +270,21 @@ function visualFrameMarkerTitle(frame: StudioVisualFrame): string {
     frame.vlmObservations.length > 0
       ? `${frame.vlmObservations.length} VLM`
       : 'no VLM';
-  const ocrText = `${frame.ocrRegions.length} OCR ${
-    frame.ocrRegions.length === 1 ? 'candidate' : 'candidates'
-  }`;
+  const ocrCount = frame.ocrOutputCount ?? frame.ocrRegions.length;
+  const ocrText =
+    frame.ocrStatus === 'failed'
+      ? 'OCR failed'
+      : frame.ocrStatus === 'gap'
+        ? 'OCR unavailable'
+        : frame.ocrStatus === 'cancelled'
+          ? 'OCR cancelled'
+          : frame.ocrStatus === 'succeeded'
+            ? frame.ocrTextEmpty === true
+              ? 'OCR complete, no text detected'
+              : 'OCR observation'
+            : `${ocrCount} OCR ${ocrCount === 1 ? 'candidate' : 'candidates'}`;
 
-  return `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${ocrText}`;
+  return frame.ocrDocumentId
+    ? `Visual frame ${startSeconds}s observation, ${vlmText}, ${ocrText}`
+    : `Visual frame ${startSeconds}s to ${endSeconds}s, ${vlmText}, ${ocrText}`;
 }

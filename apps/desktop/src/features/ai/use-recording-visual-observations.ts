@@ -6,6 +6,9 @@ import type {
 import { getRecordingVisualObservations } from './ai-client';
 import { useRecordingResult } from './results/use-recording-result';
 
+const readStudioVisualObservations = (input: { recordingId: string }) =>
+  getRecordingVisualObservations({ ...input, includeOcrRegions: false });
+
 type VisualObservationsStatus = 'error' | 'idle' | 'loading' | 'ready';
 
 export function useRecordingVisualObservations(
@@ -27,7 +30,7 @@ export function useRecordingVisualObservations(
     recordingId,
     visibilityRevision: redactionSignature,
     processingSignature: visualChunkSignature,
-    read: getRecordingVisualObservations,
+    read: readStudioVisualObservations,
   });
 }
 

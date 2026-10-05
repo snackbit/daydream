@@ -4,6 +4,7 @@ use rusqlite_migration::Migrations;
 mod ai_outputs;
 mod initial;
 mod ocr_assets;
+mod ocr_documents;
 mod protected_windows;
 mod scene_recording;
 mod settings_processing;
@@ -24,5 +25,6 @@ pub(in crate::storage) fn migrations() -> Migrations<'static> {
     migrations.extend(ocr_assets::migrations());
     migrations.extend(protected_windows::migrations());
     migrations.extend(visual_frame_states::migrations());
+    migrations.extend(ocr_documents::migrations());
     Migrations::new(migrations)
 }

@@ -29,5 +29,9 @@ pub fn get_recording_visual_observations(
     input: RecordingAiResultInput,
     storage: State<'_, AppStorage>,
 ) -> Result<RecordingVisualObservations, AiError> {
-    visual_observations_for_recording(&storage, &input.recording_id)
+    visual_observations_for_recording_with_regions(
+        &storage,
+        &input.recording_id,
+        input.include_ocr_regions.unwrap_or(true),
+    )
 }

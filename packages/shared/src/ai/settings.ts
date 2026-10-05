@@ -30,6 +30,7 @@ export interface AiTranscriptionProviderSettings {
 }
 
 export interface AiVisionProviderSettings {
+  observationsEnabled: boolean;
   apiKeyRef: string | null;
   baseUrl: string | null;
   model: string | null;

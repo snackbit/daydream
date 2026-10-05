@@ -173,6 +173,12 @@ test('selected frame keeps subsecond time precise and seeks to the same offset',
 
   render(
     <VisualSourceInspector
+      context={{
+        recordingId: 'recording-1',
+        sourceTrackId: 'video-0',
+        privacyRevision: '',
+        debugEnabled: false,
+      }}
       frame={{
         endTimestampMs: 1_000,
         frameTimestampMs: 500,

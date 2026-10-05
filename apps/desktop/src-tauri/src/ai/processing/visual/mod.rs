@@ -1,4 +1,13 @@
 use super::super::*;
+pub(in crate::ai) use concurrency::{
+    acquire_ocr_permit as acquire_ocr_permit_for_documents,
+    acquire_vlm_permit as acquire_vlm_permit_for_documents,
+};
+pub(in crate::ai) use image::decode_png_rgba as decode_png_rgba_for_ocr;
+pub(in crate::ai) use vlm::{
+    vision_chat_completions_url as vision_chat_completions_url_for_ocr,
+    vision_request_config as vision_request_config_for_ocr,
+};
 
 mod concurrency;
 mod context;
@@ -14,9 +23,9 @@ use concurrency::{acquire_ocr_permit, acquire_vlm_permit};
 pub(in crate::ai) use context::previous_visual_observations;
 use context::{persisted_ocr_candidates_by_timestamp, recent_visual_observations};
 #[cfg(test)]
-pub(in crate::ai) use extraction::{
-    effective_frame_recognition_fps, frame_sample_interval_ms, full_checkpoint_for_frame,
-};
+pub(in crate::ai) use extraction::frame_sample_interval_ms;
+#[cfg(test)]
+pub(in crate::ai) use extraction::{effective_frame_recognition_fps, full_checkpoint_for_frame};
 use extraction::{extract_visual_frames, VisualExtractionRequest};
 use frame_jobs::{process_ocr_frames, process_vlm_frames, VlmFrameBatch};
 #[cfg(test)]
@@ -35,7 +44,6 @@ pub(in crate::ai) use persistence::{
     persist_visual_output as persist_visual_output_for_test,
     PendingVisualOutput as PendingVisualOutputForTest,
 };
-#[cfg(test)]
 pub(in crate::ai) use types::VisualImage;
 pub(in crate::ai) use types::{
     ExtractedVisualFrame, OcrCandidate, PendingVlmObservation, PreviousVisualObservation,
@@ -52,6 +60,9 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     chunk: &ProcessingChunkRow,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), AiError> {
+    if chunk.source_kind == "ocr" {
+        return super::ocr_documents::process_ocr_document_chunk(app, chunk, cancel).await;
+    }
     let started = Instant::now();
     let storage = app.state::<AppStorage>();
     ensure_chunk_active(&storage, chunk)?;

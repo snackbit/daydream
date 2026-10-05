@@ -1,5 +1,11 @@
 # Milestone M2: AI Processing Foundation
 
+> Historical milestone contract. The approved
+> [full-frame OCR documents](../ocr-documents-design.md) work supersedes changed-
+> region/checkpoint OCR and the Tesseract-only OCR setting described here. Activity
+> and descriptive screen-observation policies remain separate; this note does not
+> rewrite the original milestone or authorize automatic remote processing.
+
 ## Goal
 
 Deliver Daydream's first AI processing foundation: after a recording stops, the

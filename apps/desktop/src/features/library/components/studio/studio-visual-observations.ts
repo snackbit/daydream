@@ -3,9 +3,13 @@ import type {
   OcrRegion,
   RecordingVisualObservations,
   VlmObservation,
+  ProcessingChunkStatus,
+  OcrTimelineFrame,
+  OcrOccurrenceStatus,
 } from '@daydream/shared';
 
 export interface StudioVisualFrame {
+  /** Navigation-cell end, not the duration of observed OCR evidence. */
   endTimestampMs: number;
   frameTimestampMs: number;
   id: string;
@@ -13,32 +17,63 @@ export interface StudioVisualFrame {
   sourceFrameRef: string;
   sourceFrameRefs: string[];
   vlmObservations: VlmObservation[];
+  ocrStatus?: ProcessingChunkStatus | OcrOccurrenceStatus;
+  ocrOutputCount?: number;
+  segmentId?: string | null;
+  sourceTrackId?: string;
+  ocrDocumentId?: string;
+  ocrTextEmpty?: boolean | null;
+  ocrSampleEndMs?: number;
 }
 
 export function visualFrameId({
   frameTimestampMs,
+  segmentId,
+  sourceTrackId,
 }: {
   frameTimestampMs: number;
   sourceFrameRef: string;
+  segmentId?: string | null;
+  sourceTrackId?: string;
 }): string {
-  return `frame:${frameTimestampMs}`;
+  return `frame:${sourceTrackId ?? 'unmapped'}:${segmentId ?? 'unmapped'}:${frameTimestampMs}`;
 }
 
 export function buildStudioVisualFrames(
   visualObservations: RecordingVisualObservations | null,
   detail: LibraryRecordingDetail,
+  ocrFrames: OcrTimelineFrame[] = [],
 ): StudioVisualFrame[] {
-  if (!visualObservations) {
+  if (!visualObservations && ocrFrames.length === 0) {
     return [];
   }
 
   const frames = new Map<string, StudioVisualFrame>();
-  for (const region of visualObservations.ocrRegions) {
-    const frame = frameForObservation(frames, region);
+  const sourceTrackId = detail.tracks.find(
+    (track) => track.kind === 'video',
+  )?.id;
+  for (const sample of ocrFrames) {
+    const frame = frameForObservation(frames, sample);
+    frame.ocrStatus = sample.status;
+    frame.ocrOutputCount = sample.ocrOutputCount;
+    frame.ocrDocumentId = sample.documentId;
+    frame.ocrTextEmpty = sample.textEmpty;
+    frame.ocrSampleEndMs = sample.sampleEndMs;
+  }
+  for (const region of visualObservations?.ocrRegions ?? []) {
+    const frame = frameForObservation(frames, {
+      ...region,
+      segmentId: segmentIdForTimestamp(detail, region.frameTimestampMs),
+      ...(sourceTrackId ? { sourceTrackId } : {}),
+    });
     frame.ocrRegions.push(region);
   }
-  for (const observation of visualObservations.vlmObservations) {
-    const frame = frameForObservation(frames, observation);
+  for (const observation of visualObservations?.vlmObservations ?? []) {
+    const frame = frameForObservation(frames, {
+      ...observation,
+      segmentId: segmentIdForTimestamp(detail, observation.frameTimestampMs),
+      ...(sourceTrackId ? { sourceTrackId } : {}),
+    });
     frame.vlmObservations.push(observation);
   }
 
@@ -47,17 +82,33 @@ export function buildStudioVisualFrames(
       left.frameTimestampMs - right.frameTimestampMs ||
       left.sourceFrameRef.localeCompare(right.sourceFrameRef),
   );
-  return orderedFrames.map((frame, index) => ({
-    ...frame,
-    endTimestampMs: frameEndTimestampMs({
-      detail,
-      frameTimestampMs: frame.frameTimestampMs,
-      nextFrameTimestampMs: orderedFrames[index + 1]?.frameTimestampMs ?? null,
-    }),
-    ocrRegions: [...frame.ocrRegions].sort(compareOcrRegions),
-    sourceFrameRefs: [...frame.sourceFrameRefs].sort(),
-    vlmObservations: [...frame.vlmObservations].sort(compareVlmObservations),
-  }));
+  const nextBySource = new Map<string, number>();
+  return [...orderedFrames]
+    .reverse()
+    .map((frame) => {
+      const sourceKey = JSON.stringify([
+        frame.sourceTrackId ?? null,
+        frame.segmentId ?? null,
+      ]);
+      const endTimestampMs = frameEndTimestampMs({
+        detail,
+        frameTimestampMs: frame.frameTimestampMs,
+        nextFrameTimestampMs: nextBySource.get(sourceKey) ?? null,
+      });
+      // Navigation cells fill until the next observation in this source/segment.
+      // The actual evidence bound stays separately in ocrSampleEndMs for privacy.
+      nextBySource.set(sourceKey, frame.frameTimestampMs);
+      return {
+        ...frame,
+        endTimestampMs,
+        ocrRegions: [...frame.ocrRegions].sort(compareOcrRegions),
+        sourceFrameRefs: [...frame.sourceFrameRefs].sort(),
+        vlmObservations: [...frame.vlmObservations].sort(
+          compareVlmObservations,
+        ),
+      };
+    })
+    .reverse();
 }
 
 function frameForObservation(
@@ -65,7 +116,7 @@ function frameForObservation(
   observation: Pick<
     OcrRegion | VlmObservation,
     'frameTimestampMs' | 'sourceFrameRef'
-  >,
+  > & { segmentId?: string | null; sourceTrackId?: string },
 ): StudioVisualFrame {
   const id = visualFrameId(observation);
   const existing = frames.get(id);
@@ -81,6 +132,10 @@ function frameForObservation(
     endTimestampMs: observation.frameTimestampMs,
     frameTimestampMs: observation.frameTimestampMs,
     id,
+    segmentId: observation.segmentId ?? null,
+    ...(observation.sourceTrackId
+      ? { sourceTrackId: observation.sourceTrackId }
+      : {}),
     ocrRegions: [],
     sourceFrameRef: observation.sourceFrameRef,
     sourceFrameRefs: [observation.sourceFrameRef],
@@ -88,6 +143,19 @@ function frameForObservation(
   } satisfies StudioVisualFrame;
   frames.set(id, frame);
   return frame;
+}
+
+function segmentIdForTimestamp(
+  detail: LibraryRecordingDetail,
+  timestampMs: number,
+): string | null {
+  return (
+    detail.segments.find(
+      (segment) =>
+        timestampMs >= segment.playbackOffsetMs &&
+        timestampMs < segment.playbackOffsetMs + (segment.durationMs ?? 0),
+    )?.id ?? null
+  );
 }
 
 function compareOcrRegions(left: OcrRegion, right: OcrRegion): number {

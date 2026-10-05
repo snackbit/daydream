@@ -72,6 +72,7 @@ const defaultAiSettings = {
     apiKeyRef: null,
     baseUrl: null,
     model: null,
+    observationsEnabled: false,
     provider: 'disabled',
   },
 } as const;

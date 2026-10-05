@@ -4,7 +4,53 @@ Active cleanup work is listed below. Older checked sections record completed
 2026-06-12 work and historical validation; they do not define a current goal or prove
 today's checks. Add focused ownership changes when touching complex owners.
 
-## Active cleanup: master review 2026-10-05
+## Completed cleanup: full-frame OCR documents
+
+- [x] Native OCR storage/contract ownership. Group ordered document blocks/content,
+  temporal occurrences, selected-frame/paginated queries and legacy reconstruction
+  under a focused storage owner. Add explicit tested migration and preserve existing
+  raw-row compatibility. Risks: hidden-span history, unstable cursors/provenance and
+  oversized whole-recording payloads. Record final counts and focused/native gates.
+  Implemented focused storage owners: barrel 15, content 97, write 100, read 109,
+  query 188, timeline 61, legacy 128, types 69 lines; native DTOs 121 and commands 86. Tests split
+  by cache/query/persistence/legacy workflows. Schema 20 is additive. Shared lint/
+  typechecks pass. Native full unit suite passed 381 tests before finishing changes;
+  final OCR checks passed 40 tests, with formatting, doc-only retry and strict
+  all-target Clippy also passing. Sets overlap and are not summed.
+- [x] Recognition/processing ownership. Separate literal full-frame OCR from
+  descriptive VLM context, retain Tesseract hierarchy, pin provider settings and
+  isolate exact-image/content identity. Risks: remote opt-in leakage, fabricated
+  continuity, mixed-provider retries and unrelated audio reprocessing. Document
+  baseline owners at `51ad981`: OCR parser 296 lines, frame jobs 353 and descriptive
+  VLM adapter 419. Keep literal OCR requests out of the already broad descriptive
+  adapter; record final focused owners from the implementation owner. Verify focused
+  provider/cache/revision/redaction/recovery scenarios, then coordinated native gates.
+  Implemented OCR domain owners: orchestrator 355, configuration 137, extraction
+  218, Tesseract 228, literal Vision 286 and OCR-only reprocess 39 lines; enqueue 389.
+  Existing settings persistence 435 is a flat declarative map with no new lifecycle
+  owner. OCR filtered checks pass 33; AI 98/settings 11 ownership checks pass with
+  overlap. Schema/extraction/cache-resumption reds are recorded; no blanket red-first
+  claim. Finishing cache-reuse and permit changes have focused coverage, and final
+  formatting, doc-only and strict Clippy checks pass.
+- [x] OCR UI/Settings ownership. Compose Text/Changes/Details from the published
+  typed contract in focused feature owners, keep Inspector and route thin, and show
+  uncertainty/legacy/provider failures honestly. Verify actual both-theme desktop/
+  narrow selection/history/retry workflows plus shared settings save states and the
+  final JavaScript/build gate. Baseline visual Inspector 156 lines and Vision card
+  272; full-document/history/engine controls need their own owners rather than
+  growing these mixed surfaces. Keep exact wire definitions in shared/native code.
+  Implemented readable OCR composition: visual Inspector 94 lines delegates
+  Text/Changes/Details to nine focused OCR feature files; API/decoder/query/revision
+  ownership lives in six AI OCR files. Production owners remain under 400 lines.
+  Focused browser/unit checks pass, and final JS gates pass 348 tests, all lint/
+  typechecks and production build. Independent Inspector is 4/5 in both themes
+  after three passes; Settings is 4/5 after one. The timeline uses separate per-sample
+  metadata and filled navigation cells, with physical midpoint clicks covered at
+  desktop/narrow widths in both themes. All final gates have passed.
+
+Approved behavior: [OCR documents design](ocr-documents-design.md).
+
+## Completed master-review cleanup: 2026-10-05
 
 - [x] Native protected-window/lifecycle ownership. Before: `window_protection.rs`
   397 lines mixes matching, dwell/merge state, persistence and monitoring;

@@ -44,6 +44,7 @@ hex = "0.4.3"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 regex = "1"
 sha1 = "0.10.6"
+sha2 = "0.10.9"
 tokio = { version = "1", features = ["sync", "time"] }
 tracing = "0.1"
 tracing-appender = "0.2"

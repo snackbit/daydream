@@ -219,6 +219,8 @@ pub struct GetRecordingTranscriptInput {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiResultInput {
     pub recording_id: String,
+    #[serde(default)]
+    pub include_ocr_regions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

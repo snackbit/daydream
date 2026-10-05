@@ -58,9 +58,27 @@ export function RecordingStudioScreen() {
           Loading recording...
         </div>
       ) : null}
+      {state.ocrTimelineError ? (
+        <div className="px-4 py-2">
+          <Alert variant="destructive">
+            <AlertTitle>OCR observations unavailable</AlertTitle>
+            <AlertDescription>
+              {state.ocrTimelineError} Refresh the studio to try again.
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : state.ocrTimelineStatus === 'loading' ? (
+        <p
+          className="text-muted-foreground px-4 py-1 text-[10px]"
+          role="status"
+        >
+          Loading OCR observation index…
+        </p>
+      ) : null}
 
       {state.detail ? (
         <RecordingStudio
+          debugEnabled={debugEnabled}
           activity={state.activity.state}
           aiProcessingState={state.aiProcessing.state}
           detail={state.detail}
@@ -71,6 +89,7 @@ export function RecordingStudioScreen() {
           playbackAssets={state.playbackAssets}
           thumbnailStatus={state.thumbnailStatus}
           visualObservations={state.visualObservations.state}
+          ocrFrames={state.ocrFrames}
         />
       ) : null}
 

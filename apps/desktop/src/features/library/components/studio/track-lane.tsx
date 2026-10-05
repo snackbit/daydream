@@ -235,7 +235,11 @@ export function TrackLane({
             selectedVisualFrameIds={selectedVisualFrameIds}
             timelineWidthPx={timelineWidthPx}
             totalDurationMs={totalDurationMs}
-            visualFrames={visualFrames}
+            visualFrames={visualFrames.filter(
+              (frame) =>
+                frame.sourceTrackId === undefined ||
+                frame.sourceTrackId === track.id,
+            )}
             onSelectVisualFrame={onSelectVisualFrame}
           />
         ) : null}
