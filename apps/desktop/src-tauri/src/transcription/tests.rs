@@ -27,6 +27,7 @@ use super::remote::{
     RemoteTranscriptionRequest, RestTranscriptionRequest,
 };
 use super::*;
+mod local_drain;
 use crate::whisper_backend::WhisperExecutionBackend;
 use crate::{settings, storage};
 
@@ -111,6 +112,8 @@ fn local_server_binds_to_loopback_and_requires_token() {
         let audio_path = temp_dir.join("audio.wav");
         fs::write(&audio_path, b"audio").expect("audio file");
         let no_token = transcribe_via_rest(RestTranscriptionRequest {
+            local_request_id: None,
+            local_scratch_owner: None,
             audio_path: &audio_path,
             bearer_token: None,
             cancel: None,
@@ -127,6 +130,8 @@ fn local_server_binds_to_loopback_and_requires_token() {
         assert_eq!(no_token.code, "ai_transcription_remote_auth_failed");
 
         let wrong_token = transcribe_via_rest(RestTranscriptionRequest {
+            local_request_id: None,
+            local_scratch_owner: None,
             audio_path: &audio_path,
             bearer_token: Some("wrong"),
             cancel: None,
@@ -160,6 +165,8 @@ fn local_server_returns_verbose_json_for_valid_token() {
 
         let endpoint = server.endpoint();
         let response = transcribe_via_rest(RestTranscriptionRequest {
+            local_request_id: None,
+            local_scratch_owner: None,
             audio_path: &audio_path,
             bearer_token: Some(&endpoint.token),
             cancel: None,
@@ -246,6 +253,8 @@ fn local_server_preserves_missing_model_error_code() {
 
         let endpoint = server.endpoint();
         let error = transcribe_via_rest(RestTranscriptionRequest {
+            local_request_id: None,
+            local_scratch_owner: None,
             audio_path: &audio_path,
             bearer_token: Some(&endpoint.token),
             cancel: None,
@@ -297,6 +306,8 @@ fn local_server_cancel_flag_follows_client_disconnect() {
 
         let request = tauri::async_runtime::spawn(async move {
             transcribe_via_rest(RestTranscriptionRequest {
+                local_request_id: None,
+                local_scratch_owner: None,
                 audio_path: &request_audio_path,
                 bearer_token: Some(&token),
                 cancel: Some(request_cancel),
@@ -574,6 +585,8 @@ fn rest_adapter_honors_pre_cancelled_request_without_uploading() {
         let cancel = Arc::new(AtomicBool::new(true));
 
         let error = transcribe_via_rest(RestTranscriptionRequest {
+            local_request_id: None,
+            local_scratch_owner: None,
             audio_path: &audio_path,
             bearer_token: Some("sk-secret"),
             cancel: Some(cancel),

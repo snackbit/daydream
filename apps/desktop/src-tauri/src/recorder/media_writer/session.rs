@@ -89,6 +89,58 @@ pub(crate) fn start_segment_from_frames(
 }
 
 impl MediaWriterSegment {
+    #[cfg(test)]
+    pub(super) fn for_supervision_test(
+        pipeline: gst::Pipeline,
+        bus: gst::Bus,
+        appsrc: gst_app::AppSrc,
+        result: mpsc::Receiver<Result<(), String>>,
+    ) -> Self {
+        Self {
+            appsrc,
+            audio_branches: vec![],
+            bus,
+            frame_pump: None,
+            frame_pump_result: result,
+            pipeline,
+            benchmark: None,
+            started_at_ms: 0,
+            stop_frames: None,
+        }
+    }
+    pub(crate) fn abort(mut self) {
+        if let Some(stop) = self.stop_frames.take() {
+            let _ = stop.send(FramePumpStop {
+                stop_at_ms: self.started_at_ms,
+            });
+        }
+        let _ = self.pipeline.set_state(gst::State::Null);
+        if self
+            .frame_pump_result
+            .recv_timeout(FRAME_PUMP_STOP_TIMEOUT)
+            .is_ok()
+        {
+            if let Some(worker) = self.frame_pump.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+    pub(crate) fn poll_error(&mut self) -> Option<RecorderError> {
+        while let Some(message) = self.bus.pop() {
+            match message.view() {
+                gst::MessageView::Error(_) => return Some(dependency_error("recorder_media_writer_failed", "The media writer stopped after a recording error. Check audio devices and available storage.")),
+                gst::MessageView::Eos(_) => return Some(dependency_error("recorder_media_writer_failed", "The media writer ended unexpectedly.")),
+                _ => (),
+            }
+        }
+        match self.frame_pump_result.try_recv() {
+            Ok(_) | Err(mpsc::TryRecvError::Disconnected) => Some(dependency_error(
+                "recorder_media_writer_frame_write_failed",
+                "The video frame writer stopped unexpectedly.",
+            )),
+            Err(mpsc::TryRecvError::Empty) => None,
+        }
+    }
     pub(crate) fn benchmark(&self) -> Option<RecorderBenchmarkSession> {
         self.benchmark.clone()
     }

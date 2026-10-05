@@ -42,23 +42,22 @@ export function buildStudioVisualFrames(
     frame.vlmObservations.push(observation);
   }
 
-  return [...frames.values()]
-    .map((frame) => ({
-      ...frame,
-      endTimestampMs: frameEndTimestampMs({
-        detail,
-        frameTimestampMs: frame.frameTimestampMs,
-        nextFrameTimestampMs: nextFrameTimestampMs(frames, frame),
-      }),
-      ocrRegions: [...frame.ocrRegions].sort(compareOcrRegions),
-      sourceFrameRefs: [...frame.sourceFrameRefs].sort(),
-      vlmObservations: [...frame.vlmObservations].sort(compareVlmObservations),
-    }))
-    .sort(
-      (left, right) =>
-        left.frameTimestampMs - right.frameTimestampMs ||
-        left.sourceFrameRef.localeCompare(right.sourceFrameRef),
-    );
+  const orderedFrames = [...frames.values()].sort(
+    (left, right) =>
+      left.frameTimestampMs - right.frameTimestampMs ||
+      left.sourceFrameRef.localeCompare(right.sourceFrameRef),
+  );
+  return orderedFrames.map((frame, index) => ({
+    ...frame,
+    endTimestampMs: frameEndTimestampMs({
+      detail,
+      frameTimestampMs: frame.frameTimestampMs,
+      nextFrameTimestampMs: orderedFrames[index + 1]?.frameTimestampMs ?? null,
+    }),
+    ocrRegions: [...frame.ocrRegions].sort(compareOcrRegions),
+    sourceFrameRefs: [...frame.sourceFrameRefs].sort(),
+    vlmObservations: [...frame.vlmObservations].sort(compareVlmObservations),
+  }));
 }
 
 function frameForObservation(
@@ -109,18 +108,6 @@ function compareVlmObservations(
     left.observationKind.localeCompare(right.observationKind) ||
     left.id.localeCompare(right.id)
   );
-}
-
-function nextFrameTimestampMs(
-  frames: Map<string, StudioVisualFrame>,
-  frame: StudioVisualFrame,
-): number | null {
-  const nextTimestampMs = [...frames.values()]
-    .map((candidate) => candidate.frameTimestampMs)
-    .filter((timestampMs) => timestampMs > frame.frameTimestampMs)
-    .sort((left, right) => left - right)[0];
-
-  return nextTimestampMs ?? null;
 }
 
 function frameEndTimestampMs({

@@ -872,6 +872,64 @@ test('saveScene persists the current scene and clears dirty state', async () => 
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(false);
 });
 
+test('saveScene preserves edits made while the persisted scene is in flight', async () => {
+  const submitted = sceneWithSources(['main']);
+  const newer = { ...submitted, canvasWidth: submitted.canvasWidth + 100 };
+  const request = deferred<RecorderScene>();
+  client.saveRecorderScene.mockReturnValue(request.promise);
+  useRecorderWorkspaceStore.setState({
+    scene: submitted,
+    isDirty: true,
+    status,
+  });
+  const saving = useRecorderWorkspaceStore.getState().saveScene();
+  useRecorderWorkspaceStore.getState().setDraftScene(newer);
+  const duplicateSaving = useRecorderWorkspaceStore.getState().saveScene();
+  request.resolve(submitted);
+  await Promise.all([saving, duplicateSaving]);
+  expect(client.saveRecorderScene).toHaveBeenCalledTimes(1);
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    scene: newer,
+    isDirty: true,
+    saveStatus: 'ready',
+  });
+});
+
+test('status subscription refreshes missed transitions without replacing a dirty scene', async () => {
+  const dirtyScene = sceneWithSources(['main']);
+  let handler: ((next: RecorderStatus) => void) | undefined;
+  client.listenToRecorderStatusChanged.mockImplementation((nextHandler) => {
+    handler = nextHandler;
+    return Promise.resolve(vi.fn());
+  });
+  const snapshot = deferred<RecorderStatus>();
+  client.getRecorderStatus.mockReturnValue(snapshot.promise);
+  useRecorderWorkspaceStore.setState({
+    scene: dirtyScene,
+    isDirty: true,
+    status: { ...status, activeRecordingId: 'recording-1', state: 'recording' },
+    loadStatus: 'ready',
+  });
+  const subscribing = useRecorderWorkspaceStore
+    .getState()
+    .subscribeToStatusEvents();
+  await Promise.resolve();
+  expect(client.getRecorderStatus).toHaveBeenCalledTimes(1);
+  handler?.({
+    ...status,
+    activeRecordingId: 'recording-1',
+    state: 'paused',
+    updatedAtMs: 3,
+  });
+  snapshot.resolve({ ...status, state: 'recording', updatedAtMs: 2 });
+  await subscribing;
+  expect(useRecorderWorkspaceStore.getState()).toMatchObject({
+    scene: dirtyScene,
+    isDirty: true,
+    status: { state: 'paused' },
+  });
+});
+
 test('saveScene reports missing scenes and save failures', async () => {
   await useRecorderWorkspaceStore.getState().saveScene();
 
@@ -1120,6 +1178,7 @@ test('async pause shows paused while segment finalization is pending', async () 
     activeSegmentId: 'segment-1',
     state: 'recording' as const,
   };
+  client.getRecorderStatus.mockResolvedValue(recordingStatus);
   useRecorderWorkspaceStore.setState({
     isDirty: false,
     scene: sceneWithSources(['main']),

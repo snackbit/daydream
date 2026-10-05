@@ -92,9 +92,10 @@ impl RecorderManager {
         .map_err(filesystem_error)?;
 
         storage
-            .with_connection(|connection| {
+            .with_connection_mut(|connection| {
+                let transaction = connection.transaction()?;
                 storage::create_recording(
-                    connection,
+                    &transaction,
                     &CreateRecordingInput {
                         id: pending.recording_id.clone(),
                         active_scene_id: Some(pending.input.scene_id.clone()),
@@ -110,12 +111,12 @@ impl RecorderManager {
                     },
                 )?;
                 storage::mark_recording_started(
-                    connection,
+                    &transaction,
                     &pending.recording_id,
                     pending.segment.started_at_ms as i64,
                 )?;
                 storage::create_recording_segment(
-                    connection,
+                    &transaction,
                     &CreateRecordingSegmentInput {
                         file_path: path_to_string(&pending.segment_path),
                         id: pending.segment.id.clone(),
@@ -124,7 +125,7 @@ impl RecorderManager {
                         started_at_ms: pending.segment.started_at_ms as i64,
                     },
                 )?;
-                Ok(())
+                transaction.commit()
             })
             .map_err(storage_error)
     }
@@ -148,6 +149,9 @@ impl RecorderManager {
             None,
         );
         runtime.active = Some(pending.active);
+        runtime.pause_owner = None;
+        runtime.automatic_resume_pending = false;
+        runtime.cancel_pending_resume = false;
         runtime.status = status.clone();
 
         Ok(status)
@@ -170,6 +174,7 @@ impl RecorderManager {
             None,
         );
         runtime.active = Some(pending.active);
+        runtime.pause_owner = None;
         runtime.status = status.clone();
 
         Ok(status)
@@ -182,13 +187,6 @@ impl RecorderManager {
         timestamp_ms: u64,
         error: &RecorderError,
     ) -> Result<(), RecorderError> {
-        fail_segment_for_error(storage, &pending.segment.id, timestamp_ms, error, None)?;
-        storage
-            .with_connection(|connection| {
-                storage::update_recording_status(connection, &pending.recording_id, "failed")
-            })
-            .map_err(storage_error)?;
-
         let mut runtime = self.lock_runtime()?;
         let status = error_status_with_backend_health(
             timestamp_ms,
@@ -196,8 +194,20 @@ impl RecorderManager {
             error.clone(),
         );
         runtime.active = None;
+        runtime.pause_owner = None;
+        runtime.pending_failure = None;
+        runtime.automatic_resume_pending = false;
+        runtime.cancel_pending_resume = false;
         runtime.status = status;
-
-        Ok(())
+        drop(runtime);
+        let segment_failure =
+            fail_segment_for_error(storage, &pending.segment.id, timestamp_ms, error, None);
+        let recording_failure = storage
+            .with_connection(|connection| {
+                storage::update_recording_status(connection, &pending.recording_id, "failed")
+            })
+            .map(|_| ())
+            .map_err(storage_error);
+        segment_failure.and(recording_failure)
     }
 }

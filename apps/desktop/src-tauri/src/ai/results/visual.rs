@@ -45,24 +45,32 @@ pub(crate) fn visible_visual_observation_rows_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<VisibleVisualObservationRows, AiError> {
-    let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions) = storage
-        .with_connection(|connection| {
-            Ok((
-                storage::list_ocr_regions(connection, recording_id)?,
-                storage::list_vlm_observations(connection, recording_id)?,
-                list_visual_chunks_for_recording(connection, recording_id)?,
-                storage::list_recording_tracks(connection, recording_id)?,
-                storage::list_redactions(connection, recording_id)?,
-            ))
-        })
-        .map_err(storage_error)?;
-    let visible_ocr_regions =
-        filter_visible_ocr_regions(ocr_regions, &visual_chunks, &recording_tracks, &redactions);
+    let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions, segments) =
+        storage
+            .with_connection(|connection| {
+                Ok((
+                    storage::list_ocr_regions(connection, recording_id)?,
+                    storage::list_vlm_observations(connection, recording_id)?,
+                    list_visual_chunks_for_recording(connection, recording_id)?,
+                    storage::list_recording_tracks(connection, recording_id)?,
+                    storage::list_redactions(connection, recording_id)?,
+                    storage::list_recording_segments(connection, recording_id)?,
+                ))
+            })
+            .map_err(storage_error)?;
+    let visible_ocr_regions = filter_visible_ocr_regions(
+        ocr_regions,
+        &visual_chunks,
+        &recording_tracks,
+        &redactions,
+        &segments,
+    );
     let visible_vlm_observations = filter_visible_vlm_observations(
         vlm_observations,
         &visual_chunks,
         &recording_tracks,
         &redactions,
+        &segments,
     );
 
     Ok(VisibleVisualObservationRows {
@@ -128,8 +136,10 @@ fn filter_visible_ocr_regions(
     visual_chunks: &[ProcessingChunkRow],
     recording_tracks: &[RecordingTrackRow],
     redactions: &[RedactionRow],
+    segments: &[RecordingSegmentRow],
 ) -> Vec<OcrRegionRow> {
-    let visible = VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions);
+    let visible =
+        VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions, segments);
 
     regions
         .into_iter()
@@ -142,8 +152,10 @@ fn filter_visible_vlm_observations(
     visual_chunks: &[ProcessingChunkRow],
     recording_tracks: &[RecordingTrackRow],
     redactions: &[RedactionRow],
+    segments: &[RecordingSegmentRow],
 ) -> Vec<VlmObservationRow> {
-    let visible = VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions);
+    let visible =
+        VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions, segments);
 
     observations
         .into_iter()
@@ -157,6 +169,7 @@ struct VisualObservationVisibility<'a> {
     redactions: &'a [RedactionRow],
     succeeded_chunk_ids: HashSet<&'a str>,
     video_track_ids: BTreeSet<&'a str>,
+    library_video_tracks_by_chunk: BTreeMap<&'a str, String>,
 }
 
 impl<'a> VisualObservationVisibility<'a> {
@@ -164,6 +177,7 @@ impl<'a> VisualObservationVisibility<'a> {
         visual_chunks: &'a [ProcessingChunkRow],
         recording_tracks: &'a [RecordingTrackRow],
         redactions: &'a [RedactionRow],
+        segments: &[RecordingSegmentRow],
     ) -> Self {
         Self {
             redactions,
@@ -177,19 +191,32 @@ impl<'a> VisualObservationVisibility<'a> {
                 .filter(|track| matches!(track.kind.as_str(), "screen" | "video"))
                 .map(|track| track.id.as_str())
                 .collect(),
+            library_video_tracks_by_chunk: visual_chunks
+                .iter()
+                .filter_map(|chunk| {
+                    let segment = segments
+                        .iter()
+                        .find(|segment| Some(segment.id.as_str()) == chunk.segment_id.as_deref())?;
+                    Some((
+                        chunk.id.as_str(),
+                        crate::recording_privacy::source_track_id(segment, "video")?,
+                    ))
+                })
+                .collect(),
         }
     }
 
     fn is_visible(&self, chunk_id: &str, frame_timestamp_ms: i64) -> bool {
         self.succeeded_chunk_ids.contains(chunk_id)
             && !self.redactions.iter().any(|redaction| {
-                self.redaction_hides_visual_timestamp(redaction, frame_timestamp_ms)
+                self.redaction_hides_visual_timestamp(redaction, chunk_id, frame_timestamp_ms)
             })
     }
 
     fn redaction_hides_visual_timestamp(
         &self,
         redaction: &RedactionRow,
+        chunk_id: &str,
         frame_timestamp_ms: i64,
     ) -> bool {
         if frame_timestamp_ms < redaction.start_offset_ms
@@ -203,9 +230,10 @@ impl<'a> VisualObservationVisibility<'a> {
             return true;
         }
 
-        redacted_track_ids
-            .iter()
-            .any(|track_id| self.video_track_ids.contains(track_id.as_str()))
+        redacted_track_ids.iter().any(|track_id| {
+            self.video_track_ids.contains(track_id.as_str())
+                || self.library_video_tracks_by_chunk.get(chunk_id) == Some(track_id)
+        })
     }
 }
 

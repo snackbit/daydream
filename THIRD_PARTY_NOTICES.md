@@ -51,7 +51,11 @@ Leptonica, and language data remain under their upstream licenses.
 ## shadcn/ui
 
 Daydream includes generated shadcn/ui source under
-`apps/desktop/src/components/ui`.
+`apps/desktop/src/components/ui` and the unchanged custom-variant section from
+`shadcn@4.21.1` under `apps/desktop/src/shadcn-variants.css`.
+Upstream: [Tailwind helper source](https://github.com/shadcn-ui/ui/blob/main/packages/shadcn/src/tailwind.css).
+The local helpers preserve generated component state/orientation styling without
+depending on the shadcn generator CLI or its server/registry dependencies.
 
 MIT License
 

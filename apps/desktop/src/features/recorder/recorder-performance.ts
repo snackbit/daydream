@@ -1,10 +1,7 @@
 import type { RecorderPerformanceStats, RecorderState } from '@daydream/shared';
 
 export type RecorderPerformanceLevel =
-  | 'idle'
-  | 'lagging'
-  | 'on-track'
-  | 'stalled';
+  'idle' | 'lagging' | 'on-track' | 'stalled';
 
 export interface RecorderPerformanceDisplay {
   actualFps: number | null;

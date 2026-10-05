@@ -1,5 +1,25 @@
 use super::super::super::*;
 
+pub(crate) fn cancel_recording_processing_for_privacy(
+    storage: &AppStorage,
+    recording_id: &str,
+    timestamp_ms: i64,
+) -> rusqlite::Result<()> {
+    crate::recording_privacy::cancel_recording_processing(storage, recording_id, timestamp_ms)?;
+    storage.with_connection(|connection| {
+        for job in storage::list_processing_jobs(connection, Some(recording_id))? {
+            if job.status == "cancelled" && job.error.as_deref() == Some("ai_processing_privacy_changed") {
+                save_processing_notification(connection, ProcessingNotificationInput {
+                    actions: &processing_retry_actions(&job.id), job_id: Some(&job.id),
+                    message: "Processing stopped because recording privacy changed. Retry processes only eligible sources.",
+                    recording_id, status: "cancelled", timestamp_ms, title: "AI processing stopped",
+                })?;
+            }
+        }
+        Ok(())
+    })
+}
+
 pub(in crate::ai) fn update_processing_job_for_action(
     storage: &AppStorage,
     job_id: &str,

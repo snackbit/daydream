@@ -7,7 +7,10 @@ import {
 
 type AiProcessingStateStatus = 'error' | 'idle' | 'loading' | 'ready';
 
-export function useRecordingAiProcessingState(recordingId: string): {
+export function useRecordingAiProcessingState(
+  recordingId: string,
+  visibilityRevision = '',
+): {
   applyState: (state: RecordingAiProcessingState) => void;
   error: string | null;
   reload: () => Promise<RecordingAiProcessingState | null>;
@@ -15,7 +18,10 @@ export function useRecordingAiProcessingState(recordingId: string): {
   status: AiProcessingStateStatus;
 } {
   const loadRunRef = useRef(0);
-  const [state, setState] = useState<RecordingAiProcessingState | null>(null);
+  const [state, setState] = useState<{
+    data: RecordingAiProcessingState;
+    revision: string;
+  } | null>(null);
   const [status, setStatus] = useState<AiProcessingStateStatus>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -24,16 +30,23 @@ export function useRecordingAiProcessingState(recordingId: string): {
       if (nextState.recordingId !== recordingId) {
         return;
       }
-      setState(nextState);
+      loadRunRef.current += 1;
+      setState({ data: nextState, revision: visibilityRevision });
       setStatus('ready');
       setError(null);
     },
-    [recordingId],
+    [recordingId, visibilityRevision],
   );
 
   const reload = useCallback(async () => {
     const loadRunId = loadRunRef.current + 1;
     loadRunRef.current = loadRunId;
+    setState((current) =>
+      current?.data.recordingId === recordingId &&
+      current.revision === visibilityRevision
+        ? current
+        : null,
+    );
     setStatus((current) => (current === 'ready' ? current : 'loading'));
     setError(null);
     try {
@@ -51,7 +64,7 @@ export function useRecordingAiProcessingState(recordingId: string): {
       setStatus('error');
       return null;
     }
-  }, [applyState, recordingId]);
+  }, [applyState, recordingId, visibilityRevision]);
 
   useEffect(() => {
     void reload();
@@ -79,7 +92,11 @@ export function useRecordingAiProcessingState(recordingId: string): {
     };
   }, [applyState]);
 
-  const visibleState = state?.recordingId === recordingId ? state : null;
+  const visibleState =
+    state?.data.recordingId === recordingId &&
+    state.revision === visibilityRevision
+      ? state.data
+      : null;
 
   return { applyState, error, reload, state: visibleState, status };
 }

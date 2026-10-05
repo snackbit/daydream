@@ -1,11 +1,13 @@
 use std::{
     collections::HashSet,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::path::PathBuf;
 use tracing::warn;
 
 use crate::{
@@ -91,6 +93,20 @@ pub(crate) fn enforce_storage_cleanup_at(
 
     let mut result = StorageCleanupResult::default();
     for candidate in plan.candidates {
+        let Some(_lease) = crate::recording_privacy::try_mutation_lease(&candidate.recording.id)
+        else {
+            continue;
+        };
+        if crate::ai::cancel_recording_processing_for_privacy(
+            storage,
+            &candidate.recording.id,
+            now_ms,
+        )
+        .is_err()
+        {
+            result.failed_recording_count += 1;
+            continue;
+        }
         match delete_recording(storage, recordings_root, &candidate.recording) {
             Ok(()) => {
                 result.deleted_recording_count += 1;
@@ -205,17 +221,7 @@ fn delete_recording(
     recordings_root: &Path,
     recording: &RecordingRow,
 ) -> Result<(), String> {
-    let storage_dir = PathBuf::from(&recording.storage_dir);
-
-    if storage_dir.exists() {
-        ensure_path_inside_recordings_root(recordings_root, &storage_dir)?;
-        fs::remove_dir_all(&storage_dir)
-            .map_err(|_error| "Unable to delete an eligible recording directory.".to_string())?;
-    }
-
-    storage
-        .with_connection(|connection| storage::delete_recording(connection, &recording.id))
-        .map_err(|_error| "Unable to delete an eligible recording row.".to_string())
+    crate::recording_deletion::delete_recording(storage, recordings_root, recording)
 }
 
 fn recording_size_bytes(recording: &RecordingRow, segments: &[RecordingSegmentRow]) -> u64 {
@@ -244,22 +250,6 @@ fn directory_size_bytes(path: &Path) -> Result<u64, String> {
     }
 
     Ok(total)
-}
-
-fn ensure_path_inside_recordings_root(recordings_root: &Path, path: &Path) -> Result<(), String> {
-    let canonical_root = recordings_root
-        .canonicalize()
-        .map_err(|_error| "Unable to inspect recordings root.".to_string())?;
-    let canonical_path = path
-        .canonicalize()
-        .map_err(|_error| "Unable to inspect recording directory.".to_string())?;
-    if !canonical_path.starts_with(canonical_root) {
-        return Err(
-            "Refusing to delete a recording directory outside Daydream storage.".to_string(),
-        );
-    }
-
-    Ok(())
 }
 
 fn now_ms() -> i64 {

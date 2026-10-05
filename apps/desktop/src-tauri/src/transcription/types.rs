@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct TranscriptionRequest {
+    pub processing_lease: Option<Arc<tokio::sync::OwnedRwLockReadGuard<()>>>,
     pub audio_path: PathBuf,
     pub cancel: Arc<AtomicBool>,
     pub language: String,

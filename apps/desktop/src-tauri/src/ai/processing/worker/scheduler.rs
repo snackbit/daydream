@@ -8,23 +8,41 @@ pub(in crate::ai) fn recover_stale_processing(storage: &AppStorage) -> Result<()
             let jobs = storage::list_processing_jobs_by_status(
                 connection,
                 AI_PROCESSING_JOB_KIND,
-                &["running"],
+                &[
+                    "running",
+                    "queued",
+                    "paused",
+                    "cancelled",
+                    "failed",
+                    "succeeded",
+                ],
                 None,
             )?;
             for job in jobs {
-                storage::update_processing_job_status(
-                    connection,
-                    &job.id,
-                    "queued",
-                    None,
-                    timestamp_ms,
-                )?;
-                storage::requeue_processing_chunks(
-                    connection,
-                    &job.id,
-                    &["running"],
-                    timestamp_ms,
-                )?;
+                if matches!(job.status.as_str(), "running" | "queued" | "paused") {
+                    storage::requeue_processing_chunks(
+                        connection,
+                        &job.id,
+                        &["running"],
+                        timestamp_ms,
+                    )?;
+                    if job.status == "running" {
+                        storage::update_processing_job_status(
+                            connection,
+                            &job.id,
+                            "queued",
+                            None,
+                            timestamp_ms,
+                        )?;
+                    }
+                } else {
+                    storage::cancel_processing_chunks(
+                        connection,
+                        &job.id,
+                        &["running"],
+                        timestamp_ms,
+                    )?;
+                }
             }
             Ok(())
         })

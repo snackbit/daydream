@@ -92,6 +92,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
   async reset() {
+    if (get().mutationStatus === 'loading')
+      throw new Error('A settings request is already running.');
     await runAsyncStoreAction({
       before: () =>
         set({
@@ -121,6 +123,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   savedScene: null,
   async save(settings) {
+    if (get().mutationStatus === 'loading')
+      throw new Error('A settings request is already running.');
+    const draftAtSave = get().draft;
     const settingsToSave = settings ?? get().draft;
     if (!settingsToSave) {
       set({ error: 'No settings are loaded.' });
@@ -140,18 +145,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           mutationStatus: 'error',
         }),
       run: () => saveAppSettings({ settings: settingsToSave }),
-      success: (settingsState) =>
+      success: (settingsState) => {
+        const draft =
+          get().draft === draftAtSave ? settingsState.settings : get().draft;
         set({
-          draft: settingsState.settings,
+          draft,
           error: null,
-          isDirty: false,
+          isDirty:
+            draft !== null && !settingsEqual(draft, settingsState.settings),
           mutationStatus: 'success',
           settingsState,
           successMessage: settingsMutationMessage(
             'Settings saved.',
             settingsState.storageCleanup,
           ),
-        }),
+        });
+      },
     });
   },
   setDraft(draft) {
@@ -162,7 +171,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       isDirty: settingsState
         ? !settingsEqual(draft, settingsState.settings)
         : true,
-      mutationStatus: 'idle',
+      mutationStatus: get().mutationStatus === 'loading' ? 'loading' : 'idle',
       successMessage: null,
     });
   },

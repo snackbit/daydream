@@ -36,13 +36,14 @@ export function createRecorderWorkspacePersistenceActions(
   get: RecorderWorkspaceGet,
 ): PersistenceActions {
   return {
-    load: () => load(set),
+    load: () => load(set, get),
     saveScene: () => saveScene(set, get),
     updateCaptureSources: () => updateCaptureSources(set, get),
   };
 }
 
-async function load(set: RecorderWorkspaceSet) {
+async function load(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
+  const statusBeforeRead = get().status;
   await runAsyncStoreAction({
     before: () => set({ error: null, loadStatus: 'loading' }),
     failure: (error) =>
@@ -51,12 +52,19 @@ async function load(set: RecorderWorkspaceSet) {
         loadStatus: 'error',
       }),
     run: loadRecorderWorkspaceSnapshot,
-    success: (snapshot) => applyLoadedRecorderWorkspace(set, snapshot),
+    success: (snapshot) =>
+      applyLoadedRecorderWorkspace(set, {
+        ...snapshot,
+        status:
+          get().status !== statusBeforeRead
+            ? (get().status ?? snapshot.status)
+            : snapshot.status,
+      }),
   });
 }
 
 async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
-  if (workspaceConfigurationLocked(get())) {
+  if (workspaceConfigurationLocked(get()) || get().saveStatus === 'loading') {
     return;
   }
 
@@ -65,6 +73,9 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
     set({ error: 'No recorder scene is available to save.' });
     return;
   }
+  const desktopAudioSourceId = get().desktopAudioSourceId;
+  const microphoneAudioSourceId = get().microphoneAudioSourceId;
+  set({ error: null, saveStatus: 'loading' });
   if (
     scene.sources.length === 0 &&
     previewIsActive(get().previewStatus) &&
@@ -88,11 +99,16 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
       saveRecorderScene({
         scene: {
           ...scene,
-          desktopAudioSourceId: get().desktopAudioSourceId,
-          microphoneAudioSourceId: get().microphoneAudioSourceId,
+          desktopAudioSourceId,
+          microphoneAudioSourceId,
         },
       }),
     success: (savedScene) => {
+      const draftChanged =
+        get().scene !== scene ||
+        get().desktopAudioSourceId !== desktopAudioSourceId ||
+        get().microphoneAudioSourceId !== microphoneAudioSourceId;
+      const currentScene = draftChanged ? get().scene : savedScene;
       const previewStatus = get().previewStatus;
       const clearPreviewError =
         previewStatus?.state === 'error' &&
@@ -100,10 +116,14 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
       const clearPreviewState =
         savedScene.sources.length === 0 || clearPreviewError;
       set({
-        desktopAudioSourceId: savedScene.desktopAudioSourceId,
+        desktopAudioSourceId: draftChanged
+          ? get().desktopAudioSourceId
+          : savedScene.desktopAudioSourceId,
         error: null,
-        isDirty: false,
-        microphoneAudioSourceId: savedScene.microphoneAudioSourceId,
+        isDirty: draftChanged,
+        microphoneAudioSourceId: draftChanged
+          ? get().microphoneAudioSourceId
+          : savedScene.microphoneAudioSourceId,
         previewFramesBySceneSourceId: clearPreviewState
           ? {}
           : get().previewFramesBySceneSourceId,
@@ -112,11 +132,10 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
           : get().previewStartInFlightSceneId,
         previewStatus: clearPreviewState ? null : previewStatus,
         saveStatus: 'ready',
-        scene: savedScene,
-        selectedSceneSourceId: selectExistingSceneSource(
-          savedScene,
-          get().selectedSceneSourceId,
-        ),
+        scene: currentScene,
+        selectedSceneSourceId: currentScene
+          ? selectExistingSceneSource(currentScene, get().selectedSceneSourceId)
+          : null,
       });
     },
   });

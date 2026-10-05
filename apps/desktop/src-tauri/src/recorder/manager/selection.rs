@@ -30,7 +30,67 @@ impl RecorderManager {
         recording_id: &str,
         timestamp_ms: u64,
     ) -> Result<ActiveRecording, RecorderError> {
+        self.begin_resume_selecting_with_authority(recording_id, timestamp_ms, None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_auto_resume_selecting(
+        &self,
+        recording_id: &str,
+        timestamp_ms: u64,
+    ) -> Result<ActiveRecording, RecorderError> {
+        let generation = self
+            .automatic_resume_authority(recording_id)?
+            .ok_or_else(|| {
+                lifecycle_error(
+                    "recorder_manual_pause",
+                    "Automatic resume cannot override a manual pause.",
+                )
+            })?;
+        self.begin_auto_resume_with_authority(recording_id, timestamp_ms, generation)
+    }
+
+    pub(crate) fn automatic_resume_authority(
+        &self,
+        recording_id: &str,
+    ) -> Result<Option<u64>, RecorderError> {
+        let runtime = self.lock_runtime()?;
+        Ok((runtime.pause_owner == Some(PauseOwner::Automatic)
+            && runtime
+                .active
+                .as_ref()
+                .is_some_and(|active| active.recording_id == recording_id))
+        .then_some(runtime.pause_generation))
+    }
+
+    pub(crate) fn begin_auto_resume_with_authority(
+        &self,
+        recording_id: &str,
+        timestamp_ms: u64,
+        generation: u64,
+    ) -> Result<ActiveRecording, RecorderError> {
+        self.begin_resume_selecting_with_authority(recording_id, timestamp_ms, Some(generation))
+    }
+
+    fn begin_resume_selecting_with_authority(
+        &self,
+        recording_id: &str,
+        timestamp_ms: u64,
+        automatic_generation: Option<u64>,
+    ) -> Result<ActiveRecording, RecorderError> {
         let mut runtime = self.lock_runtime()?;
+        if automatic_generation.is_some() && runtime.pause_owner != Some(PauseOwner::Automatic) {
+            return Err(lifecycle_error(
+                "recorder_manual_pause",
+                "Automatic resume cannot override a manual pause.",
+            ));
+        }
+        if automatic_generation.is_some_and(|generation| generation != runtime.pause_generation) {
+            return Err(lifecycle_error(
+                "recorder_stale_automatic_resume",
+                "A newer pause canceled automatic resume.",
+            ));
+        }
         if status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
@@ -62,6 +122,11 @@ impl RecorderManager {
             runtime.status.backend_health.clone(),
             None,
         );
+        if automatic_generation.is_none() {
+            runtime.pause_owner = None;
+        }
+        runtime.automatic_resume_pending = automatic_generation.is_some();
+        runtime.cancel_pending_resume = false;
 
         Ok(active)
     }
@@ -80,10 +145,15 @@ impl RecorderManager {
 
     pub(crate) fn restore_paused_after_selecting(
         &self,
+        storage: &AppStorage,
         active: ActiveRecording,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
         let mut runtime = self.lock_runtime()?;
+        if let Some(error) = runtime.pending_failure.take() {
+            drop(runtime);
+            return self.abort_recording(storage, &active.recording_id, error, timestamp_ms);
+        }
         let status = status_from_active(
             RecorderState::Paused,
             &active,
@@ -92,6 +162,8 @@ impl RecorderManager {
             None,
         );
         runtime.active = Some(active);
+        runtime.automatic_resume_pending = false;
+        runtime.cancel_pending_resume = false;
         runtime.status = status.clone();
 
         Ok(status)

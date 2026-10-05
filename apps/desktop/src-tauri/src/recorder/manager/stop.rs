@@ -2,87 +2,6 @@ use super::*;
 use tracing::warn;
 
 impl RecorderManager {
-    pub fn begin_pause_recording(
-        &self,
-        recording_id: &str,
-        timestamp_ms: u64,
-    ) -> Result<RecorderStatus, RecorderError> {
-        let mut runtime = self.lock_runtime()?;
-        if status_has_pending_lifecycle(&runtime.status) {
-            return Err(lifecycle_error(
-                "recorder_already_active",
-                "A recorder lifecycle transition is already in progress.",
-            ));
-        }
-        let active = runtime
-            .active
-            .clone()
-            .ok_or_else(|| lifecycle_error("recorder_not_recording", "No recording is active."))?;
-        if active.recording_id != recording_id {
-            return Err(lifecycle_error(
-                "recorder_recording_mismatch",
-                "The requested recording is not active.",
-            ));
-        }
-        if active.active_segment.is_none() {
-            return Err(lifecycle_error(
-                "recorder_not_recording",
-                "No segment is recording.",
-            ));
-        }
-
-        let segment = active
-            .active_segment
-            .as_ref()
-            .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
-        let status = status_for_finalizing_pause(
-            &active,
-            segment,
-            timestamp_ms,
-            runtime.status.backend_health.clone(),
-        );
-        runtime.status = status.clone();
-
-        Ok(status)
-    }
-
-    pub fn complete_pause_recording(
-        &self,
-        storage: &AppStorage,
-        recording_id: &str,
-        timestamp_ms: u64,
-    ) -> Result<RecorderStatus, RecorderError> {
-        let active = self.active_for_completion(recording_id, RecorderFinalizationAction::Pause)?;
-        let segment = active
-            .active_segment
-            .clone()
-            .ok_or_else(|| lifecycle_error("recorder_not_recording", "No segment is recording."))?;
-
-        if let Err(error) = self.finalize_media_segment(storage, &active, &segment, timestamp_ms) {
-            self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
-            return Err(error);
-        }
-        if let Err(error) = mark_recording_paused(storage, &active.recording_id) {
-            self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
-            return Err(error);
-        }
-
-        let mut paused = active;
-        paused.active_segment = None;
-        let mut runtime = self.lock_runtime()?;
-        let status = status_from_active(
-            RecorderState::Paused,
-            &paused,
-            timestamp_ms,
-            runtime.status.backend_health.clone(),
-            None,
-        );
-        runtime.active = Some(paused);
-        runtime.status = status.clone();
-
-        Ok(status)
-    }
-
     pub fn begin_stop_recording(
         &self,
         recording_id: &str,
@@ -132,12 +51,37 @@ impl RecorderManager {
         if let Some(segment) = &active.active_segment {
             if let Err(error) = self.finalize_media_segment(storage, &active, segment, timestamp_ms)
             {
-                self.ensure_error_status_after_completion_failure(&error, timestamp_ms)?;
+                let _ = self.abort_recording(storage, recording_id, error.clone(), timestamp_ms);
                 return Err(error);
             }
         }
 
-        storage
+        // Capture is stopped before spans are closed. Completion never publishes
+        // processable metadata before every automatic protection span is durable.
+        self.stop_protection_monitor()?;
+        let protection_barrier = storage
+            .with_connection(|connection| storage::get_recording(connection, recording_id))
+            .and_then(|recording| {
+                let started = recording
+                    .started_at_ms
+                    .ok_or(rusqlite::Error::InvalidQuery)?;
+                super::super::window_protection::close_open_protection_spans(
+                    storage,
+                    recording_id,
+                    (timestamp_ms as i64).saturating_sub(started).max(0),
+                    timestamp_ms as i64,
+                )
+            });
+        if protection_barrier.is_err() {
+            return self.abort_recording(storage, recording_id, super::super::errors::dependency_error("recorder_window_protection_storage_failed", "Protected spans could not be saved. Recording stopped and AI processing was blocked."), timestamp_ms);
+        }
+
+        let mut runtime = self.lock_runtime()?;
+        if let Some(error) = runtime.pending_failure.take() {
+            drop(runtime);
+            return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
+        let completion = storage
             .with_connection(|connection| {
                 storage::mark_recording_completed(
                     connection,
@@ -145,7 +89,20 @@ impl RecorderManager {
                     timestamp_ms as i64,
                 )
             })
-            .map_err(storage_error)?;
+            .map_err(storage_error);
+        if let Err(error) = completion {
+            drop(runtime);
+            let _ = self.abort_recording(storage, recording_id, error.clone(), timestamp_ms);
+            return Err(error);
+        }
+
+        let status =
+            idle_status_with_backend_health(timestamp_ms, runtime.status.backend_health.clone());
+        runtime.active = None;
+        runtime.pause_owner = None;
+        runtime.automatic_resume_pending = false;
+        runtime.status = status.clone();
+        drop(runtime);
 
         match settings::load_app_settings(storage) {
             Ok(app_settings) => {
@@ -167,16 +124,10 @@ impl RecorderManager {
             ),
         }
 
-        let mut runtime = self.lock_runtime()?;
-        let status =
-            idle_status_with_backend_health(timestamp_ms, runtime.status.backend_health.clone());
-        runtime.active = None;
-        runtime.status = status.clone();
-
         Ok(status)
     }
 
-    fn finalize_media_segment(
+    pub(super) fn finalize_media_segment(
         &self,
         storage: &AppStorage,
         active: &ActiveRecording,
@@ -255,7 +206,7 @@ impl RecorderManager {
         Ok(())
     }
 
-    fn active_for_completion(
+    pub(super) fn active_for_completion(
         &self,
         recording_id: &str,
         expected_action: RecorderFinalizationAction,
@@ -287,27 +238,6 @@ impl RecorderManager {
         Ok(active)
     }
 
-    fn ensure_error_status_after_completion_failure(
-        &self,
-        error: &RecorderError,
-        timestamp_ms: u64,
-    ) -> Result<(), RecorderError> {
-        let mut runtime = self.lock_runtime()?;
-        if runtime.status.state == RecorderState::Error {
-            return Ok(());
-        }
-
-        let status = error_status_with_backend_health(
-            timestamp_ms,
-            runtime.status.backend_health.clone(),
-            error.clone(),
-        );
-        runtime.active = None;
-        runtime.status = status;
-
-        Ok(())
-    }
-
     pub(super) fn fail_active_recording(
         &self,
         storage: &AppStorage,
@@ -317,31 +247,11 @@ impl RecorderManager {
         error: &RecorderError,
         writer_exit_code: Option<i64>,
     ) -> Result<(), RecorderError> {
-        fail_segment_for_error(storage, segment_id, timestamp_ms, error, writer_exit_code)?;
-        storage
-            .with_connection(|connection| {
-                storage::update_recording_status(connection, &active.recording_id, "failed")
-            })
-            .map_err(storage_error)?;
-
-        let mut runtime = self.lock_runtime()?;
-        let status = error_status_with_backend_health(
-            timestamp_ms,
-            runtime.status.backend_health.clone(),
-            error.clone(),
-        );
-        runtime.active = None;
-        runtime.status = status;
-
-        Ok(())
+        let segment_failure =
+            fail_segment_for_error(storage, segment_id, timestamp_ms, error, writer_exit_code);
+        let recording_failure = self
+            .abort_recording(storage, &active.recording_id, error.clone(), timestamp_ms)
+            .map(|_| ());
+        segment_failure.and(recording_failure)
     }
-}
-
-fn mark_recording_paused(storage: &AppStorage, recording_id: &str) -> Result<(), RecorderError> {
-    storage
-        .with_connection(|connection| {
-            storage::update_recording_status(connection, recording_id, "paused")
-        })
-        .map(|_row| ())
-        .map_err(storage_error)
 }

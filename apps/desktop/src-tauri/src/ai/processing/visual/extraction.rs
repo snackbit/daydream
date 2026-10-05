@@ -7,16 +7,29 @@ use super::{
     types::*,
 };
 
+pub(super) struct VisualExtractionRequest<'a> {
+    pub(super) segment: &'a RecordingSegmentRow,
+    pub(super) segment_playback_offset_ms: i64,
+    pub(super) chunk: &'a ProcessingChunkRow,
+    pub(super) recording_fps: f64,
+    pub(super) app_settings: &'a settings::AppSettings,
+    pub(super) include_ocr_regions: bool,
+    pub(super) cancel: &'a AtomicBool,
+}
+
 pub(super) fn extract_visual_frames(
     app: &AppHandle,
-    segment: &RecordingSegmentRow,
-    segment_playback_offset_ms: i64,
-    chunk: &ProcessingChunkRow,
-    recording_fps: f64,
-    app_settings: &settings::AppSettings,
-    include_ocr_regions: bool,
-    cancel: &AtomicBool,
+    request: VisualExtractionRequest<'_>,
 ) -> Result<ExtractedVisualFrameSet, AiError> {
+    let VisualExtractionRequest {
+        segment,
+        segment_playback_offset_ms,
+        chunk,
+        recording_fps,
+        app_settings,
+        include_ocr_regions,
+        cancel,
+    } = request;
     let video_stream_index = segment.video_stream_index.ok_or_else(|| {
         ai_error(
             "ai_processing_video_stream_missing",

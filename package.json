@@ -25,11 +25,20 @@
     "lint:fix": "yarn workspace @daydream/desktop lint:fix && yarn workspace @daydream/shared lint:fix && yarn workspace @daydream/ffmpeg lint:fix",
     "test": "yarn workspace @daydream/desktop test && yarn workspace @daydream/shared test && yarn workspace @daydream/ffmpeg test",
     "test:recorder:e2e": "yarn workspace @daydream/desktop test:recorder:e2e",
-    "test:recorder": "yarn workspace @daydream/desktop test:recorder && yarn workspace @daydream/desktop test:recorder:coverage && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
-    "typecheck": "yarn workspace @daydream/desktop typecheck && yarn workspace @daydream/shared typecheck && yarn workspace @daydream/ffmpeg typecheck"
+    "test:recorder": "yarn workspace @daydream/desktop test:recorder && yarn workspace @daydream/desktop test:recorder:e2e",
+    "typecheck": "yarn workspace @daydream/desktop typecheck && yarn workspace @daydream/shared typecheck && yarn workspace @daydream/ffmpeg typecheck",
+    "test:unit": "yarn workspace @daydream/desktop test:unit && yarn workspace @daydream/shared test && yarn workspace @daydream/ffmpeg test",
+    "test:browser": "yarn workspace @daydream/desktop test:browser",
+    "rust:fmt": "yarn workspace @daydream/desktop rust:fmt",
+    "rust:clippy": "yarn workspace @daydream/desktop rust:clippy",
+    "rust:test": "yarn workspace @daydream/desktop rust:test",
+    "test:recorder:coverage": "yarn workspace @daydream/desktop test:recorder:coverage"
   },
   "devDependencies": {
     "@daydream/eslint-config": "workspace:*",
     "@daydream/tsconfig": "workspace:*"
+  },
+  "engines": {
+    "node": "^22.12.0 || >=24.0.0"
   }
 }

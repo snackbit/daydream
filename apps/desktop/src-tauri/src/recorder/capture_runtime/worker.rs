@@ -9,6 +9,9 @@ pub(crate) struct RuntimeWorker {
 }
 
 impl RuntimeWorker {
+    pub(crate) fn is_finished(&self) -> bool {
+        self.handle.is_finished()
+    }
     pub(crate) fn spawn(
         name: &'static str,
         run: impl FnOnce() -> Result<(), RecorderError> + Send + 'static,

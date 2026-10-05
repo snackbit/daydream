@@ -81,10 +81,7 @@ export interface AudioSourceList {
 }
 
 export type RecorderSceneLayoutMode =
-  | 'auto-16-9'
-  | 'custom'
-  | 'horizontal'
-  | 'vertical';
+  'auto-16-9' | 'custom' | 'horizontal' | 'vertical';
 
 export interface RecorderSceneSource {
   crop: CropRect;

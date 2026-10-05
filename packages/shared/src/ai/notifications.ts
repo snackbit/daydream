@@ -1,18 +1,8 @@
 export type NotificationSource =
-  | 'ai'
-  | 'capture'
-  | 'library'
-  | 'recorder'
-  | 'settings'
-  | 'system';
+  'ai' | 'capture' | 'library' | 'recorder' | 'settings' | 'system';
 
 export type NotificationStatus =
-  | 'cancelled'
-  | 'failed'
-  | 'info'
-  | 'running'
-  | 'succeeded'
-  | 'warning';
+  'cancelled' | 'failed' | 'info' | 'running' | 'succeeded' | 'warning';
 
 export type NotificationActionStyle = 'default' | 'destructive' | 'secondary';
 

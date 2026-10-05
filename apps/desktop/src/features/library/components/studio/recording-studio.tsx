@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
@@ -15,6 +15,7 @@ import {
 import { StudioPlayer } from './studio-player';
 import { StudioSidebar } from './studio-sidebar';
 import { useStudioTimelineStore } from './studio-timeline-store';
+import { buildStudioVisualFrames } from './studio-visual-observations';
 import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
 
@@ -56,6 +57,10 @@ export function RecordingStudio({
     mutedTrackIds,
     playbackAssets,
   });
+  const visualFrames = useMemo(
+    () => buildStudioVisualFrames(visualObservations, detail),
+    [detail, visualObservations],
+  );
 
   useEffect(() => {
     initializeTimeline(detail);
@@ -95,7 +100,7 @@ export function RecordingStudio({
               playback={playback}
               playbackAssets={playbackAssets}
               thumbnailStatus={thumbnailStatus}
-              visualObservations={visualObservations}
+              visualFrames={visualFrames}
               onCreateRedactions={onCreateRedactions}
               onUnredactRanges={onUnredactRanges}
               onToggleTrackMuted={toggleTrackMuted}
@@ -108,7 +113,7 @@ export function RecordingStudio({
         <StudioSidebar
           aiProcessingState={aiProcessingState}
           detail={detail}
-          visualObservations={visualObservations}
+          visualFrames={visualFrames}
           onCreateRedactions={onCreateRedactions}
           onDeleteRedaction={onDeleteRedaction}
           onUnredactRanges={onUnredactRanges}

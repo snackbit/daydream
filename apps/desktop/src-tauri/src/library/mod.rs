@@ -56,26 +56,12 @@ fn normalize_recording_title(title: Option<String>) -> Result<Option<String>, St
     Ok(Some(trimmed.to_string()))
 }
 
-fn delete_recording_row(
+pub(crate) fn delete_recording_row(
     storage: &AppStorage,
     recordings_root: &Path,
     recording: &RecordingRow,
 ) -> Result<(), String> {
-    let storage_dir = PathBuf::from(&recording.storage_dir);
-
-    if storage_dir.exists() {
-        ensure_path_inside_recordings_root(recordings_root, &storage_dir)?;
-        fs::remove_dir_all(&storage_dir).map_err(|error| {
-            format!(
-                "Unable to delete recording directory {}: {error}",
-                path_to_string(&storage_dir)
-            )
-        })?;
-    }
-
-    storage
-        .with_connection(|connection| storage::delete_recording(connection, &recording.id))
-        .map_err(|error| error.to_string())
+    crate::recording_deletion::delete_recording(storage, recordings_root, recording)
 }
 
 fn ensure_recording_is_deletable(recording: &RecordingRow) -> Result<(), String> {
@@ -147,28 +133,6 @@ fn system_time_ms(time: SystemTime) -> Option<i64> {
 
 fn now_ms() -> i64 {
     system_time_ms(SystemTime::now()).unwrap_or_default()
-}
-
-fn ensure_path_inside_recordings_root(recordings_root: &Path, path: &Path) -> Result<(), String> {
-    let canonical_root = recordings_root.canonicalize().map_err(|error| {
-        format!(
-            "Unable to inspect recordings root {}: {error}",
-            path_to_string(recordings_root)
-        )
-    })?;
-    let canonical_path = path.canonicalize().map_err(|error| {
-        format!(
-            "Unable to inspect recording directory {}: {error}",
-            path_to_string(path)
-        )
-    })?;
-    if !canonical_path.starts_with(canonical_root) {
-        return Err(
-            "Refusing to delete a recording directory outside Daydream storage.".to_string(),
-        );
-    }
-
-    Ok(())
 }
 
 fn path_to_string(path: &Path) -> String {

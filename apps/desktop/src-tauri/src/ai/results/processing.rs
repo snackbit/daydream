@@ -158,10 +158,7 @@ pub(in crate::ai) fn processing_job_from_row_with_storage(
     }
 }
 
-pub(in crate::ai) fn emit_processing_state<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-    recording_id: &str,
-) {
+pub(crate) fn emit_processing_state<R: tauri::Runtime>(app: &AppHandle<R>, recording_id: &str) {
     let storage = app.state::<AppStorage>();
     if let Ok(state) = processing_state_for_recording(&storage, recording_id) {
         tracing::info!(

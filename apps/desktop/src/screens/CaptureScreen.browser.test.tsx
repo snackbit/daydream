@@ -864,6 +864,44 @@ test('CaptureScreen makes scene configuration read-only while recording', async 
   expect(client.selectCaptureSources).not.toHaveBeenCalled();
 });
 
+test('CaptureScreen reconciles a protected-window pause on return without discarding the scene', async () => {
+  const savedScene = sceneFixture(['main']);
+  const recordingStatus = {
+    ...status,
+    activeRecordingId: 'recording-1',
+    activeSceneId: savedScene.id,
+    state: 'recording',
+  } satisfies RecorderStatus;
+  client.getRecorderScene.mockResolvedValue(savedScene);
+  client.getRecorderStatus.mockResolvedValue(recordingStatus);
+  const first = render(<CaptureScreen />);
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('button', { name: /^Pause$/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  first.unmount();
+  client.getRecorderStatus.mockResolvedValue({
+    ...recordingStatus,
+    state: 'paused',
+    updatedAtMs: 5,
+  });
+  render(<CaptureScreen />);
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('button', { name: /^Resume$/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  expect(
+    (screen.getByRole('button', { name: /^Pause$/i }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(client.getRecorderScene).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Status: paused')).toBeTruthy();
+});
+
 test('CaptureScreen deletes a draft source and saves the reduced scene', async () => {
   render(<CaptureScreen />);
 

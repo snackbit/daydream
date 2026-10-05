@@ -30,6 +30,9 @@ use super::types::{
 };
 use crate::storage;
 
+mod failures;
+mod protection;
+
 #[test]
 fn unavailable_error_uses_locked_gate_a_shape() {
     let error = unavailable_error();
@@ -1227,12 +1230,13 @@ fn resume_test_recording(
     {
         Ok(pending) => pending,
         Err(error) => {
-            let _ = manager.restore_paused_after_selecting(active, timestamp_ms);
+            let _ = manager.restore_paused_after_selecting(storage, active, timestamp_ms);
             return Err(error);
         }
     };
     if let Err(error) = manager.create_pending_segment_rows(storage, &pending) {
-        let _ = manager.restore_paused_after_selecting(pending.active.clone(), timestamp_ms);
+        let _ =
+            manager.restore_paused_after_selecting(storage, pending.active.clone(), timestamp_ms);
         return Err(error);
     }
 

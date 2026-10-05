@@ -2,10 +2,10 @@ use super::super::super::*;
 use super::types::*;
 
 #[derive(Default)]
-pub(super) struct PendingVisualOutput {
-    pub(super) frame_similarity_entries: Vec<CreateFrameSimilarityEntryInput>,
-    pub(super) ocr_regions: Vec<CreateVisualRegionInput>,
-    pub(super) vlm_observations: Vec<CreateVisualRegionInput>,
+pub(in crate::ai) struct PendingVisualOutput {
+    pub(in crate::ai) frame_similarity_entries: Vec<CreateFrameSimilarityEntryInput>,
+    pub(in crate::ai) ocr_regions: Vec<CreateVisualRegionInput>,
+    pub(in crate::ai) vlm_observations: Vec<CreateVisualRegionInput>,
 }
 
 pub(super) fn ocr_region_inputs(
@@ -98,16 +98,24 @@ pub(super) fn queue_visual_frame_states(
     Ok(rows)
 }
 
+pub(super) enum VisualFrameUpdate<'a> {
+    Running,
+    Succeeded(usize),
+    Failed(&'a str),
+}
+
 pub(super) fn mark_visual_frame_state(
     app: &AppHandle,
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,
     frame_state_id: &str,
-    status: &str,
-    progress: f64,
-    error_code: Option<&str>,
-    output_count: i64,
+    update: VisualFrameUpdate<'_>,
 ) -> Result<(), AiError> {
+    let (status, progress, error_code, output_count) = match update {
+        VisualFrameUpdate::Running => ("running", 0.5, None, 0),
+        VisualFrameUpdate::Succeeded(count) => ("succeeded", 1.0, None, count as i64),
+        VisualFrameUpdate::Failed(code) => ("failed", 0.0, Some(code), 0),
+    };
     storage
         .with_connection(|connection| {
             storage::update_visual_frame_processing_state_status(
@@ -154,7 +162,7 @@ pub(super) fn vlm_observation_inputs(
         .collect()
 }
 
-pub(super) fn persist_visual_output(
+pub(in crate::ai) fn persist_visual_output(
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,
     output: PendingVisualOutput,
@@ -175,6 +183,9 @@ pub(super) fn persist_visual_output(
     let started = Instant::now();
     let result = storage.with_connection_mut(|connection| {
         let transaction = connection.transaction()?;
+        if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
+            return Ok(());
+        }
         storage::delete_visual_output_for_chunks(&transaction, std::slice::from_ref(&chunk.id))?;
         for region in output.ocr_regions {
             storage::create_ocr_region(&transaction, &region)?;

@@ -80,6 +80,10 @@ pub(crate) struct MediaSegmentAudioProbe {
 pub(crate) struct MediaWriterSegment;
 
 impl MediaWriterSegment {
+    pub(crate) fn abort(self) {}
+    pub(crate) fn poll_error(&mut self) -> Option<RecorderError> {
+        Some(unavailable_error())
+    }
     pub(crate) fn benchmark(&self) -> Option<super::benchmark::RecorderBenchmarkSession> {
         None
     }

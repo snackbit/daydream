@@ -48,7 +48,7 @@ pub fn get_library_recording_debug(
 }
 
 #[tauri::command(rename = "deleteLibraryRecording")]
-pub fn delete_library_recording(
+pub async fn delete_library_recording(
     app: tauri::AppHandle,
     input: DeleteLibraryRecordingInput,
     storage: State<'_, AppStorage>,
@@ -63,11 +63,14 @@ pub fn delete_library_recording(
         .map_err(|error| error.to_string())?;
 
     ensure_recording_is_deletable(&recording)?;
+    crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
+        .map_err(|error| error.to_string())?;
+    let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
     delete_recording_row(&storage, &recordings_root, &recording)
 }
 
 #[tauri::command(rename = "deleteLibraryRecordings")]
-pub fn delete_library_recordings(
+pub async fn delete_library_recordings(
     app: tauri::AppHandle,
     input: DeleteLibraryRecordingsInput,
     storage: State<'_, AppStorage>,
@@ -92,6 +95,9 @@ pub fn delete_library_recordings(
     }
 
     for recording in recordings {
+        crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
+            .map_err(|error| error.to_string())?;
+        let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
         delete_recording_row(&storage, &recordings_root, &recording)?;
     }
 
@@ -120,7 +126,8 @@ pub fn rename_library_recording(
 }
 
 #[tauri::command(rename = "createLibraryRedactions")]
-pub fn create_library_redactions(
+pub async fn create_library_redactions(
+    app: tauri::AppHandle,
     input: CreateLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
@@ -135,6 +142,19 @@ pub fn create_library_redactions(
         .map_err(|error| error.to_string())?;
     let tracks = tracks_from_segments(&segments);
     let duration_ms = timeline_duration_ms(&segments);
+    let existing_redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
+    build_normalized_redaction_inputs(
+        &recording.id,
+        &input.ranges,
+        &existing_redactions,
+        &tracks,
+        duration_ms,
+    )?;
+    crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
+        .map_err(|error| error.to_string())?;
+    let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
         .map_err(|error| error.to_string())?;
@@ -158,11 +178,13 @@ pub fn create_library_redactions(
         })
         .map_err(|error| error.to_string())?;
 
+    ai::emit_processing_state(&app, &recording.id);
     detail_for_recording(storage.inner(), &recording.id)
 }
 
 #[tauri::command(rename = "deleteLibraryRedaction")]
-pub fn delete_library_redaction(
+pub async fn delete_library_redaction(
+    app: tauri::AppHandle,
     input: DeleteLibraryRedactionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
@@ -170,6 +192,9 @@ pub fn delete_library_redaction(
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|error| error.to_string())?;
     ensure_recording_allows_redaction(&recording)?;
+    crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
+        .map_err(|error| error.to_string())?;
+    let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
     let deleted = storage
         .with_connection(|connection| {
             storage::delete_redaction(connection, &input.recording_id, &input.redaction_id)
@@ -179,11 +204,13 @@ pub fn delete_library_redaction(
         return Err("Redaction was not found.".to_string());
     }
 
+    ai::emit_processing_state(&app, &recording.id);
     detail_for_recording(storage.inner(), &recording.id)
 }
 
 #[tauri::command(rename = "unredactLibraryRedactions")]
-pub fn unredact_library_redactions(
+pub async fn unredact_library_redactions(
+    app: tauri::AppHandle,
     input: UnredactLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
@@ -198,6 +225,19 @@ pub fn unredact_library_redactions(
         .map_err(|error| error.to_string())?;
     let tracks = tracks_from_segments(&segments);
     let duration_ms = timeline_duration_ms(&segments);
+    let existing_redactions = storage
+        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
+        .map_err(|error| error.to_string())?;
+    build_unredacted_redaction_inputs(
+        &recording.id,
+        &input.ranges,
+        &existing_redactions,
+        &tracks,
+        duration_ms,
+    )?;
+    crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
+        .map_err(|error| error.to_string())?;
+    let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
         .map_err(|error| error.to_string())?;
@@ -221,6 +261,7 @@ pub fn unredact_library_redactions(
         })
         .map_err(|error| error.to_string())?;
 
+    ai::emit_processing_state(&app, &recording.id);
     detail_for_recording(storage.inner(), &recording.id)
 }
 

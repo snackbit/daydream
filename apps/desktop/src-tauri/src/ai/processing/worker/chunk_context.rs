@@ -32,6 +32,11 @@ impl<'a> ProcessingChunkContext<'a> {
         let updated = self
             .storage
             .with_connection(|connection| {
+                let current = storage::get_processing_chunk(connection, &self.chunk.id)?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                if current.attempt_count != self.chunk.attempt_count {
+                    return Ok(current);
+                }
                 let updated = storage::update_processing_chunk_status_if_active(
                     connection,
                     &self.chunk.id,
@@ -81,6 +86,11 @@ impl<'a> ProcessingChunkContext<'a> {
     ) -> Result<ProcessingChunkRow, AiError> {
         self.storage
             .with_connection(|connection| {
+                let current = storage::get_processing_chunk(connection, &self.chunk.id)?
+                    .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                if current.attempt_count != self.chunk.attempt_count {
+                    return Ok(current);
+                }
                 if matches!(status, "cancelled" | "failed") {
                     storage::cancel_visual_frame_processing_states_for_chunk(
                         connection,

@@ -25,6 +25,9 @@ pub(crate) use timing::{
 pub(crate) use worker::RuntimeWorker;
 
 pub(crate) trait CaptureSession: Send + Debug {
+    fn poll_error(&self) -> Option<RecorderError> {
+        None
+    }
     fn stop(self: Box<Self>, stop_at_ms: u64) -> Result<(), RecorderError>;
 }
 

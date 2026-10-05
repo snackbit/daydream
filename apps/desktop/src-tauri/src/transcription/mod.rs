@@ -5,13 +5,14 @@ use std::{
 
 mod http;
 mod local_protocol;
+mod local_receipts;
+mod local_requests;
+mod local_scratch;
 mod local_server;
 mod local_worker;
 mod provider;
 mod remote;
 mod types;
-
-use uuid::Uuid;
 
 use crate::whisper_backend;
 pub use local_server::run_whisper_worker_process;
@@ -51,10 +52,6 @@ fn local_whisper_model_path(app_data_dir: &Path, model_id: &str) -> PathBuf {
         .join("models")
         .join("whisper.cpp")
         .join(format!("ggml-{model_id}.bin"))
-}
-
-fn temp_audio_path() -> PathBuf {
-    std::env::temp_dir().join(format!("daydream-transcription-{}.wav", Uuid::now_v7()))
 }
 
 fn transcription_error(code: &str, message: &str) -> TranscriptionError {

@@ -11,10 +11,7 @@ export type AiTranscriptionBackend = 'cpu' | 'cuda' | 'vulkan';
 export type TranscriptSourceRole = 'desktop-audio' | 'microphone';
 
 export type ActivitySourceKind =
-  | 'frame-delta'
-  | 'keyboard'
-  | 'merged'
-  | 'mouse';
+  'frame-delta' | 'keyboard' | 'merged' | 'mouse';
 
 export type ActivityIntervalState = 'active' | 'idle' | 'unknown';
 

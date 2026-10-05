@@ -90,6 +90,9 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
 ) -> rusqlite::Result<PersistedTranscriptionStats> {
     let transaction = connection.transaction()?;
     let mut stats = PersistedTranscriptionStats::default();
+    if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
+        return Ok(stats);
+    }
 
     for pending in transcriptions {
         for segment in pending.transcription.segments {

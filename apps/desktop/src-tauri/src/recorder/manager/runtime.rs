@@ -12,6 +12,18 @@ pub(super) struct RecorderRuntime {
     pub(super) preview_start_generation: u64,
     pub(super) preview_status: RecorderPreviewStatus,
     pub(super) status: RecorderStatus,
+    pub(super) pause_owner: Option<PauseOwner>,
+    pub(super) protection_monitor: Option<super::super::window_protection::WindowProtectionMonitor>,
+    pub(super) pending_failure: Option<super::super::types::RecorderError>,
+    pub(super) automatic_resume_pending: bool,
+    pub(super) cancel_pending_resume: bool,
+    pub(super) pause_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PauseOwner {
+    Manual,
+    Automatic,
 }
 
 #[derive(Debug)]

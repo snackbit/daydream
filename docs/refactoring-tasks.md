@@ -1,9 +1,60 @@
 # Refactoring Tasks
 
-This checklist is the persistent source of truth for the code-quality cleanup
-goal. Work through it one item at a time. Do not mark the goal complete until
-every checked-in task here is either done or explicitly replaced by a better
-documented task.
+Active cleanup work is listed below. Older checked sections record completed
+2026-06-12 work and historical validation; they do not define a current goal or prove
+today's checks. Add focused ownership changes when touching complex owners.
+
+## Active cleanup: master review 2026-10-05
+
+- [x] Native protected-window/lifecycle ownership. Before: `window_protection.rs`
+  397 lines mixes matching, dwell/merge state, persistence and monitoring;
+  `lifecycle_commands.rs` 407 lines mixes manual/automatic lifecycle and completion.
+  Split matching/state/persistence/monitor/tests and lifecycle supervision; manager
+  owns pause authority. Risks: metadata/storage failure leaks, interrupted protection
+  across rule changes and stale automatic resume ownership. Verify focused
+  `recorder::` scenarios, then coordinated native gate with two build jobs.
+  Verified: lifecycle 209; automatic/completion/attachments/supervision 104/79/80/66;
+  pause/stop 130/257; protection barrel 9 with matching/state/persistence/monitor
+  68/132/116/112 and tests 245; PipeWire session/intake 395/108; KWin provider/script
+  458/147. Full 349 native tests, formatting and strict all-target Clippy pass.
+  Real hardware and packaged capture remain manual limits in the native report.
+- [x] Processing privacy/context/deletion ownership. Before: visual `mod.rs` 737
+  lines mixes orchestration, OCR/VLM batches and context. Extract focused context,
+  shared current privacy eligibility, redaction identity mapping and deletion artifact
+  service. Risks: hidden media processing/upload, raw redacted context, stranded
+  restart chunks and temp leftovers. Verify focused AI/redaction/deletion/recovery
+  scenarios, then coordinated native gate.
+  Implemented: visual root 313 lines (was 737), frame jobs 353, context 78,
+  privacy eligibility 194 and deletion service 128. Focused ownership tests pass
+  118 (AI 71, Library 24, retention 3, transcription 17, app-data lease 1,
+  deletion 2). Final 349 native tests, formatting and strict Clippy pass; finishing
+  AI/transcription checks pass 94 after the final bounded cancellation/Clippy edits.
+- [x] Local transcription cancellation boundary. Extract request receipts, bounded
+  request admission and private scratch cleanup so cancellation acknowledges real
+  handler completion before redaction/deletion proceeds. Final focused owners:
+  receipts 136, requests 28, scratch 79, server 364 and worker 432 lines. The worker
+  remains the model/process cache owner; its small kill/wait change keeps that
+  boundary. The drain regression was observed failing before its fix, and 22
+  transcription tests initially passed; the final transcription set passes 23.
+  The failed-parent cancellation regression was observed red then green. Shared
+  native gates pass, with 94 focused AI/transcription checks covering finishing edits.
+- [x] Frontend async draft, route reconciliation and privacy cache ownership.
+  Preserve newer draft edits, clear stale Inspector results after redaction and
+  reconcile missed recorder events on return. Sort visual frames once instead of
+  per rendered frame. Verify focused unit/browser failure and race scenarios, then
+  one JavaScript gate. Final ownership/counts follow the frontend fix report.
+  Implemented: result visibility/read-hook owners 175/65 lines, route controller 322,
+  recorder lifecycle/persistence 193/195, settings store/controller 231/277.
+  Focused tests pass 50 unit and 95 browser; typechecks and targeted autofix pass.
+  Synthetic 10,000-frame construction fell from 2,366 ms to 12 ms. Final JS gate
+  passed: lint/typecheck, desktop 31 files/280 tests, shared 9 and FFmpeg 1
+  (290 total), plus production build. Known eager app chunk: 859 kB/256 kB gzip.
+  Next untouched owners: protected-window card 614, track lane 495.
+
+Current findings and fix evidence: [master review](reviews/master-review.md).
+Exact commands/resource limits: [validation](agent-validation.md).
+
+## Completed cleanup history
 
 ## Operating Rules
 

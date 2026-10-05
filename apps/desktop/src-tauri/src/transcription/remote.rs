@@ -36,6 +36,8 @@ pub async fn transcribe_remote(
 ) -> Result<VerboseTranscription, TranscriptionError> {
     let endpoint = transcription_endpoint_url(request.base_url)?;
     transcribe_via_rest(RestTranscriptionRequest {
+        local_request_id: None,
+        local_scratch_owner: None,
         audio_path: request.audio_path,
         bearer_token: Some(request.api_key),
         cancel: request.cancel,
@@ -95,6 +97,8 @@ pub(super) async fn warm_local_via_rest(
 }
 
 pub(super) struct RestTranscriptionRequest<'a> {
+    pub(super) local_request_id: Option<&'a str>,
+    pub(super) local_scratch_owner: Option<&'a super::local_scratch::LocalScratchOwner>,
     pub(super) audio_path: &'a Path,
     pub(super) bearer_token: Option<&'a str>,
     pub(super) cancel: Option<Arc<AtomicBool>>,
@@ -111,6 +115,8 @@ pub(super) async fn transcribe_via_rest(
     request: RestTranscriptionRequest<'_>,
 ) -> Result<VerboseTranscription, TranscriptionError> {
     let RestTranscriptionRequest {
+        local_request_id,
+        local_scratch_owner,
         audio_path,
         bearer_token,
         cancel,
@@ -142,6 +148,15 @@ pub(super) async fn transcribe_via_rest(
         .text("model", model.to_string())
         .text("response_format", "verbose_json")
         .text("timestamp_granularities[]", "segment");
+    if let Some(id) = local_request_id {
+        form = form.text("daydream_request_id", id.to_string());
+    }
+    if let Some(owner) = local_scratch_owner {
+        form = form.text("daydream_scratch_request_id", owner.request_id.clone());
+        if let Some(job_id) = &owner.job_id {
+            form = form.text("daydream_scratch_job_id", job_id.clone());
+        }
+    }
     if word_timestamps {
         form = form.text("timestamp_granularities[]", "word");
     }

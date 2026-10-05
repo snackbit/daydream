@@ -80,17 +80,21 @@ pub(crate) mod commands;
 mod models;
 mod ocr_runtime;
 mod processing;
+#[cfg(test)]
+pub(crate) use processing::cancel_job_if_inactive;
 mod results;
 mod types;
 pub(super) use models::*;
 pub use models::{recover_model_downloads, AiModelManager};
 pub(crate) use ocr_runtime::*;
+pub(crate) use processing::cancel_recording_processing_for_privacy;
 pub(crate) use processing::enqueue_recording_ai_processing;
 use processing::*;
 use results::*;
 pub(crate) use results::{
-    processing_state_for_recording, visible_transcript_segments_for_recording,
-    visible_visual_observation_rows_for_recording, visual_observations_for_recording,
+    emit_processing_state, processing_state_for_recording,
+    visible_transcript_segments_for_recording, visible_visual_observation_rows_for_recording,
+    visual_observations_for_recording,
 };
 pub use types::{
     ActivityEvent, ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus,

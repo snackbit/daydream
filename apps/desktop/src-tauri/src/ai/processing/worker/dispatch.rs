@@ -21,22 +21,58 @@ impl ProcessingChunkSource {
     }
 }
 
-pub(super) fn claim_next_processing_chunk(
+pub(in crate::ai) fn claim_next_processing_chunk(
     storage: &AppStorage,
     job_id: &str,
 ) -> Result<Option<ProcessingChunkRow>, AiError> {
     let next_chunk = storage
         .with_connection(|connection| {
-            let chunks = storage::list_processing_chunks(connection, job_id)?;
-            let chunk = chunks
-                .iter()
-                .filter(|chunk| chunk.status == "queued")
-                .find(|chunk| chunk_ready_to_claim(chunk, &chunks))
-                .cloned();
-            let Some(chunk) = chunk else {
-                return Ok(None);
-            };
-            storage::claim_processing_chunk(connection, &chunk.id, 0.05, now_ms())
+            let mut chunks = storage::list_processing_chunks(connection, job_id)?;
+            if let Some(chunk) = chunks.first() {
+                if !crate::recording_privacy::protection_ready(connection, &chunk.recording_id)? {
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
+            }
+            for index in 0..chunks.len() {
+                if chunks[index].status != "queued" {
+                    continue;
+                }
+                let chunk = &chunks[index];
+                if !crate::recording_privacy::chunk_eligible(connection, chunk)? {
+                    storage::delete_transcript_output_for_chunks(
+                        connection,
+                        std::slice::from_ref(&chunk.id),
+                    )?;
+                    storage::delete_activity_output_for_chunks(
+                        connection,
+                        std::slice::from_ref(&chunk.id),
+                    )?;
+                    storage::delete_visual_output_for_chunks(
+                        connection,
+                        std::slice::from_ref(&chunk.id),
+                    )?;
+                    storage::update_processing_chunk_status(
+                        connection,
+                        &chunk.id,
+                        "succeeded",
+                        1.0,
+                        None,
+                        now_ms(),
+                    )?;
+                    storage::update_processing_chunk_result_code(
+                        connection,
+                        &chunk.id,
+                        Some("skipped-redaction"),
+                        now_ms(),
+                    )?;
+                    chunks[index].status = "succeeded".to_string();
+                    continue;
+                }
+                if chunk_ready_to_claim(chunk, &chunks) {
+                    return storage::claim_processing_chunk(connection, &chunk.id, 0.05, now_ms());
+                }
+            }
+            Ok(None)
         })
         .map_err(storage_error)?;
 

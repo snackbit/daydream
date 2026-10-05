@@ -5,6 +5,11 @@ import type {
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
+import {
+  visibleActivity,
+  visibleAiProcessingState,
+  visibleVisualObservations,
+} from '@/features/ai/results/derived-result-visibility';
 import { useRecordingActivity } from '@/features/ai/use-recording-activity';
 import { useRecordingAiProcessingState } from '@/features/ai/use-recording-ai-processing-state';
 import { useRecordingVisualObservations } from '@/features/ai/use-recording-visual-observations';
@@ -38,10 +43,13 @@ export function useRecordingStudioController({
     'error' | 'idle' | 'loading' | 'ready'
   >('idle');
   const [processingStartBusy, setProcessingStartBusy] = useState(false);
-  const aiProcessing = useRecordingAiProcessingState(recordingId);
   const redactionSignature = useMemo(
     () => recordingRedactionSignature(detail),
     [detail],
+  );
+  const aiProcessing = useRecordingAiProcessingState(
+    recordingId,
+    redactionSignature,
   );
   const activity = useRecordingActivity(
     recordingId,
@@ -51,6 +59,23 @@ export function useRecordingStudioController({
   const visualObservations = useRecordingVisualObservations(
     recordingId,
     aiProcessing.state,
+    redactionSignature,
+  );
+  const visibleActivityState = useMemo(
+    () => (detail ? visibleActivity(detail, activity.state) : null),
+    [activity.state, detail],
+  );
+  const visibleAiState = useMemo(
+    () =>
+      detail ? visibleAiProcessingState(detail, aiProcessing.state) : null,
+    [aiProcessing.state, detail],
+  );
+  const visibleVisualState = useMemo(
+    () =>
+      detail
+        ? visibleVisualObservations(detail, visualObservations.state)
+        : null,
+    [detail, visualObservations.state],
   );
   const loadRunRef = useRef(0);
   const playbackSessionIdRef = useRef<string | null>(null);
@@ -225,6 +250,15 @@ export function useRecordingStudioController({
     }
   }, [aiProcessing, detail]);
 
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      load(),
+      aiProcessing.reload(),
+      activity.reload(),
+      visualObservations.reload(),
+    ]);
+  }, [activity.reload, aiProcessing.reload, load, visualObservations.reload]);
+
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
@@ -246,21 +280,25 @@ export function useRecordingStudioController({
       confirmDelete,
       confirmRename,
       createRedactions,
-      load,
+      load: refresh,
       removeRedaction,
       startAiProcessing,
       unredactRanges,
     },
     state: {
-      activity,
-      aiProcessing,
+      activity: { ...activity, state: visibleActivityState },
+      aiProcessing: { ...aiProcessing, state: visibleAiState },
       detail,
-      error,
+      error:
+        error ??
+        aiProcessing.error ??
+        activity.error ??
+        visualObservations.error,
       playbackAssets,
       processingStartBusy,
       status,
       thumbnailStatus,
-      visualObservations,
+      visualObservations: { ...visualObservations, state: visibleVisualState },
     },
   };
 }

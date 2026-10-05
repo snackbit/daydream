@@ -105,9 +105,9 @@ runtimes directly. Typed Tauri commands own those boundaries.
 
 ### Prerequisites
 
-- Node.js 22 or newer
+- Node.js 22.12+ on the Node 22 line, or Node 24+ (Node 24 LTS recommended)
 - Corepack
-- Rust and Cargo
+- Rust and Cargo 1.95 or newer (the locked `rusqlite_migration` dependency requires it)
 - Linux Tauri development libraries for WebKitGTK 4.1
 - PipeWire and xdg-desktop-portal
 - GStreamer development headers and the base, good, bad, ugly, and PulseAudio
@@ -151,7 +151,7 @@ Package names vary by distribution.
 ### Install and run
 
 ```bash
-COREPACK_HOME=/tmp/corepack corepack yarn install
+COREPACK_HOME=/tmp/corepack corepack yarn install --immutable
 COREPACK_HOME=/tmp/corepack corepack yarn dev
 ```
 
@@ -162,12 +162,15 @@ protocol failures.
 ### Quality gates
 
 ```bash
-COREPACK_HOME=/tmp/corepack corepack yarn lint:fix
 COREPACK_HOME=/tmp/corepack corepack yarn check
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+COREPACK_HOME=/tmp/corepack corepack yarn rust:fmt
+CARGO_BUILD_JOBS=2 COREPACK_HOME=/tmp/corepack corepack yarn rust:clippy
+CARGO_BUILD_JOBS=2 COREPACK_HOME=/tmp/corepack corepack yarn rust:test -- --test-threads=2
 ```
 
-Some Rust transcription tests bind temporary loopback ports.
+`check` covers JavaScript lint, typechecks and tests; native checks are separate.
+See the [validation map](docs/agent-validation.md) for focused commands,
+formatting, worker budgets and Playwright/loopback prerequisites.
 
 ## Project documents
 

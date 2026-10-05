@@ -78,14 +78,15 @@ impl RecorderManager {
         .map_err(filesystem_error)?;
 
         storage
-            .with_connection(|connection| {
+            .with_connection_mut(|connection| {
+                let transaction = connection.transaction()?;
                 storage::update_recording_status(
-                    connection,
+                    &transaction,
                     &pending.active.recording_id,
                     "recording",
                 )?;
                 storage::create_recording_segment(
-                    connection,
+                    &transaction,
                     &CreateRecordingSegmentInput {
                         file_path: path_to_string(&pending.segment_path),
                         id: pending.segment.id.clone(),
@@ -94,23 +95,67 @@ impl RecorderManager {
                         started_at_ms: pending.segment.started_at_ms as i64,
                     },
                 )?;
-                Ok(())
+                transaction.commit()
             })
             .map_err(storage_error)
     }
 
     pub(crate) fn activate_pending_segment(
         &self,
+        storage: &AppStorage,
         mut pending: PendingSegmentStart,
         runtime: RecordingSegmentRuntime,
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
+        let mut manager_runtime = self.lock_runtime()?;
+        if let Some(error) = manager_runtime.pending_failure.take() {
+            drop(manager_runtime);
+            runtime.abort(timestamp_ms);
+            return self.abort_recording(
+                storage,
+                &pending.active.recording_id,
+                error,
+                timestamp_ms,
+            );
+        }
         pending.segment.timing = runtime.capture_timing();
+        if manager_runtime.automatic_resume_pending && manager_runtime.cancel_pending_resume {
+            drop(manager_runtime);
+            runtime.abort(timestamp_ms);
+            let error = lifecycle_error(
+                "recorder_resume_canceled",
+                "A newer pause canceled automatic resume.",
+            );
+            let persisted =
+                fail_segment_for_error(storage, &pending.segment.id, timestamp_ms, &error, None)
+                    .and_then(|_| {
+                        storage
+                            .with_connection(|connection| {
+                                storage::update_recording_status(
+                                    connection,
+                                    &pending.active.recording_id,
+                                    "paused",
+                                )
+                            })
+                            .map(|_| ())
+                            .map_err(storage_error)
+                    });
+            if let Err(error) = persisted {
+                return self.abort_recording(
+                    storage,
+                    &pending.active.recording_id,
+                    error,
+                    timestamp_ms,
+                );
+            }
+            pending.active.next_segment_index += 1;
+            return self.restore_paused_after_selecting(storage, pending.active, timestamp_ms);
+        }
         pending.segment.runtime = Some(Arc::new(Mutex::new(Some(runtime))));
         pending.active.active_segment = Some(pending.segment);
         pending.active.next_segment_index += 1;
 
-        let mut runtime = self.lock_runtime()?;
+        let runtime = &mut manager_runtime;
         let status = status_from_active(
             RecorderState::Recording,
             &pending.active,
@@ -119,6 +164,9 @@ impl RecorderManager {
             None,
         );
         runtime.active = Some(pending.active);
+        runtime.pause_owner = None;
+        runtime.automatic_resume_pending = false;
+        runtime.cancel_pending_resume = false;
         runtime.status = status.clone();
 
         Ok(status)
@@ -142,6 +190,7 @@ impl RecorderManager {
             None,
         );
         runtime.active = Some(pending.active);
+        runtime.pause_owner = None;
         runtime.status = status.clone();
 
         Ok(status)

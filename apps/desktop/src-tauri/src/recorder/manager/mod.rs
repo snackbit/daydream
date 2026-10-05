@@ -31,6 +31,7 @@ use super::types::{
 
 mod finalization;
 mod paths;
+mod pause;
 mod recording_state;
 mod resume;
 mod runtime;
@@ -39,6 +40,7 @@ mod selection;
 mod start;
 mod status;
 mod stop;
+mod supervision;
 
 pub(crate) use recording_state::{
     ActiveRecording, ActiveSegment, PendingRecordingStart, PendingSegmentStart,
@@ -48,6 +50,7 @@ pub(crate) use segment_runtime::RecordingSegmentRuntime;
 
 use finalization::fail_segment_for_error;
 use paths::{duration_ms, path_to_string, segment_file_name};
+pub(crate) use runtime::PauseOwner;
 use runtime::{ActivePreview, RecorderRuntime};
 use status::{
     error_status_with_backend_health, idle_preview_status, idle_status,
@@ -72,6 +75,12 @@ impl RecorderManager {
                 preview_start_generation: 0,
                 preview_status: idle_preview_status(now_ms()),
                 status: idle_status(now_ms()),
+                pause_owner: None,
+                protection_monitor: None,
+                pending_failure: None,
+                automatic_resume_pending: false,
+                cancel_pending_resume: false,
+                pause_generation: 0,
             }),
         }
     }

@@ -1,8 +1,5 @@
 use std::{
-    fs::{DirBuilder, OpenOptions},
-    io::Write,
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -13,10 +10,14 @@ use uuid::Uuid;
 use zbus::{blocking::connection::Builder as ConnectionBuilder, blocking::Connection, interface};
 
 use super::LinuxWindowProvider;
+mod kwin_script;
 use crate::recorder::types::{
     ProtectableWindow, ProtectableWindowList, ProtectableWindowProviderStatus,
     WindowProtectionStatus,
 };
+use kwin_script::write_kwin_script;
+#[cfg(test)]
+use kwin_script::{js_string_literal, kwin_script};
 
 const PROVIDER_NAME: &str = "linux-kde-kwin-script";
 const BUS_NAME: &str = "com.snackbit.Daydream.WindowMetadata";
@@ -39,6 +40,10 @@ impl KdeKwinScriptProvider {
         }
 
         let bridge = bridge()?;
+        if kwin_owner(&bridge._connection).as_deref() != Some(bridge.kwin_owner.as_str()) {
+            clear_bridge(&bridge);
+            return None;
+        }
         let Some(snapshot) = bridge.wait_for_snapshot(SNAPSHOT_WAIT) else {
             clear_bridge(&bridge);
             return None;
@@ -75,6 +80,7 @@ struct KdeKwinBridge {
     _connection: Connection,
     _script_path: PathBuf,
     state: Arc<KdeKwinBridgeState>,
+    kwin_owner: String,
 }
 
 impl KdeKwinBridge {
@@ -83,6 +89,7 @@ impl KdeKwinBridge {
         let state = Arc::new(KdeKwinBridgeState::new(token));
         let connection = ConnectionBuilder::session()
             .ok()?
+            .method_timeout(Duration::from_millis(500))
             .serve_at(
                 OBJECT_PATH,
                 KdeKwinBridgeInterface {
@@ -94,6 +101,7 @@ impl KdeKwinBridge {
             .ok()?
             .build()
             .ok()?;
+        let kwin_owner = kwin_owner(&connection)?;
         let script_path = write_kwin_script(&state.token).ok()?;
         load_kwin_script(&script_path).ok()?;
 
@@ -101,6 +109,7 @@ impl KdeKwinBridge {
             _connection: connection,
             _script_path: script_path,
             state,
+            kwin_owner,
         }))
     }
 
@@ -120,6 +129,18 @@ impl KdeKwinBridge {
     }
 }
 
+fn kwin_owner(connection: &Connection) -> Option<String> {
+    zbus::blocking::Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )
+    .ok()?
+    .call("GetNameOwner", &("org.kde.KWin",))
+    .ok()
+}
+
 struct KdeKwinBridgeState {
     latest: Mutex<Option<KwinSnapshot>>,
     token: String,
@@ -134,11 +155,17 @@ impl KdeKwinBridgeState {
     }
 
     fn accept_snapshot(&self, token: &str, payload: &str) {
-        if token != self.token || payload.len() > MAX_PAYLOAD_BYTES {
+        if token != self.token {
+            return;
+        }
+
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            self.invalidate_snapshot();
             return;
         }
 
         let Ok(snapshot) = parse_snapshot(payload) else {
+            self.invalidate_snapshot();
             return;
         };
         if snapshot.provider != PROVIDER_NAME {
@@ -157,6 +184,12 @@ impl KdeKwinBridgeState {
         }
 
         *latest = Some(snapshot);
+    }
+
+    fn invalidate_snapshot(&self) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = None;
+        }
     }
 
     fn snapshot(&self) -> Option<KwinSnapshot> {
@@ -200,7 +233,7 @@ fn clear_bridge(current: &Arc<KdeKwinBridge>) {
     }
 }
 
-fn load_kwin_script(script_path: &PathBuf) -> zbus::Result<()> {
+fn load_kwin_script(script_path: &Path) -> zbus::Result<()> {
     let connection = ConnectionBuilder::session()?
         .method_timeout(Duration::from_secs(2))
         .build()?;
@@ -217,149 +250,11 @@ fn load_kwin_script(script_path: &PathBuf) -> zbus::Result<()> {
     proxy.call("start", &())
 }
 
-fn write_kwin_script(token: &str) -> std::io::Result<PathBuf> {
-    let script_dir = kwin_script_dir();
-    DirBuilder::new()
-        .mode(0o700)
-        .recursive(true)
-        .create(&script_dir)?;
-    let script_path = script_dir.join("daydream-window-metadata.js");
-    let script = kwin_script(token);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .mode(0o600)
-        .truncate(true)
-        .write(true)
-        .open(&script_path)?;
-    file.write_all(script.as_bytes())?;
-    Ok(script_path)
-}
-
-fn kwin_script_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join(format!("daydream-kwin-{}", std::process::id()))
-}
-
-fn kwin_script(token: &str) -> String {
-    format!(
-        r#"const DAYDREAM_SERVICE = {service};
-const DAYDREAM_PATH = {path};
-const DAYDREAM_INTERFACE = {interface};
-const DAYDREAM_TOKEN = {token};
-const DAYDREAM_PROVIDER = {provider};
-
-let daydreamSequence = 0;
-const daydreamConnectedWindows = new Map();
-
-function daydreamString(value) {{
-    if (value === undefined || value === null) {{
-        return null;
-    }}
-    const text = String(value).trim();
-    return text.length > 0 ? text : null;
-}}
-
-function daydreamWindowId(window) {{
-    return daydreamString(window.internalId) ||
-        daydreamString(window.windowId) ||
-        daydreamString(window.pid) ||
-        daydreamString(window.caption) ||
-        "window-" + String(window.stackingOrder);
-}}
-
-function daydreamProcessId(window) {{
-    return typeof window.pid === "number" && Number.isFinite(window.pid) ? window.pid : null;
-}}
-
-function daydreamWindowSnapshot(window) {{
-    const desktopFileName = daydreamString(window.desktopFileName);
-    const resourceClass = daydreamString(window.resourceClass);
-    const resourceName = daydreamString(window.resourceName);
-    return {{
-        id: daydreamWindowId(window),
-        appIdentity: desktopFileName || resourceClass || resourceName,
-        processName: resourceClass || resourceName || desktopFileName,
-        processId: daydreamProcessId(window),
-        title: daydreamString(window.caption)
-    }};
-}}
-
-function daydreamWindows() {{
-    return workspace.windowList()
-        .filter(window => window.normalWindow)
-        .map(window => {{
-            daydreamConnectWindow(window);
-            return daydreamWindowSnapshot(window);
-        }});
-}}
-
-function daydreamEmitSnapshot() {{
-    const activeWindow = workspace.activeWindow;
-    const payload = JSON.stringify({{
-        provider: DAYDREAM_PROVIDER,
-        sequence: ++daydreamSequence,
-        activeWindowId: activeWindow && activeWindow.normalWindow ? daydreamWindowId(activeWindow) : null,
-        windows: daydreamWindows()
-    }});
-    callDBus(DAYDREAM_SERVICE, DAYDREAM_PATH, DAYDREAM_INTERFACE, "UpdateSnapshot", DAYDREAM_TOKEN, payload);
-}}
-
-function daydreamConnectSignal(object, signalName) {{
-    if (object && object[signalName]) {{
-        object[signalName].connect(daydreamEmitSnapshot);
-    }}
-}}
-
-function daydreamConnectWindow(window) {{
-    if (daydreamConnectedWindows.has(window)) {{
-        return;
-    }}
-
-    daydreamConnectedWindows.set(window, true);
-    daydreamConnectSignal(window, "activeChanged");
-    daydreamConnectSignal(window, "captionChanged");
-    daydreamConnectSignal(window, "desktopFileNameChanged");
-    daydreamConnectSignal(window, "resourceClassChanged");
-    daydreamConnectSignal(window, "resourceNameChanged");
-    if (window.closed) {{
-        window.closed.connect(() => {{
-            daydreamConnectedWindows.delete(window);
-            daydreamEmitSnapshot();
-        }});
-    }}
-}}
-
-function daydreamMain() {{
-    workspace.windowList().forEach(daydreamConnectWindow);
-    workspace.windowAdded.connect(window => {{
-        daydreamConnectWindow(window);
-        daydreamEmitSnapshot();
-    }});
-    daydreamConnectSignal(workspace, "currentDesktopChanged");
-    daydreamConnectSignal(workspace, "currentActivityChanged");
-    daydreamConnectSignal(workspace, "activeWindowChanged");
-    daydreamEmitSnapshot();
-}}
-
-daydreamMain();
-"#,
-        service = js_string_literal(BUS_NAME),
-        path = js_string_literal(OBJECT_PATH),
-        interface = js_string_literal(INTERFACE_NAME),
-        token = js_string_literal(token),
-        provider = js_string_literal(PROVIDER_NAME),
-    )
-}
-
-fn js_string_literal(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
-}
-
 fn parse_snapshot(payload: &str) -> Result<KwinSnapshot, serde_json::Error> {
     let mut snapshot: KwinSnapshot = serde_json::from_str(payload)?;
-    snapshot.windows.retain(|window| window.id.trim().len() > 0);
+    snapshot
+        .windows
+        .retain(|window| !window.id.trim().is_empty());
     snapshot.windows.iter_mut().for_each(KwinWindow::sanitize);
     Ok(snapshot)
 }
@@ -534,5 +429,30 @@ mod tests {
         assert!(script.contains("UpdateSnapshot"));
         assert!(script.contains(&js_string_literal("token-with-\"quote")));
         assert!(script.contains(PROVIDER_NAME));
+    }
+
+    #[test]
+    fn invalid_authenticated_metadata_cannot_leave_a_stale_available_snapshot() {
+        let state = KdeKwinBridgeState::new("current-token".into());
+        let valid = format!(
+            r#"{{"provider":"{PROVIDER_NAME}","sequence":1,"activeWindowId":null,"windows":[]}}"#
+        );
+        for invalid in [
+            "malformed metadata".to_string(),
+            "x".repeat(super::MAX_PAYLOAD_BYTES + 1),
+        ] {
+            state.accept_snapshot("current-token", &valid);
+            assert!(state.snapshot().is_some());
+            state.accept_snapshot("wrong-token", &invalid);
+            assert!(
+                state.snapshot().is_some(),
+                "untrusted updates cannot invalidate the provider"
+            );
+            state.accept_snapshot("current-token", &invalid);
+            assert!(
+                state.snapshot().is_none(),
+                "invalid current metadata must make protection unavailable"
+            );
+        }
     }
 }

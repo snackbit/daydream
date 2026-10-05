@@ -271,6 +271,17 @@ impl WhisperProcessTranscriptionRunner {
                         ));
                     }
                 }
+                if matches!(
+                    error.code.as_str(),
+                    "ai_transcription_cancelled"
+                        | "ai_transcription_timeout"
+                        | "ai_transcription_provider_failed"
+                ) {
+                    if let Some(mut worker) = state.take() {
+                        let _ = worker.child.kill();
+                        let _ = worker.child.wait();
+                    }
+                }
                 Err(error)
             }
         }
@@ -306,8 +317,12 @@ impl LocalTranscriptionRunner for WhisperProcessTranscriptionRunner {
         input: LocalTranscriptionInput,
     ) -> Result<VerboseTranscription, TranscriptionError> {
         let endpoint = self.endpoint()?;
+        let scratch_owner =
+            super::local_scratch::LocalScratchOwner::from_audio_path(&input.audio_path);
         let result =
             tauri::async_runtime::block_on(transcribe_via_rest(RestTranscriptionRequest {
+                local_request_id: None,
+                local_scratch_owner: scratch_owner.as_ref(),
                 audio_path: &input.audio_path,
                 bearer_token: Some(&endpoint.token),
                 cancel: Some(input.cancel),

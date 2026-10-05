@@ -44,6 +44,7 @@ export function useSettingsScreenController() {
   const [cleanupConfirmation, setCleanupConfirmation] =
     useState<CleanupConfirmation | null>(null);
   const [cleanupPreviewing, setCleanupPreviewing] = useState(false);
+  const [preparingSave, setPreparingSave] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const selectedAiModelId = draft?.ai.transcription.localModelId ?? null;
   const ai = useSettingsAiController({
@@ -64,7 +65,7 @@ export function useSettingsScreenController() {
         : null,
     [draft, settingsState],
   );
-  const saving = mutationStatus === 'loading';
+  const saving = mutationStatus === 'loading' || preparingSave;
   const busy = saving || cleanupPreviewing;
   const hasUnsavedSettings = isDirty || ai.hasAiSecretDraft;
   const canSave = Boolean(
@@ -175,27 +176,34 @@ export function useSettingsScreenController() {
   }
 
   async function savePreparedSettings(settings: AppSettings): Promise<boolean> {
-    const preparation = await ai.prepareAiSettingsForSave(
-      settings,
-      settingsState?.settings ?? null,
-    );
-    if (!preparation) {
-      return false;
-    }
-
+    setPreparingSave(true);
     try {
-      await save(preparation.settings);
-    } catch {
-      ai.setPendingSecretRefsForDeletion(preparation.createdSecretRefs);
-      await ai.deletePendingAiSecrets();
-      return false;
-    }
+      const preparation = await ai.prepareAiSettingsForSave(
+        settings,
+        settingsState?.settings ?? null,
+      );
+      if (!preparation) {
+        return false;
+      }
 
-    ai.setPendingSecretRefsForDeletion(preparation.secretRefsToDeleteAfterSave);
-    await ai.deletePendingAiSecrets();
-    ai.clearSecretDrafts();
-    await ai.refreshAiScaffolds();
-    return true;
+      try {
+        await save(preparation.settings);
+      } catch {
+        ai.setPendingSecretRefsForDeletion(preparation.createdSecretRefs);
+        await ai.deletePendingAiSecrets();
+        return false;
+      }
+
+      ai.setPendingSecretRefsForDeletion(
+        preparation.secretRefsToDeleteAfterSave,
+      );
+      await ai.deletePendingAiSecrets();
+      ai.clearSecretDrafts();
+      await ai.refreshAiScaffolds();
+      return true;
+    } finally {
+      setPreparingSave(false);
+    }
   }
 
   async function saveAndLeaveSettings() {

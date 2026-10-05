@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { FieldSet } from '@/components/ui/field';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
 import { GeneralSettingsTab } from '@/features/settings/components/general-settings-tab';
@@ -204,70 +205,74 @@ export function SettingsScreen() {
             : 'Loading settings.'}
         </div>
       ) : (
-        <Tabs defaultValue="general">
-          <TabsList aria-label="Settings sections">
-            <TabsTrigger value="general">General</TabsTrigger>
-            <TabsTrigger value="record">Record</TabsTrigger>
-            <TabsTrigger value="storage">Storage/Library</TabsTrigger>
-            <TabsTrigger value="ai">AI/LLM</TabsTrigger>
-          </TabsList>
+        <FieldSet disabled={busy} aria-busy={busy}>
+          <Tabs defaultValue="general">
+            <TabsList aria-label="Settings sections">
+              <TabsTrigger value="general">General</TabsTrigger>
+              <TabsTrigger value="record">Record</TabsTrigger>
+              <TabsTrigger value="storage">Storage/Library</TabsTrigger>
+              <TabsTrigger value="ai">AI/LLM</TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="general">
-            <GeneralSettingsTab draft={draft} onUpdateDraft={updateDraft} />
-          </TabsContent>
+            <TabsContent value="general">
+              <GeneralSettingsTab draft={draft} onUpdateDraft={updateDraft} />
+            </TabsContent>
 
-          <TabsContent value="record">
-            <RecordSettingsTab
-              cadenceMode={cadenceMode ?? cadenceModeForFps(draft.record.fps)}
-              draft={draft}
-              limits={settingsState.limits}
-              sceneDimensions={formatSceneDimensions(savedScene)}
-              oneHourEstimate={formatStorageSize(
-                estimateOneHourRecordingBytes(draft, savedScene),
-              )}
-              onChangeCadenceMode={setCadenceMode}
-              onUpdateDraft={updateDraft}
-            />
-          </TabsContent>
+            <TabsContent value="record">
+              <RecordSettingsTab
+                cadenceMode={cadenceMode ?? cadenceModeForFps(draft.record.fps)}
+                draft={draft}
+                limits={settingsState.limits}
+                sceneDimensions={formatSceneDimensions(savedScene)}
+                oneHourEstimate={formatStorageSize(
+                  estimateOneHourRecordingBytes(draft, savedScene),
+                )}
+                onChangeCadenceMode={setCadenceMode}
+                onUpdateDraft={updateDraft}
+              />
+            </TabsContent>
 
-          <TabsContent value="storage">
-            <StorageSettingsTab
-              draft={draft}
-              limits={settingsState.limits}
-              onUpdateDraft={updateDraft}
-            />
-          </TabsContent>
+            <TabsContent value="storage">
+              <StorageSettingsTab
+                draft={draft}
+                limits={settingsState.limits}
+                onUpdateDraft={updateDraft}
+              />
+            </TabsContent>
 
-          <TabsContent value="ai">
-            <AiSettingsTab
-              draft={draft}
-              limits={settingsState.limits}
-              models={aiModels}
-              onCancelModelDownload={(modelId) =>
-                void runAiModelAction(() => cancelAiModelDownload({ modelId }))
-              }
-              onChangeTranscriptionKey={setTranscriptionKeyDraft}
-              onChangeVisionKey={setVisionKeyDraft}
-              onDeleteModel={(modelId) =>
-                void runAiModelAction(() => deleteAiModel({ modelId }))
-              }
-              onDownloadModel={(modelId) =>
-                void runAiModelAction(() => downloadAiModel({ modelId }))
-              }
-              onRefreshInputActivityStatus={() =>
-                void refreshInputActivityStatus()
-              }
-              onRepairInputActivity={() => void repairInputActivity()}
-              onUpdateDraft={updateDraft}
-              inputActivityRepairMessage={inputActivityRepairMessage}
-              inputActivityRepairing={inputActivityRepairing}
-              inputActivityStatus={inputActivityStatus}
-              providerStatus={aiProviderStatus}
-              transcriptionKeyDraft={transcriptionKeyDraft}
-              visionKeyDraft={visionKeyDraft}
-            />
-          </TabsContent>
-        </Tabs>
+            <TabsContent value="ai">
+              <AiSettingsTab
+                draft={draft}
+                limits={settingsState.limits}
+                models={aiModels}
+                onCancelModelDownload={(modelId) =>
+                  void runAiModelAction(() =>
+                    cancelAiModelDownload({ modelId }),
+                  )
+                }
+                onChangeTranscriptionKey={setTranscriptionKeyDraft}
+                onChangeVisionKey={setVisionKeyDraft}
+                onDeleteModel={(modelId) =>
+                  void runAiModelAction(() => deleteAiModel({ modelId }))
+                }
+                onDownloadModel={(modelId) =>
+                  void runAiModelAction(() => downloadAiModel({ modelId }))
+                }
+                onRefreshInputActivityStatus={() =>
+                  void refreshInputActivityStatus()
+                }
+                onRepairInputActivity={() => void repairInputActivity()}
+                onUpdateDraft={updateDraft}
+                inputActivityRepairMessage={inputActivityRepairMessage}
+                inputActivityRepairing={inputActivityRepairing}
+                inputActivityStatus={inputActivityStatus}
+                providerStatus={aiProviderStatus}
+                transcriptionKeyDraft={transcriptionKeyDraft}
+                visionKeyDraft={visionKeyDraft}
+              />
+            </TabsContent>
+          </Tabs>
+        </FieldSet>
       )}
     </PageLayout>
   );

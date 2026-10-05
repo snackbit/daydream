@@ -1,5 +1,4 @@
 use std::{
-    fs,
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::PathBuf,
@@ -13,6 +12,11 @@ use std::{
 
 use uuid::Uuid;
 
+use super::{
+    local_receipts::LocalHandlerReceipt,
+    local_scratch::{LocalAudioCopy, LocalScratchOwner},
+    remote::check_cancelled,
+};
 use crate::settings;
 
 use super::http::{
@@ -22,9 +26,9 @@ use super::http::{
 use super::local_protocol::{LocalWarmupRequest, WhisperWorkerReady};
 use super::local_worker::{LocalTranscriptionRunner, WhisperCppTranscriptionRunner};
 use super::{
-    file_error, local_bind_error, local_whisper_model_path, network_io_error, request_build_error,
-    temp_audio_path, transcription_error, LocalTranscriptionInput, LocalTranscriptionWarmup,
-    TranscriptionError, VerboseTranscription, LOCAL_BACKEND_FORM_FIELD, LOCAL_WARMUP_PATH,
+    local_bind_error, local_whisper_model_path, network_io_error, request_build_error,
+    transcription_error, LocalTranscriptionInput, LocalTranscriptionWarmup, TranscriptionError,
+    VerboseTranscription, LOCAL_BACKEND_FORM_FIELD, LOCAL_WARMUP_PATH,
     MAX_TRANSCRIPTION_UPLOAD_BYTES, TRANSCRIPTION_PATH,
 };
 
@@ -216,6 +220,10 @@ fn handle_local_transcription_request(
     })?;
     let boundary = multipart_boundary(content_type)?;
     let multipart = parse_multipart_form(&request.body, &boundary)?;
+    let handler_receipt = multipart
+        .optional_text("daydream_request_id")
+        .map(LocalHandlerReceipt::claim)
+        .transpose()?;
     let model_id = multipart.text("model")?;
     let response_format = multipart.text("response_format")?;
     let local_backend = multipart
@@ -246,13 +254,23 @@ fn handle_local_transcription_request(
         ));
     }
 
-    let cancel = Arc::new(AtomicBool::new(false));
-    let audio_path = temp_audio_path();
-    fs::write(&audio_path, &file.data).map_err(file_error)?;
+    let cancel = handler_receipt
+        .as_ref()
+        .map(LocalHandlerReceipt::cancel)
+        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    check_cancelled(Some(&cancel))?;
+    let owner = if let Some(receipt) = &handler_receipt {
+        LocalScratchOwner::validated(receipt.job_id(), receipt.id())?
+    } else if let Some(id) = multipart.optional_text("daydream_scratch_request_id") {
+        LocalScratchOwner::validated(multipart.optional_text("daydream_scratch_job_id"), id)?
+    } else {
+        LocalScratchOwner::validated(None, &Uuid::now_v7().to_string())?
+    };
+    let audio_copy = LocalAudioCopy::write(&context.app_data_dir, &owner, &file.data)?;
     let _disconnect_monitor =
         LocalTranscriptionCancelMonitor::start(disconnect_stream, cancel.clone());
     let result = context.runner.transcribe(LocalTranscriptionInput {
-        audio_path: audio_path.clone(),
+        audio_path: audio_copy.path().to_path_buf(),
         cancel,
         language: language.to_string(),
         local_backend: local_backend.to_string(),
@@ -261,8 +279,8 @@ fn handle_local_transcription_request(
         model_path,
         word_timestamps,
     });
-    let _ = fs::remove_file(audio_path);
-
+    drop(audio_copy);
+    drop(handler_receipt);
     result
 }
 

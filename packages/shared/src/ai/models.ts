@@ -4,12 +4,7 @@ import type {
 } from './provider-kinds.js';
 
 export type AiModelDownloadStatus =
-  | 'available'
-  | 'cancelled'
-  | 'downloading'
-  | 'failed'
-  | 'missing'
-  | 'queued';
+  'available' | 'cancelled' | 'downloading' | 'failed' | 'missing' | 'queued';
 
 export type AiOcrDataStatus = AiModelDownloadStatus | 'partial';
 
@@ -20,10 +15,7 @@ export type AiOcrRuntimeSource = 'managed' | 'missing' | 'system';
 export type AiModelSelfTestStatus = 'failed' | 'not-run' | 'passed' | 'running';
 
 export type AiModelVerificationStatus =
-  | 'failed'
-  | 'passed'
-  | 'pending'
-  | 'unknown';
+  'failed' | 'passed' | 'pending' | 'unknown';
 
 export interface AiModelAsset {
   checksum: string | null;

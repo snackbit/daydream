@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "vitest run --exclude 'dist/**'",
+    "test": "vitest run --exclude 'dist/**' --maxWorkers=2",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -28,9 +28,9 @@
   "devDependencies": {
     "@daydream/eslint-config": "workspace:*",
     "@daydream/tsconfig": "workspace:*",
-    "@types/node": "25.9.1",
-    "eslint": "9.39.4",
+    "@types/node": "24.19.1",
+    "eslint": "9.39.5",
     "typescript": "6.0.3",
-    "vitest": "4.1.8"
+    "vitest": "4.1.11"
   }
 }

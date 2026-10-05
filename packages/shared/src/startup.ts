@@ -1,11 +1,7 @@
 export type AppStartupPhase = 'error' | 'loading' | 'ready';
 
 export type AppStartupStageStatus =
-  | 'error'
-  | 'loading'
-  | 'pending'
-  | 'ready'
-  | 'warning';
+  'error' | 'loading' | 'pending' | 'ready' | 'warning';
 
 export interface AppStartupIssue {
   code: string;

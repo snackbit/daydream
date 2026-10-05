@@ -4,7 +4,6 @@ import type {
   LibraryRecordingDetail,
   RecordingActivity,
   RecordingAiProcessingState,
-  RecordingVisualObservations,
 } from '@daydream/shared';
 import {
   DndContext,
@@ -24,10 +23,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
 import { isStudioActivityLaneKind } from './studio-activity-lanes';
 import { useStudioTimelineStore } from './studio-timeline-store';
-import {
-  buildStudioVisualFrames,
-  type StudioVisualFrame,
-} from './studio-visual-observations';
+import type { StudioVisualFrame } from './studio-visual-observations';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
@@ -63,7 +59,7 @@ export function TrackTimeline({
   playback,
   playbackAssets,
   thumbnailStatus,
-  visualObservations,
+  visualFrames,
 }: {
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
@@ -79,7 +75,7 @@ export function TrackTimeline({
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
-  visualObservations: RecordingVisualObservations | null;
+  visualFrames: StudioVisualFrame[];
 }) {
   const { actions, state } = playback;
   const clipsById = useStudioTimelineStore((store) => store.clipsById);
@@ -128,7 +124,6 @@ export function TrackTimeline({
     visibleWindowMs,
   });
   const hasTimeRangeSelection = selection.ranges.length > 0;
-  const visualFrames = buildStudioVisualFrames(visualObservations, detail);
   const { waveformStatus, waveformTiles } = useWaveformTileQueue({
     detail,
     requestRange: viewModel.waveformRequestRange,

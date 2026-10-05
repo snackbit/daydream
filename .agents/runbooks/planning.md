@@ -91,12 +91,8 @@ milestone-style plan.
 
 10. Validate at the correct layer.
    - Use focused tests for the behavior changed.
-   - Prefer the repository quality gates from `README.md` and `AGENTS.md`:
-     `COREPACK_HOME=/tmp/corepack corepack yarn lint`,
-     `COREPACK_HOME=/tmp/corepack corepack yarn typecheck`,
-     `COREPACK_HOME=/tmp/corepack corepack yarn test`, and
-     `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` when
-     Rust/Tauri changes are in scope and local prerequisites are installed.
+   - Use the [validation map](../../docs/agent-validation.md) for scoped commands,
+     final gates and shared resource limits. Run full gates once after edits settle.
    - Include negative or failure-path validation for privacy-sensitive,
      stateful, native, or user-facing behavior.
    - Treat sandbox-sensitive native diagnostics carefully. If a command that

@@ -1,4 +1,6 @@
 use super::*;
+
+mod privacy_regressions;
 use std::path::{Path, PathBuf};
 
 #[test]

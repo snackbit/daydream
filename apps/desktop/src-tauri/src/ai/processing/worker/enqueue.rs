@@ -7,6 +7,17 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
 ) -> Result<ProcessingJobRow, AiError> {
     tracing::info!(recording_id = %recording_id, "ai_processing_start_requested");
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
+    if !storage
+        .with_connection(|connection| {
+            crate::recording_privacy::protection_ready(connection, recording_id)
+        })
+        .map_err(storage_error)?
+    {
+        return Err(ai_error(
+            "ai_processing_protection_pending",
+            "Protected recording spans must be recovered before processing.",
+        ));
+    }
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, recording_id))
         .map_err(storage_error)?;

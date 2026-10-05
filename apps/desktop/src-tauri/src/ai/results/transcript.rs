@@ -23,21 +23,27 @@ pub(crate) fn visible_transcript_segments_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<Vec<TranscriptSegmentRow>, AiError> {
-    let (segments, redactions) = storage
+    let (segments, redactions, source_segments) = storage
         .with_connection(|connection| {
             Ok((
                 storage::list_transcript_segments(connection, recording_id)?,
                 storage::list_redactions(connection, recording_id)?,
+                storage::list_recording_segments(connection, recording_id)?,
             ))
         })
         .map_err(storage_error)?;
 
-    Ok(filter_visible_transcript_segments(segments, &redactions))
+    Ok(filter_visible_transcript_segments(
+        segments,
+        &redactions,
+        &source_segments,
+    ))
 }
 
 fn filter_visible_transcript_segments(
     segments: Vec<TranscriptSegmentRow>,
     redactions: &[RedactionRow],
+    source_segments: &[RecordingSegmentRow],
 ) -> Vec<TranscriptSegmentRow> {
     if redactions.is_empty() {
         return segments;
@@ -46,14 +52,23 @@ fn filter_visible_transcript_segments(
     segments
         .into_iter()
         .filter(|segment| {
-            !redactions.iter().any(|redaction| {
-                storage::redaction_applies_to_track_range(
-                    redaction,
-                    &segment.track_id,
-                    segment.start_offset_ms,
-                    segment.end_offset_ms,
-                )
-            })
+            let mut targets = vec![segment.track_id.clone()];
+            if let Some(source) = source_segments
+                .iter()
+                .find(|source| source.id == segment.segment_id)
+            {
+                if let Some(id) =
+                    crate::recording_privacy::source_track_id(source, &segment.source_role)
+                {
+                    targets.push(id);
+                }
+            }
+            !crate::recording_privacy::range_redacted(
+                redactions,
+                &targets,
+                segment.start_offset_ms,
+                segment.end_offset_ms,
+            )
         })
         .collect()
 }

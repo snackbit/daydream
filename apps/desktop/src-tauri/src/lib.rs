@@ -5,6 +5,8 @@ mod library;
 mod notifications;
 mod playback_server;
 pub mod recorder;
+mod recording_deletion;
+mod recording_privacy;
 mod redaction_targets;
 pub mod secret_crypto;
 mod settings;
@@ -26,6 +28,10 @@ pub fn run() {
         .setup(|app| {
             telemetry::initialize(app.handle())?;
             let app_data_dir = app.path().app_data_dir()?;
+            let recording_data_lease =
+                recording_deletion::acquire_recording_data_lease(&app_data_dir)
+                    .map_err(std::io::Error::other)?;
+            app.manage(recording_data_lease);
             let recorder_manager = recorder::RecorderManager::new(app_data_dir.clone());
             let ai_model_manager = ai::AiModelManager::new();
             let transcription_provider_manager = transcription::TranscriptionProviderManager::new(
@@ -39,6 +45,8 @@ pub fn run() {
             })?;
             let startup_manager = startup::AppStartupManager::new();
             let storage = storage::initialize(app.handle())?;
+            recording_deletion::remove_stale_processing_artifacts(&app_data_dir)
+                .map_err(std::io::Error::other)?;
             match settings::load_app_settings(&storage) {
                 Ok(app_settings) => {
                     let cleanup = storage_limits::enforce_storage_cleanup(

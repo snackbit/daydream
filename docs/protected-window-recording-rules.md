@@ -143,6 +143,31 @@ Automatic pause:
 - Resume only after no protected match exists for `mergeGapMs`.
 - Never auto-resume a recording that the user manually paused.
 
+Recorder pause authority belongs to the backend manager. A manual pause can
+claim an existing automatic pause, including a pause that is still finalizing.
+Manual resume revokes the earlier automatic pause authority, so a later manual
+pause cannot be undone by the monitor.
+An automatic resume waiting for pause finalization carries that pause's
+generation. A newer manual or protected pause cancels the old resume request,
+including a segment already being prepared but not yet activated.
+
+Once a protected span opens, switching to another protected rule keeps that span
+open. A pause rule takes precedence over redaction for the remainder of this
+continuous protected interval. The span retains the initial rule's attribution;
+it closes only after reliable metadata shows no protected match for the merge
+gap.
+
+If focused-window metadata becomes unavailable during a protected recording,
+the backend stops the recording with a typed error. Unknown focus never counts
+as a safe window. A protection write failure also stops the recording and blocks
+processing. Closure and redaction materialization run in one SQLite transaction;
+the monitor must stop before the final processing barrier runs. Failed recordings
+remain unavailable to processing until their protection state is repaired.
+
+Active capture workers and the media writer are supervised every 250 ms. Native
+failure stops the remaining capture resources and emits the recorder error state;
+the user does not need to click Stop to discover a failed recording.
+
 Automatic redaction:
 
 - Keep recording.

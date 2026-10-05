@@ -21,7 +21,7 @@ Install the prerequisites listed in [README.md](README.md), then install the
 workspace through the pinned Yarn version:
 
 ```bash
-COREPACK_HOME=/tmp/corepack corepack yarn install
+COREPACK_HOME=/tmp/corepack corepack yarn install --immutable
 ```
 
 Run the desktop app with:
@@ -32,16 +32,9 @@ COREPACK_HOME=/tmp/corepack corepack yarn dev
 
 ## Checks
 
-Run the relevant focused tests while working. Before submitting a change, run:
-
-```bash
-COREPACK_HOME=/tmp/corepack corepack yarn lint:fix
-COREPACK_HOME=/tmp/corepack corepack yarn check
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-```
-
-Rust tests that exercise local transcription endpoints need permission to bind
-temporary loopback ports.
+Use the [validation map](docs/agent-validation.md) for focused checks and
+final JavaScript/native gates. Coordinate expensive browser/native checks, format
+an owned batch once and inspect the diff. Local endpoint tests need loopback binding.
 
 ## Pull requests
 

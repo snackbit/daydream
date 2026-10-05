@@ -9,8 +9,10 @@ pub(super) async fn process_processing_chunk(
     job_id: &str,
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
+    let _lease = crate::recording_privacy::processing_lease(&chunk.recording_id).await;
+    ensure_chunk_active(&app.state::<AppStorage>(), &chunk)?;
     match ProcessingChunkSource::from_chunk(&chunk)? {
-        ProcessingChunkSource::Audio => process_audio_chunk(app, job_id, chunk).await,
+        ProcessingChunkSource::Audio => process_audio_chunk(app, job_id, chunk, _lease).await,
         ProcessingChunkSource::Activity => process_activity_chunk(app, job_id, chunk).await,
         ProcessingChunkSource::Visual => process_visual_chunk(app, job_id, chunk).await,
     }
@@ -20,6 +22,7 @@ async fn process_audio_chunk(
     app: &AppHandle,
     job_id: &str,
     chunk: ProcessingChunkRow,
+    processing_lease: Arc<tokio::sync::OwnedRwLockReadGuard<()>>,
 ) -> Result<(), AiError> {
     let started = Instant::now();
     let context = ProcessingChunkContext::new(app, job_id, &chunk);
@@ -36,7 +39,7 @@ async fn process_audio_chunk(
     );
     context.emit_processing_state();
     let result = run_with_cancel_monitor(app, job_id, |cancel| {
-        process_audio_chunk_inner(app, &chunk, cancel)
+        process_audio_chunk_inner(app, &chunk, cancel, processing_lease.clone())
     })
     .await;
 
@@ -54,7 +57,12 @@ async fn process_audio_chunk(
             context.emit_processing_state();
             Ok(())
         }
-        Err(error) if error.code == "ai_transcription_cancelled" => {
+        Err(error)
+            if matches!(
+                error.code.as_str(),
+                "ai_transcription_cancelled" | "ai_processing_cancelled"
+            ) =>
+        {
             handle_audio_cancel_signal(&context, &chunk, job_id, error)
         }
         Err(error) => {

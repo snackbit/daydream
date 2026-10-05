@@ -229,6 +229,40 @@ test('settings store loads settings with the saved recorder scene', async () => 
   });
 });
 
+test('saving preserves newer edits and keeps a single settings request in flight', async () => {
+  await useSettingsStore.getState().load();
+  const submitted = {
+    ...settingsState.settings,
+    storage: { ...settingsState.settings.storage, retentionDays: 30 },
+  };
+  const newer = {
+    ...submitted,
+    storage: { ...submitted.storage, retentionDays: 45 },
+  };
+  let finishSave: (result: AppSettingsState) => void = () => {
+    throw new Error('save not started');
+  };
+  settingsClient.saveAppSettings.mockImplementation(
+    () =>
+      new Promise<AppSettingsState>((resolve) => {
+        finishSave = resolve;
+      }),
+  );
+  useSettingsStore.getState().setDraft(submitted);
+  const saving = useSettingsStore.getState().save();
+  useSettingsStore.getState().setDraft(newer);
+  expect(useSettingsStore.getState().mutationStatus).toBe('loading');
+  await expect(useSettingsStore.getState().save()).rejects.toThrow(/already/i);
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledTimes(1);
+  finishSave({ ...settingsState, settings: submitted });
+  await saving;
+  expect(useSettingsStore.getState()).toMatchObject({
+    draft: newer,
+    isDirty: true,
+    settingsState: { settings: submitted },
+  });
+});
+
 test('settings store saves dirty draft and resets to defaults', async () => {
   await useSettingsStore.getState().load();
   useSettingsStore.getState().setDraft({

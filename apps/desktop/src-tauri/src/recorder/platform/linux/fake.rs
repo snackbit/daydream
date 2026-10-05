@@ -210,6 +210,11 @@ impl CapturePreviewSession for NoopPreviewSession {
 }
 
 impl CaptureSession for FakeCaptureSession {
+    fn poll_error(&self) -> Option<RecorderError> {
+        self.worker
+            .is_finished()
+            .then(|| fake_capture_error("Fake capture stopped unexpectedly."))
+    }
     fn stop(self: Box<Self>, _stop_at_ms: u64) -> Result<(), RecorderError> {
         let _ = self.shutdown.send(());
         self.worker

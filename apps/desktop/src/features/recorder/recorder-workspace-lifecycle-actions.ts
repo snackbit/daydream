@@ -1,5 +1,6 @@
 import {
   getRecorderRecordingStats,
+  getRecorderStatus,
   listenToRecorderStatusChanged,
   pauseRecording,
   resumeRecording,
@@ -151,7 +152,10 @@ async function subscribeToStatusEvents(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ) {
-  return listenToRecorderStatusChanged((status) => {
+  let receivedEvent = false;
+  let active = true;
+  function applyStatus(status: Awaited<ReturnType<typeof getRecorderStatus>>) {
+    if (!active) return;
     set({
       error: status.lastError?.message ?? null,
       pendingLifecycleAction: null,
@@ -161,5 +165,29 @@ async function subscribeToStatusEvents(
         status.state === 'recording' ? get().recordingStatsError : null,
       status,
     });
+  }
+  const unlisten = await listenToRecorderStatusChanged((status) => {
+    receivedEvent = true;
+    applyStatus(status);
   });
+  // Subscribe before reading: a newer event owns state even when an older IPC
+  // snapshot completes later. Re-entry must not reload the editable scene.
+  const statusBeforeRead = get().status;
+  const actionBeforeRead = get().pendingLifecycleAction;
+  void getRecorderStatus()
+    .then((snapshot) => {
+      if (
+        !receivedEvent &&
+        get().status === statusBeforeRead &&
+        get().pendingLifecycleAction === actionBeforeRead
+      )
+        applyStatus(snapshot);
+    })
+    .catch((error) => {
+      if (active && !receivedEvent) set({ error: errorMessage(error) });
+    });
+  return () => {
+    active = false;
+    unlisten();
+  };
 }

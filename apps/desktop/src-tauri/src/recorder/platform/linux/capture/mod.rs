@@ -40,12 +40,14 @@ use crate::recorder::{
 };
 
 mod frame_convert;
+mod intake;
 mod preflight;
 mod preview;
 mod sampler;
 mod scheduler;
 mod session;
 use frame_convert::*;
+use intake::*;
 #[cfg(test)]
 pub(crate) use preflight::preflight_live_capture;
 pub(crate) use preflight::{

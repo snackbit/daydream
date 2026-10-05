@@ -134,10 +134,6 @@ pub fn window_protection_status() -> WindowProtectionStatus {
     window_provider::window_protection_status()
 }
 
-pub(crate) fn current_focused_window() -> Option<super::super::types::ProtectableWindow> {
-    window_provider::current_focused_window()
-}
-
 pub(crate) fn window_metadata_snapshot() -> super::super::types::WindowMetadataSnapshot {
     window_provider::window_metadata_snapshot()
 }

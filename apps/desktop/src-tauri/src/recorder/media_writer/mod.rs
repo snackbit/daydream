@@ -62,4 +62,6 @@ fn launch_value(value: impl AsRef<std::ffi::OsStr>) -> String {
 }
 
 #[cfg(test)]
+mod supervision_tests;
+#[cfg(test)]
 mod tests;

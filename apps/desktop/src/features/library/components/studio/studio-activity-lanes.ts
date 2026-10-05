@@ -3,9 +3,7 @@ export const ACTIVITY_KEYBOARD_LANE_ID = 'activity:keyboard';
 export const ACTIVITY_FOCUS_LANE_ID = 'activity:focus';
 
 export type StudioActivityLaneKind =
-  | 'activity-focus'
-  | 'activity-keyboard'
-  | 'activity-mouse';
+  'activity-focus' | 'activity-keyboard' | 'activity-mouse';
 
 export interface StudioActivityLaneDefinition {
   colorId: string;

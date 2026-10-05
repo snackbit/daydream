@@ -3,7 +3,6 @@ import type {
   LibraryRecordingDetail,
   LibraryRecordingRedaction,
   RecordingAiProcessingState,
-  RecordingVisualObservations,
 } from '@daydream/shared';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -22,10 +21,7 @@ import {
   type StudioLaneDraft,
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
-import {
-  buildStudioVisualFrames,
-  type StudioVisualFrame,
-} from './studio-visual-observations';
+import type { StudioVisualFrame } from './studio-visual-observations';
 
 export function StudioSidebar({
   aiProcessingState,
@@ -33,7 +29,7 @@ export function StudioSidebar({
   onCreateRedactions,
   onDeleteRedaction,
   onUnredactRanges,
-  visualObservations,
+  visualFrames,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
@@ -44,7 +40,7 @@ export function StudioSidebar({
   onUnredactRanges: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
-  visualObservations: RecordingVisualObservations | null;
+  visualFrames: StudioVisualFrame[];
 }) {
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
@@ -70,7 +66,6 @@ export function StudioSidebar({
     .filter((redaction): redaction is LibraryRecordingRedaction =>
       Boolean(redaction),
     );
-  const visualFrames = buildStudioVisualFrames(visualObservations, detail);
   const selectedVisualFrames = selection.visualFrameIds
     .map((frameId) => visualFrames.find((frame) => frame.id === frameId))
     .filter((frame): frame is StudioVisualFrame => Boolean(frame));

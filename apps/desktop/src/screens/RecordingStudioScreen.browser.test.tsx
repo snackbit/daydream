@@ -1164,6 +1164,79 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
       },
     ],
   } satisfies LibraryRecordingDetail;
+  aiClient.getRecordingAiProcessingState
+    .mockResolvedValueOnce({
+      chunks: [
+        {
+          attemptCount: 1,
+          createdAtMs: 1,
+          endOffsetMs: 2_000,
+          errorCode: null,
+          id: 'private-chunk',
+          jobId: 'private-job',
+          progress: 1,
+          recordingId: detail.id,
+          resultCode: null,
+          segmentId: 'segment-1',
+          sourceKind: 'audio',
+          startOffsetMs: 0,
+          status: 'succeeded',
+          trackId: 'desktop-audio-1',
+          updatedAtMs: 1,
+        },
+      ],
+      job: null,
+      recordingId: detail.id,
+      transcript: {
+        recordingId: detail.id,
+        tracks: [
+          {
+            sourceRole: 'desktop-audio',
+            trackId: 'stored-audio-uuid',
+            segments: [
+              {
+                confidence: null,
+                endOffsetMs: 1_800,
+                id: 'private-text',
+                model: 'small',
+                provider: 'local-whisper-cpp',
+                segmentId: 'segment-1',
+                startOffsetMs: 1_700,
+                text: 'private spoken secret',
+                words: [],
+              },
+            ],
+          },
+        ],
+      },
+    } satisfies RecordingAiProcessingState)
+    .mockRejectedValue(new Error('reload unavailable'));
+  aiClient.getRecordingVisualObservations
+    .mockResolvedValueOnce({
+      recordingId: detail.id,
+      ocrRegions: [
+        {
+          chunkId: 'private-ocr',
+          confidence: 1,
+          frameTimestampMs: 1_700,
+          id: 'private-region',
+          jobId: 'private-job',
+          model: 'tesseract',
+          provider: 'tesseract',
+          recordingId: detail.id,
+          region: { x: 0, y: 0, width: 100, height: 20 },
+          sourceFrameRef: 'segment:segment-1:offset:1700:frame:1',
+          text: 'private screen secret',
+        },
+      ],
+      vlmObservations: [],
+      vlmState: {
+        errorCode: null,
+        providerStatus: 'disabled',
+        status: 'disabled',
+      },
+    } satisfies RecordingVisualObservations)
+    .mockRejectedValue(new Error('reload unavailable'));
   aiClient.getRecordingActivity
     .mockResolvedValueOnce({
       captureStates: [],
@@ -1173,7 +1246,7 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
           id: 'focus-1',
           kind: 'focused-window',
           occurredAtMs: 2_200,
-          offsetMs: 1_200,
+          offsetMs: 1_700,
           recordingId: 'recording-1',
           title: 'Notes.md',
         },
@@ -1194,9 +1267,18 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
 
   expect(
     await screen.findByRole('button', {
-      name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+      name: /Focus changed at 0:02 - Editor - Notes\.md/i,
     }),
   ).toBeTruthy();
+  expect(await screen.findByText('private spoken secret')).toBeTruthy();
+  fireEvent.click(
+    await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
+  );
+  fireEvent.click(
+    await screen.findByRole('button', { name: /OCR text \(1\)/i }),
+  );
+  expect(await screen.findByText('private screen secret')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
   const timeline = await screen.findByLabelText('Track timeline');
   mockTimelineRect(timeline);
@@ -1225,9 +1307,17 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
     expect(aiClient.getRecordingActivity).toHaveBeenCalledTimes(2),
   );
   await waitFor(() =>
+    expect(aiClient.getRecordingAiProcessingState).toHaveBeenCalledTimes(2),
+  );
+  await waitFor(() =>
+    expect(aiClient.getRecordingVisualObservations).toHaveBeenCalledTimes(2),
+  );
+  expect(screen.queryByText('private spoken secret')).toBeNull();
+  expect(screen.queryByText('private screen secret')).toBeNull();
+  await waitFor(() =>
     expect(
       screen.queryByRole('button', {
-        name: /Focus changed at 0:01 - Editor - Notes\.md/i,
+        name: /Focus changed at 0:02 - Editor - Notes\.md/i,
       }),
     ).toBeNull(),
   );

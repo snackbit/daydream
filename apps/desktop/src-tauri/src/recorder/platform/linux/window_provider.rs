@@ -25,10 +25,6 @@ pub(super) fn window_protection_status() -> WindowProtectionStatus {
         .unwrap_or_else(unavailable_window_status)
 }
 
-pub(super) fn current_focused_window() -> Option<ProtectableWindow> {
-    provider().and_then(|provider| provider.focused_window())
-}
-
 pub(super) fn window_metadata_snapshot() -> WindowMetadataSnapshot {
     let Some(provider) = provider() else {
         let list = unavailable_window_list();

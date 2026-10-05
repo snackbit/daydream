@@ -22,8 +22,10 @@ pub(in crate::ai) async fn process_audio_chunk_inner(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     cancel: Arc<AtomicBool>,
+    processing_lease: Arc<tokio::sync::OwnedRwLockReadGuard<()>>,
 ) -> Result<AudioChunkProcessingOutcome, AiError> {
     let storage = app.state::<AppStorage>();
+    ensure_chunk_active(&storage, chunk)?;
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
     let provider_name = app_settings.ai.transcription.provider.clone();
     check_atomic_cancel(&cancel)?;
@@ -113,6 +115,7 @@ pub(in crate::ai) async fn process_audio_chunk_inner(
     let mut pending_transcriptions = Vec::with_capacity(transcription_ranges.len());
     for (range_index, range) in transcription_ranges.iter().enumerate() {
         check_atomic_cancel(&cancel)?;
+        ensure_chunk_active(&storage, chunk)?;
         let range_audio = audio_path_for_speech_range(
             app,
             chunk,
@@ -122,11 +125,13 @@ pub(in crate::ai) async fn process_audio_chunk_inner(
             temp_audio.path(),
             &cancel,
         )?;
+        ensure_chunk_active(&storage, chunk)?;
         let transcription = provider
             .transcribe(
                 app,
                 &storage,
                 TranscriptionRequest {
+                    processing_lease: Some(processing_lease.clone()),
                     audio_path: range_audio.path,
                     cancel: cancel.clone(),
                     language: app_settings.ai.transcription.language.clone(),
@@ -164,6 +169,7 @@ pub(in crate::ai) async fn process_audio_chunk_inner(
         });
     }
     check_atomic_cancel(&cancel)?;
+    ensure_chunk_active(&storage, chunk)?;
     persist_transcriptions(
         app,
         chunk,

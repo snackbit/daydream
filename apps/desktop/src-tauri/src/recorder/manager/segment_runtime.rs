@@ -37,6 +37,23 @@ impl RecordingSegmentRuntime {
         self.timing.clone()
     }
 
+    pub(crate) fn poll_error(&mut self) -> Option<RecorderError> {
+        self.capture
+            .as_ref()
+            .and_then(|capture| capture.poll_error())
+            .or_else(|| self.media_writer.poll_error())
+    }
+
+    pub(crate) fn abort(mut self, timestamp_ms: u64) {
+        if let Some(monitor) = self.activity_monitor.take() {
+            monitor.stop();
+        }
+        if let Some(capture) = self.capture.take() {
+            let _ = capture.stop(timestamp_ms);
+        }
+        self.media_writer.abort();
+    }
+
     pub(super) fn stop(mut self, stop_at_ms: u64) -> Result<(), RecorderError> {
         if let Some(activity_monitor) = self.activity_monitor.take() {
             activity_monitor.stop();

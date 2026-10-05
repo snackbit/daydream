@@ -3,16 +3,10 @@ import type { RecordingVisualObservations } from './ai/visual.js';
 import type { RecorderSegmentState } from './recorder.js';
 
 export type LibraryRecordingAvailability =
-  | 'available'
-  | 'incomplete'
-  | 'locked'
-  | 'missing-files';
+  'available' | 'incomplete' | 'locked' | 'missing-files';
 
 export type LibraryRecordingSortKey =
-  | 'availability'
-  | 'duration'
-  | 'started'
-  | 'status';
+  'availability' | 'duration' | 'started' | 'status';
 
 export type LibraryRecordingViewMode = 'grid' | 'list';
 

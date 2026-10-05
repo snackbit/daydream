@@ -10,13 +10,12 @@ use crate::{
     storage::{self, AppStorage},
 };
 
+use super::local_requests::transcribe_local_via_rest;
 use super::local_server::{LocalTranscriptionEndpoint, LocalTranscriptionServer};
 use super::local_worker::{
     LocalTranscriptionRunner, WhisperCppTranscriptionRunner, WhisperProcessTranscriptionRunner,
 };
-use super::remote::{
-    transcribe_remote, transcribe_via_rest, RemoteTranscriptionRequest, RestTranscriptionRequest,
-};
+use super::remote::{transcribe_remote, RemoteTranscriptionRequest, RestTranscriptionRequest};
 use super::{
     local_whisper_model_path, transcription_error, LocalTranscriptionWarmup, TranscriptionError,
     TranscriptionRequest, VerboseTranscription,
@@ -101,18 +100,23 @@ impl TranscriptionProviderManager {
         local_backend: &str,
     ) -> Result<VerboseTranscription, TranscriptionError> {
         let endpoint = self.local_endpoint(app)?;
-        transcribe_via_rest(RestTranscriptionRequest {
-            audio_path: &request.audio_path,
-            bearer_token: Some(&endpoint.token),
-            cancel: Some(request.cancel),
-            endpoint: &endpoint.url,
-            language: &request.language,
-            local_backend: Some(local_backend),
-            max_initial_timestamp_seconds: Some(request.max_initial_timestamp_seconds),
-            model: &request.model,
-            timeout: request.timeout,
-            word_timestamps: request.word_timestamps,
-        })
+        transcribe_local_via_rest(
+            RestTranscriptionRequest {
+                local_request_id: None,
+                local_scratch_owner: None,
+                audio_path: &request.audio_path,
+                bearer_token: Some(&endpoint.token),
+                cancel: Some(request.cancel),
+                endpoint: &endpoint.url,
+                language: &request.language,
+                local_backend: Some(local_backend),
+                max_initial_timestamp_seconds: Some(request.max_initial_timestamp_seconds),
+                model: &request.model,
+                timeout: request.timeout,
+                word_timestamps: request.word_timestamps,
+            },
+            request.processing_lease,
+        )
         .await
     }
 

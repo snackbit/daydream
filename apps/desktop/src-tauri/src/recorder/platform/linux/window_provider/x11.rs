@@ -96,7 +96,17 @@ impl X11WindowProvider {
                     .map(|chunk| {
                         let mut raw = [0_u8; std::mem::size_of::<c_ulong>()];
                         raw.copy_from_slice(chunk);
-                        c_ulong::from_ne_bytes(raw) as u64
+                        // Xlib stores CARDINAL values in native unsigned longs:
+                        // widen on 32-bit targets, keep the word on 64-bit targets.
+                        let value = c_ulong::from_ne_bytes(raw);
+                        #[cfg(target_pointer_width = "32")]
+                        {
+                            u64::from(value)
+                        }
+                        #[cfg(target_pointer_width = "64")]
+                        {
+                            value
+                        }
                     })
             })
     }

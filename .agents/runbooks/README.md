@@ -14,6 +14,11 @@ evidence about the host.
 
 ## Index
 
+### [Validation map](../../docs/agent-validation.md)
+
+Use for exact scoped commands, native/browser prerequisites, dependency checks
+and shared resource limits. Keep command details in that canonical map.
+
 ### [Planning](./planning.md)
 
 Use when creating, refining, executing, reviewing, or closing milestone-scoped

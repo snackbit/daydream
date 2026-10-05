@@ -6,6 +6,7 @@ pub(in crate::ai) async fn process_activity_chunk_inner(
     cancel: Arc<AtomicBool>,
 ) -> Result<(), AiError> {
     let storage = app.state::<AppStorage>();
+    ensure_chunk_active(&storage, chunk)?;
     let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
     let chunk_start = chunk.start_offset_ms.ok_or_else(|| {
         ai_error(
@@ -88,6 +89,9 @@ pub(in crate::ai) async fn process_activity_chunk_inner(
 
     storage
         .with_connection(|connection| {
+            if !crate::recording_privacy::chunk_active(connection, chunk)? {
+                return Ok(());
+            }
             storage::delete_activity_output_for_chunks(
                 connection,
                 std::slice::from_ref(&chunk.id),
