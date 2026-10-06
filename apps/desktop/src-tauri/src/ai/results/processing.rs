@@ -159,29 +159,17 @@ pub(in crate::ai) fn processing_job_from_row_with_storage(
 }
 
 pub(crate) fn emit_processing_state<R: tauri::Runtime>(app: &AppHandle<R>, recording_id: &str) {
-    let storage = app.state::<AppStorage>();
-    if let Ok(state) = processing_state_for_recording(&storage, recording_id) {
-        tracing::info!(
-            recording_id = %recording_id,
-            job_id = state.job.as_ref().map(|job| job.id.as_str()).unwrap_or(""),
-            job_status = state.job.as_ref().map(|job| job.status.as_str()).unwrap_or("none"),
-            chunk_status_counts = %processing_state_chunk_status_counts(&state.chunks),
-            transcript_track_count = state.transcript.tracks.len(),
-            "ai_processing_state_emitted"
-        );
-        let _ = app.emit(AI_PROCESSING_CHANGED_EVENT, state);
-    }
+    // Invalidate the selected recording's read model instead of rebuilding and
+    // broadcasting every transcript/word/frame to unrelated screens.
+    let changed = crate::background_tasks::BackgroundTasksChanged {
+        recording_id: Some(recording_id.into()),
+        updated_at_ms: now_ms(),
+    };
+    let _ = app.emit(AI_PROCESSING_CHANGED_EVENT, &changed);
+    crate::background_tasks::emit_changed(app, Some(recording_id));
 }
 
 pub(in crate::ai) fn processing_chunk_status_counts(chunks: &[ProcessingChunkRow]) -> String {
-    let mut counts = BTreeMap::<String, usize>::new();
-    for chunk in chunks {
-        *counts.entry(chunk.status.clone()).or_default() += 1;
-    }
-    serde_json::to_string(&counts).unwrap_or_else(|_error| "{}".to_string())
-}
-
-pub(in crate::ai) fn processing_state_chunk_status_counts(chunks: &[ProcessingChunk]) -> String {
     let mut counts = BTreeMap::<String, usize>::new();
     for chunk in chunks {
         *counts.entry(chunk.status.clone()).or_default() += 1;

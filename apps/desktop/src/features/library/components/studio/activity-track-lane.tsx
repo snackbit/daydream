@@ -9,12 +9,14 @@ import type {
   ActivityInterval,
   LibraryRecordingRedaction,
   RecordingActivity,
+  LibraryRecordingSegment,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
 import {
   ActivityIntervalSpan,
   FocusActivityMarker,
 } from './activity-track-markers';
+import { FocusAnnotationStrip } from './annotations/focus-annotation-strip';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import type {
   StudioLaneDraft,
@@ -23,7 +25,7 @@ import type {
 import { TrackLaneHeader } from './track-lane-header';
 import { RedactionOverlay, TimeRangeOverlay } from './track-lane-overlays';
 import {
-  TRACK_DERIVED_LANE_HEIGHT_PX,
+  trackLaneHeightPxForKind,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
 } from './track-timeline-math';
 
@@ -40,6 +42,7 @@ export interface ActivityTrackLaneProps {
   timelineWidthPx: number;
   timeRanges: StudioTimeRangeSelection[];
   totalDurationMs: number;
+  segments: LibraryRecordingSegment[];
 }
 
 export function ActivityTrackLane({
@@ -55,6 +58,7 @@ export function ActivityTrackLane({
   timelineWidthPx,
   timeRanges,
   totalDurationMs,
+  segments,
 }: ActivityTrackLaneProps) {
   const laneContentClickRef = useRef<{
     moved: boolean;
@@ -120,7 +124,7 @@ export function ActivityTrackLane({
       <TrackLaneHeader
         audioTrack={false}
         dragHandleProps={dragHandleProps}
-        heightPx={TRACK_DERIVED_LANE_HEIGHT_PX}
+        heightPx={trackLaneHeightPxForKind(lane.kind)}
         lane={lane}
         muted={false}
         selectedLane={selectedLane}
@@ -135,7 +139,10 @@ export function ActivityTrackLane({
         )}
         data-lane-content
         data-track-id={lane.trackId}
-        style={{ height: TRACK_DERIVED_LANE_HEIGHT_PX, width: timelineWidthPx }}
+        style={{
+          height: trackLaneHeightPxForKind(lane.kind),
+          width: timelineWidthPx,
+        }}
         onClick={handleLaneContentClick}
         onPointerDown={handleLaneContentPointerDown}
         onPointerMove={handleLaneContentPointerMove}
@@ -147,6 +154,7 @@ export function ActivityTrackLane({
           timelineWidthPx={timelineWidthPx}
           totalDurationMs={totalDurationMs}
           onInspectActivity={onInspectActivity}
+          segments={segments}
         />
         {timeRanges.map((range) => (
           <TimeRangeOverlay
@@ -179,6 +187,7 @@ function ActivityLaneContent({
   redactions,
   timelineWidthPx,
   totalDurationMs,
+  segments,
 }: {
   activity: RecordingActivity | null;
   lane: StudioLaneDraft;
@@ -186,10 +195,11 @@ function ActivityLaneContent({
   redactions: LibraryRecordingRedaction[];
   timelineWidthPx: number;
   totalDurationMs: number;
+  segments: LibraryRecordingSegment[];
 }) {
   if (lane.kind === 'activity-focus') {
     return (
-      <>
+      <div className="relative h-6">
         {activity?.events
           .filter((event) => event.kind === 'focused-window')
           .map((event) => (
@@ -202,7 +212,16 @@ function ActivityLaneContent({
               onInspectActivity={onInspectActivity}
             />
           ))}
-      </>
+        <FocusAnnotationStrip
+          events={activity?.events ?? []}
+          lane={lane}
+          redactions={redactions}
+          segments={segments}
+          timelineWidthPx={timelineWidthPx}
+          totalDurationMs={totalDurationMs}
+          onInspectActivity={onInspectActivity}
+        />
+      </div>
     );
   }
 

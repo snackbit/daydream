@@ -8,6 +8,7 @@ use super::super::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveRecording {
+    pub(super) video_sources: Vec<crate::storage::RecordingVideoSource>,
     pub(super) active_segment: Option<ActiveSegment>,
     pub(super) canvas_height: u32,
     pub(super) canvas_width: u32,
@@ -24,6 +25,7 @@ pub(crate) struct ActiveRecording {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveSegment {
+    pub(super) capture_started_at_ms: u64,
     pub(super) file_path: PathBuf,
     pub(super) id: String,
     pub(super) runtime: Option<SharedSegmentRuntime>,

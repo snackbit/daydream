@@ -30,6 +30,8 @@ pub struct RecorderSceneSource {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderScene {
+    #[serde(default)]
+    pub(crate) independent_video: bool,
     pub(crate) canvas_height: u32,
     pub(crate) canvas_width: u32,
     pub(crate) desktop_audio_source_id: Option<String>,

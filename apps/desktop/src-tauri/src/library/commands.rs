@@ -26,17 +26,7 @@ pub fn get_library_recording(
     recording_id: String,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, &recording_id))
-        .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| storage::list_recording_segments(connection, &recording_id))
-        .map_err(|error| error.to_string())?;
-    let redactions = storage
-        .with_connection(|connection| storage::list_redactions(connection, &recording_id))
-        .map_err(|error| error.to_string())?;
-
-    Ok(detail_from_rows(&recording, &segments, &redactions))
+    detail_for_recording(storage.inner(), &recording_id)
 }
 
 #[tauri::command(rename = "getLibraryRecordingDebug")]
@@ -115,19 +105,12 @@ pub fn rename_library_recording(
             storage::rename_recording(connection, &input.recording_id, title.as_deref())
         })
         .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| storage::list_recording_segments(connection, &recording.id))
-        .map_err(|error| error.to_string())?;
-    let redactions = storage
-        .with_connection(|connection| storage::list_redactions(connection, &recording.id))
-        .map_err(|error| error.to_string())?;
-
-    Ok(detail_from_rows(&recording, &segments, &redactions))
+    detail_for_recording(storage.inner(), &recording.id)
 }
 
 #[tauri::command(rename = "createLibraryRedactions")]
-pub async fn create_library_redactions(
-    app: tauri::AppHandle,
+pub async fn create_library_redactions<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     input: CreateLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
@@ -140,7 +123,9 @@ pub async fn create_library_redactions(
             storage::list_recording_segments(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
-    let tracks = tracks_from_segments(&segments);
+    let tracks = storage
+        .with_connection(|connection| tracks_for_recording(connection, &recording.id, &segments))
+        .map_err(|error| error.to_string())?;
     let duration_ms = timeline_duration_ms(&segments);
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
@@ -209,8 +194,8 @@ pub async fn delete_library_redaction(
 }
 
 #[tauri::command(rename = "unredactLibraryRedactions")]
-pub async fn unredact_library_redactions(
-    app: tauri::AppHandle,
+pub async fn unredact_library_redactions<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     input: UnredactLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
@@ -223,7 +208,9 @@ pub async fn unredact_library_redactions(
             storage::list_recording_segments(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
-    let tracks = tracks_from_segments(&segments);
+    let tracks = storage
+        .with_connection(|connection| tracks_for_recording(connection, &recording.id, &segments))
+        .map_err(|error| error.to_string())?;
     let duration_ms = timeline_duration_ms(&segments);
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
@@ -266,66 +253,118 @@ pub async fn unredact_library_redactions(
 }
 
 #[tauri::command(rename = "getRecordingWaveforms")]
-pub fn get_recording_waveforms(
+pub async fn get_recording_waveforms(
     input: LibraryWaveformRequest,
-    storage: State<'_, AppStorage>,
+    app: tauri::AppHandle,
 ) -> Result<LibraryWaveforms, String> {
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
-        .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| {
-            storage::list_recording_segments(connection, &input.recording_id)
-        })
-        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let operation = crate::background_tasks::operations::Operation::start(
+            &app,
+            "waveforms",
+            &input.recording_id,
+            "Audio waveforms",
+        );
+        let storage = app.state::<AppStorage>();
+        let recording = storage
+            .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+            .map_err(|error| error.to_string())?;
+        let segments = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &input.recording_id)
+            })
+            .map_err(|error| error.to_string())?;
 
-    Ok(waveforms::waveforms_for_recording(&recording, &segments))
+        let value = waveforms::waveforms_for_recording(&recording, &segments);
+        operation.finish(
+            value
+                .error
+                .as_ref()
+                .map(|_| "ai_waveform_generation_failed"),
+        );
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Waveform worker failed.".to_string())?
 }
 
 #[tauri::command(rename = "getRecordingWaveformTiles")]
-pub fn get_recording_waveform_tiles(
+pub async fn get_recording_waveform_tiles(
     input: LibraryWaveformTileRequest,
-    storage: State<'_, AppStorage>,
+    app: tauri::AppHandle,
 ) -> Result<LibraryWaveformTiles, String> {
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
-        .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| {
-            storage::list_recording_segments(connection, &input.recording_id)
-        })
-        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let operation = crate::background_tasks::operations::Operation::start(
+            &app,
+            "waveforms",
+            &input.recording_id,
+            "Audio waveforms",
+        );
+        let storage = app.state::<AppStorage>();
+        let recording = storage
+            .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+            .map_err(|error| error.to_string())?;
+        let segments = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &input.recording_id)
+            })
+            .map_err(|error| error.to_string())?;
 
-    Ok(waveforms::waveform_tiles_for_recording(
-        &recording, &segments, &input,
-    ))
+        let value = waveforms::waveform_tiles_for_recording(&recording, &segments, &input);
+        operation.finish(
+            value
+                .error
+                .as_ref()
+                .map(|_| "ai_waveform_generation_failed"),
+        );
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Waveform worker failed.".to_string())?
 }
 
 #[tauri::command(rename = "createLibraryPlaybackSession")]
-pub fn create_library_playback_session(
+pub async fn create_library_playback_session(
     input: LibraryPlaybackAssetRequest,
-    storage: State<'_, AppStorage>,
-    playback_server: State<'_, PlaybackServer>,
+    app: tauri::AppHandle,
 ) -> Result<LibraryPlaybackAssets, String> {
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
-        .map_err(|error| error.to_string())?;
-    let segments = storage
-        .with_connection(|connection| {
-            storage::list_recording_segments(connection, &input.recording_id)
-        })
-        .map_err(|error| error.to_string())?;
-    let detail = detail_from_rows(&recording, &segments, &[]);
-    if detail.availability != LibraryRecordingAvailability::Available {
-        return Ok(LibraryPlaybackAssets {
-            error: Some("Recording is not available for playback.".to_string()),
-            recording_id: recording.id,
-            segments: Vec::new(),
-            session_id: String::new(),
-        });
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let operation = crate::background_tasks::operations::Operation::start(
+            &app,
+            "media-preparation",
+            &input.recording_id,
+            "Playback preparation",
+        );
+        let storage = app.state::<AppStorage>();
+        let playback_server = app.state::<PlaybackServer>();
+        let recording = storage
+            .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
+            .map_err(|error| error.to_string())?;
+        let segments = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, &input.recording_id)
+            })
+            .map_err(|error| error.to_string())?;
+        let detail = detail_from_rows(&recording, &segments, &[]);
+        if detail.availability != LibraryRecordingAvailability::Available {
+            return Ok(LibraryPlaybackAssets {
+                error: Some("Recording is not available for playback.".to_string()),
+                recording_id: recording.id,
+                segments: Vec::new(),
+                session_id: String::new(),
+            });
+        }
 
-    playback_server.create_session(&recording, &segments)
+        let sources = storage
+            .with_connection(|connection| {
+                storage::recording_video_streams(connection, &recording.id)
+            })
+            .map_err(|_| "Video sources could not be read.".to_string())?;
+        let result = playback_server.create_source_session(&recording, &segments, &sources);
+        operation.finish(result.as_ref().err().map(|_| "ai_media_preparation_failed"));
+        result
+    })
+    .await
+    .map_err(|_| "Playback preparation worker failed.".to_string())?
 }
 
 #[tauri::command(rename = "closeLibraryPlaybackSession")]
@@ -339,8 +378,10 @@ pub fn close_library_playback_session(
 #[tauri::command(rename = "prepareLibraryRecordingThumbnail")]
 pub async fn prepare_library_recording_thumbnail(
     input: LibraryRecordingThumbnailRequest,
+    app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingThumbnail, String> {
+    let lease = crate::recording_privacy::processing_lease(&input.recording_id).await;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|error| error.to_string())?;
@@ -349,7 +390,24 @@ pub async fn prepare_library_recording_thumbnail(
             storage::list_recording_segments(connection, &input.recording_id)
         })
         .map_err(|error| error.to_string())?;
-    let detail = detail_from_rows(&recording, &segments, &[]);
+    let detail = detail_for_recording(storage.inner(), &recording.id)?;
+    let first_source = detail
+        .tracks
+        .iter()
+        .find(|track| track.kind == LibraryTrackKind::Video)
+        .map(|track| &track.id);
+    if detail.redactions.iter().any(|cut| {
+        cut.start_offset_ms <= 0
+            && cut.end_offset_ms > 0
+            && (cut.track_ids.is_empty()
+                || first_source.is_some_and(|id| cut.track_ids.contains(id)))
+    }) {
+        return Ok(LibraryRecordingThumbnail {
+            error: None,
+            path: None,
+            recording_id: recording.id,
+        });
+    }
     if detail.availability != LibraryRecordingAvailability::Available {
         return Ok(LibraryRecordingThumbnail {
             error: Some("Recording is not available for thumbnails.".to_string()),
@@ -360,7 +418,21 @@ pub async fn prepare_library_recording_thumbnail(
 
     let recording_id = recording.id.clone();
     match tauri::async_runtime::spawn_blocking(move || {
-        recording_thumbnail_for_recording(&recording, &segments)
+        let _lease = lease;
+        let operation = crate::background_tasks::operations::Operation::start(
+            &app,
+            "thumbnails",
+            &recording.id,
+            "Recording thumbnails",
+        );
+        let result = recording_thumbnail_for_recording(&recording, &segments);
+        operation.finish(
+            result
+                .as_ref()
+                .err()
+                .map(|_| "ai_thumbnail_generation_failed"),
+        );
+        result
     })
     .await
     .map_err(|error| error.to_string())?

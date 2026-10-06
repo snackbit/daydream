@@ -9,6 +9,8 @@ use super::waveforms::{
 };
 use super::*;
 
+mod source_redactions;
+
 #[test]
 fn summary_marks_missing_segment_files() {
     let temp_dir = test_dir("missing-segment-files");
@@ -561,6 +563,7 @@ fn waveform_tile_bin_ms_tracks_visible_ms_per_pixel() {
 #[test]
 fn waveform_tile_ranges_follow_segment_timeline_offsets() {
     let segment = LibraryRecordingSegment {
+        video_streams: Vec::new(),
         desktop_audio_stream_index: Some(1),
         duration_ms: Some(10_000),
         ended_at_ms: Some(11_000),

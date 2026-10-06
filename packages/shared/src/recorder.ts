@@ -97,6 +97,7 @@ export interface RecorderSceneSource {
 }
 
 export interface RecorderScene {
+  independentVideo?: boolean;
   canvasHeight: number;
   canvasWidth: number;
   desktopAudioSourceId: string | null;
@@ -112,6 +113,7 @@ export interface SaveRecorderSceneInput {
 }
 
 export interface StartRecorderPreviewInput {
+  scene?: RecorderScene;
   sceneId: string;
 }
 
@@ -126,6 +128,8 @@ export interface RecorderPreviewStatus {
 }
 
 export interface RecorderPreviewFrame {
+  sourceWidth?: number;
+  sourceHeight?: number;
   dataUrl: string;
   height: number;
   sceneSourceId: string;
@@ -135,6 +139,16 @@ export interface RecorderPreviewFrame {
 }
 
 export type RecorderQualityPreset = 'balanced-ocr';
+export interface CaptureSetup {
+  scene: RecorderScene | null;
+  fps: number;
+  videoBitrateKbps: number;
+}
+export interface SaveCaptureSetupInput {
+  scene: RecorderScene;
+  fps: number;
+  videoBitrateKbps: number;
+}
 
 export interface StartRecordingInput {
   desktopAudioSourceId: string | null;
@@ -223,6 +237,7 @@ export interface RecorderMediaWriterCapabilities {
   fileSink: boolean;
   h264Parse: boolean;
   matroskaMuxer: boolean;
+  splitMuxer?: boolean;
   opusEncoder: boolean;
   pulseSource: boolean;
   queue: boolean;
@@ -284,6 +299,8 @@ export interface RecorderPerformanceStats {
 }
 
 export interface RecorderRecordingStats {
+  /** Absent only when connected to an older native build. */
+  recordedDurationMs?: number;
   activeSegmentId: string | null;
   activeSegmentIndex: number | null;
   activeSegmentSizeBytes: number | null;

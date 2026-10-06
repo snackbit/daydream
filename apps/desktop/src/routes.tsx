@@ -1,18 +1,47 @@
+import { useCallback } from 'react';
 import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from '@tanstack/react-router';
 import { AppShell } from '@/app/AppShell';
 import { RouteErrorScreen } from '@/features/navigation/components/route-error-screen';
 import { RouteNotFoundScreen } from '@/features/navigation/components/route-not-found-screen';
-import { CaptureScreen } from '@/screens/CaptureScreen';
-import { DiagnosticsScreen } from '@/screens/DiagnosticsScreen';
+import {
+  validateSettingsLocation,
+  type SettingsTab,
+} from '@/features/settings/settings-location';
 import { HomeScreen } from '@/screens/HomeScreen';
-import { LibraryScreen } from '@/screens/LibraryScreen';
-import { NotificationsScreen } from '@/screens/NotificationsScreen';
-import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
-import { SettingsScreen } from '@/screens/SettingsScreen';
+
+const CaptureScreen = lazyRouteComponent(
+  () => import('@/screens/CaptureScreen'),
+  'CaptureScreen',
+);
+const DiagnosticsScreen = lazyRouteComponent(
+  () => import('@/screens/DiagnosticsScreen'),
+  'DiagnosticsScreen',
+);
+const LibraryScreen = lazyRouteComponent(
+  () => import('@/screens/LibraryScreen'),
+  'LibraryScreen',
+);
+const NotificationsScreen = lazyRouteComponent(
+  () => import('@/screens/NotificationsScreen'),
+  'NotificationsScreen',
+);
+const ProcessingScreen = lazyRouteComponent(
+  () => import('@/screens/ProcessingScreen'),
+  'ProcessingScreen',
+);
+const RecordingStudioScreen = lazyRouteComponent(
+  () => import('@/screens/RecordingStudioScreen'),
+  'RecordingStudioScreen',
+);
+const SettingsScreen = lazyRouteComponent(
+  () => import('@/screens/SettingsScreen'),
+  'SettingsScreen',
+);
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -51,15 +80,40 @@ const diagnosticsRoute = createRoute({
 });
 
 const settingsRoute = createRoute({
-  component: SettingsScreen,
+  component: SettingsRouteScreen,
   getParentRoute: () => rootRoute,
   path: '/settings',
+  validateSearch: validateSettingsLocation,
 });
+
+function SettingsRouteScreen() {
+  const search = settingsRoute.useSearch();
+  const navigate = settingsRoute.useNavigate();
+  const changeTab = useCallback(
+    (tab: SettingsTab) => {
+      void navigate({ search: { tab, focus: null } });
+    },
+    [navigate],
+  );
+  return (
+    <SettingsScreen
+      tab={search.tab}
+      focusSection={search.focus}
+      onTabChange={changeTab}
+    />
+  );
+}
 
 const notificationsRoute = createRoute({
   component: NotificationsScreen,
   getParentRoute: () => rootRoute,
   path: '/notifications',
+});
+
+const processingRoute = createRoute({
+  component: ProcessingScreen,
+  getParentRoute: () => rootRoute,
+  path: '/processing',
 });
 
 const routeTree = rootRoute.addChildren([
@@ -70,6 +124,7 @@ const routeTree = rootRoute.addChildren([
   diagnosticsRoute,
   settingsRoute,
   notificationsRoute,
+  processingRoute,
 ]);
 
 export const router = createRouter({ routeTree });

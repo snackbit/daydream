@@ -20,6 +20,7 @@ pub(super) struct ThumbnailService {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ThumbnailKey {
+    pub(super) video_stream_index: i64,
     pub(super) offset_ms: i64,
     pub(super) segment_id: String,
     pub(super) session_id: String,

@@ -73,9 +73,16 @@ export function useRecordingAiProcessingState(
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
+    let refreshTimer: number | null = null;
     void listenToAiProcessingChanged((nextState) => {
-      if (active) {
+      if (active && 'chunks' in nextState) {
         applyState(nextState);
+      } else if (active && nextState.recordingId === recordingId) {
+        if (refreshTimer === null)
+          refreshTimer = window.setTimeout(() => {
+            refreshTimer = null;
+            void reload();
+          }, 500);
       }
     }).then((nextUnlisten) => {
       if (active) {
@@ -87,10 +94,11 @@ export function useRecordingAiProcessingState(
 
     return () => {
       active = false;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       loadRunRef.current += 1;
       unlisten?.();
     };
-  }, [applyState]);
+  }, [applyState, recordingId, reload]);
 
   const visibleState =
     state?.data.recordingId === recordingId &&

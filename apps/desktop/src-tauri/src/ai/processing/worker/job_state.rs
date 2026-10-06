@@ -37,7 +37,6 @@ fn pause_processing_job(
 ) -> Result<(), AiError> {
     storage
         .with_connection(|connection| {
-            storage::requeue_processing_chunks(connection, job_id, &["running"], now_ms())?;
             save_processing_notification(
                 connection,
                 ProcessingNotificationInput {

@@ -30,8 +30,10 @@ pub(crate) use types::*;
 
 pub(crate) mod commands;
 mod debug;
+pub(crate) mod frame_navigation;
 mod mapping;
 mod playback;
+pub(crate) mod redaction_resize;
 mod redactions;
 mod thumbnails;
 use mapping::*;

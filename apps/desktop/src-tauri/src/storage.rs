@@ -19,8 +19,15 @@ mod scenes;
 mod schema;
 mod segments;
 mod settings;
+mod video_sources;
+pub use video_sources::*;
 
 pub use ai::get_ocr_timeline_frames;
+pub use ai::{
+    audio_range_succeeded, first_processing_chunk_failure, processing_chunk_retry_ready,
+    processing_job_config, processing_job_input_open, save_audio_range_checkpoint,
+    schedule_processing_chunk_retry, set_processing_chunk_phase, set_processing_job_runtime,
+};
 pub use ai::{
     cancel_processing_chunks, cancel_visual_frame_processing_states_for_chunk,
     claim_next_queued_processing_chunk, claim_processing_chunk, create_activity_interval,
@@ -53,6 +60,7 @@ pub use ai::{
     get_processing_job_ocr_config, normalize_ocr_text, save_ocr_frame_result,
     save_processing_job_ocr_config,
 };
+pub use ai::{processing_chunk_config, processing_chunk_selection, set_processing_chunk_total};
 pub use ai::{
     OcrBlockInput, OcrCachedContent, OcrContentInput, OcrFrameInput, OcrWordHierarchy, OcrWordInput,
 };
@@ -83,8 +91,9 @@ pub use redactions::{
     list_redactions, redaction_applies_to_track_range, CreateRedactionInput, RedactionRow,
 };
 pub use scenes::{
-    get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, RecorderSceneRow,
-    RecorderSceneSourceRow, SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
+    get_latest_recorder_scene, get_recorder_scene, save_recorder_scene, save_recorder_scene_rows,
+    save_recorder_scene_with_mode, RecorderSceneRow, RecorderSceneSourceRow,
+    SaveRecorderSceneInput, SaveRecorderSceneSourceInput,
 };
 pub use segments::{
     create_recording_segment, fail_recording_segment, finalize_recording_segment,

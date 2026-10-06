@@ -65,12 +65,24 @@ pub struct AiTranscriptionProviderSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiVisionProviderSettings {
+    #[serde(
+        default = "default_vision_auth_mode",
+        skip_serializing_if = "default_key_auth"
+    )]
+    pub auth_mode: String,
     #[serde(default)]
     pub observations_enabled: bool,
     pub api_key_ref: Option<String>,
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub provider: String,
+}
+
+fn default_vision_auth_mode() -> String {
+    "api-key".into()
+}
+fn default_key_auth(value: &String) -> bool {
+    value == "api-key"
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -84,6 +96,10 @@ pub struct AiOcrSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AiProcessingSettings {
     pub auto_start_after_recording: bool,
+    #[serde(default = "default_processing_timing")]
+    pub timing: String,
+    #[serde(default = "default_processing_resource_mode")]
+    pub resource_mode: String,
     pub frame_recognition_fps: f64,
     pub frame_recognition_sync_with_recording: bool,
     pub frame_similarity_enabled: bool,
@@ -94,6 +110,13 @@ pub struct AiProcessingSettings {
     pub max_parallel_vlm_jobs: u32,
     pub periodic_full_frame_interval_ms: u32,
     pub visual_delta_tile_size_px: u32,
+}
+
+fn default_processing_timing() -> String {
+    "during-recording".into()
+}
+fn default_processing_resource_mode() -> String {
+    "background".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -272,6 +295,21 @@ pub struct StorageSettingsLimits {
 #[serde(rename_all = "camelCase")]
 pub struct SaveAppSettingsInput {
     pub settings: AppSettings,
+    #[serde(default)]
+    pub credentials: SettingsCredentialDrafts,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsCredentialDrafts {
+    pub transcription_key: Option<String>,
+    pub vision_key: Option<String>,
+}
+
+impl std::fmt::Debug for SettingsCredentialDrafts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SettingsCredentialDrafts([redacted])")
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -60,12 +60,21 @@ pub(crate) fn collect_recorder_recording_stats(
     let active_segment = active_segment_for_stats(&segments, status.active_segment_id.as_deref());
     let active_segment_size_bytes =
         active_segment.and_then(|segment| segment_file_size_bytes(segment).ok());
-    let total_size_bytes = segments
-        .iter()
-        .filter_map(|segment| segment_file_size_bytes(segment).ok())
-        .sum();
+    let total_size_bytes = cached_recording_size(&recording_id, &segments);
 
     Ok(Some(RecorderRecordingStats {
+        recorded_duration_ms: segments
+            .iter()
+            .map(|segment| {
+                if let Some(duration) = segment.duration_ms {
+                    duration.max(0) as u64
+                } else if segment.state == "recording" {
+                    timestamp_ms.saturating_sub(segment.started_at_ms.max(0) as u64)
+                } else {
+                    0
+                }
+            })
+            .sum(),
         active_segment_id: status.active_segment_id,
         active_segment_index: active_segment
             .and_then(|segment| u32::try_from(segment.segment_index).ok()),
@@ -80,6 +89,39 @@ pub(crate) fn collect_recorder_recording_stats(
         total_size_bytes,
         updated_at_ms: timestamp_ms,
     }))
+}
+
+fn cached_recording_size(recording_id: &str, segments: &[RecordingSegmentRow]) -> u64 {
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+    };
+    static CACHE: OnceLock<Mutex<(String, HashMap<String, u64>)>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new((String::new(), HashMap::new())))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if cache.0 != recording_id {
+        cache.0 = recording_id.into();
+        cache.1.clear();
+    }
+    segments
+        .iter()
+        .map(|segment| {
+            if segment.state == "finalized" {
+                if let Some(size) = cache.1.get(&segment.id) {
+                    return *size;
+                }
+                if let Ok(size) = segment_file_size_bytes(segment) {
+                    cache.1.insert(segment.id.clone(), size);
+                    return size;
+                }
+                0
+            } else {
+                segment_file_size_bytes(segment).unwrap_or(0)
+            }
+        })
+        .sum()
 }
 
 fn active_segment_for_stats<'a>(

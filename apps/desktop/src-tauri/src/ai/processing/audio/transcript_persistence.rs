@@ -12,73 +12,70 @@ pub(in crate::ai) struct PersistedTranscriptionStats {
     pub(in crate::ai) word_count: usize,
 }
 
-pub(super) fn persist_transcriptions(
-    app: &AppHandle,
+pub(super) struct SpeechRangeResult {
+    pub(super) range: whisper_backend::SpeechRange,
+    pub(super) fingerprint: String,
+    pub(super) pending: PendingTranscription,
+}
+
+pub(super) fn persist_speech_range(
+    storage: &AppStorage,
     chunk: &ProcessingChunkRow,
     track: &RecordingTrackRow,
     provider: &str,
     model: &str,
-    transcriptions: Vec<PendingTranscription>,
+    result: SpeechRangeResult,
 ) -> Result<(), AiError> {
-    if transcriptions
-        .iter()
-        .all(|pending| pending.transcription.segments.is_empty())
-    {
-        tracing::info!(
-            recording_id = %chunk.recording_id,
-            job_id = %chunk.job_id,
-            chunk_id = %chunk.id,
-            track_id = chunk.track_id.as_deref().unwrap_or(""),
-            source_role = %track.kind,
-            "ai_processing_transcript_persist_skipped_empty"
-        );
-        return Ok(());
-    }
-    let segment_id = chunk.segment_id.clone().ok_or_else(|| {
-        ai_error(
-            "ai_processing_segment_missing",
-            "Processing segment is missing.",
-        )
-    })?;
-    let storage = app.state::<AppStorage>();
-    let stats = storage
+    let saved = storage
         .with_connection_mut(|connection| {
-            persist_transcriptions_for_chunk(
-                connection,
+            let transaction = connection.transaction()?;
+            if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
+                return Ok(false);
+            }
+            if storage::audio_range_succeeded(
+                &transaction,
+                &chunk.id,
+                result.range.start_ms,
+                result.range.end_ms,
+                &result.fingerprint,
+            )? {
+                return Ok(true);
+            }
+            let segment_id = chunk
+                .segment_id
+                .as_deref()
+                .ok_or(rusqlite::Error::InvalidQuery)?;
+            write_transcriptions(
+                &transaction,
                 chunk,
                 track,
                 provider,
                 model,
-                &segment_id,
-                transcriptions,
-            )
+                segment_id,
+                vec![result.pending],
+            )?;
+            storage::save_audio_range_checkpoint(
+                &transaction,
+                &chunk.id,
+                result.range.start_ms,
+                result.range.end_ms,
+                &result.fingerprint,
+                None,
+            )?;
+            transaction.commit()?;
+            Ok(true)
         })
         .map_err(storage_error)?;
-    if stats.segment_count == 0 {
-        tracing::info!(
-            recording_id = %chunk.recording_id,
-            job_id = %chunk.job_id,
-            chunk_id = %chunk.id,
-            track_id = chunk.track_id.as_deref().unwrap_or(""),
-            source_role = %track.kind,
-            "ai_processing_transcript_persist_skipped_empty"
-        );
-        return Ok(());
+    if !saved {
+        return Err(ai_error(
+            "ai_processing_cancelled",
+            "The audio source is no longer eligible.",
+        ));
     }
-    tracing::info!(
-        recording_id = %chunk.recording_id,
-        job_id = %chunk.job_id,
-        chunk_id = %chunk.id,
-        track_id = %track.id,
-        source_role = %track.kind,
-        segment_count = stats.segment_count,
-        word_count = stats.word_count,
-        text_char_count = stats.text_char_count,
-        "ai_processing_transcript_persisted"
-    );
     Ok(())
 }
 
+#[cfg(test)]
 pub(in crate::ai) fn persist_transcriptions_for_chunk(
     connection: &mut rusqlite::Connection,
     chunk: &ProcessingChunkRow,
@@ -89,11 +86,39 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
     transcriptions: Vec<PendingTranscription>,
 ) -> rusqlite::Result<PersistedTranscriptionStats> {
     let transaction = connection.transaction()?;
-    let mut stats = PersistedTranscriptionStats::default();
     if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
-        return Ok(stats);
+        return Ok(PersistedTranscriptionStats::default());
     }
+    let stats = write_transcriptions(
+        &transaction,
+        chunk,
+        track,
+        provider,
+        model,
+        segment_id,
+        transcriptions,
+    )?;
+    transaction.commit()?;
+    Ok(stats)
+}
 
+fn write_transcriptions(
+    connection: &rusqlite::Connection,
+    chunk: &ProcessingChunkRow,
+    track: &RecordingTrackRow,
+    provider: &str,
+    model: &str,
+    segment_id: &str,
+    transcriptions: Vec<PendingTranscription>,
+) -> rusqlite::Result<PersistedTranscriptionStats> {
+    let mut stats = PersistedTranscriptionStats::default();
+    let sources = storage::list_recording_segments(connection, &chunk.recording_id)?;
+    let current_start = playback_offset_for_segment(&sources, segment_id).unwrap_or(0);
+    let previous = sources
+        .iter()
+        .position(|source| source.id == segment_id)
+        .and_then(|index| index.checked_sub(1))
+        .and_then(|index| sources.get(index));
     for pending in transcriptions {
         for segment in pending.transcription.segments {
             let text = segment.text.trim().to_string();
@@ -106,7 +131,7 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
             let (start_offset_ms, end_offset_ms) =
                 transcript_segment_offsets_ms(pending.base_offset_ms, &segment, &segment_words);
             storage::create_transcript_segment(
-                &transaction,
+                connection,
                 &CreateTranscriptSegmentInput {
                     chunk_id: chunk.id.clone(),
                     confidence: None,
@@ -117,7 +142,14 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
                     model: Some(model.to_string()),
                     provider: provider.to_string(),
                     recording_id: chunk.recording_id.clone(),
-                    segment_id: segment_id.to_string(),
+                    segment_id: if start_offset_ms < current_start {
+                        previous
+                            .map(|source| source.id.as_str())
+                            .unwrap_or(segment_id)
+                    } else {
+                        segment_id
+                    }
+                    .to_string(),
                     source_role: track.kind.clone(),
                     start_offset_ms,
                     text: text.clone(),
@@ -128,7 +160,7 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
             stats.text_char_count += text.chars().count();
             for word in segment_words {
                 storage::create_transcript_word(
-                    &transaction,
+                    connection,
                     &CreateTranscriptWordInput {
                         end_offset_ms: pending.base_offset_ms + seconds_to_ms(word.end),
                         id: Uuid::now_v7().to_string(),
@@ -143,7 +175,6 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
         }
     }
 
-    transaction.commit()?;
     Ok(stats)
 }
 
@@ -183,4 +214,96 @@ pub(in crate::ai) fn transcript_segment_offsets_ms(
     let end_offset_ms = base_offset_ms + seconds_to_ms(end_seconds);
 
     (start_offset_ms, end_offset_ms.max(start_offset_ms))
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    #[test]
+    fn committed_speech_is_idempotent_and_a_failed_checkpoint_rolls_back_text() {
+        let storage = storage::test_storage(PathBuf::new());
+        let (chunk, track) = storage
+            .with_connection(|connection| {
+                let (chunk, track) = crate::ai::tests::test_transcription_chunk(connection);
+                storage::finalize_recording_segment(
+                    connection,
+                    &storage::FinalizeRecordingSegmentInput {
+                        id: chunk.segment_id.clone().unwrap(),
+                        duration_ms: 5000,
+                        ended_at_ms: 5001,
+                        updated_at_ms: 5001,
+                        video_stream_index: Some(0),
+                        desktop_audio_stream_index: Some(1),
+                        microphone_audio_stream_index: Some(2),
+                        probe_json: None,
+                    },
+                )?;
+                Ok((chunk, track))
+            })
+            .unwrap();
+        let result = || SpeechRangeResult {
+            range: whisper_backend::SpeechRange {
+                start_ms: 100,
+                end_ms: 600,
+            },
+            fingerprint: "synthetic-config".into(),
+            pending: PendingTranscription {
+                base_offset_ms: 100,
+                transcription: crate::ai::tests::test_verbose_transcription(
+                    0.0,
+                    0.5,
+                    "Synthetic reply",
+                    vec![],
+                ),
+            },
+        };
+        persist_speech_range(
+            &storage,
+            &chunk,
+            &track,
+            "local-whisper-cpp",
+            "synthetic",
+            result(),
+        )
+        .unwrap();
+        persist_speech_range(
+            &storage,
+            &chunk,
+            &track,
+            "local-whisper-cpp",
+            "synthetic",
+            result(),
+        )
+        .unwrap();
+        storage.with_connection(|connection|{
+            assert_eq!(connection.query_row("SELECT COUNT(*) FROM transcript_segments WHERE chunk_id=?1",[&chunk.id],|row|row.get::<_,i64>(0))?,1);
+            connection.execute_batch("CREATE TRIGGER reject_speech_checkpoint BEFORE INSERT ON processing_audio_ranges BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;")?;Ok(())
+        }).unwrap();
+        let mut failed = result();
+        failed.range.start_ms = 1000;
+        failed.range.end_ms = 1500;
+        failed.pending.base_offset_ms = 1000;
+        assert!(persist_speech_range(
+            &storage,
+            &chunk,
+            &track,
+            "local-whisper-cpp",
+            "synthetic",
+            failed
+        )
+        .is_err());
+        storage
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT COUNT(*) FROM transcript_segments WHERE chunk_id=?1",
+                        [&chunk.id],
+                        |row| row.get::<_, i64>(0)
+                    )?,
+                    1
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
 }

@@ -10,7 +10,7 @@ pub fn get_ocr_timeline_frames(
 ) -> rusqlite::Result<OcrTimelineFramePage> {
     let eligible = timeline_occurrence_cte();
     let limit = input.limit.unwrap_or(1000).clamp(1, 5000);
-    let sql=format!("{eligible}{CURRENT_OCR_VISIBLE} SELECT id,recording_id,segment_id,source_track_id,frame_timestamp_ms,source_frame_ref,status,error_code,sample_end_ms,CASE WHEN status='succeeded' THEN NOT EXISTS(SELECT 1 FROM ocr_document_contents c WHERE c.id=current_visible.content_id AND c.normalized_text!='') ELSE NULL END FROM current_visible WHERE (?3 IS NULL OR frame_timestamp_ms>=?3) AND (?4 IS NULL OR frame_timestamp_ms<?4) AND (?5 IS NULL OR frame_timestamp_ms>?5 OR (frame_timestamp_ms=?5 AND id>?6)) ORDER BY frame_timestamp_ms,id LIMIT ?7");
+    let sql=format!("{eligible}{CURRENT_OCR_VISIBLE} SELECT id,recording_id,segment_id,source_track_id,frame_timestamp_ms,source_frame_ref,status,error_code,sample_end_ms,CASE WHEN status='succeeded' THEN NOT EXISTS(SELECT 1 FROM ocr_document_contents c WHERE c.id=current_visible.content_id AND c.normalized_text!='') ELSE NULL END,CASE WHEN status='succeeded' THEN (SELECT substr(c.text,1,160) FROM ocr_document_contents c WHERE c.id=current_visible.content_id) ELSE NULL END FROM current_visible WHERE (?3 IS NULL OR frame_timestamp_ms>=?3) AND (?4 IS NULL OR frame_timestamp_ms<?4) AND (?5 IS NULL OR frame_timestamp_ms>?5 OR (frame_timestamp_ms=?5 AND id>?6)) ORDER BY frame_timestamp_ms,id LIMIT ?7");
     let mut statement = connection.prepare(&sql)?;
     let mut frames = statement
         .query_map(
@@ -39,6 +39,7 @@ pub fn get_ocr_timeline_frames(
                     error_code: row.get(7)?,
                     sample_end_ms: row.get(8)?,
                     text_empty: row.get(9)?,
+                    text_preview: row.get(10)?,
                     ocr_output_count,
                 })
             },

@@ -11,6 +11,8 @@ use crate::recorder::{
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SceneCompositorPlan {
+    pub(crate) source_dimensions: HashMap<String, (u32, u32)>,
+    pub(crate) independent_video: bool,
     pub(crate) canvas_height: u32,
     pub(crate) canvas_width: u32,
     pub(crate) inputs: Vec<SceneCompositorInput>,
@@ -28,6 +30,38 @@ pub(crate) struct SceneCompositorInput {
 }
 
 impl SceneCompositorPlan {
+    pub(crate) fn compose_source_outputs(
+        &self,
+        latest: &HashMap<String, CapturedFrame>,
+        timestamp: u64,
+    ) -> Result<Vec<CapturedFrame>, RecorderError> {
+        if !self.independent_video {
+            return Ok(vec![self.compose_latest_frames(latest, timestamp)?]);
+        }
+        self.inputs
+            .iter()
+            .map(|input| {
+                let frame=latest.get(&input.source_id).ok_or_else(||capture_source_missing_error(&input.source_id))?;
+                if self.source_dimensions.get(&input.scene_source_id).is_some_and(|dimensions|*dimensions!=(frame.width,frame.height)) {
+                    return Err(crate::recorder::types::RecorderError{category:crate::recorder::types::RecorderErrorCategory::Video,code:"recorder_source_dimensions_changed".into(),details:None,message:"A video source changed size. Review its crop and output size before restarting.".into()});
+                }
+                let mut local_input = input.clone();
+                local_input.rect.x = 0.0;
+                local_input.rect.y = 0.0;
+                let local = Self {
+                    source_dimensions:HashMap::new(),
+                    independent_video: false,
+                    canvas_width: even_canvas_dimension(local_input.rect.width as u32),
+                    canvas_height: even_canvas_dimension(local_input.rect.height as u32),
+                    inputs: vec![local_input],
+                    output_format: self.output_format,
+                };
+                let mut frame = local.compose_latest_frames(latest, timestamp)?;
+                frame.source_id = input.scene_source_id.clone();
+                Ok(frame)
+            })
+            .collect()
+    }
     pub(crate) fn from_scene(
         scene: &RecorderScene,
         runtime_sources: &[CaptureRuntimeSource],
@@ -56,6 +90,17 @@ impl SceneCompositorPlan {
         inputs.sort_by_key(|input| input.z_index);
 
         Ok(Self {
+            source_dimensions: scene
+                .sources
+                .iter()
+                .filter_map(|source| {
+                    Some((
+                        source.id.clone(),
+                        (source.source_width? as u32, source.source_height? as u32),
+                    ))
+                })
+                .collect(),
+            independent_video: scene.independent_video,
             canvas_height: even_canvas_dimension(scene.canvas_height),
             canvas_width: even_canvas_dimension(scene.canvas_width),
             inputs,

@@ -1,4 +1,11 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
+    thread,
+    time::Duration,
+};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -18,7 +25,7 @@ use super::{
     duration_to_clock_time,
     frame_pump::{pump_composed_frames, FramePumpStop},
     pipeline::{audio_branches, build_pipeline, AudioBranch},
-    types::MediaSegmentInput,
+    types::{FragmentEvent, MediaSegmentInput},
 };
 
 const EOS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -30,6 +37,7 @@ const FRAME_PUMP_STOP_TIMEOUT: Duration = Duration::from_millis(100);
 #[derive(Debug)]
 pub(crate) struct MediaWriterSegment {
     appsrc: gst_app::AppSrc,
+    extra_video_sources: Vec<gst_app::AppSrc>,
     audio_branches: Vec<AudioBranch>,
     bus: gst::Bus,
     frame_pump: Option<thread::JoinHandle<()>>,
@@ -38,6 +46,10 @@ pub(crate) struct MediaWriterSegment {
     benchmark: Option<RecorderBenchmarkSession>,
     started_at_ms: u64,
     stop_frames: Option<mpsc::Sender<FramePumpStop>>,
+    fragments: mpsc::Receiver<FragmentEvent>,
+    fragment_overflow: Arc<AtomicBool>,
+    open_fragments: Arc<AtomicUsize>,
+    fragment_seen: Arc<AtomicBool>,
 }
 
 #[cfg(test)]
@@ -50,7 +62,7 @@ pub(crate) fn start_synthetic_segment(
     let benchmark = benchmark_session_for_input(input);
 
     let fps = input.fps;
-    start_segment_with_frame_pump(input, true, benchmark, move |appsrc, stop| {
+    start_segment_with_frame_pump(input, true, benchmark, move |appsrc, stop, _sources| {
         thread::spawn(move || {
             pump_synthetic_frames(
                 appsrc,
@@ -73,8 +85,19 @@ pub(crate) fn start_segment_from_frames(
     let started_at_ms = input.started_at_ms;
     let benchmark = benchmark_session_for_input(input);
     let frame_pump_benchmark = benchmark.clone();
-    start_segment_with_frame_pump(input, false, benchmark, move |appsrc, stop| {
+    start_segment_with_frame_pump(input, false, benchmark, move |appsrc, stop, sources| {
         thread::spawn(move || {
+            if !sources.is_empty() {
+                return super::frame_pump::pump_source_frames(
+                    sources,
+                    frames,
+                    stop,
+                    timing,
+                    fps,
+                    started_at_ms,
+                    frame_pump_benchmark,
+                );
+            }
             pump_composed_frames(
                 appsrc,
                 frames,
@@ -98,6 +121,7 @@ impl MediaWriterSegment {
     ) -> Self {
         Self {
             appsrc,
+            extra_video_sources: Vec::new(),
             audio_branches: vec![],
             bus,
             frame_pump: None,
@@ -106,6 +130,10 @@ impl MediaWriterSegment {
             benchmark: None,
             started_at_ms: 0,
             stop_frames: None,
+            fragments: mpsc::channel().1,
+            fragment_overflow: Arc::new(AtomicBool::new(false)),
+            open_fragments: Arc::new(AtomicUsize::new(0)),
+            fragment_seen: Arc::new(AtomicBool::new(false)),
         }
     }
     pub(crate) fn abort(mut self) {
@@ -126,6 +154,9 @@ impl MediaWriterSegment {
         }
     }
     pub(crate) fn poll_error(&mut self) -> Option<RecorderError> {
+        if self.fragment_overflow.load(Ordering::SeqCst) {
+            return Some(dependency_error("recorder_fragment_queue_overflow","Recording fragment metadata could not keep up. Capture stopped to preserve the saved files."));
+        }
         while let Some(message) = self.bus.pop() {
             match message.view() {
                 gst::MessageView::Error(_) => return Some(dependency_error("recorder_media_writer_failed", "The media writer stopped after a recording error. Check audio devices and available storage.")),
@@ -145,7 +176,11 @@ impl MediaWriterSegment {
         self.benchmark.clone()
     }
 
-    pub(crate) fn stop(mut self, stop_at_ms: u64) -> Result<(), RecorderError> {
+    pub(crate) fn drain_fragments(&mut self) -> Vec<FragmentEvent> {
+        self.fragments.try_iter().collect()
+    }
+
+    pub(crate) fn stop(mut self, stop_at_ms: u64) -> Result<Vec<FragmentEvent>, RecorderError> {
         info!(stop_at_ms, "media_writer_stop_requested");
         let audio_cutoff_probes = install_audio_cutoff_probes(
             &self.pipeline,
@@ -195,10 +230,13 @@ impl MediaWriterSegment {
         }
 
         let _ = self.appsrc.end_of_stream();
+        for source in &self.extra_video_sources {
+            let _ = source.end_of_stream();
+        }
         trace!("media_writer_appsrc_eos_sent");
 
         trace!("media_writer_waiting_for_bus_eos");
-        let result = wait_for_eos_or_error(&self.bus);
+        let result = wait_for_eos_or_error(&self.bus, &self.open_fragments, &self.fragment_seen);
         let _ = self.pipeline.set_state(gst::State::Null);
         log_audio_cutoff_results(&audio_cutoff_probes);
         match &result {
@@ -215,7 +253,7 @@ impl MediaWriterSegment {
             }
         }
 
-        result
+        result.map(|_| self.drain_fragments())
     }
 }
 
@@ -226,6 +264,7 @@ pub(super) fn start_segment_with_frame_pump(
     spawn_frame_pump: impl FnOnce(
         gst_app::AppSrc,
         mpsc::Receiver<FramePumpStop>,
+        Vec<(crate::storage::RecordingVideoSource, gst_app::AppSrc)>,
     ) -> thread::JoinHandle<Result<(), String>>,
 ) -> Result<MediaWriterSegment, RecorderError> {
     info!(
@@ -266,8 +305,95 @@ pub(super) fn start_segment_with_frame_pump(
         )
     })?;
     let (stop_frames, receiver) = mpsc::channel();
+    if let Some(splitmux) = pipeline.by_name("mux") {
+        let first_path = input.output_path.clone();
+        let first_index = input.segment_index;
+        splitmux.connect("format-location", false, move |values| {
+            let index = values.get(1)?.get::<u32>().ok()?;
+            let path = if index == first_index {
+                first_path.clone()
+            } else {
+                first_path.parent()?.join(format!("{index:04}.mkv"))
+            };
+            Some(path.to_string_lossy().to_string().to_value())
+        });
+    }
+    let (fragment_sender, fragments) = mpsc::sync_channel(16);
+    let fragment_overflow = Arc::new(AtomicBool::new(false));
+    let overflow = fragment_overflow.clone();
+    let started = input.started_at_ms;
+    let open_fragments = Arc::new(AtomicUsize::new(0));
+    let fragment_seen = Arc::new(AtomicBool::new(false));
+    let open_count = open_fragments.clone();
+    let seen = fragment_seen.clone();
+    bus.set_sync_handler(move |_, message| {
+        if let gst::MessageView::Element(element) = message.view() {
+            if let Some(structure) = element.structure() {
+                let name = structure.name();
+                if matches!(
+                    name.as_str(),
+                    "splitmuxsink-fragment-opened" | "splitmuxsink-fragment-closed"
+                ) {
+                    if let (Ok(path), Ok(time)) = (
+                        structure.get::<String>("location"),
+                        structure.get::<gst::ClockTime>("running-time"),
+                    ) {
+                        let event = FragmentEvent {
+                            opened: name == "splitmuxsink-fragment-opened",
+                            path: path.into(),
+                            timestamp_ms: started.saturating_add(time.mseconds()),
+                        };
+                        if event.opened {
+                            seen.store(true, Ordering::SeqCst);
+                            open_count.fetch_add(1, Ordering::SeqCst);
+                        } else {
+                            open_count.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        if fragment_sender.try_send(event).is_err() {
+                            overflow.store(true, Ordering::SeqCst);
+                        }
+                    } else {
+                        overflow.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+        gst::BusSyncReply::Pass
+    });
     let (frame_pump_result_sender, frame_pump_result) = mpsc::channel();
-    let worker = spawn_frame_pump(appsrc.clone(), receiver);
+    let sources = input
+        .video_sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            let element = if index == 0 {
+                appsrc.clone()
+            } else {
+                pipeline
+                    .by_name(&format!("video_src_{index}"))
+                    .ok_or_else(|| {
+                        dependency_error(
+                            "recorder_media_writer_pipeline_failed",
+                            "A video input is missing.",
+                        )
+                    })?
+                    .downcast::<gst_app::AppSrc>()
+                    .map_err(|_| {
+                        dependency_error(
+                            "recorder_media_writer_pipeline_failed",
+                            "A video input is invalid.",
+                        )
+                    })?
+            };
+            Ok((source.clone(), element))
+        })
+        .collect::<Result<Vec<_>, RecorderError>>()?;
+    let extra_video_sources = sources
+        .iter()
+        .skip(1)
+        .map(|(_, source)| source.clone())
+        .collect();
+    let worker = spawn_frame_pump(appsrc.clone(), receiver, sources);
     let frame_pump = thread::spawn(move || {
         let result = match worker.join() {
             Ok(result) => result,
@@ -295,6 +421,7 @@ pub(super) fn start_segment_with_frame_pump(
 
     Ok(MediaWriterSegment {
         appsrc,
+        extra_video_sources,
         audio_branches: audio_branches(input),
         bus,
         frame_pump: Some(frame_pump),
@@ -303,6 +430,10 @@ pub(super) fn start_segment_with_frame_pump(
         benchmark,
         started_at_ms: input.started_at_ms,
         stop_frames: Some(stop_frames),
+        fragments,
+        fragment_overflow,
+        open_fragments,
+        fragment_seen,
     })
 }
 
@@ -318,8 +449,17 @@ fn benchmark_session_for_input(input: &MediaSegmentInput) -> Option<RecorderBenc
     })
 }
 
-fn wait_for_eos_or_error(bus: &gst::Bus) -> Result<(), RecorderError> {
+fn wait_for_eos_or_error(
+    bus: &gst::Bus,
+    open: &AtomicUsize,
+    seen: &AtomicBool,
+) -> Result<(), RecorderError> {
     loop {
+        // Async splitmux finalization can consume sink EOS internally. Closed
+        // notifications confirm every opened muxer finished writing its file.
+        if seen.load(Ordering::SeqCst) && open.load(Ordering::SeqCst) == 0 {
+            return Ok(());
+        }
         let Some(message) = bus.timed_pop(duration_to_clock_time(EOS_TIMEOUT)) else {
             warn!("media_writer_eos_timeout");
             return Err(dependency_error(

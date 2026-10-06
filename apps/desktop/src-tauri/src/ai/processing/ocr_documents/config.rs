@@ -106,6 +106,31 @@ pub(super) fn load_ocr_job_config(
     }
 }
 
+pub(super) fn load_chunk_ocr_config(
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+) -> Result<OcrJobConfig, AiError> {
+    let original = load_ocr_job_config(storage, &chunk.job_id)?;
+    let override_json = storage
+        .with_connection(|connection| storage::processing_chunk_config(connection, &chunk.id))
+        .map_err(storage_error)?;
+    let Some(json) = override_json else {
+        return Ok(original);
+    };
+    let settings: settings::AppSettings = serde_json::from_str(&json).map_err(|_| {
+        ai_error(
+            "ai_processing_config_invalid",
+            "The selected source configuration is invalid.",
+        )
+    })?;
+    let mut updated = OcrJobConfig::capture(&settings)?;
+    // Retrying existing samples changes their provider, not their source-time
+    // identity. Full OCR reprocessing remains the explicit cadence-change path.
+    updated.recognition_fps = original.recognition_fps;
+    updated.sync_with_recording = original.sync_with_recording;
+    Ok(updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

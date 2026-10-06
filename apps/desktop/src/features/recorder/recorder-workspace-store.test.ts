@@ -8,7 +8,9 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
-import { useRecorderWorkspaceStore } from './recorder-workspace-store';
+import { createRecorderWorkspaceStore } from './recorder-workspace-store';
+
+let useRecorderWorkspaceStore = createRecorderWorkspaceStore();
 
 const client = vi.hoisted(() => ({
   getAudioSources: vi.fn(),
@@ -136,6 +138,7 @@ const audioSources: AudioSourceList = {
 };
 
 beforeEach(() => {
+  useRecorderWorkspaceStore = createRecorderWorkspaceStore();
   vi.resetAllMocks();
   useRecorderWorkspaceStore.setState(
     useRecorderWorkspaceStore.getInitialState(),
@@ -949,6 +952,22 @@ test('saveScene reports missing scenes and save failures', async () => {
     error: 'disk full',
     saveStatus: 'error',
   });
+});
+
+test('shell and Capture share one status subscription until both release it', async () => {
+  const cleanup = vi.fn();
+  client.listenToRecorderStatusChanged.mockResolvedValue(cleanup);
+  const [shell, capture] = await Promise.all([
+    useRecorderWorkspaceStore.getState().subscribeToStatusEvents(),
+    useRecorderWorkspaceStore.getState().subscribeToStatusEvents(),
+  ]);
+  expect(client.listenToRecorderStatusChanged).toHaveBeenCalledTimes(1);
+  shell();
+  await Promise.resolve();
+  expect(cleanup).not.toHaveBeenCalled();
+  capture();
+  await Promise.resolve();
+  expect(cleanup).toHaveBeenCalledTimes(1);
 });
 
 test('setDraftScene marks dirty and falls back to an existing selection', () => {

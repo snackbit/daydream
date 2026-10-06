@@ -1,5 +1,6 @@
 use super::*;
 
+mod live_processing;
 mod ocr_documents;
 mod privacy_regressions;
 use std::path::{Path, PathBuf};
@@ -1964,13 +1965,19 @@ fn audio_chunk_plans_split_long_segments_by_source_and_preserve_pause_gap() {
         .filter(|plan| plan.segment_id == "segment-2" && plan.source_role == "desktop-audio")
         .collect::<Vec<_>>();
 
-    assert_eq!(desktop_segment_1.len(), 3);
-    assert_eq!(microphone_segment_1.len(), 3);
+    assert_eq!(desktop_segment_1.len(), 62);
+    assert_eq!(microphone_segment_1.len(), 62);
     assert_eq!(desktop_segment_1[0].start_offset_ms, 0);
-    assert_eq!(desktop_segment_1[0].end_offset_ms, 15 * 60 * 1_000);
-    assert_eq!(desktop_segment_1[2].start_offset_ms, 30 * 60 * 1_000);
-    assert_eq!(desktop_segment_1[2].end_offset_ms, 31 * 60 * 1_000);
-    assert_eq!(desktop_segment_2.len(), 1);
+    assert_eq!(desktop_segment_1[0].end_offset_ms, 30_000);
+    assert_eq!(
+        desktop_segment_1[61].start_offset_ms,
+        31 * 60 * 1_000 - 30_000
+    );
+    assert_eq!(desktop_segment_1[61].end_offset_ms, 31 * 60 * 1_000);
+    assert_eq!(desktop_segment_2.len(), 10);
+    assert!(plans
+        .iter()
+        .all(|plan| plan.end_offset_ms - plan.start_offset_ms <= 30_000));
     assert_eq!(
         desktop_segment_2[0].start_offset_ms,
         segment_1_duration_ms + pause_after_segment_1_ms
@@ -2419,7 +2426,7 @@ fn create_test_vlm_observation(
     )
 }
 
-fn test_transcription_chunk(
+pub(in crate::ai) fn test_transcription_chunk(
     connection: &rusqlite::Connection,
 ) -> (ProcessingChunkRow, RecordingTrackRow) {
     let recording_id = Uuid::now_v7().to_string();
@@ -2505,7 +2512,7 @@ fn test_transcription_chunk(
     (chunk, track)
 }
 
-fn test_verbose_transcription(
+pub(in crate::ai) fn test_verbose_transcription(
     start: f64,
     end: f64,
     text: &str,

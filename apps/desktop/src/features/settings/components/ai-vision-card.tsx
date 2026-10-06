@@ -24,6 +24,7 @@ import {
 interface AiVisionCardProps {
   draft: AppSettings;
   models: AiModelAsset[];
+  sourceCount: number;
   onCancelModelDownload: (modelId: string) => void;
   onChangeVisionKey: (value: string) => void;
   onDeleteModel: (modelId: string) => void;
@@ -36,6 +37,7 @@ interface AiVisionCardProps {
 export function AiVisionCard({
   draft,
   models,
+  sourceCount,
   onCancelModelDownload,
   onChangeVisionKey,
   onDeleteModel,
@@ -54,15 +56,14 @@ export function AiVisionCard({
     visionKeyDraft,
   });
   const hasVisionConsumer =
-    ocr.engine === 'vision' || vision.observationsEnabled;
+    (ocr.enabled && ocr.engine === 'vision') || vision.observationsEnabled;
 
   return (
     <Card size="sm">
       <CardHeader>
         <CardTitle>OCR and Vision</CardTitle>
         <CardDescription>
-          Choose how text is recognized. Screen observations use the shared
-          Vision endpoint independently.
+          Read text and describe screen activity.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -93,9 +94,7 @@ export function AiVisionCard({
           />
           {hasVisionConsumer && missingRequirements.length > 0 ? (
             <VisionConfigurationAlert
-              engine={ocr.engine}
               missingRequirements={missingRequirements}
-              observationsEnabled={vision.observationsEnabled}
             />
           ) : null}
           <Separator />
@@ -105,6 +104,8 @@ export function AiVisionCard({
               ocrEngine: ocr.engine,
               settings: vision,
               visionKeyDraft,
+              sourceCount,
+              samplesPerMinute: effectiveFrameRecognitionFps * 60,
             }}
             actions={{
               onChangeVisionKey,
@@ -118,18 +119,11 @@ export function AiVisionCard({
 }
 
 function VisionConfigurationAlert({
-  engine,
   missingRequirements,
-  observationsEnabled,
 }: {
-  engine: AppSettings['ai']['ocr']['engine'];
   missingRequirements: string[];
-  observationsEnabled: boolean;
 }) {
-  const message =
-    engine === 'vision'
-      ? `Vision OCR is not ready until you configure ${joinRequirements(missingRequirements)}. It will not fall back to Tesseract.${observationsEnabled ? ' Screen observations are also unavailable until configured.' : ''}`
-      : `Screen observations are not ready until you configure ${joinRequirements(missingRequirements)}.`;
+  const message = `Add ${joinRequirements(missingRequirements)}. You can save this setup now. Vision tasks cannot run until it is complete.`;
 
   return (
     <Alert variant="destructive">

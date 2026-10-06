@@ -61,7 +61,7 @@ export function TrackClip({
           ? 'var(--color-primary)'
           : `color-mix(in oklch, ${color.border} 24%, var(--color-border))`,
         left: (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
-        bottom: 4,
+        bottom: track.kind === 'video' ? 52 : 4,
         width: Math.max(
           4,
           ((segment.durationMs ?? 0) / totalDurationMs) * timelineWidthPx,

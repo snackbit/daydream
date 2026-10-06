@@ -37,15 +37,23 @@ impl<'a> ProcessingChunkContext<'a> {
                 if current.attempt_count != self.chunk.attempt_count {
                     return Ok(current);
                 }
+                let error = storage::first_processing_chunk_failure(connection, &self.chunk.id)?;
                 let updated = storage::update_processing_chunk_status_if_active(
                     connection,
                     &self.chunk.id,
-                    "succeeded",
+                    if error.is_some() {
+                        "completed-with-errors"
+                    } else {
+                        "succeeded"
+                    },
                     1.0,
-                    None,
+                    error.as_deref(),
                     now_ms(),
                 )?;
-                if updated.status == "succeeded" {
+                if matches!(
+                    updated.status.as_str(),
+                    "succeeded" | "completed-with-errors"
+                ) {
                     if let Some(result_code) = result_code {
                         storage::update_processing_chunk_result_code(
                             connection,
@@ -74,8 +82,7 @@ impl<'a> ProcessingChunkContext<'a> {
     }
 
     pub(super) fn mark_failed(&self, error_code: &str) -> Result<(), AiError> {
-        self.update_status("failed", 0.0, Some(error_code))
-            .map(|_updated| ())
+        super::chunk_failure::fail_chunk(&self.storage, self.chunk, error_code, now_ms())
     }
 
     fn update_status(

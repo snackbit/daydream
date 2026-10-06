@@ -1,28 +1,41 @@
 use super::super::super::*;
+use super::readiness::save_readiness_failure;
+use rusqlite::OptionalExtension;
 
 pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
     app: &AppHandle<R>,
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<ProcessingJobRow, AiError> {
+    enqueue_processing(app, storage, recording_id, false)
+}
+
+fn enqueue_processing<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    storage: &AppStorage,
+    recording_id: &str,
+    append: bool,
+) -> Result<ProcessingJobRow, AiError> {
     tracing::info!(recording_id = %recording_id, "ai_processing_start_requested");
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
     let ocr_config_json = capture_ocr_job_config(&app_settings)?;
-    if !storage
-        .with_connection(|connection| {
-            crate::recording_privacy::protection_ready(connection, recording_id)
-        })
-        .map_err(storage_error)?
+    let recording = storage
+        .with_connection(|connection| storage::get_recording(connection, recording_id))
+        .map_err(storage_error)?;
+    let input_open = matches!(recording.status.as_str(), "recording" | "paused");
+    if !input_open
+        && !storage
+            .with_connection(|connection| {
+                crate::recording_privacy::protection_ready(connection, recording_id)
+            })
+            .map_err(storage_error)?
     {
         return Err(ai_error(
             "ai_processing_protection_pending",
             "Protected recording spans must be recovered before processing.",
         ));
     }
-    let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, recording_id))
-        .map_err(storage_error)?;
-    if recording.status != "completed" {
+    if !matches!(recording.status.as_str(), "completed" | "failed") && !input_open {
         tracing::warn!(
             recording_id = %recording_id,
             recording_status = %recording.status,
@@ -43,8 +56,16 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
         .map_err(storage_error)?;
     let audio_plans = audio_chunk_plans(&segments, &redactions);
     let activity_plans = activity_chunk_plans(&segments, &app_settings, &redactions);
-    let ocr_plans = visual_chunk_plans(&segments, &app_settings, &redactions, "ocr");
-    let vlm_plans = visual_chunk_plans(&segments, &app_settings, &redactions, "vlm");
+    let ocr_plans = storage
+        .with_connection(|connection| {
+            visual_source_chunk_plans(connection, &segments, &app_settings, &redactions, "ocr")
+        })
+        .map_err(storage_error)?;
+    let vlm_plans = storage
+        .with_connection(|connection| {
+            visual_source_chunk_plans(connection, &segments, &app_settings, &redactions, "vlm")
+        })
+        .map_err(storage_error)?;
     let audio_chunk_count = audio_plans.len();
     let activity_chunk_count = activity_plans.len();
     let ocr_chunk_count = ocr_plans.len();
@@ -62,21 +83,6 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
         word_timestamps = app_settings.ai.transcription.word_timestamps_enabled,
         "ai_processing_plan_built"
     );
-    if !audio_plans.is_empty() {
-        if let Err(error) = check_transcription_readiness(app, storage, &app_settings) {
-            tracing::warn!(
-                recording_id = %recording_id,
-                error_code = %error.code,
-                "ai_processing_start_blocked_transcription_readiness"
-            );
-            return Err(save_readiness_failure(
-                storage,
-                recording_id,
-                &error.code,
-                &error.message,
-            ));
-        }
-    }
 
     if audio_plans.is_empty()
         && activity_plans.is_empty()
@@ -99,47 +105,76 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
         .with_connection_mut(|database| {
             let transaction = database.transaction()?;
             let connection = &transaction;
-            if let Some(existing) = storage::get_latest_processing_job_for_recording(
+            let existing = storage::get_latest_processing_job_for_recording(
                 connection,
                 recording_id,
                 AI_PROCESSING_JOB_KIND,
-            )? {
+            )?;
+            if let Some(existing) = &existing {
                 tracing::info!(
                     recording_id = %recording_id,
                     job_id = %existing.id,
                     job_status = %existing.status,
                     "ai_processing_existing_job_found"
                 );
-                match existing.status.as_str() {
-                    "queued" | "running" | "paused" | "succeeded" => return Ok(existing),
-                    "failed" | "cancelled" => {
-                        let retried = storage::retry_processing_job_chunks(
-                            connection,
-                            &existing.id,
-                            now_ms(),
+                if !append
+                    && !input_open
+                    && !storage::processing_job_input_open(connection, &existing.id)?
+                {
+                    match existing.status.as_str() {
+                        "queued" | "running" | "paused" | "succeeded" => {
+                            return Ok(existing.clone())
+                        }
+                        "failed" | "cancelled" | "completed-with-errors" => {
+                            let retried = storage::retry_processing_job_chunks(
+                                connection,
+                                &existing.id,
+                                now_ms(),
+                            )?;
+                            transaction.commit()?;
+                            return Ok(retried);
+                        }
+                        _ => {}
+                    }
+                }
+                // Automatic fragment admission must not undo a user's cancel.
+                if existing.status == "cancelled" {
+                    if !input_open {
+                        connection.execute(
+                            "UPDATE processing_job_runtime SET input_open=0 WHERE job_id=?1",
+                            [&existing.id],
                         )?;
                         transaction.commit()?;
-                        return Ok(retried);
                     }
-                    _ => {}
+                    return Ok(existing.clone());
                 }
             }
 
             let timestamp_ms = now_ms();
-            let job_id = Uuid::now_v7().to_string();
-            let job = storage::create_processing_job(
-                connection,
-                &CreateProcessingJobInput {
-                    created_at_ms: timestamp_ms,
-                    error: None,
-                    id: job_id.clone(),
-                    kind: AI_PROCESSING_JOB_KIND.to_string(),
-                    recording_id: recording_id.to_string(),
-                    status: "queued".to_string(),
-                    updated_at_ms: timestamp_ms,
-                },
-            )?;
+            let job_id = existing
+                .as_ref()
+                .map(|job| job.id.clone())
+                .unwrap_or_else(|| Uuid::now_v7().to_string());
+            let job = if let Some(existing) = existing {
+                existing
+            } else {
+                storage::create_processing_job(
+                    connection,
+                    &CreateProcessingJobInput {
+                        created_at_ms: timestamp_ms,
+                        error: None,
+                        id: job_id.clone(),
+                        kind: AI_PROCESSING_JOB_KIND.to_string(),
+                        recording_id: recording_id.to_string(),
+                        status: "queued".to_string(),
+                        updated_at_ms: timestamp_ms,
+                    },
+                )?
+            };
             storage::save_processing_job_ocr_config(connection, &job.id, &ocr_config_json)?;
+            let config =
+                serde_json::to_string(&app_settings).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            storage::set_processing_job_runtime(connection, &job.id, input_open, &config)?;
             let desktop_track = ensure_audio_track(
                 connection,
                 recording_id,
@@ -160,7 +195,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                     "microphone" => microphone_track.id.clone(),
                     _ => return Err(rusqlite::Error::InvalidQuery),
                 };
-                storage::create_processing_chunk(
+                create_chunk_once(
                     connection,
                     &CreateProcessingChunkInput {
                         attempt_count: 0,
@@ -182,7 +217,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                 )?;
             }
             for plan in activity_plans {
-                storage::create_processing_chunk(
+                create_chunk_once(
                     connection,
                     &CreateProcessingChunkInput {
                         attempt_count: 0,
@@ -205,7 +240,7 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
             }
             for (source_kind, plans) in [("ocr", ocr_plans), ("vlm", vlm_plans)] {
                 for plan in plans {
-                    storage::create_processing_chunk(
+                    create_chunk_once(
                         connection,
                         &CreateProcessingChunkInput {
                             attempt_count: 0,
@@ -221,12 +256,23 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
                             source_kind: source_kind.to_string(),
                             start_offset_ms: Some(plan.start_offset_ms),
                             status: "queued".to_string(),
-                            track_id: None,
+                            track_id: plan.track_id,
                             updated_at_ms: timestamp_ms,
                         },
                     )?;
                 }
             }
+            let job = if matches!(job.status.as_str(), "running" | "paused") {
+                job
+            } else {
+                storage::update_processing_job_status(
+                    connection,
+                    &job.id,
+                    "queued",
+                    None,
+                    timestamp_ms,
+                )?
+            };
             save_processing_notification(
                 connection,
                 ProcessingNotificationInput {
@@ -256,134 +302,86 @@ pub(crate) fn enqueue_recording_ai_processing<R: tauri::Runtime>(
     Ok(job)
 }
 
-fn check_transcription_readiness<R: tauri::Runtime>(
+fn create_chunk_once(
+    connection: &rusqlite::Connection,
+    input: &CreateProcessingChunkInput,
+) -> rusqlite::Result<()> {
+    let exists:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM processing_chunks WHERE job_id=?1 AND segment_id IS ?2 AND source_kind=?3 AND track_id IS ?4 AND start_offset_ms IS ?5 AND end_offset_ms IS ?6)",rusqlite::params![input.job_id,input.segment_id,input.source_kind,input.track_id,input.start_offset_ms,input.end_offset_ms],|row|row.get(0))?;
+    if exists {
+        return Ok(());
+    }
+    if !crate::recording_privacy::range_protection_ready(
+        connection,
+        &input.recording_id,
+        input.start_offset_ms.unwrap_or(0),
+        input.end_offset_ms.unwrap_or(i64::MAX),
+    )? {
+        return Ok(());
+    }
+    storage::create_processing_chunk(connection, input)?;
+    Ok(())
+}
+
+pub(crate) fn admit_live_recording<R: tauri::Runtime>(
     app: &AppHandle<R>,
     storage: &AppStorage,
-    app_settings: &settings::AppSettings,
+    id: &str,
 ) -> Result<(), AiError> {
-    match app_settings.ai.transcription.provider.as_str() {
-        "local-whisper-cpp" => {
-            let model_id = &app_settings.ai.transcription.local_model_id;
-            let model = storage
-                .with_connection(|connection| storage::get_ai_model_asset(connection, model_id))
-                .map_err(storage_error)?
-                .ok_or_else(|| {
-                    ai_error(
-                        "ai_processing_local_model_unavailable",
-                        "Selected local transcription model has not been downloaded.",
-                    )
-                })?;
-            let Some(local_path) = model.local_path.as_deref() else {
-                return Err(ai_error(
-                    "ai_processing_local_model_unavailable",
-                    "Selected local transcription model has no local file.",
-                ));
-            };
-            if model.download_status != "available" || !Path::new(local_path).is_file() {
-                return Err(ai_error(
-                    "ai_processing_local_model_unavailable",
-                    "Selected local transcription model file is not available.",
-                ));
-            }
-            let _ = app.path().app_data_dir().map_err(|error| {
-                ai_error(
-                    "ai_processing_app_data_unavailable",
-                    &format!("App data directory is unavailable: {error}"),
-                )
-            })?;
-            Ok(())
-        }
-        "openai-compatible" => {
-            if app_settings
-                .ai
-                .transcription
-                .remote_base_url
-                .as_deref()
-                .is_none_or(str::is_empty)
-            {
-                return Err(ai_error(
-                    "ai_processing_remote_base_url_required",
-                    "Remote transcription base URL is required.",
-                ));
-            }
-            if app_settings
-                .ai
-                .transcription
-                .remote_api_key_ref
-                .as_deref()
-                .is_none_or(str::is_empty)
-            {
-                return Err(ai_error(
-                    "ai_processing_remote_api_key_required",
-                    "Remote transcription API key is required.",
-                ));
-            }
-            if app_settings
-                .ai
-                .transcription
-                .remote_model
-                .as_deref()
-                .is_none_or(str::is_empty)
-            {
-                return Err(ai_error(
-                    "ai_processing_remote_model_required",
-                    "Remote transcription model is required.",
-                ));
-            }
-            Ok(())
-        }
-        _ => Err(ai_error(
-            "ai_processing_transcription_provider_invalid",
-            "Transcription provider is not supported.",
-        )),
+    let settings = settings::load_app_settings(storage).map_err(settings_error)?;
+    if !settings.ai.processing.auto_start_after_recording
+        || settings.ai.processing.timing != "during-recording"
+    {
+        return Ok(());
     }
+    let needed=storage.with_connection(|connection|{
+        let recording=storage::get_recording(connection,id)?;
+        connection.execute("UPDATE recording_live_state SET classified_through_ms=MAX(classified_through_ms,?2) WHERE recording_id=?1 AND classifier_required=0",rusqlite::params![id,now_ms().saturating_sub(recording.started_at_ms.unwrap_or(now_ms()))])?;
+        let job=storage::get_latest_processing_job_for_recording(connection,id,AI_PROCESSING_JOB_KIND)?;
+        if job.as_ref().is_some_and(|job|job.status=="cancelled"){return Ok(false);}
+        let watermark:Option<i64>=connection.query_row("SELECT classified_through_ms FROM recording_live_state WHERE recording_id=?1",[id],|row|row.get(0)).optional()?;
+        let segments=storage::list_recording_segments(connection,id)?;
+        for segment in &segments {
+            if segment.state!="finalized"{continue;}
+            let end=segment.ended_at_ms.unwrap_or(i64::MAX).saturating_sub(recording.started_at_ms.unwrap_or(0));
+            if watermark.is_none_or(|watermark|end>watermark){continue;}
+            let admitted:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM processing_chunks WHERE recording_id=?1 AND segment_id=?2)",rusqlite::params![id,segment.id],|row|row.get(0))?;
+            if !admitted{return Ok(true);}
+        }
+        Ok(false)
+    }).map_err(storage_error)?;
+    if needed {
+        enqueue_processing(app, storage, id, true)?;
+    }
+    Ok(())
 }
 
-pub(in crate::ai) fn selected_transcription_model(
-    app_settings: &settings::AppSettings,
-) -> Result<String, AiError> {
-    match app_settings.ai.transcription.provider.as_str() {
-        "local-whisper-cpp" => Ok(app_settings.ai.transcription.local_model_id.clone()),
-        "openai-compatible" => app_settings
-            .ai
-            .transcription
-            .remote_model
-            .clone()
-            .filter(|model| !model.trim().is_empty())
-            .ok_or_else(|| {
-                ai_error(
-                    "ai_processing_remote_model_required",
-                    "Remote transcription model is required.",
-                )
-            }),
-        _ => Err(ai_error(
-            "ai_processing_transcription_provider_invalid",
-            "Transcription provider is not supported.",
-        )),
-    }
-}
-
-fn save_readiness_failure(
+pub(crate) fn finish_live_recording<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     storage: &AppStorage,
-    recording_id: &str,
-    code: &str,
-    message: &str,
-) -> AiError {
-    let notification_message = format!("{message} Recording: {recording_id}.");
-    let _ = storage.with_connection(|connection| {
-        save_processing_notification(
-            connection,
-            ProcessingNotificationInput {
-                actions: &[],
-                job_id: None,
-                message: &notification_message,
-                recording_id,
-                status: "warning",
-                timestamp_ms: now_ms(),
-                title: "AI processing unavailable",
-            },
-        )
-        .map(|_row| ())
-    });
-    ai_error(code, message)
+    id: &str,
+) -> Result<bool, AiError> {
+    let had_open = storage
+        .with_connection(|connection| {
+            let job = storage::get_latest_processing_job_for_recording(
+                connection,
+                id,
+                AI_PROCESSING_JOB_KIND,
+            )?;
+            if let Some(job) = job {
+                storage::processing_job_input_open(connection, &job.id)
+            } else {
+                Ok(false)
+            }
+        })
+        .map_err(storage_error)?;
+    if !had_open {
+        return Ok(false);
+    }
+    let result = enqueue_processing(app, storage, id, true);
+    storage.with_connection(|connection|{
+        connection.execute("UPDATE processing_job_runtime SET input_open=0 WHERE job_id IN(SELECT id FROM processing_jobs WHERE recording_id=?1)",[id])?;
+        connection.execute("UPDATE processing_chunk_runtime SET next_retry_at_ms=NULL,phase='queued' WHERE phase='waiting-for-audio-context' AND chunk_id IN(SELECT id FROM processing_chunks WHERE recording_id=?1)",[id])?;Ok(())
+    }).map_err(storage_error)?;
+    result?;
+    Ok(true)
 }

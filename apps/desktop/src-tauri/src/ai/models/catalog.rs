@@ -332,5 +332,6 @@ pub(in crate::ai) fn emit_model_list(app: &AppHandle) {
     let storage = app.state::<AppStorage>();
     if let Ok(models) = model_list(&storage) {
         let _ = app.emit(AI_MODELS_CHANGED_EVENT, models);
+        crate::background_tasks::emit_changed(app, None);
     }
 }

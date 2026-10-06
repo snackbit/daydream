@@ -1,10 +1,11 @@
 use super::super::*;
 pub(in crate::ai) use concurrency::{
-    acquire_ocr_permit as acquire_ocr_permit_for_documents,
-    acquire_vlm_permit as acquire_vlm_permit_for_documents,
+    acquire_ocr_cancellable as acquire_ocr_permit_for_documents,
+    acquire_vlm_cancellable as acquire_vlm_permit_for_documents,
 };
 pub(in crate::ai) use image::decode_png_rgba as decode_png_rgba_for_ocr;
 pub(in crate::ai) use vlm::{
+    verify_current_vision_configuration,
     vision_chat_completions_url as vision_chat_completions_url_for_ocr,
     vision_request_config as vision_request_config_for_ocr,
 };
@@ -19,7 +20,8 @@ mod persistence;
 mod types;
 mod vlm;
 
-use concurrency::{acquire_ocr_permit, acquire_vlm_permit};
+use concurrency::{acquire_ocr_cancellable, acquire_ocr_permit, acquire_vlm_cancellable};
+#[cfg(test)]
 pub(in crate::ai) use context::previous_visual_observations;
 use context::{persisted_ocr_candidates_by_timestamp, recent_visual_observations};
 #[cfg(test)]
@@ -49,7 +51,36 @@ pub(in crate::ai) use types::{
     ExtractedVisualFrame, OcrCandidate, PendingVlmObservation, PreviousVisualObservation,
     VisionRequestConfig,
 };
-use vlm::{request_vlm_observations, vision_provider_ready, vision_request_config};
+use vlm::{request_vlm_observations, vision_request_config};
+mod configuration;
+
+pub(in crate::ai) async fn probe_provider(
+    config: &VisionRequestConfig,
+    path: &Path,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), AiError> {
+    let frame = types::ExtractedVisualFrame {
+        abrupt_transition: false,
+        after_context: None,
+        before_context: None,
+        frame_timestamp_ms: 0,
+        full_checkpoint: true,
+        height: 64,
+        path: path.into(),
+        region: VisualRegion {
+            x: 0,
+            y: 0,
+            width: 128,
+            height: 64,
+        },
+        signature: "synthetic-provider-test".into(),
+        source_frame_ref: "synthetic-provider-test".into(),
+        width: 128,
+    };
+    request_vlm_observations(config, &frame, &[], &[], cancel)
+        .await
+        .map(|_| ())
+}
 #[cfg(test)]
 pub(in crate::ai) use vlm::{
     validate_vlm_observation_text, vision_chat_completions_url, vlm_chat_completions_body,
@@ -59,14 +90,15 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     cancel: Arc<AtomicBool>,
+    lease: crate::recording_privacy::ProcessingLease,
 ) -> Result<(), AiError> {
     if chunk.source_kind == "ocr" {
-        return super::ocr_documents::process_ocr_document_chunk(app, chunk, cancel).await;
+        return super::ocr_documents::process_ocr_document_chunk(app, chunk, cancel, lease).await;
     }
     let started = Instant::now();
     let storage = app.state::<AppStorage>();
     ensure_chunk_active(&storage, chunk)?;
-    let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
+    let app_settings = configuration::load_visual_settings(&storage, chunk)?;
     let is_vlm_chunk = chunk.source_kind == "vlm";
     if chunk.source_kind == "ocr" && !app_settings.ai.ocr.enabled {
         tracing::info!(
@@ -75,21 +107,6 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
             chunk_id = %chunk.id,
             source_kind = %chunk.source_kind,
             "ai_processing_visual_chunk_skipped_ocr_disabled"
-        );
-        return Ok(());
-    }
-    if is_vlm_chunk && !vision_provider_ready(&app_settings) {
-        tracing::info!(
-            recording_id = %chunk.recording_id,
-            job_id = %chunk.job_id,
-            chunk_id = %chunk.id,
-            source_kind = %chunk.source_kind,
-            vision_provider = %app_settings.ai.vision.provider,
-            ocr_enabled = app_settings.ai.ocr.enabled,
-            has_base_url = app_settings.ai.vision.base_url.is_some(),
-            has_api_key_ref = app_settings.ai.vision.api_key_ref.is_some(),
-            has_model = app_settings.ai.vision.model.is_some(),
-            "ai_processing_visual_chunk_skipped_vlm_unconfigured"
         );
         return Ok(());
     }
@@ -137,7 +154,11 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
                 .into_iter()
                 .find(|candidate| candidate.id == segment_id)
                 .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-            Ok((segment, segment_playback_offset_ms, recording.default_fps))
+            Ok((
+                source_segment(connection, chunk, segment)?,
+                segment_playback_offset_ms,
+                recording.default_fps,
+            ))
         })
         .map_err(storage_error)?;
 
@@ -154,18 +175,45 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
         "ai_processing_visual_chunk_loaded"
     );
 
-    let frame_set = extract_visual_frames(
-        app,
-        VisualExtractionRequest {
-            segment: &segment,
-            segment_playback_offset_ms,
-            chunk,
-            recording_fps,
-            app_settings: &app_settings,
-            include_ocr_regions: !is_vlm_chunk,
-            cancel: &cancel,
-        },
-    )?;
+    let extraction_app = app.clone();
+    let extraction_chunk = chunk.clone();
+    let extraction_settings = app_settings.clone();
+    let extraction_cancel = cancel.clone();
+    let extraction_lease = lease.clone();
+    let mut frame_set = tauri::async_runtime::spawn_blocking(move || {
+        let _lease = extraction_lease;
+        extract_visual_frames(
+            &extraction_app,
+            VisualExtractionRequest {
+                segment: &segment,
+                segment_playback_offset_ms,
+                chunk: &extraction_chunk,
+                recording_fps,
+                app_settings: &extraction_settings,
+                include_ocr_regions: !is_vlm_chunk,
+                cancel: &extraction_cancel,
+            },
+        )
+    })
+    .await
+    .map_err(|_| {
+        ai_error(
+            "ai_processing_visual_extraction_worker_failed",
+            "Visual extraction worker failed.",
+        )
+    })??;
+    let selection = super::worker::load_unit_selection(&storage, &chunk.id)?;
+    let succeeded=storage.with_connection(|connection|{
+        let mut statement=connection.prepare("SELECT frame_timestamp_ms FROM visual_frame_processing_states WHERE chunk_id=?1 AND status='succeeded'")?;
+        let rows=statement.query_map([&chunk.id],|row|row.get::<_,i64>(0))?;rows.collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()
+    }).map_err(storage_error)?;
+    frame_set.vlm_frames.retain(|frame| {
+        !succeeded.contains(&frame.frame_timestamp_ms)
+            && selection
+                .frame_timestamps
+                .as_ref()
+                .is_none_or(|timestamps| timestamps.contains(&frame.frame_timestamp_ms))
+    });
     tracing::info!(
         recording_id = %chunk.recording_id,
         job_id = %chunk.job_id,
@@ -196,7 +244,11 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     };
     let previous_observations = if is_vlm_chunk {
         let previous_started = Instant::now();
-        let observations = previous_visual_observations(&storage, &chunk.recording_id)?;
+        let observations = context::previous_visual_observations_for_source(
+            &storage,
+            &chunk.recording_id,
+            chunk.track_id.as_deref(),
+        )?;
         tracing::info!(
             recording_id = %chunk.recording_id,
             job_id = %chunk.job_id,
@@ -211,7 +263,11 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     };
     let persisted_ocr_candidates = if is_vlm_chunk {
         let candidates_started = Instant::now();
-        let candidates = persisted_ocr_candidates_by_timestamp(&storage, &chunk.recording_id)?;
+        let candidates = persisted_ocr_candidates_by_timestamp(
+            &storage,
+            &chunk.recording_id,
+            chunk.track_id.as_deref(),
+        )?;
         tracing::info!(
             recording_id = %chunk.recording_id,
             job_id = %chunk.job_id,
@@ -260,6 +316,7 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
                 max_parallel_ocr_jobs: app_settings.ai.processing.max_parallel_ocr_jobs as usize,
                 max_parallel_vlm_jobs: app_settings.ai.processing.max_parallel_vlm_jobs as usize,
                 cancel: cancel.clone(),
+                lease: lease.clone(),
             },
         )
         .await?;
@@ -300,7 +357,9 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
     let persist_vlm_observation_count = pending_output.vlm_observations.len();
     let persist_similarity_entry_count = pending_output.frame_similarity_entries.len();
     let persist_started = Instant::now();
-    persist_visual_output(&storage, chunk, pending_output)?;
+    if !is_vlm_chunk {
+        persist_visual_output(&storage, chunk, pending_output)?;
+    }
     let persist_elapsed_ms = elapsed_ms(persist_started);
 
     tracing::info!(

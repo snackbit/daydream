@@ -1,5 +1,7 @@
 import type { CSSProperties, MouseEvent } from 'react';
 import type { VisualFrameProcessingState } from '@daydream/shared';
+import { FileText, ScanEye } from 'lucide-react';
+import { describeProcessingError } from '@/features/processing/processing-errors';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '../../library-format';
 import type { StudioVisualFrame } from './studio-visual-observations';
@@ -94,7 +96,7 @@ function VisualFrameMarker({
       aria-label={title}
       aria-pressed={selected}
       className={cn(
-        'absolute bottom-1 z-20 h-5 overflow-hidden rounded-sm border px-1 text-[0.625rem] font-medium',
+        'absolute bottom-0 z-20 h-12 overflow-hidden border-r text-left text-[0.625rem] font-medium',
         'focus-visible:ring-ring hover:brightness-95 focus-visible:ring-2 focus-visible:outline-none',
         visualFrameMarkerClassName(source),
         selected && 'ring-primary ring-2',
@@ -110,8 +112,25 @@ function VisualFrameMarker({
       type="button"
       onClick={handleSelect}
     >
-      <span className="block truncate">
+      <span className="flex h-6 items-center gap-1 border-b px-1">
+        {source === 'vlm' ? (
+          <ScanEye className="size-3" aria-hidden="true" />
+        ) : (
+          <FileText className="size-3" aria-hidden="true" />
+        )}
         {formatVisualFrameMarkerTimestamp(frame.frameTimestampMs)}
+      </span>
+      <span className="block h-6 truncate px-1 leading-6">
+        {frame.vlmObservations
+          .map((observation) => observation.text)
+          .join(' · ') ||
+          frame.ocrRegions.map((region) => region.text).join(' ') ||
+          frame.ocrTextPreview ||
+          (frame.ocrStatus === 'failed'
+            ? 'Text recognition failed'
+            : frame.ocrTextEmpty
+              ? 'No text detected'
+              : 'Screen text')}
       </span>
     </button>
   );
@@ -212,7 +231,7 @@ function visualProcessingMarkerLabel(
   const kind = state.sourceKind === 'ocr' ? 'OCR' : 'VLM';
   const timestamp = formatVisualFrameMarkerTimestamp(state.frameTimestampMs);
   if (state.status === 'failed' && state.errorCode) {
-    return `${kind} frame ${timestamp} failed: ${state.errorCode}`;
+    return `${kind} frame ${timestamp}: ${describeProcessingError(state.errorCode).summary}`;
   }
   if (state.status === 'succeeded') {
     return `${kind} frame ${timestamp} processed, ${state.outputCount} outputs`;

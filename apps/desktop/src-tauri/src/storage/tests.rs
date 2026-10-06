@@ -44,7 +44,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 20);
+    assert_eq!(schema_version, 24);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -1523,7 +1523,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 20);
+    assert_eq!(schema_version, 24);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
@@ -2434,6 +2434,104 @@ fn recorder_foreign_keys_are_enforced() {
     assert!(source_error
         .to_string()
         .contains("FOREIGN KEY constraint failed"));
+}
+
+#[test]
+fn processing_resilience_migration_preserves_populated_job_children() {
+    for historical_column_order in [false, true] {
+        let mut connection = Connection::open_in_memory().unwrap();
+        enable_connection_pragmas(&connection).unwrap();
+        migrations().to_version(&mut connection, 20).unwrap();
+        if historical_column_order {
+            // Early databases received result_code after timestamps and track_id.
+            connection.execute_batch("ALTER TABLE processing_chunks DROP COLUMN result_code; ALTER TABLE processing_chunks ADD COLUMN result_code TEXT;").unwrap();
+        }
+        let recording_id = create_test_recording(&connection);
+        let job_id = Uuid::now_v7().to_string();
+        let chunk_id = Uuid::now_v7().to_string();
+        super::create_processing_job(
+            &connection,
+            &super::CreateProcessingJobInput {
+                id: job_id.clone(),
+                recording_id: recording_id.clone(),
+                kind: "ai-processing".into(),
+                status: "running".into(),
+                created_at_ms: 1,
+                updated_at_ms: 1,
+                error: None,
+            },
+        )
+        .unwrap();
+        create_processing_chunk(
+            &connection,
+            &CreateProcessingChunkInput {
+                id: chunk_id.clone(),
+                job_id: job_id.clone(),
+                recording_id: recording_id.clone(),
+                source_kind: "activity".into(),
+                segment_id: None,
+                track_id: None,
+                start_offset_ms: Some(0),
+                end_offset_ms: Some(1_000),
+                status: "succeeded".into(),
+                attempt_count: 1,
+                progress: 1.0,
+                error_code: None,
+                result_code: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            },
+        )
+        .unwrap();
+        super::save_processing_job_ocr_config(&connection, &job_id, "{}").unwrap();
+        apply_migrations(&mut connection).unwrap();
+        assert!(super::get_processing_job(&connection, &job_id)
+            .unwrap()
+            .is_some());
+        let migrated_chunk = super::get_processing_chunk(&connection, &chunk_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(migrated_chunk.created_at_ms, 1);
+        assert_eq!(migrated_chunk.updated_at_ms, 1);
+        assert_eq!(migrated_chunk.track_id, None);
+        assert_eq!(
+            super::get_processing_job_ocr_config(&connection, &job_id)
+                .unwrap()
+                .as_deref(),
+            Some("{}")
+        );
+        super::update_processing_job_status(
+            &connection,
+            &job_id,
+            "completed-with-errors",
+            Some("ai_transcription_vad_model_missing"),
+            2,
+        )
+        .unwrap();
+        super::update_processing_chunk_status(
+            &connection,
+            &chunk_id,
+            "completed-with-errors",
+            1.0,
+            Some("ai_transcription_vad_model_missing"),
+            2,
+        )
+        .unwrap();
+        assert!(connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            connection
+                .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 }
 
 fn create_test_recording(connection: &Connection) -> String {

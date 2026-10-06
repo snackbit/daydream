@@ -15,9 +15,12 @@ pub(crate) fn save_recorder_scene_for_storage(
     input: SaveRecorderSceneInput,
     timestamp_ms: u64,
 ) -> Result<RecorderScene, RecorderError> {
+    let independent_video = input.scene.independent_video;
     let storage_input = storage_scene_input_from_recorder(input.scene, timestamp_ms)?;
     let scene = storage
-        .with_connection_mut(|connection| storage::save_recorder_scene(connection, &storage_input))
+        .with_connection_mut(|connection| {
+            storage::save_recorder_scene_with_mode(connection, &storage_input, independent_video)
+        })
         .map_err(storage_error)?;
 
     scene_from_storage(scene)
@@ -49,7 +52,7 @@ pub(crate) fn quality_preset_as_storage_label(preset: &RecorderQualityPreset) ->
     }
 }
 
-fn storage_scene_input_from_recorder(
+pub(crate) fn storage_scene_input_from_recorder(
     scene: RecorderScene,
     timestamp_ms: u64,
 ) -> Result<StorageSaveRecorderSceneInput, RecorderError> {
@@ -95,6 +98,7 @@ fn storage_scene_source_input_from_recorder(
 
 pub(crate) fn scene_from_storage(scene: RecorderSceneRow) -> Result<RecorderScene, RecorderError> {
     Ok(RecorderScene {
+        independent_video: scene.independent_video,
         canvas_height: u32_value(scene.canvas_height, "canvasHeight")?,
         canvas_width: u32_value(scene.canvas_width, "canvasWidth")?,
         desktop_audio_source_id: scene.desktop_audio_source_id,

@@ -153,6 +153,7 @@ pub struct RecorderPerformanceStats {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderRecordingStats {
+    pub(crate) recorded_duration_ms: u64,
     pub(crate) active_segment_id: Option<String>,
     pub(crate) active_segment_index: Option<u32>,
     pub(crate) active_segment_size_bytes: Option<u64>,

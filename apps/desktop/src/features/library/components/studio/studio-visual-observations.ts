@@ -24,6 +24,7 @@ export interface StudioVisualFrame {
   ocrDocumentId?: string;
   ocrTextEmpty?: boolean | null;
   ocrSampleEndMs?: number;
+  ocrTextPreview?: string | null;
 }
 
 export function visualFrameId({
@@ -53,26 +54,47 @@ export function buildStudioVisualFrames(
     (track) => track.kind === 'video',
   )?.id;
   for (const sample of ocrFrames) {
+    if (
+      sample.recordingId !== detail.id ||
+      !visibleTimestamp(detail, sample.sourceTrackId, sample.frameTimestampMs)
+    )
+      continue;
     const frame = frameForObservation(frames, sample);
     frame.ocrStatus = sample.status;
     frame.ocrOutputCount = sample.ocrOutputCount;
     frame.ocrDocumentId = sample.documentId;
     frame.ocrTextEmpty = sample.textEmpty;
     frame.ocrSampleEndMs = sample.sampleEndMs;
+    frame.ocrTextPreview = sample.textPreview ?? null;
   }
   for (const region of visualObservations?.ocrRegions ?? []) {
+    const regionSource =
+      region.sourceFrameRef.match(/:stream:([^:]+):/)?.[1] ?? sourceTrackId;
+    if (
+      visualObservations?.recordingId !== detail.id ||
+      !visibleTimestamp(detail, regionSource, region.frameTimestampMs)
+    )
+      continue;
     const frame = frameForObservation(frames, {
       ...region,
       segmentId: segmentIdForTimestamp(detail, region.frameTimestampMs),
-      ...(sourceTrackId ? { sourceTrackId } : {}),
+      ...(regionSource ? { sourceTrackId: regionSource } : {}),
     });
     frame.ocrRegions.push(region);
   }
   for (const observation of visualObservations?.vlmObservations ?? []) {
+    const observationSource =
+      observation.sourceFrameRef.match(/:stream:([^:]+):/)?.[1] ??
+      sourceTrackId;
+    if (
+      visualObservations?.recordingId !== detail.id ||
+      !visibleTimestamp(detail, observationSource, observation.frameTimestampMs)
+    )
+      continue;
     const frame = frameForObservation(frames, {
       ...observation,
       segmentId: segmentIdForTimestamp(detail, observation.frameTimestampMs),
-      ...(sourceTrackId ? { sourceTrackId } : {}),
+      ...(observationSource ? { sourceTrackId: observationSource } : {}),
     });
     frame.vlmObservations.push(observation);
   }
@@ -109,6 +131,20 @@ export function buildStudioVisualFrames(
       };
     })
     .reverse();
+}
+
+function visibleTimestamp(
+  detail: LibraryRecordingDetail,
+  source: string | undefined,
+  timestamp: number,
+): boolean {
+  return !detail.redactions.some(
+    (redaction) =>
+      timestamp >= redaction.startOffsetMs &&
+      timestamp < redaction.endOffsetMs &&
+      (redaction.trackIds.length === 0 ||
+        (source !== undefined && redaction.trackIds.includes(source))),
+  );
 }
 
 function frameForObservation(

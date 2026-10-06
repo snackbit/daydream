@@ -36,16 +36,19 @@ fn probe_segment(segment_path: &Path) -> Result<MediaSegmentProbe, String> {
     let duration_ms = info.duration().map(clock_time_ms);
     let video_streams = info.video_streams();
     let audio_streams = info.audio_streams();
-    let video = video_streams
-        .first()
-        .map(|stream| video_probe(0, stream, duration_ms));
+    let videos = video_streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| video_probe(index as i64, stream, duration_ms))
+        .collect::<Vec<_>>();
+    let video = videos.first().cloned();
     let audio = audio_streams
         .iter()
         .enumerate()
-        .map(|(index, stream)| audio_probe(index as i64 + 1, stream, duration_ms))
+        .map(|(index, stream)| audio_probe(index as i64 + videos.len() as i64, stream, duration_ms))
         .collect::<Vec<_>>();
     let mut streams = Vec::new();
-    if let Some(video) = &video {
+    for video in &videos {
         streams.push(MediaSegmentStreamProbe {
             codec_name: video.codec_name.clone(),
             codec_type: Some("video".to_string()),
@@ -61,6 +64,7 @@ fn probe_segment(segment_path: &Path) -> Result<MediaSegmentProbe, String> {
     }));
 
     Ok(MediaSegmentProbe {
+        videos,
         audio,
         available: true,
         duration_ms,
@@ -120,6 +124,7 @@ fn stream_caps_field(
 
 fn unavailable_segment_probe(error: impl Into<String>) -> MediaSegmentProbe {
     MediaSegmentProbe {
+        videos: Vec::new(),
         audio: Vec::new(),
         available: false,
         duration_ms: None,

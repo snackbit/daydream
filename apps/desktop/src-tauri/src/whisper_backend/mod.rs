@@ -60,6 +60,7 @@ mod silence;
 #[cfg(test)]
 mod tests;
 mod transcribe;
+pub mod vad;
 mod wav;
 
 pub use backend::{backend_status, WhisperExecutionBackend};

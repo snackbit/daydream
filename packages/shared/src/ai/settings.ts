@@ -30,11 +30,27 @@ export interface AiTranscriptionProviderSettings {
 }
 
 export interface AiVisionProviderSettings {
+  authMode?: 'api-key' | 'none';
   observationsEnabled: boolean;
   apiKeyRef: string | null;
   baseUrl: string | null;
   model: string | null;
   provider: AiVisionProviderKind;
+}
+
+export interface TestVisionProviderInput {
+  vision: AiVisionProviderSettings;
+  keyDraft: string | null;
+  ocr: boolean;
+  observations: boolean;
+}
+export interface VisionProviderTestResult {
+  checks: Array<{
+    kind: 'ocr' | 'observations';
+    status: 'succeeded' | 'failed';
+    errorCode: string | null;
+    elapsedMs: number;
+  }>;
 }
 
 export interface AiOcrSettings {
@@ -44,6 +60,8 @@ export interface AiOcrSettings {
 
 export interface AiProcessingSettings {
   autoStartAfterRecording: boolean;
+  timing?: 'during-recording' | 'after-stop' | 'manual';
+  resourceMode?: 'background' | 'fast';
   frameRecognitionFps: number;
   frameRecognitionSyncWithRecording: boolean;
   frameSimilarityEnabled: boolean;

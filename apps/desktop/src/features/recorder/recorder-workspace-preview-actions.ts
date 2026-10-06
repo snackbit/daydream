@@ -73,7 +73,11 @@ async function startPreview(
       return undefined;
     },
     rethrow: false,
-    run: () => startRecorderPreview({ sceneId }),
+    run: () =>
+      startRecorderPreview({
+        sceneId,
+        ...(state.scene && state.isDirty ? { scene: state.scene } : {}),
+      }),
     success: (previewStatus) => {
       if (get().previewStartInFlightSceneId !== sceneId) return;
       if (previewStatus.sceneId !== sceneId) {

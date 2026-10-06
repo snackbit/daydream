@@ -34,13 +34,37 @@ export function createRecorderWorkspaceLifecycleActions(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ): LifecycleActions {
+  let subscribers = 0;
+  let listener: Promise<() => void> | null = null;
+  async function subscribeShared() {
+    subscribers += 1;
+    if (listener === null) listener = subscribeToStatusEvents(set, get);
+    try {
+      await listener;
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        subscribers -= 1;
+        if (subscribers === 0 && listener !== null) {
+          const current = listener;
+          listener = null;
+          void current.then((cleanup) => cleanup());
+        }
+      };
+    } catch (error) {
+      subscribers -= 1;
+      if (subscribers === 0) listener = null;
+      throw error;
+    }
+  }
   return {
     pause: () => pause(set, get),
     refreshRecordingStats: () => refreshRecordingStats(set, get),
     resume: () => resume(set, get),
     start: () => start(set, get),
     stop: () => stop(set, get),
-    subscribeToStatusEvents: () => subscribeToStatusEvents(set, get),
+    subscribeToStatusEvents: subscribeShared,
   };
 }
 
@@ -78,7 +102,7 @@ async function refreshRecordingStats(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ) {
-  if (get().status?.state !== 'recording') {
+  if (get().status?.state !== 'recording' && get().status?.state !== 'paused') {
     set({ recordingStats: null, recordingStatsError: null });
     return;
   }
@@ -87,7 +111,7 @@ async function refreshRecordingStats(
     const recordingStats = await getRecorderRecordingStats();
     const status = get().status;
     if (
-      status?.state !== 'recording' ||
+      (status?.state !== 'recording' && status?.state !== 'paused') ||
       (recordingStats !== null &&
         status.activeRecordingId !== recordingStats.recordingId)
     ) {
@@ -160,9 +184,13 @@ async function subscribeToStatusEvents(
       error: status.lastError?.message ?? null,
       pendingLifecycleAction: null,
       recordingStats:
-        status.state === 'recording' ? get().recordingStats : null,
+        status.state === 'recording' || status.state === 'paused'
+          ? get().recordingStats
+          : null,
       recordingStatsError:
-        status.state === 'recording' ? get().recordingStatsError : null,
+        status.state === 'recording' || status.state === 'paused'
+          ? get().recordingStatsError
+          : null,
       status,
     });
   }

@@ -19,6 +19,19 @@ are preserved in
 Whisper model files are downloaded separately and remain subject to their
 upstream terms.
 
+Daydream's vendored VAD compute loop has one maintained correction: failed
+graph computation resets its scheduler and returns failure instead of reporting
+success with incomplete speech probabilities. The upstream API is unchanged.
+
+## Silero VAD
+
+Silero v6.2.0 is bundled offline under `apps/desktop/src-tauri/resources/vad`.
+The GGML artifact comes from ggml-org/whisper-vad revision
+`c5c26827b67dfd053856f92e824e14fdcc123daf`. SHA-256:
+`2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987`.
+Its MIT license and source are included with the resource. Speech detection
+runs locally on CPU; installing or using Daydream does not upload audio to Silero.
+
 ## FFmpeg and ffmpeg-static
 
 The `packages/ffmpeg` development helper resolves `ffmpeg-static@5.3.0`. The

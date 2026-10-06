@@ -66,7 +66,66 @@ pub(super) fn detail_for_recording(
         .with_connection(|connection| storage::list_redactions(connection, recording_id))
         .map_err(|error| error.to_string())?;
 
-    Ok(detail_from_rows(&recording, &segments, &redactions))
+    let mut detail = detail_from_rows(&recording, &segments, &redactions);
+    let mappings = storage
+        .with_connection(|connection| storage::recording_video_streams(connection, recording_id))
+        .map_err(|_| "Video source metadata could not be read.".to_string())?;
+    for segment in &mut detail.segments {
+        if let Some(streams) = mappings.get(&segment.id) {
+            segment.video_streams = streams.clone();
+        }
+    }
+    detail.tracks = source_tracks(&segments, &mappings);
+    detail.redactions = library_redactions(&redactions, &detail.tracks);
+    Ok(detail)
+}
+
+pub(super) fn tracks_for_recording(
+    connection: &rusqlite::Connection,
+    recording_id: &str,
+    segments: &[RecordingSegmentRow],
+) -> rusqlite::Result<Vec<LibraryRecordingTrack>> {
+    let mappings = storage::recording_video_streams(connection, recording_id)?;
+    Ok(source_tracks(segments, &mappings))
+}
+
+fn source_tracks(
+    segments: &[RecordingSegmentRow],
+    mappings: &BTreeMap<String, Vec<storage::SegmentVideoStream>>,
+) -> Vec<LibraryRecordingTrack> {
+    let mut tracks = tracks_from_segments(segments);
+    let mut sources = BTreeMap::new();
+    for stream in segments
+        .iter()
+        .filter_map(|segment| mappings.get(&segment.id))
+        .flatten()
+    {
+        sources
+            .entry(stream.track_id.clone())
+            .or_insert_with(|| LibraryRecordingTrack {
+                codec: Some("h264".into()),
+                description: if stream.source_id.is_some() {
+                    "Independent screen source".into()
+                } else {
+                    "Composited screen recording".into()
+                },
+                id: stream.track_id.clone(),
+                kind: LibraryTrackKind::Video,
+                label: stream.label.clone(),
+                stream_index: Some(stream.stream_index),
+            });
+    }
+    if !sources.is_empty() {
+        let previous = std::mem::take(&mut tracks);
+        tracks = sources.into_values().collect();
+        tracks.sort_by_key(|track| track.stream_index);
+        tracks.extend(
+            previous
+                .into_iter()
+                .filter(|track| track.kind != LibraryTrackKind::Video),
+        );
+    }
+    tracks
 }
 
 pub(super) fn summary_from_rows(
@@ -172,6 +231,7 @@ pub(super) fn library_segments(segments: &[RecordingSegmentRow]) -> Vec<LibraryR
             .unwrap_or(0);
 
         output.push(LibraryRecordingSegment {
+            video_streams: Vec::new(),
             desktop_audio_stream_index: segment.desktop_audio_stream_index,
             duration_ms: segment.duration_ms,
             ended_at_ms: segment.ended_at_ms,

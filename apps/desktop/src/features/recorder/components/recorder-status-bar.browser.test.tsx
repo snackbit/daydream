@@ -1,6 +1,8 @@
 import type { RecorderPerformanceStats } from '@daydream/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import '@/index.css';
 import { RecorderStatusBar } from './recorder-status-bar';
 
 const client = vi.hoisted(() => ({
@@ -43,6 +45,33 @@ test('recorder status bar reports unavailable stats fetches', async () => {
   render(<RecorderStatusBar />);
 
   expect(await screen.findByText('Capture stats unavailable')).toBeDefined();
+});
+
+test('shell recorder controls and statistics stay reachable in a narrow window', async () => {
+  await page.viewport(420, 800);
+  client.getRecorderPerformanceStats.mockRejectedValue(
+    new Error('Synthetic stats unavailable'),
+  );
+  render(
+    <RecorderStatusBar
+      session={{
+        status: { state: 'recording', finalization: null },
+        stats: { recordedDurationMs: 3_665_000, totalSizeBytes: 300_000_000 },
+        locked: false,
+        pause: vi.fn().mockResolvedValue(undefined),
+        resume: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+      }}
+    />,
+  );
+  const performance = await screen.findByText('Capture stats unavailable');
+  expect(performance.getBoundingClientRect().right).toBeLessThanOrEqual(420);
+  const stop = screen.getByRole('button', { name: 'Stop recording' });
+  expect(stop.getBoundingClientRect().right).toBeLessThanOrEqual(420);
+  expect(screen.getByLabelText('Recorded duration').textContent).toBe(
+    '01:01:05',
+  );
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(420);
 });
 
 test('recorder status bar smooths alternating visible fps samples', async () => {

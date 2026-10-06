@@ -51,6 +51,8 @@ export function transcriptionResultLabel(
       return 'Cancelled';
     case 'failed':
       return 'Failed';
+    case 'completed-with-errors':
+      return 'Completed with errors';
     case 'no-speech':
       return 'No speech detected';
     case 'queued':

@@ -33,6 +33,7 @@ fn parser_reads_video_start_time() {
         PlaybackRequest::Video {
             segment_id,
             start_ms,
+            ..
         } => {
             assert_eq!(segment_id, "segment-1");
             assert_eq!(start_ms, 1200);
@@ -189,6 +190,7 @@ fn video_encoder_args_force_clamped_output_fps() {
 #[test]
 fn thumbnail_args_seek_after_input_and_write_jpeg_pipe() {
     let segment = PlaybackSegment {
+        video_streams: Vec::new(),
         desktop_audio_stream_index: None,
         file_path: "/tmp/daydream/segment.mkv".to_string(),
         microphone_audio_stream_index: None,
@@ -223,6 +225,7 @@ fn software_encoder_is_available_as_fallback() {
 
 fn thumbnail_key(session_id: &str, segment_id: &str, offset_ms: i64) -> ThumbnailKey {
     ThumbnailKey {
+        video_stream_index: 0,
         offset_ms,
         segment_id: segment_id.to_string(),
         session_id: session_id.to_string(),
@@ -233,6 +236,7 @@ fn thumbnail_job(key: ThumbnailKey) -> ThumbnailJob {
     ThumbnailJob {
         offset_ms: key.offset_ms,
         segment: PlaybackSegment {
+            video_streams: Vec::new(),
             desktop_audio_stream_index: None,
             file_path: "/tmp/daydream/segment.mkv".to_string(),
             microphone_audio_stream_index: None,

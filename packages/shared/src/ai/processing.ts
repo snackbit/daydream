@@ -15,13 +15,24 @@ export type ProcessingJobKind =
   | 'vlm';
 
 export type ProcessingJobStatus =
-  'cancelled' | 'failed' | 'paused' | 'queued' | 'running' | 'succeeded';
+  | 'cancelled'
+  | 'completed-with-errors'
+  | 'failed'
+  | 'paused'
+  | 'queued'
+  | 'running'
+  | 'succeeded';
 
 export type ProcessingChunkSourceKind =
   'activity' | 'audio' | 'frame' | 'ocr' | 'vlm';
 
 export type ProcessingChunkStatus =
-  'cancelled' | 'failed' | 'queued' | 'running' | 'succeeded';
+  | 'cancelled'
+  | 'completed-with-errors'
+  | 'failed'
+  | 'queued'
+  | 'running'
+  | 'succeeded';
 
 export interface ProcessingJob {
   createdAtMs: number;

@@ -1,9 +1,11 @@
 mod ai;
+mod background_tasks;
 mod diagnostics;
 mod ffmpeg;
 mod library;
 mod notifications;
 mod playback_server;
+mod provider_http;
 pub mod recorder;
 mod recording_deletion;
 mod recording_privacy;
@@ -13,6 +15,7 @@ mod settings;
 mod startup;
 pub mod storage;
 mod storage_limits;
+mod subprocess;
 mod telemetry;
 mod timeline_lanes;
 mod transcription;
@@ -79,11 +82,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            background_tasks::list_background_tasks,
+            background_tasks::get_background_task,
+            ai::commands::processing_commands::retry_processing_units,
+            ai::commands::processing_commands::reprocess_recording_transcription,
             startup::get_app_startup_status,
             startup::retry_app_startup,
             library::commands::close_library_playback_session,
             library::commands::create_library_playback_session,
             library::commands::create_library_redactions,
+            library::redaction_resize::resize_library_redaction,
+            library::frame_navigation::adjacent_library_frame,
             diagnostics::commands::get_diagnostics,
             diagnostics::commands::get_debug_log_bundle,
             library::commands::delete_library_recording,
@@ -123,6 +132,7 @@ pub fn run() {
             ai::commands::model_commands::delete_ai_model,
             ai::commands::model_commands::self_test_ai_model,
             ai::commands::provider_commands::get_ai_provider_status,
+            ai::processing::provider_test::test_vision_provider,
             ai::commands::provider_commands::save_ai_provider_secret,
             ai::commands::provider_commands::delete_ai_provider_secret,
             ai::commands::processing_commands::list_processing_jobs,
@@ -141,6 +151,8 @@ pub fn run() {
             recorder::select_capture_sources,
             recorder::get_audio_sources,
             recorder::save_recorder_scene,
+            recorder::source_recording::get_capture_setup,
+            recorder::source_recording::save_capture_setup,
             recorder::get_recorder_preview_status,
             recorder::start_recorder_preview,
             recorder::stop_recorder_preview,

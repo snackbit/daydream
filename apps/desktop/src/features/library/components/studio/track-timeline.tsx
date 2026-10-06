@@ -22,6 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
+import { GroupedRedactions } from './redactions/grouped-redactions';
 import { isStudioActivityLaneKind } from './studio-activity-lanes';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
@@ -65,6 +66,7 @@ export function TrackTimeline({
   playbackAssets,
   thumbnailStatus,
   visualFrames,
+  onRefreshRedactions,
 }: {
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
@@ -84,6 +86,7 @@ export function TrackTimeline({
   playbackAssets: LibraryPlaybackAssets | null;
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   visualFrames: StudioVisualFrame[];
+  onRefreshRedactions: () => void;
 }) {
   const { actions, state } = playback;
   const clipsById = useStudioTimelineStore((store) => store.clipsById);
@@ -308,6 +311,15 @@ export function TrackTimeline({
             timelineWidthPx={viewModel.timelineWidthPx}
             totalDurationMs={viewModel.totalDurationMs}
           />
+          <GroupedRedactions
+            redactions={detail.redactions}
+            lanes={viewModel.activeLaneLayouts}
+            selectedIds={viewModel.selectedRedactionIds}
+            timelineWidthPx={viewModel.timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            onSelect={handleSelectRedaction}
+            onSaved={onRefreshRedactions}
+          />
           <div
             className="grid"
             style={{
@@ -341,6 +353,7 @@ export function TrackTimeline({
                   return (
                     <SortableActivityTrackLane
                       activity={activity}
+                      segments={detail.segments}
                       key={lane.trackId}
                       lane={lane}
                       redactions={detail.redactions}
@@ -372,6 +385,7 @@ export function TrackTimeline({
 
                 return (
                   <SortableTrackLane
+                    visibleRange={viewModel.waveformRequestRange}
                     aiProcessingState={aiProcessingState}
                     clipDrafts={clipsById}
                     detail={detail}

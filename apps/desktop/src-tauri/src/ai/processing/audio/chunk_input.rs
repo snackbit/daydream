@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Clone)]
 pub(super) struct AudioChunkInput {
     pub(super) chunk_start_offset_ms: i64,
     pub(super) segment: RecordingSegmentRow,

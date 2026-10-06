@@ -96,6 +96,15 @@ impl RecorderManager {
         }
         let mut paused = active;
         paused.active_segment = None;
+        paused.next_segment_index = storage
+            .with_connection(|connection| {
+                storage::list_recording_segments(connection, recording_id)
+            })
+            .map_err(storage_error)?
+            .iter()
+            .map(|segment| segment.segment_index.max(0) as u32 + 1)
+            .max()
+            .unwrap_or(paused.next_segment_index);
         let mut runtime = self.lock_runtime()?;
         if let Some(error) = runtime.pending_failure.take() {
             drop(runtime);

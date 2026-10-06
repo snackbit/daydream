@@ -164,6 +164,15 @@ pub fn recover_interrupted_recordings(
     connection: &Connection,
     _ended_at_ms: i64,
 ) -> rusqlite::Result<usize> {
+    let transaction = connection.unchecked_transaction()?;
+    let connection = &transaction;
+    let ids = {
+        let mut statement = connection.prepare(
+            "SELECT id FROM recordings WHERE status IN ('planned','recording','paused')",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     connection.execute(
         r#"
         UPDATE recording_segments
@@ -184,7 +193,7 @@ pub fn recover_interrupted_recordings(
         params![INTERRUPTED_RECORDING_ERROR_CODE],
     )?;
 
-    connection.execute(
+    let recovered = connection.execute(
         r#"
         UPDATE recordings
         SET
@@ -201,7 +210,12 @@ pub fn recover_interrupted_recordings(
         WHERE status IN ('planned', 'recording', 'paused')
         "#,
         [],
-    )
+    )?;
+    for id in ids {
+        crate::recording_privacy::seal_interrupted_capture(connection, &id, _ended_at_ms)?;
+    }
+    transaction.commit()?;
+    Ok(recovered)
 }
 
 pub fn is_active_recording_status(status: &str) -> bool {

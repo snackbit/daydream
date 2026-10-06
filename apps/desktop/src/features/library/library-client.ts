@@ -19,7 +19,38 @@ import type {
   LibraryWaveforms,
   RenameLibraryRecordingInput,
   UnredactLibraryRedactionsInput,
+  ResizeLibraryRedactionInput,
 } from '@daydream/shared';
+import {
+  decodeVideoAssets,
+  decodeVideoStreams,
+} from './video-metadata-decoder';
+
+export async function resizeLibraryRedaction(
+  input: ResizeLibraryRedactionInput,
+): Promise<void> {
+  await invoke<unknown>('resizeLibraryRedaction', { input });
+}
+
+export async function adjacentLibraryFrame(
+  recordingId: string,
+  timestampMs: number,
+  direction: -1 | 1,
+  sourceTrackId?: string,
+): Promise<number | null> {
+  const value = await invoke<unknown>('adjacentLibraryFrame', {
+    input: {
+      recordingId,
+      timestampMs: Math.round(timestampMs),
+      direction,
+      ...(sourceTrackId ? { sourceTrackId } : {}),
+    },
+  });
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new Error('Invalid frame navigation response.');
+  return value;
+}
 
 export async function listLibraryRecordings(): Promise<
   LibraryRecordingSummary[]
@@ -30,9 +61,18 @@ export async function listLibraryRecordings(): Promise<
 export async function getLibraryRecording(
   recordingId: string,
 ): Promise<LibraryRecordingDetail> {
-  return invoke<LibraryRecordingDetail>('getLibraryRecording', {
+  const detail = await invoke<LibraryRecordingDetail>('getLibraryRecording', {
     recordingId,
   });
+  return {
+    ...detail,
+    segments: detail.segments.map((segment) => ({
+      ...segment,
+      ...(segment.videoStreams === undefined
+        ? {}
+        : { videoStreams: decodeVideoStreams(segment.videoStreams) }),
+    })),
+  };
 }
 
 export async function deleteLibraryRecording(
@@ -96,9 +136,21 @@ export async function getRecordingWaveformTiles(
 export async function createLibraryPlaybackSession(
   input: LibraryPlaybackAssetRequest,
 ): Promise<LibraryPlaybackAssets> {
-  return invoke<LibraryPlaybackAssets>('createLibraryPlaybackSession', {
-    input,
-  });
+  const assets = await invoke<LibraryPlaybackAssets>(
+    'createLibraryPlaybackSession',
+    {
+      input,
+    },
+  );
+  return {
+    ...assets,
+    segments: assets.segments.map((segment) => ({
+      ...segment,
+      ...(segment.videos === undefined
+        ? {}
+        : { videos: decodeVideoAssets(segment.videos) }),
+    })),
+  };
 }
 
 export async function closeLibraryPlaybackSession(

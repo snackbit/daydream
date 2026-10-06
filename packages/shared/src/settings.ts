@@ -92,6 +92,12 @@ export interface StorageSettingsLimits {
 
 export interface SaveAppSettingsInput {
   settings: AppSettings;
+  credentials?: SettingsCredentialDrafts;
+}
+
+export interface SettingsCredentialDrafts {
+  transcriptionKey?: string | null;
+  visionKey?: string | null;
 }
 
 export interface PreviewAppSettingsStorageCleanupInput {

@@ -64,6 +64,31 @@ pub(in crate::ai) async fn acquire_vlm_permit(max_active: usize) -> VisualFrameP
         .await
 }
 
+pub(in crate::ai) async fn acquire_ocr_cancellable(
+    max_active: usize,
+    cancel: Arc<AtomicBool>,
+) -> Result<VisualFramePoolPermit, AiError> {
+    await_permit(acquire_ocr_permit(max_active), cancel).await
+}
+pub(in crate::ai) async fn acquire_vlm_cancellable(
+    max_active: usize,
+    cancel: Arc<AtomicBool>,
+) -> Result<VisualFramePoolPermit, AiError> {
+    await_permit(acquire_vlm_permit(max_active), cancel).await
+}
+async fn await_permit(
+    future: impl std::future::Future<Output = VisualFramePoolPermit>,
+    cancel: Arc<AtomicBool>,
+) -> Result<VisualFramePoolPermit, AiError> {
+    tokio::pin!(future);
+    loop {
+        check_processing_cancel(&cancel)?;
+        if let Ok(permit) = tokio::time::timeout(Duration::from_millis(50), &mut future).await {
+            return Ok(permit);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

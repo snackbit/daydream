@@ -109,6 +109,7 @@ export interface OcrTimelineFrame {
   status: OcrOccurrenceStatus;
   sampleEndMs: number;
   textEmpty: boolean | null;
+  textPreview?: string | null;
 }
 
 export interface GetOcrTimelineFramesInput {

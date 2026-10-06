@@ -16,6 +16,7 @@ pub(super) struct FullFrameSet {
     _directory: TempProcessingDirectory,
     paths: Vec<PathBuf>,
     segment_id: String,
+    track_id: Option<String>,
     chunk_start: i64,
     chunk_end: i64,
     fps: f64,
@@ -23,6 +24,9 @@ pub(super) struct FullFrameSet {
 impl FullFrameSet {
     pub(super) fn len(&self) -> usize {
         self.paths.len()
+    }
+    pub(super) fn timestamp(&self, index: usize) -> i64 {
+        self.chunk_start + sample_offset_ms(index, self.fps)
     }
     pub(super) fn frame(&self, index: usize) -> Result<FullFrame, AiError> {
         let path = self.paths[index].clone();
@@ -37,7 +41,13 @@ impl FullFrameSet {
             pixel_hash: pixel_hash(&image),
             source_ref: format!(
                 "segment:{}:offset:{}:frame:{}",
-                self.segment_id, timestamp_ms, index
+                if let Some(track) = &self.track_id {
+                    format!("{}:stream:{track}", self.segment_id)
+                } else {
+                    self.segment_id.clone()
+                },
+                timestamp_ms,
+                index
             ),
         })
     }
@@ -76,6 +86,7 @@ pub(super) fn extract_full_frames(
         start - playback_offset,
         end - start,
         fps,
+        cancel,
     )?;
     check_processing_cancel(cancel)?;
     let mut paths = fs::read_dir(directory.path())
@@ -92,6 +103,7 @@ pub(super) fn extract_full_frames(
         _directory: directory,
         paths,
         segment_id: segment.id.clone(),
+        track_id: chunk.track_id.clone(),
         chunk_start: start,
         chunk_end: end,
         fps,
@@ -105,8 +117,10 @@ fn extract_to_directory(
     start: i64,
     duration: i64,
     fps: f64,
+    cancel: &AtomicBool,
 ) -> Result<(), AiError> {
-    let output = Command::new(ffmpeg::binary_path())
+    let mut command = Command::new(ffmpeg::binary_path());
+    command
         .args([
             "-hide_banner",
             "-v",
@@ -128,9 +142,20 @@ fn extract_to_directory(
             "-threads",
             "1",
         ])
-        .arg(directory.join("frame-%06d.png"))
-        .output()
-        .map_err(file_error)?;
+        .arg(directory.join("frame-%06d.png"));
+    let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(60), 1_000_000)
+        .map_err(|error| {
+        ai_error(
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                "ai_processing_cancelled"
+            } else if error.kind() == std::io::ErrorKind::TimedOut {
+                "ai_ocr_frame_extract_timeout"
+            } else {
+                "ai_ocr_frame_extract_failed"
+            },
+            "OCR frame extraction did not finish.",
+        )
+    })?;
     if !output.status.success() {
         return Err(ai_error(
             "ai_ocr_frame_extract_failed",
@@ -191,13 +216,23 @@ mod tests {
         assert!(output.status.success(), "synthetic video generation failed");
         let frames = root.join("frames");
         fs::create_dir_all(&frames).unwrap();
-        extract_to_directory(&frames, video.to_str().unwrap(), 0, 0, 2000, 2.0).unwrap();
+        extract_to_directory(
+            &frames,
+            video.to_str().unwrap(),
+            0,
+            0,
+            2000,
+            2.0,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         let mut paths = fs::read_dir(&frames)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .collect::<Vec<_>>();
         paths.sort();
         let sampled = FullFrameSet {
+            track_id: None,
             _directory: TempProcessingDirectory::new(frames),
             paths,
             segment_id: "synthetic".into(),

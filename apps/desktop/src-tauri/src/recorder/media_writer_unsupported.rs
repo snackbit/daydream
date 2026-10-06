@@ -12,6 +12,7 @@ const UNSUPPORTED_MESSAGE: &str = "Recorder media writing is only implemented on
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MediaSegmentInput {
+    pub(crate) video_sources: Vec<crate::storage::RecordingVideoSource>,
     pub(crate) benchmarks_dir: PathBuf,
     pub(crate) canvas_height: u32,
     pub(crate) canvas_width: u32,
@@ -36,6 +37,8 @@ pub(crate) struct MediaWriterStreamIndexes {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MediaSegmentProbe {
+    #[serde(default)]
+    pub(crate) videos: Vec<MediaSegmentVideoProbe>,
     pub(crate) audio: Vec<MediaSegmentAudioProbe>,
     pub(crate) available: bool,
     pub(crate) duration_ms: Option<u64>,
@@ -160,6 +163,7 @@ pub(crate) fn probe_json_string(probe: &MediaSegmentProbe) -> String {
 
 fn unavailable_segment_probe(error: impl Into<String>) -> MediaSegmentProbe {
     MediaSegmentProbe {
+        videos: Vec::new(),
         audio: Vec::new(),
         available: false,
         duration_ms: None,

@@ -117,6 +117,8 @@ pub fn default_ai_settings() -> AiSettings {
         },
         processing: AiProcessingSettings {
             auto_start_after_recording: true,
+            timing: "during-recording".into(),
+            resource_mode: "background".into(),
             frame_recognition_fps: DEFAULT_AI_FRAME_RECOGNITION_FPS,
             frame_recognition_sync_with_recording: true,
             frame_similarity_enabled: true,
@@ -144,6 +146,7 @@ pub fn default_ai_settings() -> AiSettings {
             word_timestamps_enabled: true,
         },
         vision: AiVisionProviderSettings {
+            auth_mode: "api-key".into(),
             observations_enabled: false,
             api_key_ref: None,
             base_url: None,

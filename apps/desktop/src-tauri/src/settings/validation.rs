@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 use super::{defaults::*, types::*};
 
-pub(super) fn validate_settings(settings: AppSettings) -> Result<AppSettings, AppSettingsError> {
+pub(crate) fn validate_settings(settings: AppSettings) -> Result<AppSettings, AppSettingsError> {
     validate_f64_range(
         "record.fps",
         settings.record.fps,
@@ -19,22 +19,29 @@ pub(super) fn validate_settings(settings: AppSettings) -> Result<AppSettings, Ap
         "Video bitrate must be between 250 and 10000 kbps.",
     )?;
     validate_window_protection_settings(&settings.record.window_protection)?;
+    validate_storage_settings(&settings.storage)?;
+    validate_ai_settings(&settings.ai)?;
+
+    Ok(settings)
+}
+
+pub(super) fn validate_storage_settings(
+    settings: &StorageSettings,
+) -> Result<(), AppSettingsError> {
     validate_u32_range(
         "storage.retentionDays",
-        settings.storage.retention_days,
+        settings.retention_days,
         MIN_STORAGE_RETENTION_DAYS,
         MAX_STORAGE_RETENTION_DAYS,
         "Retention must be between 1 and 365 days.",
     )?;
-    if settings.storage.size_limit_bytes < MIN_STORAGE_SIZE_LIMIT_BYTES {
+    if settings.size_limit_bytes < MIN_STORAGE_SIZE_LIMIT_BYTES {
         return Err(validation_error(
             "storage.sizeLimitBytes",
             "Storage size limit must be at least 1 GiB.",
         ));
     }
-    validate_ai_settings(&settings.ai)?;
-
-    Ok(settings)
+    Ok(())
 }
 
 fn validate_window_protection_settings(
@@ -195,27 +202,28 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
         &["tesseract", "vision"],
         "OCR engine must be Tesseract or Vision.",
     )?;
-    if settings.ocr.engine == "vision"
-        && (settings.vision.provider != "openai-compatible"
-            || settings
-                .vision
-                .base_url
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-            || settings
-                .vision
-                .api_key_ref
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-            || settings
-                .vision
-                .model
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty()))
-    {
+    validate_one_of(
+        "ai.vision.authMode",
+        &settings.vision.auth_mode,
+        &["api-key", "none"],
+        "Choose API key or No authentication.",
+    )?;
+    if !matches!(
+        settings.processing.timing.as_str(),
+        "during-recording" | "after-stop" | "manual"
+    ) {
         return Err(validation_error(
-            "ai.ocr.engine",
-            "Vision OCR requires a configured vision endpoint, model and key.",
+            "ai.processing.timing",
+            "Choose during recording, after stop, or manual processing.",
+        ));
+    }
+    if !matches!(
+        settings.processing.resource_mode.as_str(),
+        "background" | "fast"
+    ) {
+        return Err(validation_error(
+            "ai.processing.resourceMode",
+            "Choose Background or Fast processing.",
         ));
     }
     validate_u32_range(

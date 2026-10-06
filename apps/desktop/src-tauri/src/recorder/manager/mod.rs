@@ -30,6 +30,7 @@ use super::types::{
 };
 
 mod finalization;
+mod fragments;
 mod paths;
 mod pause;
 mod recording_state;
@@ -101,7 +102,7 @@ impl RecorderManager {
 
         Ok(RecorderPerformanceStats {
             desired_fps: runtime.active.as_ref().map(|active| active.fps),
-            segment_started_at_ms: active_segment.map(|segment| segment.started_at_ms),
+            segment_started_at_ms: active_segment.map(|segment| segment.capture_started_at_ms),
             state: runtime.status.state.clone(),
             timing: active_segment
                 .and_then(|segment| segment.timing.as_ref())

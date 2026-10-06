@@ -4,13 +4,7 @@ import type {
   AiOcrEngine,
   AiProviderStatus,
 } from '@daydream/shared';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import {
   Select,
   SelectContent,
@@ -22,9 +16,7 @@ import {
   type UpdateSettingsDraft,
   updateAiOcr,
 } from '@/features/settings/settings-draft-updaters';
-import { formatFps } from '@/features/settings/settings-format';
 import { AiModelActionButton, ModelStatusIcon } from '../ai-model-cache-card';
-import { CheckboxField } from '../ai-settings-fields';
 
 export interface OcrEngineSettingsSectionModel {
   enabled: boolean;
@@ -55,23 +47,24 @@ export function OcrEngineSettingsSection({
   actions,
   model,
 }: OcrEngineSettingsSectionProps) {
-  const requestCeilingPerMinute = 60 * model.effectiveFrameRecognitionFps;
-  const handleOcrEnabledChange = useCallback(
-    (enabled: boolean) => {
-      updateAiOcr(actions.onUpdateDraft, (current) => ({
-        ...current,
-        enabled,
-      }));
-    },
-    [actions.onUpdateDraft],
-  );
   const handleOcrEngineChange = useCallback(
     (value: string) => {
+      if (value === 'off') {
+        updateAiOcr(actions.onUpdateDraft, (current) => ({
+          ...current,
+          enabled: false,
+        }));
+        return;
+      }
       const engine = parseOcrEngine(value);
       if (!engine) {
         return;
       }
-      updateAiOcr(actions.onUpdateDraft, (current) => ({ ...current, engine }));
+      updateAiOcr(actions.onUpdateDraft, (current) => ({
+        ...current,
+        engine,
+        enabled: true,
+      }));
     },
     [actions.onUpdateDraft],
   );
@@ -79,41 +72,28 @@ export function OcrEngineSettingsSection({
   return (
     <div className="grid gap-3">
       <FieldGroup>
-        <CheckboxField
-          checked={model.enabled}
-          description="Recognize retained frames selected by the existing sampling policy."
-          label="Run OCR on retained frames"
-          onCheckedChange={handleOcrEnabledChange}
-        />
         <Field>
           <FieldLabel htmlFor="ai-ocr-engine">
             Text recognition engine
           </FieldLabel>
-          <Select onValueChange={handleOcrEngineChange} value={model.engine}>
+          <Select
+            onValueChange={handleOcrEngineChange}
+            value={model.enabled ? model.engine : 'off'}
+          >
             <SelectTrigger id="ai-ocr-engine">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
               <SelectItem value="tesseract">Tesseract (local)</SelectItem>
               <SelectItem value="vision">Vision model</SelectItem>
             </SelectContent>
           </Select>
-          <FieldDescription>
-            New jobs use this setting. Retry keeps a job&apos;s original engine;
-            Reprocess OCR uses the current setting.
-          </FieldDescription>
         </Field>
       </FieldGroup>
-      {model.engine === 'tesseract' ? (
+      {model.enabled && model.engine === 'tesseract' ? (
         <TesseractAssets actions={actions} model={model} />
-      ) : (
-        <VisionOcrDisclosure
-          enabled={model.enabled}
-          observationsEnabled={model.observationsEnabled}
-          recognitionFps={model.effectiveFrameRecognitionFps}
-          requestCeilingPerMinute={requestCeilingPerMinute}
-        />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -155,53 +135,6 @@ function TesseractAssets({ actions, model }: OcrEngineSettingsSectionProps) {
         onDownloadModel={actions.onDownloadModel}
       />
     </div>
-  );
-}
-
-function VisionOcrDisclosure({
-  enabled,
-  observationsEnabled,
-  recognitionFps,
-  requestCeilingPerMinute,
-}: {
-  enabled: boolean;
-  observationsEnabled: boolean;
-  recognitionFps: number;
-  requestCeilingPerMinute: number;
-}) {
-  const fpsLabel = recognitionFps.toLocaleString(undefined, {
-    maximumFractionDigits: 2,
-  });
-  const requestCeilingLabel = requestCeilingPerMinute.toLocaleString(
-    undefined,
-    { maximumFractionDigits: 2 },
-  );
-
-  return (
-    <Alert>
-      <AlertTitle>Vision OCR uses the shared remote endpoint</AlertTitle>
-      <AlertDescription>
-        <div className="grid gap-1">
-          <p>
-            {enabled
-              ? 'Original-size retained sampled frames will be sent for OCR when you process a recording.'
-              : 'OCR is off; no frames will be sent for OCR until you enable it.'}
-          </p>
-          <p>
-            Current cadence: {formatFps(recognitionFps)}. OCR request ceiling:{' '}
-            {requestCeilingLabel} sampled frames per minute (60 × {fpsLabel}{' '}
-            FPS), before exact-image cache reuse.
-          </p>
-          <p>
-            Remote image calls may incur provider charges. Pricing varies; this
-            screen does not estimate charges.{' '}
-            {observationsEnabled
-              ? 'Enabled screen observations can add separate requests.'
-              : 'Screen observations use a separate control and can add requests if enabled.'}
-          </p>
-        </div>
-      </AlertDescription>
-    </Alert>
   );
 }
 

@@ -28,16 +28,32 @@ pub(in crate::ai) fn claim_next_processing_chunk(
     let next_chunk = storage
         .with_connection(|connection| {
             let mut chunks = storage::list_processing_chunks(connection, job_id)?;
-            if let Some(chunk) = chunks.first() {
-                if !crate::recording_privacy::protection_ready(connection, &chunk.recording_id)? {
-                    return Err(rusqlite::Error::InvalidQuery);
-                }
+            if let Some(chunk)=chunks.first() {
+                let recording=storage::get_recording(connection,&chunk.recording_id)?;
+                if !matches!(recording.status.as_str(),"recording"|"paused")&&!crate::recording_privacy::protection_ready(connection,&chunk.recording_id)?{return Err(rusqlite::Error::InvalidQuery);}
             }
+            let mut running_by_kind=std::collections::HashMap::<String,usize>::new();
+            for chunk in &chunks {if chunk.status=="running"{*running_by_kind.entry(chunk.source_kind.clone()).or_default()+=1;}}
+            chunks.sort_by_key(|chunk|(running_by_kind.get(&chunk.source_kind).copied().unwrap_or(0),chunk.start_offset_ms.unwrap_or(0),chunk.source_kind.clone(),chunk.created_at_ms));
             for index in 0..chunks.len() {
                 if chunks[index].status != "queued" {
                     continue;
                 }
+                if !storage::processing_chunk_retry_ready(connection, &chunks[index].id, now_ms())? { continue; }
                 let chunk = &chunks[index];
+                if chunk.source_kind=="audio"&&storage::processing_job_input_open(connection,job_id)? {
+                    let segments=storage::list_recording_segments(connection,&chunk.recording_id)?;
+                    if let Some(index)=segments.iter().position(|segment|Some(segment.id.as_str())==chunk.segment_id.as_deref()) {
+                        let segment=&segments[index];
+                        let recording=storage::get_recording(connection,&chunk.recording_id)?;
+                        let segment_end=segment.ended_at_ms.map(|time|time-recording.started_at_ms.unwrap_or(0));
+                        if chunk.end_offset_ms==segment_end && segments.get(index+1).is_none_or(|next|next.state!="finalized") {
+                            connection.execute("INSERT INTO processing_chunk_runtime(chunk_id,phase,next_retry_at_ms) VALUES(?1,'waiting-for-audio-context',?2) ON CONFLICT(chunk_id) DO UPDATE SET phase=excluded.phase,next_retry_at_ms=excluded.next_retry_at_ms",rusqlite::params![chunk.id,now_ms()+2000])?;
+                            continue;
+                        }
+                    }
+                }
+                if !crate::recording_privacy::range_protection_ready(connection,&chunk.recording_id,chunk.start_offset_ms.unwrap_or(0),chunk.end_offset_ms.unwrap_or(i64::MAX))? {continue;}
                 if !crate::recording_privacy::chunk_eligible(connection, chunk)? {
                     storage::delete_transcript_output_for_chunks(
                         connection,
@@ -101,7 +117,7 @@ fn chunk_ready_to_claim(chunk: &ProcessingChunkRow, chunks: &[ProcessingChunkRow
 
     !chunks.iter().any(|candidate| {
         candidate.source_kind == "ocr"
-            && candidate.status != "succeeded"
+            && matches!(candidate.status.as_str(), "queued" | "running")
             && candidate.segment_id == chunk.segment_id
             && chunks_overlap(candidate, chunk)
     })
@@ -133,6 +149,14 @@ mod tests {
             ..ocr
         };
         assert!(chunk_ready_to_claim(&vlm, &[succeeded_ocr, vlm.clone()]));
+    }
+
+    #[test]
+    fn failed_ocr_does_not_strand_independent_observations() {
+        let segment_id = Uuid::now_v7().to_string();
+        let ocr = test_chunk("ocr", "failed", 0, 1_000, &segment_id);
+        let vlm = test_chunk("vlm", "queued", 0, 1_000, &segment_id);
+        assert!(chunk_ready_to_claim(&vlm, &[ocr, vlm.clone()]));
     }
 
     fn test_chunk(

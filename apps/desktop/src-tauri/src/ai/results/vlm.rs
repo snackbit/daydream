@@ -75,7 +75,9 @@ fn vlm_provider_status(app_settings: &settings::AppSettings) -> String {
         "disabled".to_string()
     } else if app_settings.ai.vision.base_url.is_none() {
         "missing-base-url".to_string()
-    } else if app_settings.ai.vision.api_key_ref.is_none() {
+    } else if app_settings.ai.vision.auth_mode != "none"
+        && app_settings.ai.vision.api_key_ref.is_none()
+    {
         "missing-key".to_string()
     } else if app_settings.ai.vision.model.is_none() {
         "missing-model".to_string()

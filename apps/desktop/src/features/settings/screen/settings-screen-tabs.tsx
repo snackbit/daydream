@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import type {
   AiModelAsset,
   AiProviderStatus,
@@ -22,6 +23,7 @@ import {
   formatSceneDimensions,
   formatStorageSize,
 } from '@/features/settings/settings-format';
+import { settingsTab, type SettingsTab } from '../settings-location';
 
 export interface SettingsScreenTabsModel {
   aiModels: AiModelAsset[];
@@ -53,13 +55,26 @@ export interface SettingsScreenTabsProps {
   actions: SettingsScreenTabsActions;
   busy: boolean;
   model: SettingsScreenTabsModel;
+  tab?: SettingsTab | undefined;
+  onTabChange?: ((tab: SettingsTab) => void) | undefined;
 }
 
 export function SettingsScreenTabs({
   actions,
   busy,
   model,
+  tab,
+  onTabChange,
 }: SettingsScreenTabsProps) {
+  const [localTab, setLocalTab] = useState<SettingsTab>('general');
+  const handleTabChange = useCallback(
+    (value: string) => {
+      const next = settingsTab(value);
+      setLocalTab(next);
+      onTabChange?.(next);
+    },
+    [onTabChange],
+  );
   function handleCancelModelDownload(modelId: string) {
     actions.cancelAiModelDownload(modelId);
   }
@@ -75,49 +90,51 @@ export function SettingsScreenTabs({
   return (
     <FieldSet aria-busy={busy} className="min-w-0" disabled={busy}>
       <FieldGroup className="gap-3">
-        <Tabs className="gap-3" defaultValue="general">
+        <Tabs
+          className="gap-3"
+          value={tab ?? localTab}
+          onValueChange={handleTabChange}
+        >
           <TabsList
+            variant="underline"
             aria-label="Settings sections"
-            className="h-8 max-w-full justify-start gap-0.5 overflow-x-auto rounded-none border-b bg-transparent p-0"
+            className="max-w-full gap-0.5 overflow-x-auto"
           >
             <TabsTrigger
-              className="data-[state=active]:border-primary h-8 shrink-0 rounded-none border-b-2 border-b-transparent bg-transparent px-2.5 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3"
+              className="shrink-0 px-2.5 text-xs sm:px-3"
               value="general"
             >
               <Settings2 aria-hidden="true" className="size-3.5" />
               General
             </TabsTrigger>
             <TabsTrigger
-              className="data-[state=active]:border-primary h-8 shrink-0 rounded-none border-b-2 border-b-transparent bg-transparent px-2.5 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3"
+              className="shrink-0 px-2.5 text-xs sm:px-3"
               value="record"
             >
               <Video aria-hidden="true" className="size-3.5" />
               Record
             </TabsTrigger>
             <TabsTrigger
-              className="data-[state=active]:border-primary h-8 shrink-0 rounded-none border-b-2 border-b-transparent bg-transparent px-2.5 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3"
+              className="shrink-0 px-2.5 text-xs sm:px-3"
               value="storage"
             >
               <HardDrive aria-hidden="true" className="size-3.5" />
               Storage/Library
             </TabsTrigger>
-            <TabsTrigger
-              className="data-[state=active]:border-primary h-8 shrink-0 rounded-none border-b-2 border-b-transparent bg-transparent px-2.5 text-xs data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3"
-              value="ai"
-            >
+            <TabsTrigger className="shrink-0 px-2.5 text-xs sm:px-3" value="ai">
               <BrainCircuit aria-hidden="true" className="size-3.5" />
               AI/LLM
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent className="max-w-4xl min-w-0" value="general">
+          <TabsContent className="min-w-0" value="general">
             <GeneralSettingsTab
               draft={model.draft}
               onUpdateDraft={actions.updateDraft}
             />
           </TabsContent>
 
-          <TabsContent className="max-w-4xl min-w-0" value="record">
+          <TabsContent className="min-w-0" value="record">
             <RecordSettingsTab
               cadenceMode={
                 model.cadenceMode ?? cadenceModeForFps(model.draft.record.fps)
@@ -133,7 +150,7 @@ export function SettingsScreenTabs({
             />
           </TabsContent>
 
-          <TabsContent className="max-w-4xl min-w-0" value="storage">
+          <TabsContent className="min-w-0" value="storage">
             <StorageSettingsTab
               draft={model.draft}
               limits={model.limits}
@@ -141,11 +158,18 @@ export function SettingsScreenTabs({
             />
           </TabsContent>
 
-          <TabsContent className="max-w-4xl min-w-0" value="ai">
+          <TabsContent className="min-w-0" value="ai">
             <AiSettingsTab
               draft={model.draft}
               limits={model.limits}
               models={model.aiModels}
+              sourceCount={
+                model.savedScene?.independentVideo
+                  ? model.savedScene.sources.length
+                  : model.savedScene?.sources.length
+                    ? 1
+                    : 0
+              }
               onCancelModelDownload={handleCancelModelDownload}
               onChangeTranscriptionKey={actions.changeTranscriptionKey}
               onChangeVisionKey={actions.changeVisionKey}

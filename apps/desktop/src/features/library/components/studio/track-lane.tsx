@@ -28,11 +28,12 @@ import { TrackClipMedia } from './track-lane-media';
 import { RedactionOverlay, TimeRangeOverlay } from './track-lane-overlays';
 import { VisualFrameSegments } from './track-lane-visual-markers';
 import {
-  TRACK_LANE_HEIGHT_PX,
+  trackLaneHeightPxForKind,
   TRACK_SELECTION_DRAG_THRESHOLD_PX,
 } from './track-timeline-math';
 
 export interface TrackLaneProps {
+  visibleRange: { startTimelineMs: number; endTimelineMs: number };
   aiProcessingState: RecordingAiProcessingState | null;
   clipDrafts: Record<string, StudioClipDraft>;
   detail: LibraryRecordingDetail;
@@ -60,6 +61,7 @@ export interface TrackLaneProps {
 }
 
 export function TrackLane({
+  visibleRange,
   aiProcessingState,
   clipDrafts,
   detail,
@@ -156,6 +158,7 @@ export function TrackLane({
     <>
       <TrackLaneHeader
         audioTrack={audioTrack}
+        heightPx={trackLaneHeightPxForKind(track.kind)}
         dragHandleProps={dragHandleProps}
         lane={lane}
         muted={muted}
@@ -171,45 +174,67 @@ export function TrackLane({
         )}
         data-lane-content
         data-track-id={track.id}
-        style={{ height: TRACK_LANE_HEIGHT_PX, width: timelineWidthPx }}
+        style={{
+          height: trackLaneHeightPxForKind(track.kind),
+          width: timelineWidthPx,
+        }}
         onClick={handleLaneContentClick}
         onPointerDown={handleLaneContentPointerDown}
         onPointerMove={handleLaneContentPointerMove}
       >
-        {detail.segments.map((segment) => {
-          const clipId = studioClipId(track.id, segment.id);
-          const clip = clipDrafts[clipId];
+        {detail.segments
+          .filter(
+            (segment) =>
+              (track.kind !== 'video' ||
+                !segment.videoStreams?.length ||
+                segment.videoStreams.some(
+                  (source) => source.trackId === track.id,
+                )) &&
+              segment.playbackOffsetMs < visibleRange.endTimelineMs &&
+              segment.playbackOffsetMs + (segment.durationMs ?? 1) >
+                visibleRange.startTimelineMs,
+          )
+          .map((segment) => {
+            const clipId = studioClipId(track.id, segment.id);
+            const clip = clipDrafts[clipId];
 
-          return (
-            <TrackClip
-              clipId={clipId}
-              color={color}
-              key={clipId}
-              segment={segment}
-              selected={selectedClipIds.has(clipId)}
-              title={clip?.title ?? `Segment ${segment.segmentIndex}`}
-              timelineWidthPx={timelineWidthPx}
-              totalDurationMs={totalDurationMs}
-              track={track}
-              onSelectClip={onSelectClip}
-              onInspectTranscript={onInspectTranscript}
-              derivedLane={derivedLane}
-            >
-              <TrackClipMedia
+            return (
+              <TrackClip
+                clipId={clipId}
+                color={color}
+                key={clipId}
                 segment={segment}
-                thumbnailStatus={thumbnailStatus}
-                thumbnails={
-                  playbackAssets?.segments.find(
-                    (playbackSegment) =>
-                      playbackSegment.segmentId === segment.id,
-                  )?.thumbnails ?? []
-                }
+                selected={selectedClipIds.has(clipId)}
+                title={clip?.title ?? `Segment ${segment.segmentIndex}`}
+                timelineWidthPx={timelineWidthPx}
+                totalDurationMs={totalDurationMs}
                 track={track}
-                waveformTrack={waveformTrack}
-              />
-            </TrackClip>
-          );
-        })}
+                onSelectClip={onSelectClip}
+                onInspectTranscript={onInspectTranscript}
+                derivedLane={derivedLane}
+              >
+                <TrackClipMedia
+                  segment={segment}
+                  thumbnailStatus={thumbnailStatus}
+                  thumbnails={
+                    playbackAssets?.segments
+                      .find(
+                        (playbackSegment) =>
+                          playbackSegment.segmentId === segment.id,
+                      )
+                      ?.videos?.find((video) => video.trackId === track.id)
+                      ?.thumbnails ??
+                    playbackAssets?.segments.find(
+                      (segmentAsset) => segmentAsset.segmentId === segment.id,
+                    )?.thumbnails ??
+                    []
+                  }
+                  track={track}
+                  waveformTrack={waveformTrack}
+                />
+              </TrackClip>
+            );
+          })}
         {timeRanges.map((range) => (
           <TimeRangeOverlay
             key={range.id}
@@ -231,15 +256,28 @@ export function TrackLane({
         ))}
         {track.kind === 'video' ? (
           <VisualFrameSegments
-            visualFrameStates={aiProcessingState?.visualFrames ?? []}
+            visualFrameStates={(aiProcessingState?.visualFrames ?? []).filter(
+              (frame) =>
+                (frame.sourceFrameRef.match(/:stream:([^:]+):/)?.[1] ??
+                  detail.tracks.find((candidate) => candidate.kind === 'video')
+                    ?.id) === track.id &&
+                frame.frameTimestampMs >= visibleRange.startTimelineMs &&
+                frame.frameTimestampMs < visibleRange.endTimelineMs,
+            )}
             selectedVisualFrameIds={selectedVisualFrameIds}
             timelineWidthPx={timelineWidthPx}
             totalDurationMs={totalDurationMs}
-            visualFrames={visualFrames.filter(
-              (frame) =>
-                frame.sourceTrackId === undefined ||
-                frame.sourceTrackId === track.id,
-            )}
+            visualFrames={visualFrames
+              .filter(
+                (frame) =>
+                  frame.sourceTrackId === undefined ||
+                  frame.sourceTrackId === track.id,
+              )
+              .filter(
+                (frame) =>
+                  frame.endTimestampMs > visibleRange.startTimelineMs &&
+                  frame.frameTimestampMs < visibleRange.endTimelineMs,
+              )}
             onSelectVisualFrame={onSelectVisualFrame}
           />
         ) : null}

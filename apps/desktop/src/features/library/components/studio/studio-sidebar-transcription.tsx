@@ -3,6 +3,7 @@ import type {
   RecordingTranscriptionChunkState,
   RecordingTranscriptionTrackState,
 } from '@daydream/shared';
+import { ProcessingError } from '@/features/processing/components/processing-error';
 import { aiProcessingErrorSummary } from './ai-processing-error-copy';
 import { MetadataRow } from './studio-sidebar-section';
 import type {
@@ -25,11 +26,7 @@ export function TranscriptionTrackDetails({
       <MetadataRow label="Text" value={String(track.textSegmentCount)} />
       {errorCode ? (
         <>
-          <MetadataRow
-            label="Issue"
-            value={aiProcessingErrorSummary(errorCode)}
-          />
-          <MetadataRow label="Error" value={errorCode} />
+          <ProcessingError errorCode={errorCode} />
         </>
       ) : null}
     </div>

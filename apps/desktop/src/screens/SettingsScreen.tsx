@@ -1,13 +1,27 @@
+import { useEffect } from 'react';
 import { LoaderCircle, RotateCcw, Save } from 'lucide-react';
 import { PageLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { SettingsScreenDialogs } from '@/features/settings/screen/settings-screen-dialogs';
 import { SettingsScreenTabs } from '@/features/settings/screen/settings-screen-tabs';
+import type {
+  SettingsTab,
+  SettingsFocus,
+} from '@/features/settings/settings-location';
 import { settingsAiModelActions } from '@/features/settings/use-settings-ai-controller';
 import { useSettingsScreenController } from '@/features/settings/use-settings-screen-controller';
 
-export function SettingsScreen() {
+export interface SettingsScreenProps {
+  tab?: SettingsTab | undefined;
+  focusSection?: SettingsFocus | null | undefined;
+  onTabChange?: ((tab: SettingsTab) => void) | undefined;
+}
+export function SettingsScreen({
+  tab,
+  focusSection,
+  onTabChange,
+}: SettingsScreenProps = {}) {
   const {
     aiActionError,
     aiModels,
@@ -46,6 +60,16 @@ export function SettingsScreen() {
     visionKeyDraft,
     saveAndLeaveSettings,
   } = useSettingsScreenController();
+  const loaded = draft !== null && settingsState !== null;
+  useEffect(() => {
+    if (!loaded || !focusSection) return;
+    const frame = window.requestAnimationFrame(() => {
+      const section = document.getElementById(`ai-${focusSection}`);
+      section?.scrollIntoView({ block: 'start' });
+      section?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusSection, loaded, tab]);
   const { cancelAiModelDownload, deleteAiModel, downloadAiModel } =
     settingsAiModelActions;
   function handleCancelAiModelDownload(modelId: string) {
@@ -92,8 +116,8 @@ export function SettingsScreen() {
               : 'Loading settings';
 
   return (
-    <PageLayout className="max-w-6xl gap-3 lg:gap-3">
-      <div className="bg-background/95 sticky top-0 z-20 -mx-4 -mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6">
+    <PageLayout className="max-w-none gap-3 lg:gap-3">
+      <div className="bg-background/95 sticky top-0 z-20 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b py-2 backdrop-blur-sm">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-[13px] font-semibold">Settings</h1>
           <span
@@ -189,6 +213,8 @@ export function SettingsScreen() {
         </div>
       ) : (
         <SettingsScreenTabs
+          tab={tab}
+          onTabChange={onTabChange}
           actions={{
             cancelAiModelDownload: handleCancelAiModelDownload,
             changeCadenceMode: setCadenceMode,

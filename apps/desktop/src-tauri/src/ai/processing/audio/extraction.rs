@@ -10,16 +10,28 @@ pub(super) fn extract_audio_stream(
 ) -> Result<(), AiError> {
     check_atomic_cancel(cancel)?;
     let _ = fs::remove_file(output_path);
-    let output = Command::new(ffmpeg::binary_path())
+    let mut command = Command::new(ffmpeg::binary_path());
+    command
         .args(ffmpeg_audio_extract_args(
             input_path,
             stream_index,
             slice_start_ms,
             slice_duration_ms,
         ))
-        .arg(output_path)
-        .output()
-        .map_err(file_error)?;
+        .arg(output_path);
+    let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(60), 1_000_000)
+        .map_err(|error| {
+        ai_error(
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                "ai_processing_cancelled"
+            } else if error.kind() == std::io::ErrorKind::TimedOut {
+                "ai_processing_audio_extract_timeout"
+            } else {
+                "ai_processing_audio_extract_failed"
+            },
+            "Audio extraction did not finish.",
+        )
+    })?;
     check_atomic_cancel(cancel)?;
     if !output.status.success() {
         return Err(ai_error(

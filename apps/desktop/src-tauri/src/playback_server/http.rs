@@ -22,10 +22,12 @@ pub(super) enum PlaybackRequest {
         track_id: String,
     },
     Thumbnail {
+        stream_index: Option<i64>,
         offset_ms: i64,
         segment_id: String,
     },
     Video {
+        stream_index: Option<i64>,
         segment_id: String,
         start_ms: i64,
     },
@@ -62,6 +64,7 @@ pub(super) fn handle_stream(
             start_ms, track_id, ..
         } => stream_audio(&mut stream, &segment, &track_id, start_ms),
         PlaybackRequest::Thumbnail {
+            stream_index,
             offset_ms,
             segment_id,
         } => stream_thumbnail(
@@ -71,10 +74,13 @@ pub(super) fn handle_stream(
             segment_id,
             &segment,
             offset_ms,
+            stream_index,
         ),
-        PlaybackRequest::Video { start_ms, .. } => {
-            stream_video(&mut stream, &segment, &encoder, start_ms)
-        }
+        PlaybackRequest::Video {
+            start_ms,
+            stream_index,
+            ..
+        } => stream_video(&mut stream, &segment, &encoder, start_ms, stream_index),
     }
 }
 
@@ -109,6 +115,11 @@ pub(super) fn parse_request(request: &str) -> Option<(String, String, PlaybackRe
             session_id,
             token,
             PlaybackRequest::Video {
+                stream_index: segments
+                    .get(6)
+                    .map(|value| value.parse::<i64>())
+                    .transpose()
+                    .ok()?,
                 segment_id,
                 start_ms,
             },
@@ -128,6 +139,11 @@ pub(super) fn parse_request(request: &str) -> Option<(String, String, PlaybackRe
                 session_id,
                 token,
                 PlaybackRequest::Thumbnail {
+                    stream_index: segments
+                        .get(7)
+                        .map(|value| value.parse::<i64>())
+                        .transpose()
+                        .ok()?,
                     offset_ms: offset,
                     segment_id,
                 },
@@ -149,8 +165,9 @@ fn stream_video(
     segment: &PlaybackSegment,
     encoder: &VideoEncoder,
     start_ms: i64,
+    requested_stream: Option<i64>,
 ) {
-    let Some(video_stream_index) = segment.video_stream_index else {
+    let Some(video_stream_index) = selected_video_stream(segment, requested_stream) else {
         write_response(stream, 404, "text/plain", b"Segment has no video stream");
         return;
     };
@@ -227,12 +244,14 @@ fn stream_thumbnail(
     segment_id: String,
     segment: &PlaybackSegment,
     offset_ms: i64,
+    requested_stream: Option<i64>,
 ) {
-    let Some(video_stream_index) = segment.video_stream_index else {
+    let Some(video_stream_index) = selected_video_stream(segment, requested_stream) else {
         write_response(stream, 404, "text/plain", b"Segment has no video stream");
         return;
     };
     let key = ThumbnailKey {
+        video_stream_index,
         offset_ms,
         segment_id,
         session_id,
@@ -245,6 +264,26 @@ fn stream_thumbnail(
         Err(ThumbnailError::Failed) => {
             write_response(stream, 500, "text/plain", b"Unable to generate thumbnail")
         }
+    }
+}
+
+fn selected_video_stream(segment: &PlaybackSegment, requested: Option<i64>) -> Option<i64> {
+    match requested {
+        None => segment.video_stream_index,
+        Some(index)
+            if segment
+                .video_streams
+                .iter()
+                .any(|video| video.stream_index == index) =>
+        {
+            Some(index)
+        }
+        Some(index)
+            if segment.video_streams.is_empty() && segment.video_stream_index == Some(index) =>
+        {
+            Some(index)
+        }
+        _ => None,
     }
 }
 fn stream_ffmpeg_stdout(stream: &mut TcpStream, mut command: Command, content_type: &str) {

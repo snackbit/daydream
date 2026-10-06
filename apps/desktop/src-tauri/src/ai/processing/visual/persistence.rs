@@ -114,7 +114,7 @@ pub(super) fn mark_visual_frame_state(
     let (status, progress, error_code, output_count) = match update {
         VisualFrameUpdate::Running => ("running", 0.5, None, 0),
         VisualFrameUpdate::Succeeded(count) => ("succeeded", 1.0, None, count as i64),
-        VisualFrameUpdate::Failed(code) => ("failed", 0.0, Some(code), 0),
+        VisualFrameUpdate::Failed(code) => ("failed", 1.0, Some(code), 0),
     };
     storage
         .with_connection(|connection| {
@@ -230,4 +230,47 @@ pub(in crate::ai) fn persist_visual_output(
             Err(storage_error(error))
         }
     }
+}
+
+pub(super) fn persist_vlm_frame(
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    state_id: &str,
+    frame: &ExtractedVisualFrame,
+    observations: Vec<CreateVisualRegionInput>,
+) -> Result<(), AiError> {
+    let count = observations.len() as i64;
+    let committed = storage
+        .with_connection_mut(|connection| {
+            let transaction = connection.transaction()?;
+            if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
+                return Ok(false);
+            }
+            transaction.execute(
+                "DELETE FROM vlm_observations WHERE chunk_id=?1 AND frame_timestamp_ms=?2",
+                rusqlite::params![chunk.id, frame.frame_timestamp_ms],
+            )?;
+            for observation in observations {
+                storage::create_vlm_observation(&transaction, &observation)?;
+            }
+            storage::update_visual_frame_processing_state_status(
+                &transaction,
+                state_id,
+                "succeeded",
+                1.0,
+                None,
+                count,
+                now_ms(),
+            )?;
+            transaction.commit()?;
+            Ok(true)
+        })
+        .map_err(storage_error)?;
+    if !committed {
+        return Err(ai_error(
+            "ai_processing_cancelled",
+            "The source is no longer eligible for processing.",
+        ));
+    }
+    Ok(())
 }

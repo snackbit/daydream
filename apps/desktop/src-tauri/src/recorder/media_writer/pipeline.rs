@@ -10,7 +10,8 @@ use super::{
 
 const DESKTOP_AUDIO_BITRATE_BPS: u32 = 96_000;
 const MICROPHONE_AUDIO_BITRATE_BPS: u32 = 64_000;
-const LOW_LATENCY_QUEUE: &str = "queue max-size-time=0 max-size-bytes=0 max-size-buffers=0";
+const LOW_LATENCY_QUEUE: &str =
+    "queue max-size-time=2000000000 max-size-bytes=16777216 max-size-buffers=0";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct AudioBranch {
@@ -19,7 +20,7 @@ pub(super) struct AudioBranch {
 }
 
 pub(crate) fn stream_indexes(input: &MediaSegmentInput) -> MediaWriterStreamIndexes {
-    let mut next_stream_index = 1;
+    let mut next_stream_index = input.video_sources.len().max(1) as i64;
     let desktop_audio_stream_index = input.desktop_audio_source_id.as_ref().map(|_source_id| {
         let index = next_stream_index;
         next_stream_index += 1;
@@ -87,22 +88,37 @@ pub(super) fn build_pipeline(input: &MediaSegmentInput) -> Result<gst::Pipeline,
 }
 
 pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
-    let key_int_max = key_int_max(input.fps, 20);
-    let mut description = format!(
-        "appsrc name=video_src is-live=true format=time do-timestamp=false block=true \
+    let key_int_max = key_int_max(
+        input.fps,
+        if input.video_sources.is_empty() {
+            20
+        } else {
+            30
+        },
+    );
+    let mut description = if input.video_sources.is_empty() {
+        format!(
+            "appsrc name=video_src is-live=true format=time do-timestamp=false block=true \
          ! {queue} \
          ! videoconvert ! video/x-raw,format=I420 \
          ! x264enc bitrate={bitrate} key-int-max={key_int_max} speed-preset=medium \
              tune=zerolatency rc-lookahead=0 bframes=0 sync-lookahead=0 \
-         ! h264parse ! {queue} ! mux. ",
-        bitrate = input.video_bitrate_kbps,
-        queue = LOW_LATENCY_QUEUE,
-    );
+         ! h264parse ! {queue} ! mux.video ",
+            bitrate = input.video_bitrate_kbps,
+            queue = LOW_LATENCY_QUEUE,
+        )
+    } else {
+        input.video_sources.iter().enumerate().map(|(index,_)|format!(
+        "appsrc name=video_src{suffix} is-live=true format=time do-timestamp=false block=true max-buffers=2 max-bytes=16777216 ! {LOW_LATENCY_QUEUE} ! videoconvert ! video/x-raw,format=I420 ! x264enc bitrate={} key-int-max={key_int_max} speed-preset=medium tune=zerolatency rc-lookahead=0 bframes=0 sync-lookahead=0 ! h264parse ! {LOW_LATENCY_QUEUE} ! mux.{pad} ",input.video_bitrate_kbps,
+        suffix=if index==0{String::new()}else{format!("_{index}")},pad=if index==0{"video".into()}else{format!("video_aux_{}",index-1)}
+    )).collect::<String>()
+    };
     if let Some(source_id) = &input.desktop_audio_source_id {
         description.push_str(&audio_branch(
             source_id,
             DESKTOP_AUDIO_BITRATE_BPS,
             "desktop_audio_src",
+            0,
         ));
     }
     if let Some(source_id) = &input.microphone_audio_source_id {
@@ -110,17 +126,27 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
             source_id,
             MICROPHONE_AUDIO_BITRATE_BPS,
             "microphone_audio_src",
+            usize::from(input.desktop_audio_source_id.is_some()),
         ));
     }
+    let mut pad_map = vec!["video=video_0".to_string()];
+    for index in 1..input.video_sources.len() {
+        pad_map.push(format!("video_aux_{}=video_{index}", index - 1));
+    }
+    for index in 0..audio_branches(input).len() {
+        pad_map.push(format!("audio_{index}=audio_{index}"));
+    }
     description.push_str(&format!(
-        "matroskamux name=mux ! filesink location={}",
-        launch_value(input.output_path.as_os_str())
+        "splitmuxsink name=mux async-finalize=true muxer-factory=matroskamux muxer-pad-map=\"x-pad-map,{}\" muxer-properties=\"properties,offset-to-zero=true\" max-size-time=30000000000 max-size-bytes=0 send-keyframe-requests=true start-index={} location={}",
+        pad_map.join(","),
+        input.segment_index,
+        launch_value(input.output_path.parent().unwrap_or(std::path::Path::new(".")).join("%04d.mkv").as_os_str())
     ));
 
     description
 }
 
-fn audio_branch(source_id: &str, bitrate: u32, name: &str) -> String {
+fn audio_branch(source_id: &str, bitrate: u32, name: &str, index: usize) -> String {
     let cutoff_queue_name = match name {
         "desktop_audio_src" => "desktop_audio_cutoff_queue",
         "microphone_audio_src" => "microphone_audio_cutoff_queue",
@@ -128,7 +154,7 @@ fn audio_branch(source_id: &str, bitrate: u32, name: &str) -> String {
     };
     format!(
         "pulsesrc name={name} device={device} ! {queue} ! audioconvert ! audioresample \
-         ! audio/x-raw,rate=48000 ! opusenc bitrate={bitrate} ! {cutoff_queue} ! mux. ",
+         ! audio/x-raw,rate=48000 ! opusenc bitrate={bitrate} ! {cutoff_queue} ! mux.audio_{index} ",
         name = name,
         device = launch_value(source_id),
         bitrate = bitrate,
@@ -138,5 +164,5 @@ fn audio_branch(source_id: &str, bitrate: u32, name: &str) -> String {
 }
 
 fn low_latency_queue_with_name(name: &str) -> String {
-    format!("queue name={name} max-size-time=0 max-size-bytes=0 max-size-buffers=0")
+    format!("queue name={name} max-size-time=2000000000 max-size-bytes=16777216 max-size-buffers=0")
 }

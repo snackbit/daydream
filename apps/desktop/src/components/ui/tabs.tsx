@@ -17,13 +17,18 @@ function Tabs({
 
 function TabsList({
   className,
+  variant = 'pill',
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.List>) {
+}: React.ComponentProps<typeof TabsPrimitive.List> & {
+  variant?: 'pill' | 'underline';
+}) {
   return (
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
         'bg-muted text-muted-foreground inline-flex h-8 w-fit items-center justify-center rounded-lg p-1',
+        variant === 'underline' &&
+          '[&_[data-slot=tabs-trigger][data-state=active]]:border-b-primary h-auto justify-start rounded-none bg-transparent p-0 [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:rounded-none [&_[data-slot=tabs-trigger]]:border-0 [&_[data-slot=tabs-trigger]]:border-b-[3px] [&_[data-slot=tabs-trigger]]:border-b-transparent [&_[data-slot=tabs-trigger]]:bg-transparent [&_[data-slot=tabs-trigger]]:shadow-none',
         className,
       )}
       {...props}

@@ -31,6 +31,7 @@ use super::types::{
 use crate::storage;
 
 mod failures;
+mod live_processing;
 mod protection;
 
 #[test]
@@ -1259,6 +1260,7 @@ fn stop_test_recording(
 
 fn test_scene(scene_id: &str) -> RecorderScene {
     RecorderScene {
+        independent_video: false,
         canvas_height: 1440,
         canvas_width: 2560,
         desktop_audio_source_id: Some("desktop-monitor".to_string()),
@@ -1293,6 +1295,7 @@ fn test_scene(scene_id: &str) -> RecorderScene {
 
 fn empty_test_scene(scene_id: &str) -> RecorderScene {
     RecorderScene {
+        independent_video: false,
         canvas_height: 1440,
         canvas_width: 2560,
         desktop_audio_source_id: None,
@@ -1306,6 +1309,7 @@ fn empty_test_scene(scene_id: &str) -> RecorderScene {
 
 fn fake_test_scene(scene_id: &str) -> RecorderScene {
     RecorderScene {
+        independent_video: false,
         canvas_height: 180,
         canvas_width: 320,
         desktop_audio_source_id: None,

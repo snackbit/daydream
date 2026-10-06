@@ -3,14 +3,14 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 pub(super) fn display_occurrence_cte() -> String {
     eligible_occurrence_cte(
-        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed')",
+        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed','completed-with-errors')",
         true,
     )
 }
 
 pub(super) fn timeline_occurrence_cte() -> String {
     eligible_occurrence_cte(
-        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed')",
+        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed','completed-with-errors')",
         false,
     )
 }

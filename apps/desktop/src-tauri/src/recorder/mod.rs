@@ -12,6 +12,7 @@ pub(crate) mod media_writer;
 pub(crate) mod media_writer;
 mod platform;
 mod preview;
+pub(crate) mod source_recording;
 mod storage_mapping;
 #[cfg(test)]
 mod tests;

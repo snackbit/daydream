@@ -141,7 +141,11 @@ pub(super) fn extract_visual_frames(
         settings::MIN_AI_VISUAL_DELTA_TILE_SIZE_PX,
         settings::MAX_AI_VISUAL_DELTA_TILE_SIZE_PX,
     ) as usize;
-    let segment_id = segment.id.clone();
+    let segment_id = if let Some(track) = &chunk.track_id {
+        format!("{}:stream:{track}", segment.id)
+    } else {
+        segment.id.clone()
+    };
     let context_for = |path: &PathBuf, index: usize| -> VisualContextFrame {
         let timestamp = (chunk_start + (index as i64 * sample_interval_ms)).min(chunk_end);
         VisualContextFrame {
@@ -255,7 +259,7 @@ pub(super) fn extract_visual_frames(
                 file_sha1(&crop_path)?
             };
             let source_frame_ref =
-                source_frame_ref_for_region(&segment.id, timestamp, index, &region);
+                source_frame_ref_for_region(&segment_id, timestamp, index, &region);
             let frame = ExtractedVisualFrame {
                 abrupt_transition,
                 after_context: after_context.clone(),

@@ -132,7 +132,7 @@ function document(value: unknown): OcrDocument {
     contentId: nullable(row.contentId, string),
   };
 }
-function processingJob(value: unknown): ProcessingJob {
+export function processingJob(value: unknown): ProcessingJob {
   const row = record(value);
   const kind = row.kind;
   if (
@@ -150,6 +150,7 @@ function processingJob(value: unknown): ProcessingJob {
   const status = row.status;
   if (
     status !== 'cancelled' &&
+    status !== 'completed-with-errors' &&
     status !== 'failed' &&
     status !== 'paused' &&
     status !== 'queued' &&
@@ -217,6 +218,10 @@ export function decodeOcrTimelineFramePage(
         sourceTrackId: string(frame.sourceTrackId),
         status,
         textEmpty: nullable(frame.textEmpty, boolean),
+        textPreview:
+          frame.textPreview === undefined
+            ? null
+            : nullable(frame.textPreview, string),
       };
     }),
     nextCursor: nullable(row.nextCursor, (value) => {

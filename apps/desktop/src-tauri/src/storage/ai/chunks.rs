@@ -1,7 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    jobs::update_processing_job_status,
     rows::{capture_event_row, processing_chunk_row},
     types::*,
 };
@@ -302,6 +301,8 @@ pub fn claim_processing_chunk(
         return Ok(None);
     }
 
+    connection.execute("INSERT INTO processing_chunk_runtime(chunk_id,started_at_ms,phase) VALUES(?1,?2,'starting') ON CONFLICT(chunk_id) DO UPDATE SET started_at_ms=excluded.started_at_ms,next_retry_at_ms=NULL,phase='starting'", params![chunk_id,timestamp_ms])?;
+    connection.execute("UPDATE ocr_frame_occurrences SET attempt_count=(SELECT attempt_count FROM processing_chunks WHERE id=?1) WHERE chunk_id=?1 AND status='succeeded' AND EXISTS(SELECT 1 FROM processing_chunk_runtime WHERE chunk_id=?1 AND selection_json IS NOT NULL)",[chunk_id])?;
     get_processing_chunk(connection, chunk_id)
 }
 
@@ -526,9 +527,8 @@ pub fn delete_visual_output_for_chunks(
     Ok(deleted)
 }
 
-/// Retry clears current raw/attempt output while retaining already-committed
-/// successful OCR cache support. Current-attempt queries still hide that support
-/// until the restarted worker writes a fresh occurrence for its current attempt.
+/// Physical cleanup removes every raw visual result and frame checkpoint.
+/// Whole-job retry has a separate path that retains committed successful units.
 fn delete_visual_attempt_output_for_chunks(
     connection: &Connection,
     chunk_ids: &[String],
@@ -556,22 +556,4 @@ fn delete_visual_attempt_output_for_chunks(
         + connection.execute(&frame_state_sql, params.as_slice())?;
 
     Ok(deleted)
-}
-
-pub fn retry_processing_job_chunks(
-    connection: &Connection,
-    job_id: &str,
-    timestamp_ms: i64,
-) -> rusqlite::Result<ProcessingJobRow> {
-    let chunks =
-        list_processing_chunks_by_status(connection, job_id, &["failed", "cancelled"], None)?;
-    let chunk_ids = chunks
-        .iter()
-        .map(|chunk| chunk.id.clone())
-        .collect::<Vec<_>>();
-    delete_transcript_output_for_chunks(connection, &chunk_ids)?;
-    delete_activity_output_for_chunks(connection, &chunk_ids)?;
-    delete_visual_attempt_output_for_chunks(connection, &chunk_ids)?;
-    requeue_processing_chunks(connection, job_id, &["failed", "cancelled"], timestamp_ms)?;
-    update_processing_job_status(connection, job_id, "queued", None, timestamp_ms)
 }

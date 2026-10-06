@@ -42,6 +42,7 @@ pub(super) struct PlaybackSession {
 
 #[derive(Clone)]
 pub(super) struct PlaybackSegment {
+    video_streams: Vec<crate::storage::SegmentVideoStream>,
     desktop_audio_stream_index: Option<i64>,
     file_path: String,
     microphone_audio_stream_index: Option<i64>,
@@ -87,10 +88,11 @@ impl PlaybackServer {
         })
     }
 
-    pub fn create_session(
+    pub fn create_source_session(
         &self,
         recording: &RecordingRow,
         segments: &[RecordingSegmentRow],
+        sources: &std::collections::BTreeMap<String, Vec<crate::storage::SegmentVideoStream>>,
     ) -> Result<LibraryPlaybackAssets, String> {
         let session_id = Uuid::now_v7().to_string();
         let token = Uuid::now_v7().to_string();
@@ -104,6 +106,7 @@ impl PlaybackServer {
             session_segments.insert(
                 segment.id.clone(),
                 PlaybackSegment {
+                    video_streams: sources.get(&segment.id).cloned().unwrap_or_default(),
                     desktop_audio_stream_index: segment.desktop_audio_stream_index,
                     file_path: segment.file_path.clone(),
                     microphone_audio_stream_index: segment.microphone_audio_stream_index,
@@ -135,6 +138,26 @@ impl PlaybackServer {
             }
 
             response_segments.push(LibraryPlaybackSegment {
+                videos: sources
+                    .get(&segment.id)
+                    .into_iter()
+                    .flatten()
+                    .map(|video| crate::library::LibraryPlaybackVideoAsset {
+                        track_id: video.track_id.clone(),
+                        stream_index: video.stream_index,
+                        url: format!("{base}/video/{}", video.stream_index),
+                        thumbnails: thumbnail_offsets(duration_ms)
+                            .into_iter()
+                            .map(|offset_ms| LibraryPlaybackThumbnail {
+                                offset_ms,
+                                url: format!(
+                                    "{base}/thumbnail/{offset_ms}.jpg/{}",
+                                    video.stream_index
+                                ),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
                 audio,
                 segment_id: segment.id.clone(),
                 thumbnails: thumbnail_offsets(duration_ms)

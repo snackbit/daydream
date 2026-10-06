@@ -108,6 +108,7 @@ export function TrackTimelineToolbar({
 }
 
 export function SortableTrackLane({
+  visibleRange,
   aiProcessingState,
   clipDrafts,
   detail,
@@ -150,6 +151,7 @@ export function SortableTrackLane({
       }}
     >
       <TrackLane
+        visibleRange={visibleRange}
         aiProcessingState={aiProcessingState}
         clipDrafts={clipDrafts}
         detail={detail}
@@ -184,6 +186,7 @@ export function SortableTrackLane({
 
 export function SortableActivityTrackLane({
   activity,
+  segments,
   lane,
   onInspectActivity,
   onSelectLane,
@@ -214,6 +217,7 @@ export function SortableActivityTrackLane({
     >
       <ActivityTrackLane
         activity={activity}
+        segments={segments}
         dragHandleProps={{
           ...attributes,
           ...listeners,

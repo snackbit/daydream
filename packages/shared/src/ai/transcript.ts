@@ -2,6 +2,7 @@ import type { ProcessingChunkStatus } from './processing.js';
 import type { AiProviderKind, TranscriptSourceRole } from './provider-kinds.js';
 
 export type RecordingTranscriptionChunkResult =
+  | 'completed-with-errors'
   | 'cancelled'
   | 'failed'
   | 'no-speech'

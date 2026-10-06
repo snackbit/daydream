@@ -39,7 +39,7 @@ pub(super) fn start_runtime_supervision<R: Runtime>(
 ) -> Result<(), RecorderError> {
     thread::Builder::new()
         .name("daydream-recorder-supervision".into())
-        .spawn(move || loop {
+        .spawn(move || {let mut ticks=0u64;loop {
             let manager = app.state::<RecorderManager>();
             let Ok(status) = manager.status() else {
                 return;
@@ -54,8 +54,15 @@ pub(super) fn start_runtime_supervision<R: Runtime>(
                     return;
                 }
             }
+            if let Err(error)=manager.persist_capture_fragments(&app.state::<AppStorage>(),&recording_id){report_recording_failure(app,recording_id,error);return;}
+            ticks+=1;
+            if ticks.is_multiple_of(20) {
+                if let Err(error)=crate::ai::admit_live_recording(&app,&app.state::<AppStorage>(),&recording_id) {
+                    tracing::warn!(recording_id=%recording_id,error_code=%error.code,"ai_live_admission_failed");
+                }
+            }
             thread::sleep(Duration::from_millis(250));
-        })
+        }})
         .map(|_| ())
         .map_err(|_| {
             dependency_error(

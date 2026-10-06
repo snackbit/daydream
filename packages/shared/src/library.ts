@@ -27,6 +27,7 @@ export interface LibraryRecordingSummary {
 }
 
 export interface LibraryRecordingSegment {
+  videoStreams?: SegmentVideoStream[];
   desktopAudioStreamIndex: number | null;
   durationMs: number | null;
   endedAtMs: number | null;
@@ -40,6 +41,16 @@ export interface LibraryRecordingSegment {
   startedAtMs: number;
   state: RecorderSegmentState;
   videoStreamIndex: number | null;
+}
+
+export interface SegmentVideoStream {
+  trackId: string;
+  sourceId: string | null;
+  label: string;
+  streamIndex: number;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
 }
 
 export type LibraryTrackKind = 'desktop-audio' | 'microphone' | 'video';
@@ -109,6 +120,15 @@ export interface CreateLibraryRedactionsInput {
 export interface DeleteLibraryRedactionInput {
   recordingId: string;
   redactionId: string;
+}
+
+export interface ResizeLibraryRedactionInput {
+  recordingId: string;
+  redactionId: string;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  expectedStartOffsetMs: number;
+  expectedEndOffsetMs: number;
 }
 
 export interface UnredactLibraryRedactionsInput {
@@ -210,10 +230,18 @@ export interface LibraryPlaybackAssets {
 }
 
 export interface LibraryPlaybackSegment {
+  videos?: LibraryPlaybackVideoAsset[];
   audio: LibraryPlaybackAudioAsset[];
   segmentId: string;
   thumbnails: LibraryPlaybackThumbnail[];
   videoUrl: string;
+}
+
+export interface LibraryPlaybackVideoAsset {
+  trackId: string;
+  streamIndex: number;
+  url: string;
+  thumbnails: LibraryPlaybackThumbnail[];
 }
 
 export interface LibraryPlaybackAudioAsset {

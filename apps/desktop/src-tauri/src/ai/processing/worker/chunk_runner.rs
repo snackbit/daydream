@@ -10,11 +10,41 @@ pub(super) async fn process_processing_chunk(
     chunk: ProcessingChunkRow,
 ) -> Result<(), AiError> {
     let _lease = crate::recording_privacy::processing_lease(&chunk.recording_id).await;
-    ensure_chunk_active(&app.state::<AppStorage>(), &chunk)?;
-    match ProcessingChunkSource::from_chunk(&chunk)? {
+    if let Err(error) = ensure_chunk_active(&app.state::<AppStorage>(), &chunk) {
+        if error.code != "ai_processing_cancelled" {
+            return Err(error);
+        }
+        let context = ProcessingChunkContext::new(app, job_id, &chunk);
+        let job = context.current_job()?;
+        if job.status == "paused" {
+            context.requeue_paused()?;
+            return Err(ai_error(
+                "ai_processing_paused",
+                "Processing paused before this section started.",
+            ));
+        }
+        if job.status == "cancelled" {
+            context.mark_cancelled()?;
+            return Err(ai_error(
+                "ai_processing_cancelled",
+                "Processing was cancelled.",
+            ));
+        }
+        context.mark_cancelled()?;
+        context.emit_processing_state();
+        return Ok(());
+    }
+    let source = match ProcessingChunkSource::from_chunk(&chunk) {
+        Ok(source) => source,
+        Err(error) => {
+            ProcessingChunkContext::new(app, job_id, &chunk).mark_failed(&error.code)?;
+            return Err(error);
+        }
+    };
+    match source {
         ProcessingChunkSource::Audio => process_audio_chunk(app, job_id, chunk, _lease).await,
         ProcessingChunkSource::Activity => process_activity_chunk(app, job_id, chunk).await,
-        ProcessingChunkSource::Visual => process_visual_chunk(app, job_id, chunk).await,
+        ProcessingChunkSource::Visual => process_visual_chunk(app, job_id, chunk, _lease).await,
     }
 }
 
@@ -101,7 +131,20 @@ async fn process_activity_chunk(
     );
     context.emit_processing_state();
     let result = run_with_cancel_monitor(app, job_id, |cancel| {
-        process_activity_chunk_inner(app, &chunk, cancel)
+        let app = app.clone();
+        let chunk = chunk.clone();
+        async move {
+            tauri::async_runtime::spawn_blocking(move || {
+                process_activity_chunk_inner(&app, &chunk, cancel)
+            })
+            .await
+            .map_err(|_| {
+                ai_error(
+                    "ai_processing_activity_worker_failed",
+                    "Activity processing worker failed.",
+                )
+            })?
+        }
     })
     .await;
 
@@ -141,6 +184,7 @@ async fn process_visual_chunk(
     app: &AppHandle,
     job_id: &str,
     chunk: ProcessingChunkRow,
+    lease: crate::recording_privacy::ProcessingLease,
 ) -> Result<(), AiError> {
     let started = Instant::now();
     let context = ProcessingChunkContext::new(app, job_id, &chunk);
@@ -157,7 +201,7 @@ async fn process_visual_chunk(
     );
     context.emit_processing_state();
     let result = run_with_cancel_monitor(app, job_id, |cancel| {
-        process_visual_chunk_inner(app, &chunk, cancel)
+        process_visual_chunk_inner(app, &chunk, cancel, lease.clone())
     })
     .await;
 
@@ -205,9 +249,24 @@ where
 {
     let cancel = Arc::new(AtomicBool::new(false));
     let monitor = spawn_job_cancel_monitor(app.clone(), job_id.to_string(), cancel.clone());
+    let guard = CancelMonitorGuard {
+        cancel: cancel.clone(),
+        monitor,
+    };
     let result = operation(cancel).await;
-    monitor.abort();
+    drop(guard);
     result
+}
+
+struct CancelMonitorGuard {
+    cancel: Arc<AtomicBool>,
+    monitor: tauri::async_runtime::JoinHandle<()>,
+}
+impl Drop for CancelMonitorGuard {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        self.monitor.abort();
+    }
 }
 
 fn handle_audio_cancel_signal(

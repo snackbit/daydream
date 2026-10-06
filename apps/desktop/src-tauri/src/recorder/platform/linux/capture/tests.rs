@@ -641,6 +641,7 @@ fn live_stream_with_display(source_id: &str, node_id: u32, display_name: &str) -
 
 fn test_scene(sources: Vec<RecorderSceneSource>) -> RecorderScene {
     RecorderScene {
+        independent_video: false,
         canvas_height: 50,
         canvas_width: 100,
         desktop_audio_source_id: None,

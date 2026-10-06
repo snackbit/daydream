@@ -22,6 +22,7 @@ impl RecorderManager {
             .map(|recording_dir| recording_dir.join("benchmarks"))
             .unwrap_or_else(|| active.segments_dir.join("benchmarks"));
         let segment_input = MediaSegmentInput {
+            video_sources: active.video_sources.clone(),
             benchmarks_dir,
             canvas_height: active.canvas_height,
             canvas_width: active.canvas_width,
@@ -40,6 +41,7 @@ impl RecorderManager {
             &segment_input,
         )?;
         let segment = ActiveSegment {
+            capture_started_at_ms: timestamp_ms,
             file_path: segment_path.clone(),
             id: segment_id,
             runtime: None,
@@ -94,6 +96,12 @@ impl RecorderManager {
                         segment_index: pending.segment_index as i64,
                         started_at_ms: pending.segment.started_at_ms as i64,
                     },
+                )?;
+                storage::save_segment_video_streams(
+                    &transaction,
+                    &pending.segment.id,
+                    &pending.active.video_sources,
+                    pending.active.fps,
                 )?;
                 transaction.commit()
             })

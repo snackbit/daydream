@@ -9,12 +9,16 @@ import {
 } from '@/components/ui/tooltip';
 import { AppearanceControl } from '@/features/appearance/components/appearance-control';
 import { NotificationCenter } from '@/features/notifications/components/notification-center';
+import { useBackgroundTaskSync } from '@/features/processing/use-background-task-sync';
 import { RecorderStatusBar } from '@/features/recorder/components/recorder-status-bar';
+import { useRecorderSession } from '@/features/recorder/use-recorder-session';
 import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 import { StartupWarningBanner } from '@/features/startup/components/startup-warning-banner';
 import { navigationItems } from './navigation';
 
 export function AppShell() {
+  useBackgroundTaskSync();
+  const recorderSession = useRecorderSession();
   const [compactViewport, setCompactViewport] = useState(
     () =>
       typeof window !== 'undefined' &&
@@ -81,8 +85,8 @@ export function AppShell() {
           <Outlet />
         </main>
 
-        <footer className="text-muted-foreground flex h-8 shrink-0 items-center border-t px-3 text-[9px] sm:px-4 sm:text-[10px]">
-          <RecorderStatusBar />
+        <footer className="text-muted-foreground flex min-h-10 shrink-0 items-center border-t px-3 text-[11px] sm:px-4">
+          <RecorderStatusBar session={recorderSession} />
         </footer>
       </div>
 
@@ -90,8 +94,8 @@ export function AppShell() {
         <div
           className={
             compactNavigation
-              ? 'hidden h-10 shrink-0 items-center justify-center border-b md:flex'
-              : 'hidden h-10 shrink-0 items-center justify-between gap-2 border-b px-3 md:flex'
+              ? 'hidden h-11 shrink-0 items-center justify-center border-b md:flex'
+              : 'hidden h-11 shrink-0 items-center justify-between gap-2 border-b px-3 md:flex'
           }
         >
           {compactNavigation ? null : (

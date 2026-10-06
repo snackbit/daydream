@@ -6,6 +6,7 @@ import {
   resumeProcessingJob,
 } from '@/features/ai/ai-client';
 import { reprocessRecordingOcr } from '@/features/ai/ocr/ocr-client';
+import { ProcessingError } from '@/features/processing/components/processing-error';
 import { OcrTextPanel } from './ocr-text-panel';
 
 export interface OcrDocumentStateProps {
@@ -34,7 +35,12 @@ export function OcrDocumentState({
     try {
       if (job?.status === 'paused')
         await resumeProcessingJob({ jobId: job.id });
-      else if (job && (job.status === 'failed' || job.status === 'cancelled'))
+      else if (
+        job &&
+        (job.status === 'failed' ||
+          job.status === 'cancelled' ||
+          job.status === 'completed-with-errors')
+      )
         await retryProcessingJob({ jobId: job.id });
       else await reprocessRecordingOcr(recordingId);
       setRetryStatus('started');
@@ -78,7 +84,10 @@ export function OcrDocumentState({
         No text detected in this frame.
       </p>
     );
-  const failed = document?.status === 'failed' || job?.status === 'failed';
+  const failed =
+    document?.status === 'failed' ||
+    job?.status === 'failed' ||
+    job?.status === 'completed-with-errors';
   const resumable = job?.status === 'paused' || job?.status === 'cancelled';
   if (failed || resumable)
     return (
@@ -96,10 +105,14 @@ export function OcrDocumentState({
             : job?.status === 'paused'
               ? 'OCR processing is paused.'
               : 'OCR processing was cancelled.'}
-          {document?.errorCode || job?.errorCode
-            ? ` (${document?.errorCode ?? job?.errorCode})`
-            : ''}
         </p>
+        {document?.errorCode || job?.errorCode ? (
+          <ProcessingError
+            errorCode={
+              document?.errorCode ?? job?.errorCode ?? 'ai_processing_failed'
+            }
+          />
+        ) : null}
         <p className="text-muted-foreground text-[10px]">
           Retry uses the saved OCR configuration. Vision OCR may send eligible
           frames to your configured provider.

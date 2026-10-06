@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::RecorderError;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRecorderPreviewInput {
+    pub(crate) scene: Option<super::RecorderScene>,
     pub(crate) scene_id: String,
 }
 
@@ -30,6 +31,8 @@ pub struct RecorderPreviewStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderPreviewFrame {
+    pub(crate) source_width: u32,
+    pub(crate) source_height: u32,
     pub(crate) data_url: String,
     pub(crate) height: u32,
     pub(crate) scene_source_id: String,

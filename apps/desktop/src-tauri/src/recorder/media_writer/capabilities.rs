@@ -13,10 +13,16 @@ const REQUIRED_VIDEO_ELEMENTS: &[&str] = &[
     "x264enc",
     "h264parse",
     "matroskamux",
+    "splitmuxsink",
     "filesink",
 ];
 const REQUIRED_AUDIO_ELEMENTS: &[&str] = &["pulsesrc", "audioconvert", "audioresample", "opusenc"];
 const GSTREAMER_PACKAGE_HINTS: &[GstreamerPackageHint] = &[
+    GstreamerPackageHint::new(
+        "splitmuxsink",
+        "gstreamer1.0-plugins-good",
+        "gstreamer1-plugins-good",
+    ),
     GstreamerPackageHint::new(
         "appsrc",
         "gstreamer1.0-plugins-base",
@@ -107,6 +113,17 @@ pub(crate) fn validate_segment_capabilities(
     capabilities: &RecorderMediaWriterCapabilities,
     input: &MediaSegmentInput,
 ) -> Result<(), RecorderError> {
+    if input.video_sources.len() > 1 {
+        let supported = gst::ElementFactory::find("splitmuxsink").is_some_and(|factory| {
+            factory
+                .static_pad_templates()
+                .iter()
+                .any(|pad| pad.name_template() == "video_aux_%u")
+        });
+        if !supported {
+            return Err(dependency_error("recorder_multivideo_unsupported","The installed GStreamer writer cannot record independent video tracks. Update its Good plugins before recording several sources."));
+        }
+    }
     if let Some(error) = segment_capability_error(capabilities, input) {
         return Err(dependency_error("recorder_media_writer_unavailable", error));
     }
@@ -122,6 +139,7 @@ fn collect_capabilities() -> RecorderMediaWriterCapabilities {
         file_sink: element_available("filesink"),
         h264_parse: element_available("h264parse"),
         matroska_muxer: element_available("matroskamux"),
+        split_muxer: element_available("splitmuxsink"),
         opus_encoder: element_available("opusenc"),
         pulse_source: element_available("pulsesrc"),
         queue: element_available("queue"),
@@ -225,6 +243,7 @@ fn capability_for_element(capabilities: &RecorderMediaWriterCapabilities, elemen
         "filesink" => capabilities.file_sink,
         "h264parse" => capabilities.h264_parse,
         "matroskamux" => capabilities.matroska_muxer,
+        "splitmuxsink" => capabilities.split_muxer,
         "opusenc" => capabilities.opus_encoder,
         "pulsesrc" => capabilities.pulse_source,
         "queue" => capabilities.queue,

@@ -151,8 +151,17 @@ impl RecorderManager {
             let _ = fail_segment_for_error(storage, &segment.id, timestamp_ms, &error, None);
         }
         storage
-            .with_connection(|connection| {
-                storage::update_recording_status(connection, recording_id, "failed")
+            .with_connection_mut(|connection| {
+                connection.execute("UPDATE processing_job_runtime SET input_open=0 WHERE job_id IN(SELECT id FROM processing_jobs WHERE recording_id=?1)",[recording_id])?;
+                storage::update_recording_status(connection, recording_id, "failed")?;
+                let transaction = connection.transaction()?;
+                let sealed = crate::recording_privacy::seal_interrupted_capture(&transaction,recording_id,timestamp_ms as i64);
+                if sealed.is_ok() { transaction.commit()?; } else {
+                    // Keep unresolved spans intact when creating their masks fails.
+                    transaction.rollback()?;
+                    tracing::warn!(recording_id,"recorder_window_protection_recovery_pending");
+                }
+                storage::get_recording(connection,recording_id)
             })
             .map_err(storage_error)?;
         self.status()

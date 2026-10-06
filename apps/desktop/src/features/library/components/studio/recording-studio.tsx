@@ -23,13 +23,15 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
-import { StudioPlayer } from './studio-player';
 import { StudioSidebar } from './studio-sidebar';
+import { StudioSourcePlayer } from './studio-source-player';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import { buildStudioVisualFrames } from './studio-visual-observations';
 import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
+import { useStudioFrameNavigation } from './use-studio-frame-navigation';
 import { useStudioSpacePlayback } from './use-studio-space-playback';
+import { useStudioVideoSources } from './use-studio-video-sources';
 
 export interface RecordingStudioProps {
   debugEnabled?: boolean;
@@ -77,15 +79,27 @@ export function RecordingStudio({
   const initializeTimeline = useStudioTimelineStore(
     (state) => state.initializeFromDetail,
   );
-  const playback = useRecordingPlaybackController({
-    detail,
-    mutedTrackIds,
-    playbackAssets,
-  });
   const visualFrames = useMemo(
     () => buildStudioVisualFrames(visualObservations, detail, ocrFrames),
     [ocrFrames, detail, visualObservations],
   );
+  const inspectedIds = useStudioTimelineStore(
+    (state) => state.selection.visualFrameIds,
+  );
+  const inspectedSource = visualFrames.find(
+    (frame) => frame.id === inspectedIds.at(-1),
+  )?.sourceTrackId;
+  const sources = useStudioVideoSources(
+    detail,
+    playbackAssets,
+    inspectedSource,
+  );
+  const playback = useRecordingPlaybackController({
+    detail: sources.selectedDetail,
+    mutedTrackIds,
+    playbackAssets: sources.selectedAssets,
+    autoSkipRedacted: !sources.grid,
+  });
   const redactionSignature = useMemo(
     () =>
       detail.redactions
@@ -131,7 +145,16 @@ export function RecordingStudio({
     },
     [seekTimeline],
   );
-  useStudioSpacePlayback(playback.actions.togglePlayback);
+  const frameNavigation = useStudioFrameNavigation(
+    detail.id,
+    playback.state.displayedTimelineMs,
+    playback.state.seekRevision,
+    seekTimeline,
+    detail.segments.some((segment) => (segment.videoStreams?.length ?? 0) > 0)
+      ? sources.selectedTrackId
+      : undefined,
+  );
+  useStudioSpacePlayback(playback.actions.togglePlayback, frameNavigation.step);
 
   useEffect(() => {
     initializeTimeline(detail);
@@ -173,17 +196,26 @@ export function RecordingStudio({
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-full min-h-0 w-full flex-1" ref={layoutRef}>
+        {frameNavigation.error ? (
+          <div
+            role="alert"
+            className="bg-background text-destructive absolute z-50 p-2 text-xs"
+          >
+            {frameNavigation.error}
+          </div>
+        ) : null}
         {compact ? (
           <Tabs
             className="flex min-h-0 flex-1 flex-col gap-0 overflow-y-auto"
             defaultValue="timeline"
           >
             <div className="min-h-[12rem] flex-[3]">
-              <StudioPlayer
+              <StudioSourcePlayer
+                sources={sources}
                 detail={detail}
                 onRefreshPlayback={onRefreshPlayback}
                 playback={playback}
-                playbackAssets={playbackAssets}
+                assets={playbackAssets}
               />
             </div>
             <TabsList
@@ -202,6 +234,7 @@ export function RecordingStudio({
               value="timeline"
             >
               <TrackTimeline
+                onRefreshRedactions={onRefreshPlayback}
                 activity={activity}
                 aiProcessingState={aiProcessingState}
                 detail={detail}
@@ -249,16 +282,18 @@ export function RecordingStudio({
             <ResizablePanel defaultSize={74} minSize={50}>
               <ResizablePanelGroup orientation="vertical">
                 <ResizablePanel defaultSize={68} minSize={45}>
-                  <StudioPlayer
+                  <StudioSourcePlayer
+                    sources={sources}
                     detail={detail}
                     onRefreshPlayback={onRefreshPlayback}
                     playback={playback}
-                    playbackAssets={playbackAssets}
+                    assets={playbackAssets}
                   />
                 </ResizablePanel>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={32} minSize={18}>
                   <TrackTimeline
+                    onRefreshRedactions={onRefreshPlayback}
                     activity={activity}
                     aiProcessingState={aiProcessingState}
                     detail={detail}

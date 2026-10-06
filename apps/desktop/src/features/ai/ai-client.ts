@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   AiModelAssetList,
+  BackgroundTasksChanged,
   AiProviderStatus,
   CancelAiModelDownloadInput,
   DeleteAiModelInput,
@@ -145,12 +146,9 @@ export async function listenToAiModelsChanged(
 }
 
 export async function listenToAiProcessingChanged(
-  handler: (state: RecordingAiProcessingState) => void,
+  handler: (state: RecordingAiProcessingState | BackgroundTasksChanged) => void,
 ): Promise<() => void> {
-  return listen<RecordingAiProcessingState>(
-    aiProcessingChangedEvent,
-    (event) => {
-      handler(event.payload);
-    },
-  );
+  return listen<BackgroundTasksChanged>(aiProcessingChangedEvent, (event) => {
+    handler(event.payload);
+  });
 }

@@ -3,6 +3,7 @@ import type {
   AppSettingsState,
   AppSettingsStorageCleanupPreview,
   RecorderScene,
+  SettingsCredentialDrafts,
 } from '@daydream/shared';
 import { create } from 'zustand';
 import { getRecorderScene } from '@/features/recorder/recorder-client';
@@ -32,7 +33,10 @@ interface SettingsState {
   ) => Promise<AppSettingsStorageCleanupPreview | null>;
   reset: () => Promise<void>;
   savedScene: RecorderScene | null;
-  save: (settings?: AppSettings) => Promise<void>;
+  save: (
+    settings?: AppSettings,
+    credentials?: SettingsCredentialDrafts,
+  ) => Promise<void>;
   setDraft: (draft: AppSettings) => void;
   settingsState: AppSettingsState | null;
   successMessage: string | null;
@@ -122,7 +126,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     });
   },
   savedScene: null,
-  async save(settings) {
+  async save(settings, credentials) {
     if (get().mutationStatus === 'loading')
       throw new Error('A settings request is already running.');
     const draftAtSave = get().draft;
@@ -144,7 +148,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           error: settingsErrorMessage(error),
           mutationStatus: 'error',
         }),
-      run: () => saveAppSettings({ settings: settingsToSave }),
+      run: () =>
+        saveAppSettings({
+          settings: settingsToSave,
+          ...(credentials && Object.keys(credentials).length
+            ? { credentials }
+            : {}),
+        }),
       success: (settingsState) => {
         const draft =
           get().draft === draftAtSave ? settingsState.settings : get().draft;

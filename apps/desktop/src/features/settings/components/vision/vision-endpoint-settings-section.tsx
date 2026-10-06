@@ -1,9 +1,5 @@
 import { useCallback, type ChangeEvent } from 'react';
-import type {
-  AiOcrEngine,
-  AiVisionProviderKind,
-  AiVisionProviderSettings,
-} from '@daydream/shared';
+import type { AiOcrEngine, AiVisionProviderSettings } from '@daydream/shared';
 import {
   Field,
   FieldDescription,
@@ -21,22 +17,22 @@ import {
 import {
   type UpdateSettingsDraft,
   updateAiVision,
-} from '@/features/settings/settings-draft-updaters';
-import { CheckboxField, RemoteProviderFields } from '../ai-settings-fields';
-import { visionRemoteDisclosure } from './vision-settings-format';
+} from '../../settings-draft-updaters';
+import { CheckboxField } from '../ai-settings-fields';
+import { VisionProviderTest } from './vision-provider-test';
 
 export interface VisionEndpointSettingsSectionModel {
   ocrEnabled: boolean;
   ocrEngine: AiOcrEngine;
   settings: AiVisionProviderSettings;
   visionKeyDraft: string;
+  sourceCount: number;
+  samplesPerMinute: number;
 }
-
 export interface VisionEndpointSettingsSectionActions {
   onChangeVisionKey: (value: string) => void;
   onUpdateDraft: UpdateSettingsDraft;
 }
-
 export interface VisionEndpointSettingsSectionProps {
   actions: VisionEndpointSettingsSectionActions;
   model: VisionEndpointSettingsSectionModel;
@@ -47,64 +43,52 @@ export function VisionEndpointSettingsSection({
   model,
 }: VisionEndpointSettingsSectionProps) {
   const { settings } = model;
-  const remoteVision = settings.provider === 'openai-compatible';
-  const handleObservationsChange = useCallback(
-    (observationsEnabled: boolean) => {
+  const { onChangeVisionKey } = actions;
+  const update = useCallback(
+    (changes: Partial<AiVisionProviderSettings>) =>
       updateAiVision(actions.onUpdateDraft, (current) => ({
         ...current,
-        observationsEnabled,
-      }));
-    },
+        ...changes,
+      })),
     [actions.onUpdateDraft],
   );
-  const handleVisionProviderChange = useCallback(
-    (value: string) => {
-      const provider = parseVisionProvider(value);
-      if (!provider) {
-        return;
-      }
-      updateAiVision(actions.onUpdateDraft, (current) => ({
-        ...current,
-        apiKeyRef: provider === 'openai-compatible' ? current.apiKeyRef : null,
-        provider,
-      }));
-    },
-    [actions.onUpdateDraft],
+  function setProvider(value: string) {
+    if (value === 'disabled' || value === 'openai-compatible')
+      update({ provider: value });
+  }
+  function setAuth(value: string) {
+    if (value === 'none' || value === 'api-key') update({ authMode: value });
+  }
+  const changeObservations = useCallback(
+    (observationsEnabled: boolean) => update({ observationsEnabled }),
+    [update],
   );
-  const handleBaseUrlChange = useCallback(
-    (value: string) => {
-      updateAiVision(actions.onUpdateDraft, (current) => ({
-        ...current,
-        baseUrl: value || null,
-      }));
-    },
-    [actions.onUpdateDraft],
+  const changeBaseUrl = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      update({ baseUrl: event.target.value || null }),
+    [update],
   );
-  const handleModelChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const modelName = event.target.value;
-      updateAiVision(actions.onUpdateDraft, (current) => ({
-        ...current,
-        model: modelName || null,
-      }));
-    },
-    [actions.onUpdateDraft],
+  const changeModel = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      update({ model: event.target.value || null }),
+    [update],
   );
-
+  const changeKey = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) =>
+      onChangeVisionKey(event.target.value),
+    [onChangeVisionKey],
+  );
   return (
-    <FieldGroup>
+    <FieldGroup className="gap-3">
       <CheckboxField
         checked={settings.observationsEnabled}
-        description="Use the shared Vision endpoint for screen observations. Turning this off keeps the endpoint available for Vision OCR."
         label="Generate screen observations"
-        onCheckedChange={handleObservationsChange}
+        description="Describe activity in sampled screen frames."
+        onCheckedChange={changeObservations}
       />
       <Field>
         <FieldLabel htmlFor="ai-vision-provider">Vision provider</FieldLabel>
-        <Select
-          onValueChange={handleVisionProviderChange}
-          value={settings.provider}
-        >
+        <Select value={settings.provider} onValueChange={setProvider}>
           <SelectTrigger id="ai-vision-provider">
             <SelectValue />
           </SelectTrigger>
@@ -113,43 +97,90 @@ export function VisionEndpointSettingsSection({
             <SelectItem value="openai-compatible">OpenAI-compatible</SelectItem>
           </SelectContent>
         </Select>
-        <FieldDescription>
-          One endpoint, model and encrypted key are shared by Vision OCR and
-          screen observations.
-        </FieldDescription>
       </Field>
-      {remoteVision ? (
+      {settings.provider === 'openai-compatible' ? (
         <>
-          <RemoteProviderFields
-            baseUrl={settings.baseUrl ?? ''}
-            customDisclosure={visionRemoteDisclosure({
-              ocrEnabled: model.ocrEnabled,
-              ocrEngine: model.ocrEngine,
-              observationsEnabled: settings.observationsEnabled,
-            })}
-            dataSentLabel="Retained screen frames and OCR text"
-            hasSavedKey={Boolean(settings.apiKeyRef)}
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor="ai-vision-base-url">Base URL</FieldLabel>
+              <Input
+                id="ai-vision-base-url"
+                value={settings.baseUrl ?? ''}
+                placeholder="http://localhost:8080/v1"
+                onChange={changeBaseUrl}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="ai-vision-model">Vision model</FieldLabel>
+              <Input
+                id="ai-vision-model"
+                value={settings.model ?? ''}
+                placeholder="Model name"
+                onChange={changeModel}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="ai-vision-auth">Authentication</FieldLabel>
+              <Select
+                value={settings.authMode ?? 'api-key'}
+                onValueChange={setAuth}
+              >
+                <SelectTrigger id="ai-vision-auth">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="api-key">API key</SelectItem>
+                  <SelectItem value="none">No authentication</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {settings.authMode !== 'none' ? (
+              <Field>
+                <FieldLabel htmlFor="ai-vision-api-key">API key</FieldLabel>
+                <Input
+                  id="ai-vision-api-key"
+                  autoComplete="off"
+                  type="password"
+                  value={model.visionKeyDraft}
+                  placeholder={settings.apiKeyRef ? 'Saved key' : 'API key'}
+                  onChange={changeKey}
+                />
+                <FieldDescription>
+                  {model.visionKeyDraft.trim()
+                    ? 'New key, not saved.'
+                    : settings.apiKeyRef
+                      ? 'Key saved.'
+                      : 'Enter an API key.'}
+                </FieldDescription>
+              </Field>
+            ) : null}
+          </div>
+          <VisionProviderTest
+            vision={settings}
             keyDraft={model.visionKeyDraft}
-            localAlternativeDescription="Tesseract is the local OCR option. Disabling screen observations does not disable Vision OCR."
-            onBaseUrlChange={handleBaseUrlChange}
-            onKeyChange={actions.onChangeVisionKey}
-            prefix="vision"
+            ocr={model.ocrEnabled && model.ocrEngine === 'vision'}
+            observations={settings.observationsEnabled}
           />
-          <Field>
-            <FieldLabel htmlFor="ai-vision-model">Vision model</FieldLabel>
-            <Input
-              id="ai-vision-model"
-              onChange={handleModelChange}
-              placeholder="Model name"
-              value={settings.model ?? ''}
-            />
-          </Field>
+          <details className="text-muted-foreground text-xs">
+            <summary className="cursor-pointer">Data and usage</summary>
+            <p className="mt-1">
+              Vision sends sampled screen frames to this endpoint. Screen
+              observations can also include recognized text. API keys are
+              encrypted locally.
+            </p>
+            <p className="mt-1">
+              {model.sourceCount} video{' '}
+              {model.sourceCount === 1 ? 'source' : 'sources'} at up to{' '}
+              {Number(model.samplesPerMinute.toFixed(2))} samples per minute
+              each:{' '}
+              {Number((model.sourceCount * model.samplesPerMinute).toFixed(2))}{' '}
+              frames per minute in total. Each enabled Vision task can make a
+              separate request per frame. Cached OCR frames may reduce calls.
+              Provider charges vary.
+            </p>
+          </details>
         </>
       ) : null}
     </FieldGroup>
   );
-}
-
-function parseVisionProvider(value: string): AiVisionProviderKind | null {
-  return value === 'disabled' || value === 'openai-compatible' ? value : null;
 }

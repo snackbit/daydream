@@ -91,10 +91,10 @@ pub fn get_ai_provider_status(
         },
         vision: if app_settings.ai.vision.provider == "disabled" {
             "disabled".to_string()
-        } else if app_settings.ai.vision.api_key_ref.is_some() {
+        } else if settings::vision_ready(&app_settings.ai.vision) {
             "configured".to_string()
         } else {
-            "missing-key".to_string()
+            "not-ready".to_string()
         },
     })
 }

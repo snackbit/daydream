@@ -69,6 +69,13 @@ pub(in crate::storage) fn migrations() -> Vec<M<'static>> {
     DROP TABLE recordings;
     ALTER TABLE recordings_v2 RENAME TO recordings;
 
+    -- The outer migration runner disables foreign keys for table rebuilds.
+    -- Clear surviving child rows before restoring their explicit backups.
+    DELETE FROM recording_tracks;
+    DELETE FROM redactions;
+    DELETE FROM capture_events;
+    DELETE FROM processing_jobs;
+
     INSERT INTO recording_tracks (
         id,
         recording_id,

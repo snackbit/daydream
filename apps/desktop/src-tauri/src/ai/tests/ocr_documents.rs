@@ -155,12 +155,14 @@ fn normal_visual_query_skips_the_raw_word_table_when_disabled() {
 }
 
 #[test]
-fn explicit_reprocess_pins_current_engine_and_queues_only_ocr() {
+fn review_explicit_reprocess_pins_current_engine_and_safe_source_and_queues_only_ocr() {
     tauri::async_runtime::block_on(async {
         let app = tauri::test::mock_app();
         let storage = storage::test_storage(PathBuf::new());
         let path = std::env::temp_dir().join(format!("daydream-ocr-plan-{}.mkv", Uuid::now_v7()));
         fs::write(&path, b"synthetic source metadata").unwrap();
+        let hidden_source = Uuid::now_v7().to_string();
+        let safe_source = Uuid::now_v7().to_string();
         let recording_id = storage
             .with_connection(|connection| {
                 let fixture = test_visual_recording(connection);
@@ -182,6 +184,42 @@ fn explicit_reprocess_pins_current_engine_and_queues_only_ocr() {
                     rusqlite::params![fixture.segment_id, path.to_string_lossy()],
                 )?;
                 storage::mark_recording_completed(connection, &fixture.recording_id, 10_001)?;
+                let sources =
+                    [(&hidden_source, "hidden"), (&safe_source, "safe")].map(|(track, source)| {
+                        storage::RecordingVideoSource {
+                            track_id: track.clone(),
+                            source_id: source.into(),
+                            label: source.into(),
+                            width: 4,
+                            height: 2,
+                            config_json: "{}".into(),
+                        }
+                    });
+                storage::save_recording_video_sources(
+                    connection,
+                    &fixture.recording_id,
+                    &sources,
+                    1,
+                )?;
+                storage::save_segment_video_streams(
+                    connection,
+                    &fixture.segment_id,
+                    &sources,
+                    1.0,
+                )?;
+                storage::create_redaction(
+                    connection,
+                    &storage::CreateRedactionInput {
+                        id: Uuid::now_v7().to_string(),
+                        recording_id: fixture.recording_id.clone(),
+                        start_offset_ms: 0,
+                        end_offset_ms: 10_000,
+                        reason: None,
+                        created_at_ms: 10_001,
+                        track_ids_json: serde_json::to_string(std::slice::from_ref(&hidden_source))
+                            .unwrap(),
+                    },
+                )?;
                 for (key, value) in [
                     ("ai.ocr.engine", serde_json::json!("vision")),
                     ("ai.vision.provider", serde_json::json!("openai-compatible")),
@@ -217,6 +255,37 @@ fn explicit_reprocess_pins_current_engine_and_queues_only_ocr() {
             .unwrap();
         assert!(!chunks.is_empty());
         assert!(chunks.iter().all(|chunk| chunk.source_kind == "ocr"));
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.track_id.as_deref(),
+                Some(safe_source.as_str()),
+                "OCR reprocessing must retain the unredacted source UUID"
+            );
+            let selected = storage
+                .with_connection(|connection| {
+                    let segment =
+                        storage::list_recording_segments(connection, &recording_id)?.remove(0);
+                    processing::source_segment(connection, chunk, segment)
+                })
+                .unwrap();
+            assert_eq!(
+                selected.video_stream_index,
+                Some(1),
+                "Never substitute the redacted first stream"
+            );
+            let mut old_invalid_chunk = chunk.clone();
+            old_invalid_chunk.track_id = None;
+            assert!(
+                storage
+                    .with_connection(|connection| {
+                        let segment =
+                            storage::list_recording_segments(connection, &recording_id)?.remove(0);
+                        processing::source_segment(connection, &old_invalid_chunk, segment)
+                    })
+                    .is_err(),
+                "Already-queued independent-source work without an ID must fail before extraction"
+            );
+        }
         let pinned = storage
             .with_connection(|connection| {
                 storage::get_processing_job_ocr_config(connection, &job.id)

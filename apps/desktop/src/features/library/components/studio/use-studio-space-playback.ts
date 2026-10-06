@@ -17,25 +17,29 @@ const spaceOwnedTargets = [
   '[role="textbox"]',
 ].join(',');
 
-export function useStudioSpacePlayback(togglePlayback: () => Promise<unknown>) {
+export function useStudioSpacePlayback(
+  togglePlayback: () => Promise<unknown>,
+  stepFrame?: (direction: -1 | 1) => Promise<unknown>,
+) {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (
-        event.code !== 'Space' ||
-        event.repeat ||
+        !['Space', 'Comma', 'Period'].includes(event.code) ||
+        (event.repeat && event.code === 'Space') ||
         event.defaultPrevented ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
-        isPlaybackKeyOwnedByControl(event.target)
+        isPlaybackKeyOwnedByControl(event.target, event.code)
       ) {
         return;
       }
 
       event.preventDefault();
-      void togglePlayback();
+      if (event.code === 'Space') void togglePlayback();
+      else if (stepFrame) void stepFrame(event.code === 'Comma' ? -1 : 1);
     },
-    [togglePlayback],
+    [togglePlayback, stepFrame],
   );
 
   useEffect(() => {
@@ -45,8 +49,16 @@ export function useStudioSpacePlayback(togglePlayback: () => Promise<unknown>) {
   }, [handleKeyDown]);
 }
 
-function isPlaybackKeyOwnedByControl(target: EventTarget | null): boolean {
+function isPlaybackKeyOwnedByControl(
+  target: EventTarget | null,
+  code: string,
+): boolean {
   return (
-    target instanceof Element && target.closest(spaceOwnedTargets) !== null
+    target instanceof Element &&
+    target.closest(
+      code === 'Space'
+        ? spaceOwnedTargets
+        : 'input,select,textarea,[contenteditable="true"],[role="dialog"],[role="textbox"],[role="combobox"]',
+    ) !== null
   );
 }

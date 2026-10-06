@@ -265,12 +265,14 @@ function chunkLabel(chunk: RecordingTranscriptionChunkState): string {
       return 'AI processing in progress';
     case 'failed':
       return 'AI processing failed';
+    case 'completed-with-errors':
+      return 'Transcript available with failed sections';
     case 'cancelled':
       return 'Transcription chunk cancelled';
     case 'no-speech':
       return 'Transcription chunk processed with no speech';
     case 'skipped-silence':
-      return 'Transcription chunk skipped because audio stayed below the silence threshold';
+      return 'Transcription chunk skipped because no speech was detected';
     case 'text':
       return 'Transcription chunk processed with text';
     case 'unknown':

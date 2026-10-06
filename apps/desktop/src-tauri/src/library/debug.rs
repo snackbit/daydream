@@ -56,7 +56,7 @@ pub(super) fn debug_data_for_recording(
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let visual_observations = ai::visual_observations_for_recording(storage, recording_id)
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
-    let detail = detail_from_rows(&recording, &segments, &redactions);
+    let detail = detail_for_recording(storage, recording_id)?;
 
     Ok(LibraryRecordingDebugData {
         raw: json!({

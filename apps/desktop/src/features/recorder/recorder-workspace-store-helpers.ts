@@ -124,10 +124,43 @@ export function applySelectedCaptureSources(
 ): void {
   const currentScene = get().scene ?? createDefaultRecorderScene([]);
   const classification = classifyCaptureSourceMerge(currentScene, sources);
-  const scene = mergeCaptureSourcesIntoScene(
+  const merged = mergeCaptureSourcesIntoScene(
     currentScene,
     classification.newSources,
   );
+  const existingIds = new Set(currentScene.sources.map((source) => source.id));
+  const scene = currentScene.independentVideo
+    ? {
+        ...merged,
+        sources: merged.sources.map((source) =>
+          !existingIds.has(source.id) &&
+          source.sourceWidth &&
+          source.sourceHeight
+            ? {
+                ...source,
+                rect: {
+                  x: 0,
+                  y: 0,
+                  width:
+                    Math.floor(
+                      (source.sourceWidth -
+                        source.crop.left -
+                        source.crop.right) /
+                        2,
+                    ) * 2,
+                  height:
+                    Math.floor(
+                      (source.sourceHeight -
+                        source.crop.top -
+                        source.crop.bottom) /
+                        2,
+                    ) * 2,
+                },
+              }
+            : source,
+        ),
+      }
+    : merged;
   set({
     captureSources: sources,
     error: null,

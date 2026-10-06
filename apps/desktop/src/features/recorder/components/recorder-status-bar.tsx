@@ -9,6 +9,10 @@ import {
   type RecorderPerformanceLevel,
 } from '@/features/recorder/recorder-performance';
 import { cn } from '@/lib/utils';
+import {
+  RecorderSessionControls,
+  type RecorderSessionControlsProps,
+} from './recorder-session-controls';
 
 const levelLabels = {
   idle: 'Idle',
@@ -24,7 +28,10 @@ const levelClasses = {
   stalled: 'bg-red-500',
 } satisfies Record<RecorderPerformanceLevel, string>;
 
-export function RecorderStatusBar() {
+export interface RecorderStatusBarProps {
+  session?: RecorderSessionControlsProps;
+}
+export function RecorderStatusBar({ session }: RecorderStatusBarProps = {}) {
   const statsHistoryRef = useRef<RecorderPerformanceStats[]>([]);
   const [display, setDisplay] = useState<RecorderPerformanceDisplay>(() =>
     deriveRecorderPerformanceDisplay(null),
@@ -96,7 +103,10 @@ export function RecorderStatusBar() {
           )}
           title={levelLabels[display.level]}
         />
-        <span className="truncate">{formatRecorderState(state)}</span>
+        <span className="truncate">
+          {formatRecorderState(session?.status?.state ?? state)}
+        </span>
+        {session ? <RecorderSessionControls {...session} /> : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-4 tabular-nums">

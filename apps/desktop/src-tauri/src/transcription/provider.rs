@@ -46,19 +46,25 @@ impl TranscriptionProviderManager {
         }
     }
 
-    pub async fn transcribe(
+    pub(crate) async fn transcribe(
         &self,
         app: &AppHandle,
         storage: &AppStorage,
         request: TranscriptionRequest,
+        app_settings: &settings::AppSettings,
     ) -> Result<VerboseTranscription, TranscriptionError> {
-        let app_settings =
-            settings::load_app_settings(storage).map_err(|error| TranscriptionError {
-                code: error.code,
-                message: error.message,
-            })?;
-        match selected_transcription_provider(&app_settings)? {
+        match selected_transcription_provider(app_settings)? {
             TranscriptionProviderKind::OpenAiCompatible => {
+                let current = settings::load_app_settings(storage)
+                    .map_err(|error| transcription_error(&error.code, &error.message))?;
+                if current.ai.transcription.provider != app_settings.ai.transcription.provider
+                    || current.ai.transcription.remote_base_url
+                        != app_settings.ai.transcription.remote_base_url
+                    || current.ai.transcription.remote_api_key_ref
+                        != app_settings.ai.transcription.remote_api_key_ref
+                {
+                    return Err(transcription_error("ai_transcription_configuration_changed","Remote transcription configuration changed. Retry with current settings to authorize new work."));
+                }
                 let api_key = remote_transcription_api_key(
                     storage,
                     app_settings.ai.transcription.remote_api_key_ref.as_deref(),

@@ -14,6 +14,13 @@ import {
 } from '@/components/ui/card';
 import { FieldGroup } from '@/components/ui/field';
 import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import {
   updateAiKeyboardActivity,
   updateAiMouseActivity,
   updateAiProcessing,
@@ -43,6 +50,26 @@ export function AiActivityProcessingCard({
   onRepairInputActivity,
   onUpdateDraft,
 }: AiActivityProcessingCardProps) {
+  function setTiming(value: string) {
+    if (
+      value !== 'during-recording' &&
+      value !== 'after-stop' &&
+      value !== 'manual'
+    )
+      return;
+    updateAiProcessing(onUpdateDraft, (current) => ({
+      ...current,
+      timing: value,
+      autoStartAfterRecording: value !== 'manual',
+    }));
+  }
+  function setResourceMode(value: string) {
+    if (value !== 'background' && value !== 'fast') return;
+    updateAiProcessing(onUpdateDraft, (current) => ({
+      ...current,
+      resourceMode: value,
+    }));
+  }
   return (
     <Card size="sm">
       <CardHeader>
@@ -53,17 +80,50 @@ export function AiActivityProcessingCard({
       </CardHeader>
       <CardContent>
         <FieldGroup>
-          <CheckboxField
-            checked={draft.ai.processing.autoStartAfterRecording}
-            description="Process eligible, non-redacted recordings after capture ends."
-            label="Start processing after recording"
-            onCheckedChange={(checked) => {
-              updateAiProcessing(onUpdateDraft, (current) => ({
-                ...current,
-                autoStartAfterRecording: checked,
-              }));
-            }}
-          />
+          <div className="grid gap-2 md:grid-cols-2">
+            <div className="space-y-1">
+              <span className="text-xs font-medium">Processing timing</span>
+              <Select
+                value={
+                  draft.ai.processing.autoStartAfterRecording
+                    ? (draft.ai.processing.timing ?? 'after-stop')
+                    : 'manual'
+                }
+                onValueChange={setTiming}
+              >
+                <SelectTrigger aria-label="Processing timing">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="during-recording">
+                    During recording
+                  </SelectItem>
+                  <SelectItem value="after-stop">After stop</SelectItem>
+                  <SelectItem value="manual">Manual</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <span className="text-xs font-medium">Resource use</span>
+              <Select
+                value={draft.ai.processing.resourceMode ?? 'background'}
+                onValueChange={setResourceMode}
+              >
+                <SelectTrigger aria-label="Processing resource use">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="background">Background</SelectItem>
+                  <SelectItem value="fast">Fast</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            During recording processes finalized sections once their privacy
+            checks are complete. Background limits competing work; Fast uses the
+            configured concurrency limits.
+          </p>
           <CheckboxField
             checked={draft.ai.processing.frameSimilarityEnabled}
             description="Reduce duplicate or visually unchanged work in screen observations. Vision OCR still checks every selected full frame and reuses results only for exact image matches."

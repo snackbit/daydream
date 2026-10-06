@@ -3,6 +3,75 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::SceneCompositorPlan;
+
+#[test]
+fn independent_sources_keep_their_own_dimensions_identity_and_pixels() {
+    let mut a = scene_source("source-a", "monitor-1", 0);
+    a.rect = CanvasRect {
+        x: 0.0,
+        y: 0.0,
+        width: 4.0,
+        height: 2.0,
+    };
+    a.crop = CropRect {
+        left: 0.0,
+        right: 0.0,
+        top: 0.0,
+        bottom: 0.0,
+    };
+    a.source_width = Some(4.0);
+    a.source_height = Some(2.0);
+    let mut b = a.clone();
+    b.id = "source-b".into();
+    b.source_id = "monitor-2".into();
+    b.rect.width = 2.0;
+    let mut scene = test_scene(vec![a, b]);
+    scene.independent_video = true;
+    let plan = SceneCompositorPlan::from_scene(
+        &scene,
+        &[
+            runtime_source("monitor-1", "a"),
+            runtime_source("monitor-2", "b"),
+        ],
+    )
+    .unwrap();
+    let frames = HashMap::from([
+        (
+            "monitor-1".into(),
+            CapturedFrame::new(
+                "monitor-1",
+                1,
+                4,
+                2,
+                16,
+                CapturedFrameFormat::Rgba,
+                [255, 0, 0, 255].repeat(8),
+            )
+            .unwrap(),
+        ),
+        (
+            "monitor-2".into(),
+            CapturedFrame::new(
+                "monitor-2",
+                1,
+                4,
+                2,
+                16,
+                CapturedFrameFormat::Rgba,
+                [0, 255, 0, 255].repeat(8),
+            )
+            .unwrap(),
+        ),
+    ]);
+    let output = plan.compose_source_outputs(&frames, 100).unwrap();
+    assert_eq!(output.len(), 2);
+    assert_eq!((output[0].width, output[0].height), (4, 2));
+    assert_eq!((output[1].width, output[1].height), (2, 2));
+    assert_eq!(output[0].source_id, "source-a");
+    assert_eq!(output[1].source_id, "source-b");
+    assert_eq!(&output[0].data[..4], &[255, 0, 0, 255]);
+    assert_eq!(&output[1].data[..4], &[0, 255, 0, 255]);
+}
 use crate::recorder::{
     capture_runtime::{
         CaptureRuntimeSource, CaptureRuntimeSourceHandle, CapturedFrame, CapturedFrameFormat,
@@ -189,6 +258,7 @@ fn runtime_source(source_id: &str, runtime_id: &str) -> CaptureRuntimeSource {
 
 fn test_scene(sources: Vec<RecorderSceneSource>) -> RecorderScene {
     RecorderScene {
+        independent_video: false,
         canvas_height: 50,
         canvas_width: 100,
         desktop_audio_source_id: None,

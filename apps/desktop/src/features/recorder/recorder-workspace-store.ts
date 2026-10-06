@@ -14,12 +14,13 @@ export type {
   RecorderWorkspaceState,
 } from './recorder-workspace-store-types';
 
-export const useRecorderWorkspaceStore = create<RecorderWorkspaceState>(
-  (set, get) => ({
+export function createRecorderWorkspaceStore() {
+  return create<RecorderWorkspaceState>((set, get) => ({
     ...recorderWorkspaceInitialState,
     ...createRecorderWorkspacePersistenceActions(set, get),
     ...createRecorderWorkspaceSceneActions(set, get),
     ...createRecorderWorkspacePreviewActions(set, get),
     ...createRecorderWorkspaceLifecycleActions(set, get),
-  }),
-);
+  }));
+}
+export const useRecorderWorkspaceStore = createRecorderWorkspaceStore();

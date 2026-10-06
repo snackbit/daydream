@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { CaptureWorkspace } from '@/features/recorder/components/capture-workspace';
+import { SourceCaptureWorkspace } from '@/features/recorder/components/source-capture-workspace';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
 import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 
@@ -127,7 +127,6 @@ export function CaptureScreen() {
       loadStatus === 'ready' &&
       !!scene &&
       scene.sources.length > 0 &&
-      !isDirty &&
       pendingLifecycleAction === null &&
       status?.state === 'idle' &&
       status.finalization === null;
@@ -191,7 +190,7 @@ export function CaptureScreen() {
   }, [refreshRecordingStats, status?.activeRecordingId, status?.state]);
 
   return (
-    <CaptureWorkspace
+    <SourceCaptureWorkspace
       audioSources={audioSources}
       captureSources={captureSources}
       desktopAudioSourceId={desktopAudioSourceId}

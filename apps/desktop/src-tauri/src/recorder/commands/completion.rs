@@ -50,6 +50,14 @@ pub(super) fn spawn_lifecycle_completion<R: Runtime>(
 }
 
 fn maybe_auto_start_ai_processing<R: Runtime>(app: &AppHandle<R>, storage: &AppStorage, id: &str) {
+    match ai::finish_live_recording(app, storage, id) {
+        Ok(true) => return,
+        Ok(false) => (),
+        Err(error) => {
+            warn!(recording_id=id,error_code=%error.code,"ai_live_final_admission_failed");
+            return;
+        }
+    }
     let settings = match settings::load_app_settings(storage) {
         Ok(settings) => settings,
         Err(error) => {
@@ -61,7 +69,9 @@ fn maybe_auto_start_ai_processing<R: Runtime>(app: &AppHandle<R>, storage: &AppS
             return;
         }
     };
-    if !settings.ai.processing.auto_start_after_recording {
+    if !settings.ai.processing.auto_start_after_recording
+        || settings.ai.processing.timing == "manual"
+    {
         return;
     }
     match ai::enqueue_recording_ai_processing(app, storage, id) {

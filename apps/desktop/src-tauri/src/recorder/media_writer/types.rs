@@ -2,8 +2,16 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug)]
+pub(crate) struct FragmentEvent {
+    pub(crate) opened: bool,
+    pub(crate) path: PathBuf,
+    pub(crate) timestamp_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MediaSegmentInput {
+    pub(crate) video_sources: Vec<crate::storage::RecordingVideoSource>,
     pub(crate) benchmarks_dir: PathBuf,
     pub(crate) canvas_height: u32,
     pub(crate) canvas_width: u32,
@@ -28,6 +36,8 @@ pub(crate) struct MediaWriterStreamIndexes {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MediaSegmentProbe {
+    #[serde(default)]
+    pub(crate) videos: Vec<MediaSegmentVideoProbe>,
     pub(crate) audio: Vec<MediaSegmentAudioProbe>,
     pub(crate) available: bool,
     pub(crate) duration_ms: Option<u64>,

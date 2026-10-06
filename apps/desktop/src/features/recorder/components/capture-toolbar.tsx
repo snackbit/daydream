@@ -154,7 +154,7 @@ export function CaptureToolbar({
         <span className="text-foreground/85 font-medium">
           Status: {status?.state ?? loadStatus}
         </span>
-        <span>{isDirty ? 'Unsaved scene' : 'Scene saved'}</span>
+        <span>{isDirty ? 'Unsaved source setup' : 'Source setup saved'}</span>
         <span>Preview: {previewLabel(previewStatus)}</span>
         {startBlocker ? (
           <span aria-live="polite" className="text-foreground/90" role="status">

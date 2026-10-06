@@ -65,6 +65,7 @@ export function useTrackTimelineViewModel({
       orderedLaneIds.map((laneId) => ({
         heightPx: trackLaneHeightPxForKind(lanesById[laneId]!.kind),
         id: laneId,
+        label: lanesById[laneId]!.label,
       })),
     [orderedLaneIds, lanesById],
   );

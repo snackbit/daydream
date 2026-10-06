@@ -176,8 +176,18 @@ fn capture_preview_stream_frame(
             continue;
         }
 
-        let encoded = encode_cropped_preview_frame(&frame, &input.crop)?;
+        let encoded = encode_cropped_preview_frame(
+            &frame,
+            &crate::recorder::types::CropRect {
+                left: 0.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+            },
+        )?;
         let payload = RecorderPreviewFrame {
+            source_width: frame.width,
+            source_height: frame.height,
             data_url: encoded.data_url,
             height: encoded.height,
             scene_source_id: input.scene_source_id.clone(),

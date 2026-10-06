@@ -13,8 +13,10 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 import { useSettingsStore } from '@/features/settings/settings-store';
+import '@/index.css';
 import { SettingsScreen } from './SettingsScreen';
 
 const aiClient = vi.hoisted(() => ({
@@ -424,9 +426,73 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  delete document.documentElement.dataset.theme;
+  await page.viewport(1440, 960);
 });
+
+test.each([
+  ['light', 1440],
+  ['dark', 1440],
+  ['light', 420],
+  ['dark', 420],
+] as const)(
+  'Vision settings align and remain reachable in %s at %i pixels',
+  async (theme, width) => {
+    await page.viewport(width, 900);
+    document.documentElement.dataset.theme = theme;
+    settingsClient.getAppSettings.mockResolvedValue({
+      ...defaultSettingsState,
+      settings: {
+        ...defaultSettingsState.settings,
+        ai: {
+          ...defaultSettingsState.settings.ai,
+          ocr: { ...defaultSettingsState.settings.ai.ocr, engine: 'vision' },
+          vision: {
+            ...defaultSettingsState.settings.ai.vision,
+            provider: 'openai-compatible',
+            baseUrl: 'http://localhost:8080/v1',
+            model: 'synthetic-vision',
+            authMode: 'none',
+            observationsEnabled: true,
+          },
+        },
+      },
+    });
+    render(<SettingsScreen tab="ai" />);
+    const model = await screen.findByRole('textbox', { name: 'Vision model' });
+    const save = screen.getByRole('button', { name: 'Save' });
+    const probe = screen.getByRole('button', { name: /test vision/i });
+    for (const control of [
+      model,
+      save,
+      probe,
+      screen.getByRole('combobox', { name: 'Authentication' }),
+    ]) {
+      const bounds = control.getBoundingClientRect();
+      expect(bounds.width).toBeGreaterThan(0);
+      expect(bounds.left).toBeGreaterThanOrEqual(0);
+      expect(bounds.right).toBeLessThanOrEqual(width);
+    }
+    const visionSection = document.getElementById('ai-vision');
+    expect(visionSection).not.toBeNull();
+    if (!visionSection) throw new Error('Vision settings are not visible');
+    expect(
+      Math.abs(
+        visionSection.getBoundingClientRect().left -
+          screen
+            .getByRole('heading', { name: 'Settings' })
+            .getBoundingClientRect().left,
+      ),
+    ).toBeLessThan(1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    await page.screenshot({ element: visionSection });
+    await page.screenshot({
+      element: screen.getByRole('tablist', { name: 'Settings sections' }),
+    });
+  },
+);
 
 test('SettingsScreen edits record and storage settings then resets them', async () => {
   render(<SettingsScreen />);
@@ -626,138 +692,80 @@ test('SettingsScreen does not save remote API keys before cleanup confirmation',
 
   fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
 
-  expect(screen.queryByText('Delete old recordings?')).toBeNull();
+  await waitFor(() =>
+    expect(screen.queryByText('Delete old recordings?')).toBeNull(),
+  );
   expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
   expect(settingsClient.saveAppSettings).not.toHaveBeenCalled();
   expect(screen.getByDisplayValue('sk-private')).toBeTruthy();
 });
 
-test('SettingsScreen saves remote transcription settings through encrypted key refs', async () => {
+test('SettingsScreen saves remote transcription settings and the new key in one request', async () => {
   render(<SettingsScreen />);
-
   await openAiSettingsTab();
   await selectRemoteTranscriptionProvider();
-  expect(
-    await screen.findByText(
-      /recorded audio for transcription will be sent to the configured provider/i,
-    ),
-  ).toBeTruthy();
   fireEvent.change(await screen.findByLabelText('Base URL'), {
     target: { value: 'https://localhost:11434/v1' },
   });
   fireEvent.change(screen.getByLabelText('API key'), {
-    target: { value: 'sk-private' },
+    target: { value: 'synthetic-key' },
   });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-  await waitFor(() =>
-    expect(settingsClient.previewAppSettingsStorageCleanup).toHaveBeenCalled(),
-  );
-  await waitFor(() =>
-    expect(aiClient.saveAiProviderSecret).toHaveBeenCalledWith({
-      plaintext: 'sk-private',
-      role: 'transcription',
-    }),
-  );
   await waitFor(() =>
     expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
-      settings: {
-        ai: {
-          ...defaultAiSettings,
-          transcription: {
-            ...defaultAiSettings.transcription,
-            provider: 'openai-compatible',
-            remoteApiKeyRef: 'ai.secret.transcription.saved',
-            remoteBaseUrl: 'https://localhost:11434/v1',
-          },
-        },
-        debug: defaultSettingsState.settings.debug,
-        expert: defaultSettingsState.settings.expert,
-        record: defaultSettingsState.settings.record,
-        storage: defaultSettingsState.settings.storage,
-      },
-    }),
-  );
-  expect(screen.queryByDisplayValue('sk-private')).toBeNull();
-});
-
-test('SettingsScreen configures Vision OCR with full-frame consent and a secret reference', async () => {
-  render(<SettingsScreen />);
-
-  await openAiSettingsTab();
-  await selectOption('Text recognition engine', 'Vision model');
-
-  expect(
-    screen.getByText(/Vision OCR is not ready until you configure/i),
-  ).toBeTruthy();
-  expect(screen.getByText(/will not fall back to Tesseract/i)).toBeTruthy();
-  expect(
-    screen.getByText(/OCR request ceiling: 12 sampled frames per minute/i),
-  ).toBeTruthy();
-  fireEvent.click(
-    screen.getByRole('checkbox', { name: /Generate screen observations/ }),
-  );
-
-  await selectOption('Vision provider', 'OpenAI-compatible');
-  fireEvent.change(await screen.findByLabelText('Base URL'), {
-    target: { value: 'https://localhost:11434/v1' },
-  });
-  fireEvent.change(screen.getByLabelText('Vision model'), {
-    target: { value: 'vision-model' },
-  });
-  fireEvent.change(screen.getByLabelText('API key'), {
-    target: { value: 'sk-private' },
-  });
-
-  expect(
-    await screen.findByText(
-      /original-size sampled frames will be sent for OCR/i,
-    ),
-  ).toBeTruthy();
-  expect(screen.getByText(/may incur provider charges/i)).toBeTruthy();
-  const visionDisclosure = screen
-    .getAllByRole('alert')
-    .find((alert) => alert.textContent?.includes('Remote provider selected'));
-  expect(visionDisclosure?.textContent).toMatch(
-    /retained screen frames and OCR text will be sent for screen observations/i,
-  );
-  const ocrDisclosure = screen
-    .getAllByRole('alert')
-    .find((alert) =>
-      alert.textContent?.includes('Vision OCR uses the shared remote endpoint'),
-    );
-  expect(ocrDisclosure?.textContent).toMatch(
-    /Enabled screen observations can add separate requests/i,
-  );
-
-  aiClient.saveAiProviderSecret.mockResolvedValueOnce({
-    secretRef: 'ai.secret.vision.saved',
-  });
-  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-  await waitFor(() =>
-    expect(aiClient.saveAiProviderSecret).toHaveBeenCalledWith({
-      plaintext: 'sk-private',
-      role: 'vision',
-    }),
-  );
-  await waitFor(() =>
-    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      credentials: { transcriptionKey: 'synthetic-key' },
       settings: expect.objectContaining({
         ai: expect.objectContaining({
-          ocr: expect.objectContaining({ engine: 'vision', enabled: true }),
-          vision: expect.objectContaining({
-            apiKeyRef: 'ai.secret.vision.saved',
+          transcription: expect.objectContaining({
             provider: 'openai-compatible',
+            remoteBaseUrl: 'https://localhost:11434/v1',
           }),
         }),
       }),
     }),
   );
-  expect(
-    JSON.stringify(settingsClient.saveAppSettings.mock.calls[0]),
-  ).not.toContain('sk-private');
-  expect(screen.queryByDisplayValue('sk-private')).toBeNull();
+  expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByDisplayValue('synthetic-key')).toBeNull(),
+  );
+});
+
+test('SettingsScreen saves a first Vision profile and its new key together', async () => {
+  render(<SettingsScreen />);
+  await openAiSettingsTab();
+  await selectOption('Text recognition engine', 'Vision model');
+  expect(screen.getByText(/You can save this setup now/)).toBeTruthy();
+  await selectOption('Vision provider', 'OpenAI-compatible');
+  fireEvent.change(await screen.findByLabelText('Base URL'), {
+    target: { value: 'http://localhost:8080/v1' },
+  });
+  fireEvent.change(screen.getByLabelText('Vision model'), {
+    target: { value: 'synthetic-vision' },
+  });
+  fireEvent.change(screen.getByLabelText('API key'), {
+    target: { value: 'synthetic-key' },
+  });
+  expect(screen.getByText('New key, not saved.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      credentials: { visionKey: 'synthetic-key' },
+      settings: expect.objectContaining({
+        ai: expect.objectContaining({
+          ocr: expect.objectContaining({ engine: 'vision', enabled: true }),
+          vision: expect.objectContaining({
+            provider: 'openai-compatible',
+            model: 'synthetic-vision',
+            baseUrl: 'http://localhost:8080/v1',
+          }),
+        }),
+      }),
+    }),
+  );
+  expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByDisplayValue('synthetic-key')).toBeNull(),
+  );
 });
 
 test('turning off screen observations keeps the Vision OCR endpoint and saved key', async () => {
@@ -773,7 +781,7 @@ test('turning off screen observations keeps the Vision OCR endpoint and saved ke
   expect(observations.getAttribute('aria-checked')).toBe('true');
   fireEvent.click(observations);
   expect(observations.getAttribute('aria-checked')).toBe('false');
-  expect(screen.getByPlaceholderText('Saved key present')).toBeTruthy();
+  expect(screen.getByPlaceholderText('Saved key')).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -821,34 +829,21 @@ test('switching OCR back to Tesseract leaves the configured Vision endpoint inta
   expect(aiClient.deleteAiProviderSecret).not.toHaveBeenCalled();
 });
 
-test('incomplete Vision OCR stays selected and surfaces native validation without fallback', async () => {
-  const message =
-    'Vision OCR requires a configured vision endpoint, model and key.';
-  settingsClient.saveAppSettings.mockRejectedValue(new Error(message));
-
+test('incomplete Vision setup saves without blocking unrelated settings', async () => {
   render(<SettingsScreen />);
   await openAiSettingsTab();
   await selectOption('Text recognition engine', 'Vision model');
-
-  const engine = screen.getByRole('combobox', {
-    name: 'Text recognition engine',
-  });
-  expect(engine.textContent).toContain('Vision model');
-  expect(
-    screen.getByText(/Vision OCR is not ready until you configure/i),
-  ).toBeTruthy();
-
+  expect(screen.getByText(/You can save this setup now/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-  expect(await screen.findByText(message)).toBeTruthy();
-  expect(engine.textContent).toContain('Vision model');
-  expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
-    settings: expect.objectContaining({
-      ai: expect.objectContaining({
-        ocr: expect.objectContaining({ engine: 'vision' }),
+  await waitFor(() =>
+    expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+      settings: expect.objectContaining({
+        ai: expect.objectContaining({
+          ocr: expect.objectContaining({ engine: 'vision' }),
+        }),
       }),
     }),
-  });
+  );
 });
 
 test('SettingsScreen toggles checkbox fields from their description text', async () => {
@@ -1054,54 +1049,37 @@ test('SettingsScreen saves AI slider values', async () => {
   );
 });
 
-test('SettingsScreen deletes newly-created AI secrets when the final save fails', async () => {
+test('SettingsScreen retains the key draft when the atomic save fails', async () => {
   settingsClient.saveAppSettings.mockRejectedValue(
     new Error('Settings backend unavailable.'),
   );
   render(<SettingsScreen />);
-
   await openAiSettingsTab();
   await selectRemoteTranscriptionProvider();
   fireEvent.change(screen.getByLabelText('API key'), {
-    target: { value: 'sk-private' },
+    target: { value: 'synthetic-key' },
   });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-  await waitFor(() =>
-    expect(aiClient.saveAiProviderSecret).toHaveBeenCalledWith({
-      plaintext: 'sk-private',
-      role: 'transcription',
-    }),
-  );
-  await waitFor(() =>
-    expect(aiClient.deleteAiProviderSecret).toHaveBeenCalledWith({
-      secretRef: 'ai.secret.transcription.saved',
-    }),
-  );
-  expect(screen.getByDisplayValue('sk-private')).toBeTruthy();
-  expect(await screen.findByText('Settings backend unavailable.')).toBeTruthy();
+  await screen.findByText('Settings backend unavailable.');
+  expect(screen.getByDisplayValue('synthetic-key')).toBeTruthy();
+  expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
+  expect(aiClient.deleteAiProviderSecret).not.toHaveBeenCalled();
 });
 
-test('SettingsScreen surfaces platform-not-implemented secret errors without saving settings', async () => {
-  aiClient.saveAiProviderSecret.mockRejectedValue(
-    new Error('Encrypted settings are not implemented on this platform yet.'),
+test('SettingsScreen retains edits when native credential encryption is unavailable', async () => {
+  settingsClient.saveAppSettings.mockRejectedValue(
+    new Error('The API key could not be encrypted.'),
   );
   render(<SettingsScreen />);
-
   await openAiSettingsTab();
   await selectRemoteTranscriptionProvider();
   fireEvent.change(screen.getByLabelText('API key'), {
-    target: { value: 'sk-private' },
+    target: { value: 'synthetic-key' },
   });
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-  expect(
-    await screen.findByText(
-      'Encrypted settings are not implemented on this platform yet.',
-    ),
-  ).toBeTruthy();
-  expect(settingsClient.saveAppSettings).not.toHaveBeenCalled();
-  expect(screen.getByDisplayValue('sk-private')).toBeTruthy();
+  await screen.findByText('The API key could not be encrypted.');
+  expect(screen.getByDisplayValue('synthetic-key')).toBeTruthy();
+  expect(aiClient.saveAiProviderSecret).not.toHaveBeenCalled();
 });
 
 test('SettingsScreen blocks dirty leave and lets the user stay', async () => {

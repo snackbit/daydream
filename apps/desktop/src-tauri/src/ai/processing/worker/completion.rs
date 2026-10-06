@@ -18,17 +18,23 @@ pub(in crate::ai) fn summarize_processing_completion(
         return ProcessingCompletion::Active;
     }
 
-    if let Some(chunk) = chunks.iter().find(|chunk| chunk.status == "failed") {
+    if let Some(chunk) = chunks
+        .iter()
+        .find(|chunk| matches!(chunk.status.as_str(), "failed" | "completed-with-errors"))
+    {
         return ProcessingCompletion::Terminal {
             error: chunk.error_code.as_deref(),
-            status: "failed",
+            status: "completed-with-errors",
         };
     }
 
     if let Some(chunk) = chunks.iter().find(|chunk| chunk.status == "cancelled") {
         return ProcessingCompletion::Terminal {
             error: chunk.error_code.as_deref(),
-            status: "cancelled",
+            // Explicit cancellation already stops the parent. When a retry or
+            // audio-only reprocess finishes, retained cancelled sections remain
+            // incomplete without cancelling its newly successful results.
+            status: "completed-with-errors",
         };
     }
 
@@ -48,6 +54,7 @@ pub(super) fn finish_processing_job(
     storage
         .with_connection(|connection| {
             let chunks = storage::list_processing_chunks(connection, job_id)?;
+            if storage::processing_job_input_open(connection, job_id)? { return Ok(()); }
             let chunk_status_counts = processing_chunk_status_counts(&chunks);
             let ProcessingCompletion::Terminal { error, status } =
                 summarize_processing_completion(&chunks)
@@ -82,6 +89,11 @@ pub(super) fn finish_processing_job(
                     "AI processing cancelled",
                     "AI processing was cancelled.".to_string(),
                     processing_retry_actions(job_id),
+                ),
+                "completed-with-errors" => (
+                    "warning", "AI processing completed with errors",
+                    "Successful results are available. Retry the failed sections to finish processing.".into(),
+                    processing_failed_actions(job_id),
                 ),
                 _ => (
                     "failed",
@@ -204,6 +216,43 @@ fn transcription_backend_label(backend: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolated_failure_finishes_with_errors_without_discarding_success() {
+        let chunk = |status: &str| ProcessingChunkRow {
+            id: Uuid::now_v7().to_string(),
+            job_id: String::new(),
+            recording_id: String::new(),
+            source_kind: "audio".into(),
+            status: status.into(),
+            error_code: Some("ai_transcription_provider_failed".into()),
+            attempt_count: 1,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            end_offset_ms: Some(1_000),
+            start_offset_ms: Some(0),
+            segment_id: None,
+            track_id: None,
+            progress: 1.0,
+            result_code: None,
+        };
+        let chunks = [chunk("failed"), chunk("succeeded")];
+        assert!(matches!(
+            summarize_processing_completion(&chunks),
+            ProcessingCompletion::Terminal {
+                status: "completed-with-errors",
+                ..
+            }
+        ));
+        let retained_cancelled = [chunk("cancelled"), chunk("succeeded")];
+        assert!(matches!(
+            summarize_processing_completion(&retained_cancelled),
+            ProcessingCompletion::Terminal {
+                status: "completed-with-errors",
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn processing_failure_message_suggests_cpu_for_local_gpu_transcription_failure() {

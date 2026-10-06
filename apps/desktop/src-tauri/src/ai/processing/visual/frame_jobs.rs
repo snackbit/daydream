@@ -58,7 +58,7 @@ pub(super) async fn process_ocr_frames(
             let completed_count = completed_count.clone();
             async move {
                 check_processing_cancel(&cancel)?;
-                let _permit = acquire_ocr_permit(local_limit).await;
+                let _permit = acquire_ocr_cancellable(local_limit, cancel.clone()).await?;
                 check_processing_cancel(&cancel)?;
                 let storage = app.state::<AppStorage>();
                 ensure_chunk_active(&storage, &chunk)?;
@@ -136,22 +136,34 @@ pub(super) async fn process_ocr_frames(
         .collect::<Vec<Result<ProcessedOcrFrame, AiError>>>()
         .await;
     let mut output = Vec::with_capacity(results.len());
-    let mut first_error = None;
+    let mut first_failure = None;
     for result in results {
         match result {
             Ok(frame) => output.push(frame),
-            Err(error) if first_error.is_none() => first_error = Some(error),
-            Err(_) => {}
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    "ai_processing_cancelled" | "ai_storage_failed"
+                ) =>
+            {
+                return Err(error)
+            }
+            Err(error) => {
+                if first_failure.is_none() {
+                    first_failure = Some(error);
+                }
+            }
         }
     }
-    if let Some(error) = first_error {
+    output.sort_by_key(|frame| frame.frame_index);
+    if let Some(error) = first_failure {
         return Err(error);
     }
-    output.sort_by_key(|frame| frame.frame_index);
     Ok(output)
 }
 
 pub(super) struct VlmFrameBatch<'a> {
+    pub(super) lease: crate::recording_privacy::ProcessingLease,
     pub(super) config: &'a VisionRequestConfig,
     pub(super) frames: Vec<ExtractedVisualFrame>,
     pub(super) persisted_ocr_candidates: BTreeMap<i64, Vec<OcrCandidate>>,
@@ -168,6 +180,7 @@ pub(super) async fn process_vlm_frames(
     batch: VlmFrameBatch<'_>,
 ) -> Result<Vec<ProcessedVlmFrame>, AiError> {
     let VlmFrameBatch {
+        lease,
         config,
         frames,
         persisted_ocr_candidates,
@@ -192,10 +205,12 @@ pub(super) async fn process_vlm_frames(
             let config = config.clone();
             let persisted_ocr_candidates = persisted_ocr_candidates.clone();
             let previous_observations = previous_observations.clone();
+            let lease = lease.clone();
             async move {
                 check_processing_cancel(&cancel)?;
                 let storage = app.state::<AppStorage>();
-                let _vlm_permit = acquire_vlm_permit(max_parallel_vlm_jobs.max(1)).await;
+                let _vlm_permit =
+                    acquire_vlm_cancellable(max_parallel_vlm_jobs.max(1), cancel.clone()).await?;
                 check_processing_cancel(&cancel)?;
                 mark_visual_frame_state(
                     &app,
@@ -212,6 +227,7 @@ pub(super) async fn process_vlm_frames(
                     &persisted_ocr_candidates,
                     max_parallel_ocr_jobs,
                     cancel.clone(),
+                    lease,
                 )
                 .await;
                 let frame_ocr_elapsed_ms = elapsed_ms(ocr_started);
@@ -220,19 +236,26 @@ pub(super) async fn process_vlm_frames(
                 check_processing_cancel(&cancel)?;
                 ensure_chunk_active(&storage, &chunk)?;
                 let vlm_started = Instant::now();
-                let observations =
-                    request_vlm_observations(&config, &frame, &ocr_regions, &recent_observations)
-                        .await;
+                vlm::verify_current_vision_configuration(&storage, &config, false)?;
+                let observations = request_vlm_observations(
+                    &config,
+                    &frame,
+                    &ocr_regions,
+                    &recent_observations,
+                    cancel.clone(),
+                )
+                .await;
                 let frame_vlm_elapsed_ms = elapsed_ms(vlm_started);
                 match observations {
                     Ok(observations) => {
-                        mark_visual_frame_state(
-                            &app,
+                        persistence::persist_vlm_frame(
                             &storage,
                             &chunk,
                             &frame_state.id,
-                            VisualFrameUpdate::Succeeded(observations.len()),
+                            &frame,
+                            vlm_observation_inputs(&chunk, &config, observations.clone()),
                         )?;
+                        emit_processing_state(&app, &chunk.recording_id);
                         let completed = completed_count.fetch_add(1, Ordering::SeqCst) + 1;
                         update_visual_chunk_progress(
                             &app,
@@ -282,18 +305,29 @@ pub(super) async fn process_vlm_frames(
         .collect::<Vec<Result<ProcessedVlmFrame, AiError>>>()
         .await;
     let mut output = Vec::with_capacity(results.len());
-    let mut first_error = None;
+    let mut first_failure = None;
     for result in results {
         match result {
             Ok(frame) => output.push(frame),
-            Err(error) if first_error.is_none() => first_error = Some(error),
-            Err(_) => {}
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    "ai_processing_cancelled" | "ai_storage_failed"
+                ) =>
+            {
+                return Err(error)
+            }
+            Err(error) => {
+                if first_failure.is_none() {
+                    first_failure = Some(error);
+                }
+            }
         }
     }
-    if let Some(error) = first_error {
+    output.sort_by_key(|frame| frame.frame_index);
+    if let Some(error) = first_failure {
         return Err(error);
     }
-    output.sort_by_key(|frame| frame.frame_index);
     Ok(output)
 }
 
@@ -303,6 +337,7 @@ async fn vlm_ocr_context_for_frame(
     persisted_ocr_candidates: &BTreeMap<i64, Vec<OcrCandidate>>,
     max_parallel_ocr_jobs: usize,
     cancel: Arc<AtomicBool>,
+    lease: crate::recording_privacy::ProcessingLease,
 ) -> (Vec<OcrCandidate>, &'static str) {
     if let Some(regions) = persisted_ocr_candidates
         .get(&frame.frame_timestamp_ms)
@@ -323,6 +358,7 @@ async fn vlm_ocr_context_for_frame(
     let app_for_ocr = app.clone();
     let frame_for_ocr = frame.clone();
     let regions = tauri::async_runtime::spawn_blocking(move || {
+        let _lease = lease;
         run_tesseract_ocr(&app_for_ocr, frame_for_ocr.path(), &frame_for_ocr)
     })
     .await

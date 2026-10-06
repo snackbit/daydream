@@ -17,6 +17,7 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
+import '@/index.css';
 import { CaptureScreen } from './CaptureScreen';
 
 const client = vi.hoisted(() => ({
@@ -39,6 +40,11 @@ const client = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/recorder/recorder-client', () => client);
+const setupClient = vi.hoisted(() => ({
+  getCaptureSetup: vi.fn(),
+  saveCaptureSetup: vi.fn(),
+}));
+vi.mock('@/features/recorder/source-capture-client', () => setupClient);
 
 const unavailableMediaWriterCapabilities = {
   appsrc: false,
@@ -157,6 +163,15 @@ const audioSources: AudioSourceList = {
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
+  setupClient.getCaptureSetup.mockResolvedValue({
+    scene: null,
+    fps: 0.2,
+    videoBitrateKbps: 2000,
+  });
+  setupClient.saveCaptureSetup.mockImplementation(async (input) => ({
+    ...input,
+    scene: { ...input.scene, independentVideo: true },
+  }));
   useRecorderWorkspaceStore.setState(
     useRecorderWorkspaceStore.getInitialState(),
     true,
@@ -196,7 +211,57 @@ beforeEach(async () => {
 
 afterEach(() => {
   cleanup();
+  delete document.documentElement.dataset.theme;
 });
+
+test.each([
+  ['light', 1440],
+  ['dark', 1440],
+  ['light', 420],
+  ['dark', 420],
+] as const)(
+  'source crop controls remain reachable in %s at %i pixels',
+  async (theme, width) => {
+    await page.viewport(width, 900);
+    document.documentElement.dataset.theme = theme;
+    client.getRecorderScene.mockResolvedValue(
+      sceneFixture(['main', 'secondary']),
+    );
+    const view = render(<CaptureScreen />);
+    const scale = await screen.findByRole('combobox', { name: 'Output scale' });
+    const crop = screen.getByRole('combobox', { name: 'Capture area' });
+    fireEvent.click(crop);
+    fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+    const x = await screen.findByRole('spinbutton', { name: 'Crop X' });
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Crop width' }), {
+      target: { value: '1000' },
+    });
+    fireEvent.change(x, { target: { value: '20' } });
+    for (const control of [
+      scale,
+      crop,
+      x,
+      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('spinbutton', { name: 'Frame interval (seconds)' }),
+    ]) {
+      const bounds = control.getBoundingClientRect();
+      expect(bounds.width).toBeGreaterThan(0);
+      expect(bounds.left).toBeGreaterThanOrEqual(0);
+      expect(bounds.right).toBeLessThanOrEqual(width);
+    }
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    await page.screenshot({ element: view.container });
+    if (width === 420) {
+      const output = scale.closest('aside');
+      const shared = screen.getByRole('region', {
+        name: 'Shared recording settings',
+      });
+      if (!output) throw new Error('Source output controls are not visible');
+      await page.screenshot({ element: output });
+      await page.screenshot({ element: shared });
+    }
+  },
+);
 
 async function addFirstAvailableAudioSource() {
   fireEvent.click(screen.getByRole('button', { name: /add audio source/i }));
@@ -211,125 +276,28 @@ async function addFirstAvailableAudioSource() {
   );
 }
 
-test('CaptureScreen renders selected sources and explicitly saves the scene', async () => {
+test('CaptureScreen reviews selected sources and saves independent output settings explicitly', async () => {
   render(<CaptureScreen />);
-
-  expect(await screen.findAllByText('Monitor 1')).toHaveLength(2);
-  expect(
-    document.querySelector('[data-slot="resizable-panel-group"]'),
-  ).toBeTruthy();
-  expect(screen.getByText('Status: idle')).toBeTruthy();
-  expect(screen.getByText('Save the scene before recording.')).toBeTruthy();
-  expect(screen.getAllByText('1440 x 900')).toHaveLength(3);
-  expect(screen.getByRole('spinbutton', { name: 'X' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'Y' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'W' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'H' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'Left' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'Top' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'Right' })).toBeTruthy();
-  expect(screen.getByRole('spinbutton', { name: 'Bottom' })).toBeTruthy();
-  expect(screen.getByText('Original')).toBeTruthy();
-  expect(screen.getByText('100%')).toBeTruthy();
-  expect(screen.getByRole('button', { name: /^fit$/i })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /^fill$/i })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /^center$/i })).toBeTruthy();
-  expect(screen.getByRole('button', { name: /^fill empty$/i })).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('checkbox', { name: /aspect/i }));
-  expect(
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.preserveAspectRatio,
-  ).toBe(false);
-  expect(screen.getByText('100% x 100%')).toBeTruthy();
-
-  const source = screen.getByTestId('scene-source-main');
-  const sourceBodyRectBeforeClick =
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect;
-  fireEvent.pointerDown(source, { clientX: 20, clientY: 40, pointerId: 1 });
-  fireEvent.pointerMove(source.parentElement ?? source, {
-    clientX: 120,
-    clientY: 40,
-    pointerId: 1,
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual(
-    sourceBodyRectBeforeClick,
-  );
-
-  const moveHandle = screen.getByRole('button', { name: /move monitor 1/i });
-  fireEvent.pointerDown(moveHandle, { clientX: 20, clientY: 40, pointerId: 2 });
-  fireEvent.pointerMove(source.parentElement ?? source, {
-    clientX: 120,
-    clientY: 140,
-    pointerId: 2,
-  });
-  fireEvent.pointerUp(source.parentElement ?? source, {
-    clientX: 120,
-    clientY: 140,
-    pointerId: 2,
-  });
-  expect(
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect.y,
-  ).toBeGreaterThan(0);
-
-  const resizeHandle = within(source).getByRole('button', {
-    name: /resize se/i,
-  });
-  expect(resizeHandle.className).toContain('cursor-nwse-resize');
-  fireEvent.pointerDown(resizeHandle, {
-    clientX: 120,
-    clientY: 80,
-    pointerId: 3,
-  });
-  fireEvent.pointerMove(source.parentElement ?? source, {
-    clientX: 10000,
-    clientY: 10000,
-    pointerId: 3,
-  });
-  fireEvent.pointerUp(source.parentElement ?? source, {
-    clientX: 10000,
-    clientY: 10000,
-    pointerId: 3,
-  });
-  const maxClampedRect =
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect;
-  fireEvent.pointerMove(source.parentElement ?? source, {
-    clientX: 200,
-    clientY: 200,
-    pointerId: 3,
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual(
-    maxClampedRect,
-  );
-
-  fireEvent.click(screen.getByRole('button', { name: /add monitor sources/i }));
+  await screen.findAllByText('Monitor 1');
+  expect(screen.queryByLabelText(/canvas preset/i)).toBeNull();
+  expect(screen.getByText(/Review the source crops/)).toBeTruthy();
   await waitFor(() =>
-    expect(client.selectCaptureSources).toHaveBeenCalledWith({
-      forceChooser: true,
-    }),
+    expect(screen.getByLabelText('Frame interval (seconds)')).toHaveValue(5),
   );
-
-  const savedScene = useRecorderWorkspaceStore.getState().scene;
-  if (!savedScene) {
-    throw new Error('Expected the workspace to build a scene.');
-  }
-  client.saveRecorderScene.mockResolvedValue(savedScene);
-
-  fireEvent.click(screen.getByRole('button', { name: /save/i }));
-
+  expect(setupClient.saveCaptureSetup).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
   await waitFor(() =>
-    expect(client.saveRecorderScene).toHaveBeenCalledWith({
-      scene: expect.objectContaining({
-        canvasHeight: 1800,
-        canvasWidth: 1440,
-        sources: expect.arrayContaining([
-          expect.objectContaining({
-            sourceId: 'main',
-          }),
-        ]),
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fps: 0.2,
+        videoBitrateKbps: 2000,
+        scene: expect.objectContaining({
+          independentVideo: true,
+          layoutMode: 'custom',
+        }),
       }),
-    }),
+    ),
   );
-  expect(screen.getByText('Scene saved')).toBeTruthy();
 });
 
 test('CaptureScreen explains the media writer blocker for a saved scene', async () => {
@@ -390,223 +358,108 @@ test('CaptureScreen asks before refreshing a duplicate-looking monitor', async (
   );
 });
 
-test('CaptureScreen updates canvas presets and layout actions', async () => {
+test('CaptureScreen saves shared frame interval and quality without canvas controls', async () => {
+  client.getRecorderScene.mockResolvedValue(sceneFixture(['main']));
   render(<CaptureScreen />);
-
-  await screen.findAllByText('Monitor 1');
-
-  fireEvent.click(screen.getByLabelText(/canvas preset/i));
-  fireEvent.click(await screen.findByRole('option', { name: '2560 x 1440' }));
-  expect(useRecorderWorkspaceStore.getState().scene).toMatchObject({
-    canvasHeight: 1440,
-    canvasWidth: 2560,
-    layoutMode: 'auto-16-9',
+  const interval = await screen.findByLabelText('Frame interval (seconds)');
+  await waitFor(() => expect(interval).toHaveValue(5));
+  fireEvent.change(interval, { target: { value: '10' } });
+  fireEvent.change(screen.getByLabelText('Video bitrate per source (kbps)'), {
+    target: { value: '4000' },
   });
-
-  fireEvent.click(screen.getByRole('button', { name: /vertical layout/i }));
-  expect(useRecorderWorkspaceStore.getState().scene).toMatchObject({
-    canvasHeight: 1440,
-    canvasWidth: 2560,
-    layoutMode: 'vertical',
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 720,
-    width: 1152,
-    x: 704,
-    y: 0,
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[1]?.rect).toEqual({
-    height: 720,
-    width: 1152,
-    x: 704,
-    y: 720,
-  });
-
-  fireEvent.click(screen.getByRole('button', { name: /auto layout/i }));
-  expect(useRecorderWorkspaceStore.getState().scene).toMatchObject({
-    canvasHeight: 1440,
-    canvasWidth: 2560,
-    layoutMode: 'auto-16-9',
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 800,
-    width: 1280,
-    x: 0,
-    y: 320,
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[1]?.rect).toEqual({
-    height: 800,
-    width: 1280,
-    x: 1280,
-    y: 320,
-  });
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await waitFor(() =>
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({ fps: 0.1, videoBitrateKbps: 4000 }),
+    ),
+  );
+  expect(screen.queryByLabelText(/canvas preset/i)).toBeNull();
 });
 
-test('CaptureScreen switches scale labels and relocks distorted sources', async () => {
-  const savedScene = sceneFixture(['saved-main']);
-  savedScene.sources[0] = {
-    ...sceneSource(savedScene),
-    preserveAspectRatio: false,
-    rect: {
-      height: 900,
-      width: 720,
-      x: 0,
-      y: 0,
-    },
-  };
-  client.getRecorderScene.mockResolvedValue(savedScene);
-
+test('CaptureScreen records an ultrawide source at half its width and height', async () => {
+  const wide = sceneFixture(['main']);
+  const source = sceneSource(wide);
+  source.sourceWidth = 5120;
+  source.sourceHeight = 1440;
+  source.rect = { x: 0, y: 0, width: 5120, height: 1440 };
+  client.getRecorderScene.mockResolvedValue(wide);
   render(<CaptureScreen />);
+  fireEvent.click(
+    await screen.findByRole('combobox', { name: 'Output scale' }),
+  );
+  fireEvent.click(await screen.findByRole('option', { name: '50%' }));
+  await screen.findByText('Saved video: 2560 × 720');
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await waitFor(() =>
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: expect.objectContaining({
+          sources: [
+            expect.objectContaining({
+              rect: { x: 0, y: 0, width: 2560, height: 720 },
+            }),
+          ],
+        }),
+      }),
+    ),
+  );
+});
 
-  expect(await screen.findByText('50% x 100%')).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('checkbox', { name: /aspect/i }));
-
-  expect(screen.getByText('100%')).toBeTruthy();
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 900,
-    width: 1440,
-    x: 0,
-    y: 0,
+test('CaptureScreen crops the right half of an ultrawide source in physical pixels', async () => {
+  const wide = sceneFixture(['main']);
+  const source = sceneSource(wide);
+  source.sourceWidth = 5120;
+  source.sourceHeight = 1440;
+  source.rect = { x: 0, y: 0, width: 5120, height: 1440 };
+  client.getRecorderScene.mockResolvedValue(wide);
+  render(<CaptureScreen />);
+  fireEvent.click(
+    await screen.findByRole('combobox', { name: 'Capture area' }),
+  );
+  fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+  fireEvent.change(screen.getByLabelText('Crop width'), {
+    target: { value: '2560' },
   });
+  fireEvent.change(screen.getByLabelText('Crop X'), {
+    target: { value: '2560' },
+  });
+  await screen.findByText('Saved video: 2560 × 1440');
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await waitFor(() =>
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: expect.objectContaining({
+          sources: [
+            expect.objectContaining({
+              crop: { left: 2560, top: 0, right: 0, bottom: 0 },
+              rect: { x: 0, y: 0, width: 2560, height: 1440 },
+            }),
+          ],
+        }),
+      }),
+    ),
+  );
+});
+
+test('CaptureScreen keeps an invalid crop editable and restores valid settings through reset', async () => {
+  client.getRecorderScene.mockResolvedValue(sceneFixture(['main']));
+  render(<CaptureScreen />);
+  fireEvent.click(
+    await screen.findByRole('combobox', { name: 'Capture area' }),
+  );
+  fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+  fireEvent.change(screen.getByLabelText('Crop X'), {
+    target: { value: '2000' },
+  });
+  await screen.findByRole('alert');
   expect(
-    useRecorderWorkspaceStore.getState().scene?.sources[0]?.preserveAspectRatio,
+    screen.getByRole<HTMLButtonElement>('button', { name: /^save$/i }).disabled,
   ).toBe(true);
-});
-
-test('CaptureScreen fill respects the aspect checkbox', async () => {
-  const savedScene = sceneFixture(['ultrawide']);
-  savedScene.canvasHeight = 1080;
-  savedScene.canvasWidth = 1920;
-  savedScene.layoutMode = 'custom';
-  savedScene.sources[0] = {
-    ...sceneSource(savedScene),
-    preserveAspectRatio: true,
-    rect: {
-      height: 360,
-      width: 1280,
-      x: 0,
-      y: 0,
-    },
-    sourceHeight: 1440,
-    sourceWidth: 5120,
-  };
-  client.getRecorderScene.mockResolvedValue(savedScene);
-
-  render(<CaptureScreen />);
-
-  expect(await screen.findByText('25%')).toBeTruthy();
-
-  fireEvent.change(screen.getByDisplayValue('1280'), {
-    target: { value: '960' },
-  });
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 270,
-    width: 960,
-    x: 0,
-    y: 0,
-  });
-  expect(screen.getByText('19%')).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('button', { name: /^fill$/i }));
-
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 540,
-    width: 1920,
-    x: 0,
-    y: 270,
-  });
-  expect(screen.getByText('38%')).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('button', { name: /^fit$/i }));
-
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 540,
-    width: 1920,
-    x: 0,
-    y: 270,
-  });
-  expect(screen.getByText('38%')).toBeTruthy();
-
-  fireEvent.click(screen.getByRole('checkbox', { name: /aspect/i }));
-  fireEvent.click(screen.getByRole('button', { name: /^fill$/i }));
-
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.rect).toEqual({
-    height: 1080,
-    width: 1920,
-    x: 0,
-    y: 0,
-  });
-  expect(screen.getByText('38% x 75%')).toBeTruthy();
-});
-
-test('CaptureScreen shows resize handles only on the temporarily fronted selection', async () => {
-  const savedScene = sceneFixture(['back-monitor', 'front-monitor']);
-  savedScene.sources = savedScene.sources.map((source, index) => ({
-    ...source,
-    rect: {
-      height: 720,
-      width: 1152,
-      x: index === 0 ? 0 : 240,
-      y: index === 0 ? 0 : 120,
-    },
-  }));
-  client.getRecorderScene.mockResolvedValue(savedScene);
-
-  render(<CaptureScreen />);
-
-  const backSource = await screen.findByTestId('scene-source-back-monitor');
-  const frontSource = screen.getByTestId('scene-source-front-monitor');
-  const backSourceListButton = screen.getByRole('button', {
-    name: /focus back-monitor/i,
-  });
-  const frontSourceListButton = screen.getByRole('button', {
-    name: /focus front-monitor/i,
-  });
-
-  expect(screen.getAllByRole('button', { name: /resize/i })).toHaveLength(8);
+  fireEvent.click(screen.getByRole('button', { name: 'Reset crop and scale' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   expect(
-    within(backSource).getByRole('button', { name: /resize se/i }),
-  ).toBeTruthy();
-  expect(
-    within(frontSource).queryByRole('button', { name: /resize se/i }),
-  ).toBeNull();
-  expect(backSource.style.zIndex).toBe('2');
-  expect(frontSource.style.zIndex).toBe('1');
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.zIndex).toBe(
-    0,
-  );
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[1]?.zIndex).toBe(
-    1,
-  );
-  expect(backSourceListButton.getAttribute('aria-pressed')).toBe('true');
-  expect(frontSourceListButton.getAttribute('aria-pressed')).toBe('false');
-  expect(within(backSourceListButton).getByText('Focused')).toBeTruthy();
-  expect(
-    within(frontSourceListButton).getByText('Click to focus'),
-  ).toBeTruthy();
-
-  fireEvent.click(frontSourceListButton);
-
-  expect(screen.getAllByRole('button', { name: /resize/i })).toHaveLength(8);
-  expect(
-    within(backSource).queryByRole('button', { name: /resize se/i }),
-  ).toBeNull();
-  expect(
-    within(frontSource).getByRole('button', { name: /resize se/i }),
-  ).toBeTruthy();
-  expect(backSource.style.zIndex).toBe('0');
-  expect(frontSource.style.zIndex).toBe('2');
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[0]?.zIndex).toBe(
-    0,
-  );
-  expect(useRecorderWorkspaceStore.getState().scene?.sources[1]?.zIndex).toBe(
-    1,
-  );
-  expect(backSourceListButton.getAttribute('aria-pressed')).toBe('false');
-  expect(frontSourceListButton.getAttribute('aria-pressed')).toBe('true');
-  expect(within(backSourceListButton).getByText('Click to focus')).toBeTruthy();
-  expect(within(frontSourceListButton).getByText('Focused')).toBeTruthy();
+    screen.getByRole<HTMLButtonElement>('button', { name: /^save$/i }).disabled,
+  ).toBe(false);
 });
 
 test('CaptureScreen renders a saved scene on startup without adding sources', async () => {
@@ -620,7 +473,7 @@ test('CaptureScreen renders a saved scene on startup without adding sources', as
 
   expect(await screen.findAllByText('Saved monitor')).toHaveLength(2);
   expect(client.selectCaptureSources).not.toHaveBeenCalled();
-  expect(screen.getByText('Scene saved')).toBeTruthy();
+  expect(screen.getByText('Source setup saved')).toBeTruthy();
 });
 
 test('CaptureScreen shows stale screen permission error without opening source picker on start', async () => {
@@ -693,11 +546,10 @@ test('CaptureScreen renders live preview frames for a saved scene', async () => 
   });
 
   const preview = await screen.findByRole('img', {
-    name: /main live preview/i,
+    name: /main preview/i,
   });
   expect(preview.getAttribute('src')).toBe('data:image/png;base64,abc');
-  expect(preview.className).toContain('object-fill');
-  expect(preview.className).not.toContain('object-cover');
+  expect(screen.getByLabelText('Capture region')).toBeTruthy();
 });
 
 test('CaptureScreen does not auto-preview an empty saved scene', async () => {
@@ -735,11 +587,13 @@ test('CaptureScreen deleting the last monitor and saving does not restart previe
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
   await waitFor(() =>
-    expect(client.saveRecorderScene).toHaveBeenCalledWith({
-      scene: expect.objectContaining({
-        sources: [],
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: expect.objectContaining({
+          sources: [],
+        }),
       }),
-    }),
+    ),
   );
   expect(client.startRecorderPreview).toHaveBeenCalledTimes(1);
 });
@@ -886,18 +740,19 @@ test('CaptureScreen makes scene configuration read-only while recording', async 
   expect(screen.queryByLabelText(/canvas preset/i)).toBeNull();
   expect(screen.queryByLabelText(/canvas w/i)).toBeNull();
   expect(
-    (screen.getByRole('checkbox', { name: /aspect/i }) as HTMLButtonElement)
+    screen.getByRole<HTMLButtonElement>('combobox', { name: 'Output scale' })
       .disabled,
   ).toBe(true);
   expect(
-    (screen.getByRole('button', { name: /^fit$/i }) as HTMLButtonElement)
-      .disabled,
+    screen.getByRole<HTMLButtonElement>('button', {
+      name: 'Reset crop and scale',
+    }).disabled,
   ).toBe(true);
 
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
   fireEvent.click(screen.getByRole('button', { name: /add monitor sources/i }));
 
-  expect(client.saveRecorderScene).not.toHaveBeenCalled();
+  expect(setupClient.saveCaptureSetup).not.toHaveBeenCalled();
   expect(client.selectCaptureSources).not.toHaveBeenCalled();
 });
 
@@ -939,7 +794,7 @@ test('CaptureScreen reconciles a protected-window pause on return without discar
 test('CaptureScreen deletes a draft source and saves the reduced scene', async () => {
   render(<CaptureScreen />);
 
-  expect(await screen.findAllByText('Monitor 2')).toHaveLength(2);
+  expect(await screen.findByText('Monitor 2')).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button', { name: /delete monitor 2/i }));
 
@@ -950,15 +805,17 @@ test('CaptureScreen deletes a draft source and saves the reduced scene', async (
   fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
   await waitFor(() =>
-    expect(client.saveRecorderScene).toHaveBeenCalledWith({
-      scene: expect.objectContaining({
-        sources: [
-          expect.objectContaining({
-            sourceId: 'main',
-          }),
-        ],
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: expect.objectContaining({
+          sources: [
+            expect.objectContaining({
+              sourceId: 'main',
+            }),
+          ],
+        }),
       }),
-    }),
+    ),
   );
 });
 
@@ -1016,12 +873,14 @@ test('CaptureScreen saves and reloads selected audio sources', async () => {
   fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
   await waitFor(() =>
-    expect(client.saveRecorderScene).toHaveBeenCalledWith({
-      scene: expect.objectContaining({
-        desktopAudioSourceId: 'desktop',
-        microphoneAudioSourceId: null,
+    expect(setupClient.saveCaptureSetup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scene: expect.objectContaining({
+          desktopAudioSourceId: 'desktop',
+          microphoneAudioSourceId: null,
+        }),
       }),
-    }),
+    ),
   );
   expect(useRecorderWorkspaceStore.getState().isDirty).toBe(false);
 
@@ -1220,6 +1079,7 @@ test('CaptureScreen disables audio add when no eligible devices remain', async (
 
 function sceneFixture(sourceIds: string[]): RecorderScene {
   return {
+    independentVideo: true,
     canvasHeight: 900,
     canvasWidth: sourceIds.length * 1440,
     desktopAudioSourceId: null,

@@ -2,6 +2,9 @@ mod activity;
 mod audio;
 mod ocr_documents;
 mod planning;
+mod source_planning;
+pub(in crate::ai) use source_planning::{source_segment, visual_source_chunk_plans};
+pub(crate) mod provider_test;
 pub(crate) use ocr_documents::capture_ocr_job_config;
 #[cfg(test)]
 pub(in crate::ai) use ocr_documents::infer_or_reuse_frame;
@@ -10,6 +13,7 @@ mod visual;
 mod worker;
 #[cfg(test)]
 pub(crate) use worker::cancel_job_if_inactive;
+pub(crate) use worker::{retry_processing_units_for_action, RetryProcessingUnitsInput};
 
 pub(in crate::ai) fn ensure_chunk_active(
     storage: &crate::storage::AppStorage,
@@ -55,7 +59,10 @@ pub(in crate::ai) use visual::{
     PreviousVisualObservation, VisionRequestConfig, VisualImage,
 };
 pub(crate) use worker::cancel_recording_processing_for_privacy;
-pub(crate) use worker::enqueue_recording_ai_processing;
+pub(crate) use worker::reprocess_recording_audio;
+pub(crate) use worker::{
+    admit_live_recording, enqueue_recording_ai_processing, finish_live_recording,
+};
 #[cfg(test)]
 pub(in crate::ai) use worker::{
     claim_next_processing_chunk, summarize_processing_completion, ProcessingCompletion,

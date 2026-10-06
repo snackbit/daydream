@@ -1,13 +1,13 @@
 use super::super::*;
 
-pub(in crate::ai) async fn process_activity_chunk_inner(
+pub(in crate::ai) fn process_activity_chunk_inner(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), AiError> {
     let storage = app.state::<AppStorage>();
     ensure_chunk_active(&storage, chunk)?;
-    let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
+    let app_settings = super::worker::load_chunk_settings(&storage, chunk)?;
     let chunk_start = chunk.start_offset_ms.ok_or_else(|| {
         ai_error(
             "ai_processing_chunk_offset_missing",
@@ -251,30 +251,39 @@ fn frame_delta_intervals(
         })?;
     let slice_duration_ms = chunk_end.saturating_sub(chunk_start);
     let frame_bytes = FRAME_DELTA_WIDTH * FRAME_DELTA_HEIGHT;
-    let output = Command::new(ffmpeg::binary_path())
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-ss",
-            &format_seconds(slice_start_ms),
-            "-t",
-            &format_seconds(slice_duration_ms),
-            "-i",
-            &segment.file_path,
-            "-map",
-            &format!("0:{video_stream_index}"),
-            "-vf",
-            &format!(
-                "fps=1,scale={}:{}:flags=fast_bilinear,format=gray",
-                FRAME_DELTA_WIDTH, FRAME_DELTA_HEIGHT
-            ),
-            "-f",
-            "rawvideo",
-            "-",
-        ])
-        .output()
-        .map_err(file_error)?;
+    let mut command = Command::new(ffmpeg::binary_path());
+    command.args([
+        "-hide_banner",
+        "-v",
+        "error",
+        "-ss",
+        &format_seconds(slice_start_ms),
+        "-t",
+        &format_seconds(slice_duration_ms),
+        "-i",
+        &segment.file_path,
+        "-map",
+        &format!("0:{video_stream_index}"),
+        "-vf",
+        &format!(
+            "fps=1,scale={}:{}:flags=fast_bilinear,format=gray",
+            FRAME_DELTA_WIDTH, FRAME_DELTA_HEIGHT
+        ),
+        "-f",
+        "rawvideo",
+        "-",
+    ]);
+    let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(60), 8_000_000)
+        .map_err(|error| {
+        ai_error(
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                "ai_processing_cancelled"
+            } else {
+                "ai_processing_frame_delta_extract_failed"
+            },
+            "Frame activity extraction did not finish.",
+        )
+    })?;
     check_processing_cancel(cancel)?;
     if !output.status.success() {
         return Err(ai_error(

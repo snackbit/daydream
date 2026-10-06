@@ -59,9 +59,12 @@ fn visible_visual_rows(
     recording_id: &str,
     include_ocr_regions: bool,
 ) -> Result<VisibleVisualObservationRows, AiError> {
-    let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions, segments) =
+    let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions, segments,committed_frames) =
         storage
             .with_connection(|connection| {
+                let mut statement=connection.prepare("SELECT f.chunk_id,f.frame_timestamp_ms FROM visual_frame_processing_states f JOIN processing_chunks c ON c.id=f.chunk_id JOIN processing_jobs j ON j.id=c.job_id WHERE f.recording_id=?1 AND f.status='succeeded' AND c.status='running' AND j.status='running'")?;
+                let mut committed=BTreeMap::<String,BTreeSet<i64>>::new();
+                for row in statement.query_map([recording_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)))? {let (chunk,timestamp)=row?;committed.entry(chunk).or_default().insert(timestamp);}
                 Ok((
                     if include_ocr_regions {
                         storage::list_ocr_regions(connection, recording_id)?
@@ -73,6 +76,7 @@ fn visible_visual_rows(
                     storage::list_recording_tracks(connection, recording_id)?,
                     storage::list_redactions(connection, recording_id)?,
                     storage::list_recording_segments(connection, recording_id)?,
+                    committed,
                 ))
             })
             .map_err(storage_error)?;
@@ -82,6 +86,7 @@ fn visible_visual_rows(
         &recording_tracks,
         &redactions,
         &segments,
+        &committed_frames,
     );
     let visible_vlm_observations = filter_visible_vlm_observations(
         vlm_observations,
@@ -89,6 +94,7 @@ fn visible_visual_rows(
         &recording_tracks,
         &redactions,
         &segments,
+        &committed_frames,
     );
 
     Ok(VisibleVisualObservationRows {
@@ -155,9 +161,15 @@ fn filter_visible_ocr_regions(
     recording_tracks: &[RecordingTrackRow],
     redactions: &[RedactionRow],
     segments: &[RecordingSegmentRow],
+    committed_frames: &BTreeMap<String, BTreeSet<i64>>,
 ) -> Vec<OcrRegionRow> {
-    let visible =
-        VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions, segments);
+    let visible = VisualObservationVisibility::new(
+        visual_chunks,
+        recording_tracks,
+        redactions,
+        segments,
+        committed_frames,
+    );
 
     regions
         .into_iter()
@@ -171,9 +183,15 @@ fn filter_visible_vlm_observations(
     recording_tracks: &[RecordingTrackRow],
     redactions: &[RedactionRow],
     segments: &[RecordingSegmentRow],
+    committed_frames: &BTreeMap<String, BTreeSet<i64>>,
 ) -> Vec<VlmObservationRow> {
-    let visible =
-        VisualObservationVisibility::new(visual_chunks, recording_tracks, redactions, segments);
+    let visible = VisualObservationVisibility::new(
+        visual_chunks,
+        recording_tracks,
+        redactions,
+        segments,
+        committed_frames,
+    );
 
     observations
         .into_iter()
@@ -184,6 +202,7 @@ fn filter_visible_vlm_observations(
 }
 
 struct VisualObservationVisibility<'a> {
+    committed_frames: &'a BTreeMap<String, BTreeSet<i64>>,
     redactions: &'a [RedactionRow],
     succeeded_chunk_ids: HashSet<&'a str>,
     video_track_ids: BTreeSet<&'a str>,
@@ -196,12 +215,16 @@ impl<'a> VisualObservationVisibility<'a> {
         recording_tracks: &'a [RecordingTrackRow],
         redactions: &'a [RedactionRow],
         segments: &[RecordingSegmentRow],
+        committed_frames: &'a BTreeMap<String, BTreeSet<i64>>,
     ) -> Self {
         Self {
+            committed_frames,
             redactions,
             succeeded_chunk_ids: visual_chunks
                 .iter()
-                .filter(|chunk| chunk.status == "succeeded")
+                .filter(|chunk| {
+                    matches!(chunk.status.as_str(), "succeeded" | "completed-with-errors")
+                })
                 .map(|chunk| chunk.id.as_str())
                 .collect(),
             video_track_ids: recording_tracks
@@ -217,7 +240,9 @@ impl<'a> VisualObservationVisibility<'a> {
                         .find(|segment| Some(segment.id.as_str()) == chunk.segment_id.as_deref())?;
                     Some((
                         chunk.id.as_str(),
-                        crate::recording_privacy::source_track_id(segment, "video")?,
+                        chunk.track_id.clone().or_else(|| {
+                            crate::recording_privacy::source_track_id(segment, "video")
+                        })?,
                     ))
                 })
                 .collect(),
@@ -225,7 +250,11 @@ impl<'a> VisualObservationVisibility<'a> {
     }
 
     fn is_visible(&self, chunk_id: &str, frame_timestamp_ms: i64) -> bool {
-        self.succeeded_chunk_ids.contains(chunk_id)
+        (self.succeeded_chunk_ids.contains(chunk_id)
+            || self
+                .committed_frames
+                .get(chunk_id)
+                .is_some_and(|frames| frames.contains(&frame_timestamp_ms)))
             && !self.redactions.iter().any(|redaction| {
                 self.redaction_hides_visual_timestamp(redaction, chunk_id, frame_timestamp_ms)
             })
@@ -249,7 +278,11 @@ impl<'a> VisualObservationVisibility<'a> {
         }
 
         redacted_track_ids.iter().any(|track_id| {
-            self.video_track_ids.contains(track_id.as_str())
+            (self
+                .library_video_tracks_by_chunk
+                .get(chunk_id)
+                .is_none_or(|id| id.starts_with("video-"))
+                && self.video_track_ids.contains(track_id.as_str()))
                 || self.library_video_tracks_by_chunk.get(chunk_id) == Some(track_id)
         })
     }

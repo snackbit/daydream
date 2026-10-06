@@ -6,6 +6,19 @@ use super::validation::validate_settings;
 use super::*;
 
 #[test]
+fn incomplete_vision_profile_can_be_saved_before_credentials_are_entered() {
+    let mut settings = default_settings();
+    settings.ai.ocr.engine = "vision".into();
+    settings.ai.vision.provider = "openai-compatible".into();
+    settings.ai.vision.base_url = Some("http://127.0.0.1:8080/v1".into());
+    settings.ai.vision.model = Some("synthetic-vision".into());
+    assert!(
+        validation::validate_settings(settings).is_ok(),
+        "An incomplete profile must not block unrelated settings or the first key save"
+    );
+}
+
+#[test]
 fn vision_ocr_is_selectable_without_enabling_screen_observations() {
     let mut settings = default_settings();
     settings.ai.ocr.engine = "vision".into();

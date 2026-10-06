@@ -6,6 +6,24 @@ fn runnable_jobs(
     statuses: &[&str],
     limit: Option<usize>,
 ) -> rusqlite::Result<Vec<ProcessingJobRow>> {
+    if statuses == ["queued"] {
+        let mut statement=connection.prepare("SELECT j.id,j.recording_id,j.kind,j.status,j.created_at_ms,j.updated_at_ms,j.error FROM processing_jobs j WHERE j.kind IN ('ai-processing','ocr') AND j.status='queued' AND (EXISTS(SELECT 1 FROM processing_chunks c LEFT JOIN processing_chunk_runtime r ON r.chunk_id=c.id WHERE c.job_id=j.id AND c.status='queued' AND (r.next_retry_at_ms IS NULL OR r.next_retry_at_ms<=?1)) OR (NOT EXISTS(SELECT 1 FROM processing_chunks WHERE job_id=j.id AND status IN ('queued','running')) AND NOT EXISTS(SELECT 1 FROM processing_job_runtime WHERE job_id=j.id AND input_open=1))) ORDER BY j.updated_at_ms,j.id LIMIT ?2")?;
+        let rows = statement.query_map(
+            rusqlite::params![now_ms(), limit.unwrap_or(200) as i64],
+            |row| {
+                Ok(ProcessingJobRow {
+                    id: row.get(0)?,
+                    recording_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    status: row.get(3)?,
+                    created_at_ms: row.get(4)?,
+                    updated_at_ms: row.get(5)?,
+                    error: row.get(6)?,
+                })
+            },
+        )?;
+        return rows.collect();
+    }
     let mut jobs = storage::list_processing_jobs_by_status(
         connection,
         AI_PROCESSING_JOB_KIND,
@@ -35,10 +53,18 @@ pub(in crate::ai) fn recover_stale_processing(storage: &AppStorage) -> Result<()
                     "cancelled",
                     "failed",
                     "succeeded",
+                    "completed-with-errors",
                 ],
                 None,
             )?;
             for job in jobs {
+                let recording = storage::get_recording(connection, &job.recording_id)?;
+                if !matches!(recording.status.as_str(), "recording" | "paused") {
+                    connection.execute(
+                        "UPDATE processing_job_runtime SET input_open=0 WHERE job_id=?1",
+                        [&job.id],
+                    )?;
+                }
                 if matches!(job.status.as_str(), "running" | "queued" | "paused") {
                     storage::requeue_processing_chunks(
                         connection,
@@ -79,6 +105,13 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
         .ai
         .processing
         .max_parallel_jobs
+        .min(
+            if app_settings.ai.processing.resource_mode == "background" {
+                1
+            } else {
+                u32::MAX
+            },
+        )
         .saturating_sub(running.len() as u32) as usize;
     if available == 0 {
         log_capacity_full_throttled(running.len(), app_settings.ai.processing.max_parallel_jobs);

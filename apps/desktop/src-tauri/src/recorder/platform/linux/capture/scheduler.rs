@@ -75,11 +75,19 @@ pub(super) fn next_scheduler_timestamp(
     state: &mut PipeWireCaptureSchedulerState,
     now_ms: u64,
 ) -> Result<Option<u64>, RecorderError> {
-    let has_frames = state
-        .latest_frames
-        .lock()
-        .map_err(|_error| capture_adapter_failed_error("PipeWire capture sampler lock poisoned."))?
-        .has_frames();
+    let sampler = state.latest_frames.lock().map_err(|_error| {
+        capture_adapter_failed_error("PipeWire capture sampler lock poisoned.")
+    })?;
+    let has_frames = if state.plan.independent_video {
+        state
+            .plan
+            .inputs
+            .iter()
+            .all(|input| sampler.latest_frames().contains_key(&input.source_id))
+    } else {
+        sampler.has_frames()
+    };
+    drop(sampler);
     if !has_frames {
         return Ok(None);
     }
@@ -170,32 +178,36 @@ pub(super) fn compose_latest_pipewire_frames(
         RecorderBenchmarkStage::Compose
     };
     let compose_only_started = Instant::now();
-    let composed = state
+    let outputs = state
         .plan
-        .compose_latest_frames(&latest_frames, timestamp_ms)?;
+        .compose_source_outputs(&latest_frames, timestamp_ms)?;
     if scheduler_shutdown_requested(shutdown_receiver) {
         return Ok(ComposedFrameSendOutcome::Stopped);
     }
-    if let Some(benchmark) = &state.benchmark {
-        benchmark.record_stage(
-            compose_stage,
-            compose_only_started.elapsed(),
-            Some(timestamp_ms),
-            Some(latest_frames.len()),
-            vec![composed.format.label().to_string()],
-            Some(composed.data.len().try_into().unwrap_or(u64::MAX)),
-        );
-    }
-    state.plan.validate_composed_frame(&composed)?;
     let send_started = Instant::now();
-    let send_outcome = send_composed_frame_with_backpressure(
-        &state.composed_frames,
-        composed,
-        writer_backpressure_timeout(state.frame_interval_ms),
-        shutdown_receiver,
-    )?;
-    if send_outcome == ComposedFrameSendOutcome::Stopped {
-        return Ok(ComposedFrameSendOutcome::Stopped);
+    for composed in outputs {
+        if let Some(benchmark) = &state.benchmark {
+            benchmark.record_stage(
+                compose_stage,
+                compose_only_started.elapsed(),
+                Some(timestamp_ms),
+                Some(latest_frames.len()),
+                vec![composed.format.label().to_string()],
+                Some(composed.data.len().try_into().unwrap_or(u64::MAX)),
+            );
+        }
+        if !state.plan.independent_video {
+            state.plan.validate_composed_frame(&composed)?;
+        }
+        let send_outcome = send_composed_frame_with_backpressure(
+            &state.composed_frames,
+            composed,
+            writer_backpressure_timeout(state.frame_interval_ms),
+            shutdown_receiver,
+        )?;
+        if send_outcome == ComposedFrameSendOutcome::Stopped {
+            return Ok(ComposedFrameSendOutcome::Stopped);
+        }
     }
     if let Some(benchmark) = &state.benchmark {
         benchmark.record_stage(

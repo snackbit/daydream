@@ -15,7 +15,8 @@ then turns that evidence into a timeline you can review and process locally.
 ## What works today
 
 - Multi-monitor capture through the Linux desktop portal and PipeWire.
-- A scene editor for arranging selected displays on one recording canvas.
+- Source controls for monitor crop and output scale, with shared frame interval
+  and bitrate. New recordings keep each monitor in its own MKV video stream.
 - Separate desktop and microphone audio streams in local MKV segments.
 - Explicit start, pause, resume, and stop controls.
 - Local Library playback with thumbnails, waveforms, track lanes, and source
@@ -30,6 +31,8 @@ then turns that evidence into a timeline you can review and process locally.
 - Full-frame OCR documents from local Tesseract (default) or explicitly configured
   Vision OCR, with readable text, source-linked revision history and details.
 - Optional OpenAI-compatible remote transcription and vision endpoints.
+- Atomic provider/settings saves, anonymous Vision endpoints and a generated-image
+  Vision test. Studio can select a video source or show a synchronized grid.
 - Rust-owned SQLite storage with embedded migrations.
 
 ## Recorded by Daydream
@@ -91,7 +94,8 @@ Daydream is a Yarn 4 monorepo:
 
 The Linux recorder uses xdg-desktop-portal and PipeWire for screen sources,
 GStreamer for segmented media writing, and separate desktop and microphone
-audio tracks. Processing runs after capture in deterministic, resumable chunks.
+audio tracks. Processing handles finalized fragments during recording or after
+stop, according to the selected timing setting, in bounded, resumable chunks.
 
 ```text
 capture

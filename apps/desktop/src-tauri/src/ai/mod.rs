@@ -57,7 +57,7 @@ use notification_helpers::{
 const MODEL_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 const MODEL_PROGRESS_UPDATE_BYTES: i64 = 4 * 1024 * 1024;
 const AI_PROCESSING_JOB_KIND: &str = "ai-processing";
-const MAX_TRANSCRIPTION_CHUNK_DURATION_MS: i64 = 15 * 60 * 1_000;
+const MAX_TRANSCRIPTION_CHUNK_DURATION_MS: i64 = 30_000;
 const PROCESSING_WORKER_INTERVAL: Duration = Duration::from_millis(500);
 const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const VLM_TIMEOUT: Duration = Duration::from_secs(120);
@@ -81,18 +81,22 @@ mod models;
 mod ocr_runtime;
 mod ocr_types;
 pub(crate) use ocr_types::*;
-mod processing;
+pub(crate) mod processing;
 #[cfg(test)]
 pub(crate) use processing::cancel_job_if_inactive;
+pub(crate) use processing::{retry_processing_units_for_action, RetryProcessingUnitsInput};
 mod results;
 mod types;
 pub(super) use models::*;
 pub use models::{recover_model_downloads, AiModelManager};
 pub(crate) use ocr_runtime::*;
 pub(crate) use processing::cancel_recording_processing_for_privacy;
-pub(crate) use processing::enqueue_recording_ai_processing;
+pub(crate) use processing::reprocess_recording_audio;
 pub(crate) use processing::reprocess_recording_ocr;
 use processing::*;
+pub(crate) use processing::{
+    admit_live_recording, enqueue_recording_ai_processing, finish_live_recording,
+};
 use results::*;
 pub(crate) use results::{
     emit_processing_state, processing_job_from_row, processing_state_for_recording,

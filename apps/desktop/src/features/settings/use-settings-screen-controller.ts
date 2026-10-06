@@ -178,26 +178,17 @@ export function useSettingsScreenController() {
   async function savePreparedSettings(settings: AppSettings): Promise<boolean> {
     setPreparingSave(true);
     try {
-      const preparation = await ai.prepareAiSettingsForSave(
-        settings,
-        settingsState?.settings ?? null,
-      );
+      const preparation = await ai.prepareAiSettingsForSave(settings);
       if (!preparation) {
         return false;
       }
 
       try {
-        await save(preparation.settings);
+        await save(preparation.settings, preparation.credentials);
       } catch {
-        ai.setPendingSecretRefsForDeletion(preparation.createdSecretRefs);
-        await ai.deletePendingAiSecrets();
         return false;
       }
 
-      ai.setPendingSecretRefsForDeletion(
-        preparation.secretRefsToDeleteAfterSave,
-      );
-      await ai.deletePendingAiSecrets();
       ai.clearSecretDrafts();
       await ai.refreshAiScaffolds();
       return true;

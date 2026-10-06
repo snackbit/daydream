@@ -17,8 +17,12 @@ export function missingVisionRequirements({
   if (!vision.model?.trim()) {
     missing.push('a Vision model');
   }
-  if (!vision.apiKeyRef?.trim() && !visionKeyDraft.trim()) {
-    missing.push('a saved API key');
+  if (
+    vision.authMode !== 'none' &&
+    !vision.apiKeyRef?.trim() &&
+    !visionKeyDraft.trim()
+  ) {
+    missing.push('an API key');
   }
 
   return missing;

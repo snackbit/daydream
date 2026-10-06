@@ -885,6 +885,7 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-pbutils",
+ "gstreamer-video",
  "hex",
  "keyring",
  "khronos-egl",

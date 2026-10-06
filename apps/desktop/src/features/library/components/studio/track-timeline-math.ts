@@ -13,6 +13,7 @@ export const TRACK_SELECTION_DRAG_THRESHOLD_PX = 4;
 export interface TimelineLaneLayout {
   heightPx: number;
   id: string;
+  label?: string;
 }
 
 export interface RulerTick {
@@ -174,6 +175,8 @@ export function intersectTimelineLaneIds({
 }
 
 export function trackLaneHeightPxForKind(kind: string): number {
+  if (kind === 'activity-focus') return 48;
+  if (kind === 'video') return TRACK_LANE_HEIGHT_PX + 48;
   return kind.startsWith('activity-')
     ? TRACK_DERIVED_LANE_HEIGHT_PX
     : TRACK_LANE_HEIGHT_PX;

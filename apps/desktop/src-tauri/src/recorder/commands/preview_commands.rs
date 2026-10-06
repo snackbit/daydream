@@ -36,7 +36,18 @@ pub async fn start_recorder_preview(
         PreviewStartDecision::Pending { generation, .. } => (input.scene_id, generation),
     };
 
-    let scene = match recorder_scene_for_storage(&storage, &scene_id) {
+    let loaded_scene = if let Some(scene) = input.scene {
+        if scene.id == scene_id {
+            Ok(scene)
+        } else {
+            Err(super::super::errors::invalid_scene_error(
+                "Preview scene identity",
+            ))
+        }
+    } else {
+        recorder_scene_for_storage(&storage, &scene_id)
+    };
+    let scene = match loaded_scene {
         Ok(scene) => scene,
         Err(error) => {
             warn!(

@@ -25,6 +25,11 @@ const ipc = vi.hoisted(() => ({
 }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: ipc.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: ipc.listen }));
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
 const words = Array.from({ length: 500 }, (_, index) => ({
   confidence: index === 42 ? 0.3 : 0.95,
   hierarchy: null,
@@ -419,7 +424,7 @@ test('changing privacy hides open reading text immediately and late reads or fai
     job: null,
     sourceTrackId: context.sourceTrackId,
   });
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
   expect(screen.queryByLabelText('Recognized text')).toBeNull();
   expect(screen.queryByText(/Word42/)).toBeNull();
 });
@@ -451,7 +456,7 @@ test('a failed Vision document retries real processing and preserves the blocked
       onSeek={vi.fn()}
     />,
   );
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
   expect(screen.queryByLabelText('Recognized text')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Retry processing' }));
   expect(
@@ -546,7 +551,7 @@ test('a privacy change closes copied reading content and clears selected history
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.queryByText(/Private meeting/)).toBeNull();
   expect(screen.queryByText(/Revision at/)).toBeNull();
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
 });
 
 test('pre-frame OCR job phases refresh from processing events and retry the actual failed job without changing engines', async () => {
@@ -601,7 +606,7 @@ test('pre-frame OCR job phases refresh from processing events and retry the actu
     updatedAtMs: 2,
   };
   processingChanged({ payload: { recordingId: context.recordingId } });
-  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole('button', { name: 'Retry processing' }));
   expect(
     await screen.findByText(

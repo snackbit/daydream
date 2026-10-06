@@ -54,7 +54,14 @@ impl RecordingSegmentRuntime {
         self.media_writer.abort();
     }
 
-    pub(super) fn stop(mut self, stop_at_ms: u64) -> Result<(), RecorderError> {
+    pub(crate) fn drain_fragments(&mut self) -> Vec<super::super::media_writer::FragmentEvent> {
+        self.media_writer.drain_fragments()
+    }
+
+    pub(super) fn stop(
+        mut self,
+        stop_at_ms: u64,
+    ) -> Result<Vec<super::super::media_writer::FragmentEvent>, RecorderError> {
         if let Some(activity_monitor) = self.activity_monitor.take() {
             activity_monitor.stop();
         }

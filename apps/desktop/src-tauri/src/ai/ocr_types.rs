@@ -99,6 +99,7 @@ pub struct OcrTimelineFrame {
     pub status: String,
     pub sample_end_ms: i64,
     pub text_empty: Option<bool>,
+    pub text_preview: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

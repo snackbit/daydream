@@ -87,7 +87,10 @@ impl RecorderManager {
                     connection,
                     &active.recording_id,
                     timestamp_ms as i64,
-                )
+                )?;
+                let recording=storage::get_recording(connection,&active.recording_id)?;
+                connection.execute("UPDATE recording_live_state SET classified_through_ms=MAX(classified_through_ms,?2) WHERE recording_id=?1",rusqlite::params![active.recording_id,timestamp_ms as i64-recording.started_at_ms.unwrap_or(timestamp_ms as i64)])?;
+                storage::get_recording(connection,&active.recording_id)
             })
             .map_err(storage_error);
         if let Err(error) = completion {
@@ -134,6 +137,7 @@ impl RecorderManager {
         segment: &ActiveSegment,
         timestamp_ms: u64,
     ) -> Result<(), RecorderError> {
+        let mut final_segment = segment.clone();
         if let Some(runtime) = &segment.runtime {
             let segment_runtime = runtime
                 .lock()
@@ -146,16 +150,22 @@ impl RecorderManager {
                 .take();
 
             if let Some(segment_runtime) = segment_runtime {
-                if let Err(error) = segment_runtime.stop(timestamp_ms) {
-                    self.fail_active_recording(
-                        storage,
-                        active,
-                        &segment.id,
-                        timestamp_ms,
-                        &error,
-                        None,
-                    )?;
-                    return Err(error);
+                match segment_runtime.stop(timestamp_ms) {
+                    Ok(events) => {
+                        final_segment =
+                            self.save_fragment_events(storage, active, segment, &events)?;
+                    }
+                    Err(error) => {
+                        self.fail_active_recording(
+                            storage,
+                            active,
+                            &segment.id,
+                            timestamp_ms,
+                            &error,
+                            None,
+                        )?;
+                        return Err(error);
+                    }
                 }
             } else {
                 return Err(lifecycle_error(
@@ -165,6 +175,7 @@ impl RecorderManager {
             }
         }
 
+        let segment = &final_segment;
         let probe = media_writer::probe_segment_best_effort(&segment.file_path);
         let wall_duration_ms = duration_ms(segment.started_at_ms, timestamp_ms);
         if let Some(probe_duration_ms) = probe.duration_ms {

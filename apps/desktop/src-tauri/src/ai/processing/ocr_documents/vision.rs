@@ -61,7 +61,16 @@ pub(super) fn validate_response(
     if content.len() > 1_000_000 {
         return Err(invalid_response());
     }
-    let document: Document = serde_json::from_str(&content).map_err(|_| invalid_response())?;
+    // Some compatible providers wrap an otherwise literal document in a JSON
+    // fence. Accept that exact wrapper; retain strict document schema validation.
+    let text = content.trim();
+    let text = text
+        .strip_prefix("```json\n")
+        .or_else(|| text.strip_prefix("```\n"))
+        .and_then(|text| text.strip_suffix("```"))
+        .unwrap_or(text)
+        .trim();
+    let document: Document = serde_json::from_str(text).map_err(|_| invalid_response())?;
     if document.blocks.len() > 10_000 {
         return Err(invalid_response());
     }
@@ -104,18 +113,34 @@ pub(super) async fn run_vision_document(
     check_processing_cancel(&cancel)?;
     let body = request_body(config, frame)?;
     let endpoint = super::super::visual::vision_chat_completions_url_for_ocr(&config.base_url);
-    let request = reqwest::Client::new()
+    let builder = crate::provider_http::client()
         .post(endpoint)
         .timeout(VLM_TIMEOUT)
-        .bearer_auth(&config.api_key)
-        .json(&body)
-        .send();
+        .json(&body);
+    let builder = if config.api_key.is_empty() {
+        builder
+    } else {
+        builder.bearer_auth(&config.api_key)
+    };
+    let request = builder.send();
     let response = await_cancelled(request, cancel.clone())
         .await?
-        .map_err(|_| ai_error("ai_ocr_vision_request_failed", "Vision OCR request failed."))?;
+        .map_err(|error| {
+            ai_error(
+                if error.is_timeout() {
+                    "ai_ocr_vision_timeout"
+                } else {
+                    "ai_ocr_vision_request_failed"
+                },
+                "Vision OCR request failed.",
+            )
+        })?;
     if !response.status().is_success() {
         return Err(ai_error(
-            "ai_ocr_vision_status_failed",
+            &format!(
+                "ai_ocr_vision_{}",
+                crate::provider_http::status_code(response.status())
+            ),
             "Vision OCR provider rejected the request.",
         ));
     }
@@ -131,7 +156,7 @@ pub(super) async fn run_vision_document(
     let body = std::str::from_utf8(&bytes).map_err(|_| invalid_response())?;
     validate_response(body, frame.width, frame.height)
 }
-async fn await_cancelled<F: std::future::Future>(
+pub(in crate::ai) async fn await_cancelled<F: std::future::Future>(
     future: F,
     cancel: Arc<AtomicBool>,
 ) -> Result<F::Output, AiError> {

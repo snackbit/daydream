@@ -150,7 +150,7 @@ fn pipeline_uses_low_latency_video_encoder_and_explicit_queues() {
     assert!(!pipeline.contains("caps=video/x-raw,format=I420"));
     assert_eq!(
         pipeline
-            .matches("queue max-size-time=0 max-size-bytes=0 max-size-buffers=0")
+            .matches("queue max-size-time=2000000000 max-size-bytes=16777216 max-size-buffers=0")
             .count(),
         6
     );
@@ -322,6 +322,81 @@ fn live_frame_segment_stop_drains_queued_frame_before_eos() {
 }
 
 #[test]
+fn independent_video_streams_rotate_with_stable_mapping_and_output_sizes() {
+    let directory =
+        std::env::temp_dir().join(format!("daydream-independent-writer-{}", Uuid::now_v7()));
+    fs::create_dir_all(&directory).unwrap();
+    let mut input = segment_input(None, None);
+    input.output_path = directory.join("0001.mkv");
+    input.fps = 1.0;
+    input.started_at_ms = 1;
+    input.video_sources = vec![
+        crate::storage::RecordingVideoSource {
+            track_id: Uuid::now_v7().to_string(),
+            source_id: "source-a".into(),
+            label: "Synthetic A".into(),
+            width: 64,
+            height: 32,
+            config_json: "{}".into(),
+        },
+        crate::storage::RecordingVideoSource {
+            track_id: Uuid::now_v7().to_string(),
+            source_id: "source-b".into(),
+            label: "Synthetic B".into(),
+            width: 32,
+            height: 32,
+            config_json: "{}".into(),
+        },
+    ];
+    let (sender, receiver) = bounded_frame_channel(8);
+    let writer = start_segment_from_frames(&input, receiver, None).unwrap();
+    for tick in 0..70 {
+        for source in &input.video_sources {
+            sender
+                .send(
+                    CapturedFrame::new(
+                        &source.source_id,
+                        input.started_at_ms + tick * 1_000,
+                        source.width,
+                        source.height,
+                        source.width,
+                        CapturedFrameFormat::Yuv420p,
+                        black_yuv420p_frame(source.width, source.height).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    drop(sender);
+    writer.stop(input.started_at_ms + 70_000).unwrap();
+    let files = fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "mkv"))
+        .collect::<Vec<_>>();
+    assert!(
+        files.len() >= 3,
+        "Seventy seconds should rotate into independently playable fragments."
+    );
+    for file in files {
+        let probe = probe_segment_best_effort(&file);
+        assert!(probe.available, "{probe:?}");
+        assert_eq!(probe.videos.len(), 2);
+        assert_eq!(
+            (
+                probe.videos[0].index,
+                probe.videos[0].width,
+                probe.videos[1].index,
+                probe.videos[1].width
+            ),
+            (0, Some(64), 1, Some(32))
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn segment_stop_returns_error_when_frame_pump_does_not_exit() {
     let output_path = std::env::temp_dir().join(format!(
         "daydream-stuck-media-writer-{}.mkv",
@@ -330,13 +405,14 @@ fn segment_stop_returns_error_when_frame_pump_does_not_exit() {
     let mut input = segment_input(None, None);
     input.output_path = output_path.clone();
     let (release_sender, release_receiver) = mpsc::channel();
-    let segment = start_segment_with_frame_pump(&input, false, None, move |_appsrc, _stop| {
-        thread::spawn(move || {
-            let _ = release_receiver.recv();
-            Ok(())
+    let segment =
+        start_segment_with_frame_pump(&input, false, None, move |_appsrc, _stop, _sources| {
+            thread::spawn(move || {
+                let _ = release_receiver.recv();
+                Ok(())
+            })
         })
-    })
-    .expect("start media segment");
+        .expect("start media segment");
 
     let error = segment
         .stop(input.started_at_ms)
@@ -351,6 +427,7 @@ fn segment_stop_returns_error_when_frame_pump_does_not_exit() {
 
 fn segment_input(desktop: Option<&str>, mic: Option<&str>) -> MediaSegmentInput {
     MediaSegmentInput {
+        video_sources: Vec::new(),
         benchmarks_dir: std::env::temp_dir(),
         canvas_height: 720,
         canvas_width: 1280,
@@ -374,6 +451,7 @@ fn video_only_capabilities() -> RecorderMediaWriterCapabilities {
         file_sink: true,
         h264_parse: true,
         matroska_muxer: true,
+        split_muxer: true,
         opus_encoder: false,
         pulse_source: false,
         queue: true,

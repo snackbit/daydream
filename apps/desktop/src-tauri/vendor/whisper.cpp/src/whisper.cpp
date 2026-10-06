@@ -5148,7 +5148,10 @@ bool whisper_vad_detect_speech(
         // do not reset the scheduler - we will reuse the graph in the next chunk
         if (!ggml_graph_compute_helper(sched, gf, vctx->n_threads, false)) {
             WHISPER_LOG_ERROR("%s: failed to compute VAD graph\n", __func__);
-            break;
+            // Daydream integration: incomplete probabilities are a detector
+            // failure, not successful no-speech. Preserve the C API error path.
+            ggml_backend_sched_reset(sched);
+            return false;
         }
 
         // Get the probability for this chunk.

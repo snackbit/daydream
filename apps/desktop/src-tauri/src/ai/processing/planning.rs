@@ -18,6 +18,7 @@ pub(in crate::ai) struct ActivityChunkPlan {
 
 #[derive(Clone, Debug)]
 pub(in crate::ai) struct VisualChunkPlan {
+    pub(in crate::ai) track_id: Option<String>,
     pub(in crate::ai) end_offset_ms: i64,
     pub(in crate::ai) segment_id: String,
     pub(in crate::ai) start_offset_ms: i64,
@@ -101,11 +102,16 @@ pub(in crate::ai) fn activity_chunk_plans(
             let start_offset_ms = playback_offset_ms;
             let end_offset_ms = playback_offset_ms + duration_ms.max(0);
             if !redactions_overlap_any_activity(redactions, start_offset_ms, end_offset_ms) {
-                plans.push(ActivityChunkPlan {
-                    end_offset_ms,
-                    segment_id: segment.id.clone(),
-                    start_offset_ms,
-                });
+                let mut start = start_offset_ms;
+                while start < end_offset_ms {
+                    let end = (start + 30_000).min(end_offset_ms);
+                    plans.push(ActivityChunkPlan {
+                        end_offset_ms: end,
+                        segment_id: segment.id.clone(),
+                        start_offset_ms: start,
+                    });
+                    start = end;
+                }
             }
             playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
@@ -122,13 +128,7 @@ pub(in crate::ai) fn visual_chunk_plans(
 ) -> Vec<VisualChunkPlan> {
     let enabled = match source_kind {
         "ocr" => app_settings.ai.ocr.enabled,
-        "vlm" => {
-            app_settings.ai.vision.observations_enabled
-                && app_settings.ai.vision.provider == "openai-compatible"
-                && app_settings.ai.vision.base_url.is_some()
-                && app_settings.ai.vision.api_key_ref.is_some()
-                && app_settings.ai.vision.model.is_some()
-        }
+        "vlm" => app_settings.ai.vision.observations_enabled,
         _ => false,
     };
     if !enabled {
@@ -159,14 +159,23 @@ pub(in crate::ai) fn visual_chunk_plans(
             let track_id = segment
                 .video_stream_index
                 .map(|index| format!("video-{index}"));
-            if !track_id.as_deref().is_some_and(|track_id| {
-                redactions_overlap_track(redactions, track_id, start_offset_ms, end_offset_ms)
-            }) {
-                plans.push(VisualChunkPlan {
-                    end_offset_ms,
-                    segment_id: segment.id.clone(),
-                    start_offset_ms,
-                });
+            for (start_offset_ms, end_offset_ms) in visible_ranges(
+                start_offset_ms,
+                end_offset_ms,
+                redactions,
+                track_id.as_deref(),
+            ) {
+                let mut start = start_offset_ms;
+                while start < end_offset_ms {
+                    let end = (start + 30_000).min(end_offset_ms);
+                    plans.push(VisualChunkPlan {
+                        track_id: None,
+                        end_offset_ms: end,
+                        segment_id: segment.id.clone(),
+                        start_offset_ms: start,
+                    });
+                    start = end;
+                }
             }
         }
         if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
@@ -191,9 +200,12 @@ pub(in crate::ai) fn append_audio_slice_plans(
         let start_offset_ms = playback_offset_ms + slice_start_ms;
         let end_offset_ms = playback_offset_ms + slice_end_ms;
         let track_id = audio_library_track_id(segment, source_role);
-        if !track_id.as_deref().is_some_and(|track_id| {
-            redactions_overlap_track(redactions, track_id, start_offset_ms, end_offset_ms)
-        }) {
+        for (start_offset_ms, end_offset_ms) in visible_ranges(
+            start_offset_ms,
+            end_offset_ms,
+            redactions,
+            track_id.as_deref(),
+        ) {
             plans.push(AudioChunkPlan {
                 end_offset_ms,
                 segment_id: segment.id.clone(),
@@ -231,16 +243,38 @@ fn redactions_overlap_any_activity(
     })
 }
 
-fn redactions_overlap_track(
+pub(in crate::ai) fn visible_ranges(
+    start: i64,
+    end: i64,
     redactions: &[RedactionRow],
-    track_id: &str,
-    start_offset_ms: i64,
-    end_offset_ms: i64,
-) -> bool {
-    redactions.iter().any(|redaction| {
-        redaction_overlaps(redaction, start_offset_ms, end_offset_ms)
-            && redaction_targets_track(redaction, track_id)
-    })
+    track: Option<&str>,
+) -> Vec<(i64, i64)> {
+    let mut cuts = redactions
+        .iter()
+        .filter(|redaction| {
+            redaction_overlaps(redaction, start, end)
+                && track.is_none_or(|track| redaction_targets_track(redaction, track))
+        })
+        .map(|redaction| {
+            (
+                redaction.start_offset_ms.max(start),
+                redaction.end_offset_ms.min(end),
+            )
+        })
+        .collect::<Vec<_>>();
+    cuts.sort_unstable();
+    let mut cursor = start;
+    let mut ranges = Vec::new();
+    for (from, to) in cuts {
+        if from > cursor {
+            ranges.push((cursor, from));
+        }
+        cursor = cursor.max(to);
+    }
+    if cursor < end {
+        ranges.push((cursor, end));
+    }
+    ranges
 }
 
 fn redaction_overlaps(redaction: &RedactionRow, start_offset_ms: i64, end_offset_ms: i64) -> bool {
@@ -315,4 +349,29 @@ pub(in crate::ai) fn ensure_audio_track(
             source_id: None,
         },
     )
+}
+
+#[cfg(test)]
+mod privacy_slice_tests {
+    use super::*;
+    #[test]
+    fn a_small_cut_does_not_discard_the_rest_of_a_processing_window() {
+        let cuts = vec![RedactionRow {
+            id: "synthetic".into(),
+            recording_id: "synthetic".into(),
+            created_at_ms: 0,
+            reason: None,
+            start_offset_ms: 1000,
+            end_offset_ms: 2000,
+            track_ids_json: "[\"video-0\"]".into(),
+        }];
+        assert_eq!(
+            visible_ranges(0, 30_000, &cuts, Some("video-0")),
+            vec![(0, 1000), (2000, 30_000)]
+        );
+        assert_eq!(
+            visible_ranges(0, 30_000, &cuts, Some("microphone-2")),
+            vec![(0, 30_000)]
+        );
+    }
 }

@@ -26,6 +26,8 @@ pub struct RecorderMediaWriterCapabilities {
     pub(crate) file_sink: bool,
     pub(crate) h264_parse: bool,
     pub(crate) matroska_muxer: bool,
+    #[serde(default)]
+    pub(crate) split_muxer: bool,
     pub(crate) opus_encoder: bool,
     pub(crate) pulse_source: bool,
     pub(crate) queue: bool,

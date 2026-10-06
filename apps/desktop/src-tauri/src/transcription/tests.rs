@@ -516,7 +516,7 @@ fn remote_auth_failure_returns_safe_error() {
 }
 
 #[test]
-fn remote_typed_error_body_is_preserved_without_private_fallback_body() {
+fn unrecognized_remote_error_codes_cannot_expose_private_provider_content() {
     tauri::async_runtime::block_on(async {
         let server = OneShotServer::start_json(
             400,
@@ -540,8 +540,8 @@ fn remote_typed_error_body_is_preserved_without_private_fallback_body() {
         .await
         .expect_err("typed provider error");
 
-        assert_eq!(error.code, "ai_transcription_vendor_typed");
-        assert_eq!(error.message, "Typed provider error.");
+        assert_eq!(error.code, "ai_transcription_remote_request_invalid");
+        assert!(!error.message.contains("Typed provider error."));
         let _ = server.join();
         let _ = fs::remove_dir_all(temp_dir);
     });
@@ -568,7 +568,7 @@ fn remote_arbitrary_error_body_stays_redacted() {
         .await
         .expect_err("generic provider error");
 
-        assert_eq!(error.code, "ai_transcription_provider_failed");
+        assert_eq!(error.code, "ai_transcription_remote_request_invalid");
         assert!(!error.message.contains("private transcript"));
         assert!(!error.message.contains("sk-secret"));
         let _ = server.join();

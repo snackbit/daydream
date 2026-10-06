@@ -1,4 +1,11 @@
-import { Activity, Database, Home, Settings, Video } from 'lucide-react';
+import {
+  Activity,
+  Database,
+  Home,
+  Settings,
+  Video,
+  ListTodo,
+} from 'lucide-react';
 
 export interface NavigationItem {
   description: string;
@@ -27,6 +34,12 @@ export const navigationItems: NavigationItem[] = [
     href: '/library',
     icon: Database,
     label: 'Library',
+  },
+  {
+    description: 'Progress, background work, and processing recovery.',
+    href: '/processing',
+    icon: ListTodo,
+    label: 'Processing',
   },
   {
     description: 'Runtime health, native capture support, and storage details.',

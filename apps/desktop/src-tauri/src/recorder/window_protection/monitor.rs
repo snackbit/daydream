@@ -47,6 +47,8 @@ pub(crate) fn start_window_protection_monitor<R: Runtime>(
     started_at_ms: u64,
     settings: RecordWindowProtectionSettings,
 ) -> Result<Option<WindowProtectionMonitor>, RecorderError> {
+    let required = settings.enabled && settings.rules.iter().any(|rule| rule.enabled);
+    app.state::<AppStorage>().with_connection(|connection|connection.execute("INSERT INTO recording_live_state(recording_id,classifier_required,classified_through_ms) VALUES(?1,?2,0) ON CONFLICT(recording_id) DO UPDATE SET classifier_required=excluded.classifier_required",rusqlite::params![recording_id,required])).map_err(super::state::protection_storage_error)?;
     if !settings.enabled || settings.rules.iter().all(|rule| !rule.enabled) {
         return Ok(None);
     }
@@ -103,6 +105,8 @@ fn run_monitor<R: Runtime>(
             }
             ProtectionDecision::Resume => commands::request_auto_resume(app, recording_id),
         }
+        let watermark = protection.classified_through_ms(started_at_ms, now_ms());
+        storage.with_connection(|connection|connection.execute("UPDATE recording_live_state SET classified_through_ms=MAX(classified_through_ms,?2) WHERE recording_id=?1",rusqlite::params![recording_id,watermark])).map_err(super::state::protection_storage_error)?;
         thread::sleep(Duration::from_millis(250));
     }
     Ok(())

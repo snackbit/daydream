@@ -14,6 +14,7 @@ interface AiSettingsTabProps {
   draft: AppSettings;
   limits: AppSettingsLimits;
   models: AiModelAsset[];
+  sourceCount: number;
   onCancelModelDownload: (modelId: string) => void;
   onChangeTranscriptionKey: (value: string) => void;
   onChangeVisionKey: (value: string) => void;
@@ -34,6 +35,7 @@ export function AiSettingsTab({
   draft,
   limits,
   models,
+  sourceCount,
   onCancelModelDownload,
   onChangeTranscriptionKey,
   onChangeVisionKey,
@@ -55,48 +57,59 @@ export function AiSettingsTab({
 
   return (
     <div className="grid gap-3">
-      <AiTranscriptionCard
-        draft={draft}
-        limits={limits}
-        models={whisperModels}
-        onCancelModelDownload={onCancelModelDownload}
-        onChangeTranscriptionKey={onChangeTranscriptionKey}
-        onDeleteModel={onDeleteModel}
-        onDownloadModel={onDownloadModel}
-        onUpdateDraft={onUpdateDraft}
-        providerStatus={providerStatus}
-        transcriptionKeyDraft={transcriptionKeyDraft}
-      />
+      <section id="ai-transcription" tabIndex={-1}>
+        <AiTranscriptionCard
+          draft={draft}
+          limits={limits}
+          models={whisperModels}
+          onCancelModelDownload={onCancelModelDownload}
+          onChangeTranscriptionKey={onChangeTranscriptionKey}
+          onDeleteModel={onDeleteModel}
+          onDownloadModel={onDownloadModel}
+          onUpdateDraft={onUpdateDraft}
+          providerStatus={providerStatus}
+          transcriptionKeyDraft={transcriptionKeyDraft}
+        />
+      </section>
 
-      <AiModelCacheCard
-        models={whisperModels}
-        onCancelModelDownload={onCancelModelDownload}
-        onDeleteModel={onDeleteModel}
-        onDownloadModel={onDownloadModel}
-      />
+      <section id="ai-models" tabIndex={-1}>
+        <AiModelCacheCard
+          models={whisperModels}
+          onCancelModelDownload={onCancelModelDownload}
+          onDeleteModel={onDeleteModel}
+          onDownloadModel={onDownloadModel}
+        />
+      </section>
 
-      <AiVisionCard
-        draft={draft}
-        models={models}
-        onCancelModelDownload={onCancelModelDownload}
-        onChangeVisionKey={onChangeVisionKey}
-        onDeleteModel={onDeleteModel}
-        onDownloadModel={onDownloadModel}
-        onUpdateDraft={onUpdateDraft}
-        providerStatus={providerStatus}
-        visionKeyDraft={visionKeyDraft}
-      />
+      <section id="ai-vision" tabIndex={-1}>
+        <div id="ai-ocr" tabIndex={-1}>
+          <AiVisionCard
+            draft={draft}
+            models={models}
+            sourceCount={sourceCount}
+            onCancelModelDownload={onCancelModelDownload}
+            onChangeVisionKey={onChangeVisionKey}
+            onDeleteModel={onDeleteModel}
+            onDownloadModel={onDownloadModel}
+            onUpdateDraft={onUpdateDraft}
+            providerStatus={providerStatus}
+            visionKeyDraft={visionKeyDraft}
+          />
+        </div>
+      </section>
 
-      <AiActivityProcessingCard
-        draft={draft}
-        inputActivityRepairMessage={inputActivityRepairMessage}
-        inputActivityRepairing={inputActivityRepairing}
-        inputActivityStatus={inputActivityStatus}
-        limits={limits}
-        onRefreshInputActivityStatus={onRefreshInputActivityStatus}
-        onRepairInputActivity={onRepairInputActivity}
-        onUpdateDraft={onUpdateDraft}
-      />
+      <section id="ai-processing" tabIndex={-1}>
+        <AiActivityProcessingCard
+          draft={draft}
+          inputActivityRepairMessage={inputActivityRepairMessage}
+          inputActivityRepairing={inputActivityRepairing}
+          inputActivityStatus={inputActivityStatus}
+          limits={limits}
+          onRefreshInputActivityStatus={onRefreshInputActivityStatus}
+          onRepairInputActivity={onRepairInputActivity}
+          onUpdateDraft={onUpdateDraft}
+        />
+      </section>
     </div>
   );
 }

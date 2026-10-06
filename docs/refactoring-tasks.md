@@ -1,8 +1,121 @@
 # Refactoring Tasks
 
+## Source capture review follow-up
+
+- [x] Redaction create/unhide use the same source-aware track mapping as detail
+      reads, preserving all-track protection when editing audio cuts.
+- [x] OCR reprocessing retains each source plan's track ID and stream mapping.
+      Previously queued independent-source chunks without an ID fail before
+      extraction instead of falling back to the first stream.
+- [x] Admitted observations with an incomplete profile fail visibly before extraction.
+- [x] Whole-job retry preserves successful visual output/checkpoints and clears
+      stale targeted unit selections; unrecovered frame failures remain visible.
+- [x] Frame navigation searches beyond a redacted neighborhood in the same segment,
+      in both directions, with source-aware boundary jumps and an overall time limit.
+- [x] Rename/debug detail responses preserve source IDs. The rename-to-redaction
+      workflow was also reproduced as a failing regression before the follow-up fix.
+- [x] Final verification for this review batch.
+
+Eight scenarios reproduced the six findings before their fixes: public screen
+create/unhide commands, editing audio beside all-track protection, source-scoped OCR
+reprocessing, incomplete observations, both whole-job retry cases and actual frame
+stepping over a 21-second cut. Focused regressions passed after implementation.
+Retry persistence and frame navigation tests now have dedicated owners. Whole-job
+retry no longer shares physical output deletion; physical deletion still clears all
+visual artifacts. Redaction validation reads source metadata without scanning media
+sizes. Public command payloads and SQLite schema remain unchanged.
+
+Final `yarn rust:fmt`, warning-free `yarn rust:clippy`, and
+`yarn rust:test -- --test-threads=2` pass with 432 native tests. The Library scope
+passes 31 tests. The additional missing-source safeguard reproduced an unsafe
+fallback before its fix, then passed alongside the full gate. `git diff --check`
+passes. Browser and real-device checks were not rerun for this native-only batch;
+no captured media or user database was modified during verification.
+
+## Completed implementation: source capture and Settings redesign
+
+- [x] Reproduce first-save Vision failure; separate validation/readiness, atomic
+      credentials/settings persistence, anonymous endpoints and synthetic tests.
+- [x] Simplify provider forms/copy, align shell and full-width Settings, underline tabs.
+- [x] Replace canvas editing with source crop/scale and shared recording controls.
+- [x] Persist independent source/fragment metadata; preserve existing recordings.
+- [x] Route capture, playback/grid, AI, frame navigation and privacy by source ID.
+- [x] Verify migrations, failure/recovery, synthetic multi-stream fragments and
+      browser workflows in both themes; record real-device/manual limits.
+
+Accepted defaults: crop then scale the saved video; shared interval/quality;
+explicit Vision no-auth mode; incomplete provider drafts can save; Settings fills
+the main pane; source picker with optional grid. Converted setups preserve crop,
+reset scale to 100%, and need one review before capture. Scope is Capture,
+Settings and shell, plus required Studio multi-source adaptation. No subagents.
+
+The first-save regression failed before the readiness fix. Final native checks
+(`yarn rust:fmt`, `yarn rust:clippy`, `yarn rust:test -- --test-threads=2`) pass,
+with no Clippy warnings and 425 native tests. `yarn check` passes lint, all workspace
+typechecks, 366 desktop tests, 9 shared tests and 1 FFmpeg test. Immutable install
+and the desktop production build pass. Focused Capture/Settings browser checks
+pass 48 tests, including light/dark layouts at 1440/420 pixels. The real synthetic
+multi-video writer verifies stable stream mappings and playable rotated fragments.
+Source metadata deletion and source-specific redaction/planning scenarios pass.
+Counts overlap and are not summed.
+
+Recording statistics were extracted from the legacy canvas panel so the new Capture
+workspace does not depend on canvas editing. Source setup, credential persistence,
+provider probing and video metadata have focused owners and typed IPC boundaries.
+Schema 24 is additive; existing composite recordings remain compatible.
+
+Implementation and pending real-device checks:
+[source capture redesign](source-capture-redesign.md). Actual Wayland monitor capture,
+microphone accuracy, native WebKit grid playback and packaged-app runtime checks
+remain pending. Verification used synthetic fixtures; no user database was reset.
+
 Active cleanup work is listed below. Older checked sections record completed
 2026-06-12 work and historical validation; they do not define a current goal or prove
 today's checks. Add focused ownership changes when touching complex owners.
+
+## Completed implementation: daily-driver restructuring
+
+One ad hoc implementation covers the accepted reliability, live processing,
+dashboard, shell, timeline and Silero VAD plan. Capture remains separate from
+processing; remote opt-in, redaction eligibility and source provenance remain
+mandatory. Defaults: live processing, 30-second fragments, Background mode,
+bounded retries, and internal balanced VAD parameters.
+
+- [x] Independent stages, partial completion, resumable successful units and retries.
+- [x] Offline Silero v6.2.0, speech-only transcription and bounded timestamps.
+- [x] Continuous fragment rotation, privacy-safe live admission and resource budgets.
+- [x] Compact task progress, dashboard, precise errors and Settings recovery links.
+- [x] Shell-owned recorder lifecycle, global controls, duration and recording size.
+- [x] Persistent annotation descriptions, waveform correction, grouped/resizable
+      redactions and accurate frame stepping.
+- [x] Focused ownership splits, typed IPC validation, lazy route loading and cleanup.
+- [x] Final automated gates, bounded synthetic soak and documented manual limits.
+
+Baseline: 61 focused frontend unit tests and 107 native AI/storage/privacy tests
+passed during planning. Implementation verification is recorded below as it runs.
+
+Implementation and remaining operator checks:
+[daily-driver hardening](daily-driver-hardening.md).
+
+Final `yarn rust:test -- --test-threads=2` passes 416 tests; `yarn rust:fmt` and
+`yarn rust:clippy` pass without warnings. JavaScript `yarn check` passes lint,
+all workspace typechecks, 354 desktop
+tests, 9 shared-contract tests and 1 FFmpeg resolver test. Immutable install passes.
+`yarn workspace @daydream/desktop build` passes with separate lazy screen bundles.
+Dashboard recovery controls fit light/dark modes at 1440/420 pixels; the shell
+footer remains reachable at 420 pixels. Selected-frame retry, explicit audio
+reprocessing and Settings recovery links have visible browser workflow coverage.
+The synthetic 70-second media timeline rotates through at least three finalized
+fragments without restarting capture. Real microphone, Wayland and packaged-app
+validation remain explicitly pending; no ambient microphone capture was performed.
+
+Startup migration follow-up: the historical schema can append `result_code`
+after `track_id`; a freshly generated schema places it before timestamps.
+The processing table rebuild now copies explicitly named columns. The populated
+migration regression exercises both layouts and preserves timestamp/track metadata.
+The historical layout reproduced the reported `updated_at_ms` startup failure
+before the fix. Afterwards all 44 storage tests and 416 native tests pass, together
+with formatting and warning-free Clippy. No user database was reset or modified.
 
 ## Completed cleanup: full-frame OCR documents
 

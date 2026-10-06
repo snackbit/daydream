@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -39,6 +40,8 @@ const client = vi.hoisted(() => ({
   getRecordingWaveformTiles: vi.fn(),
   renameLibraryRecording: vi.fn(),
   unredactLibraryRedactions: vi.fn(),
+  adjacentLibraryFrame: vi.fn(),
+  resizeLibraryRedaction: vi.fn(),
 }));
 
 const aiClient = vi.hoisted(() => ({
@@ -77,6 +80,21 @@ vi.mock('@/features/settings/use-debug-enabled', () => ({
 }));
 
 vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    to,
+    search,
+    children,
+  }: {
+    to: string;
+    search?: { tab: string; focus: string | null };
+    children: ReactNode;
+  }) => (
+    <a
+      href={search ? `${to}?tab=${search.tab}&focus=${search.focus ?? ''}` : to}
+    >
+      {children}
+    </a>
+  ),
   useNavigate: () => router.navigate,
   useParams: () => ({ recordingId: routeState.recordingId }),
 }));
@@ -154,6 +172,97 @@ const allTimelineLaneIds = [
   'desktop-audio-1',
   'video-0',
 ];
+
+test('independent source selection and grid keep stream URLs and redactions isolated', async () => {
+  const sourceA = '00000000-0000-4000-8000-000000000101',
+    sourceB = '00000000-0000-4000-8000-000000000102';
+  const streams = [
+    {
+      trackId: sourceA,
+      sourceId: 'monitor-a',
+      label: 'Screen A',
+      streamIndex: 0,
+      width: 1280,
+      height: 720,
+      fps: 2,
+    },
+    {
+      trackId: sourceB,
+      sourceId: 'monitor-b',
+      label: 'Screen B',
+      streamIndex: 1,
+      width: 640,
+      height: 720,
+      fps: 2,
+    },
+  ];
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    tracks: [
+      { ...detail.tracks[0]!, id: sourceA, label: 'Screen A', streamIndex: 0 },
+      { ...detail.tracks[0]!, id: sourceB, label: 'Screen B', streamIndex: 1 },
+      ...detail.tracks.filter((track) => track.kind !== 'video'),
+    ],
+    segments: detail.segments.map((segment) => ({
+      ...segment,
+      videoStreams: streams,
+    })),
+    redactions: [
+      {
+        id: 'source-a-cut',
+        recordingId: detail.id,
+        startOffsetMs: 0,
+        endOffsetMs: 2000,
+        reason: null,
+        createdAtMs: 1,
+        trackIds: [sourceA],
+      },
+    ],
+  });
+  client.createLibraryPlaybackSession.mockResolvedValue({
+    ...playbackAssets,
+    segments: playbackAssets.segments.map((segment) => ({
+      ...segment,
+      videos: [
+        {
+          trackId: sourceA,
+          streamIndex: 0,
+          url: 'http://127.0.0.1/source-a',
+          thumbnails: [],
+        },
+        {
+          trackId: sourceB,
+          streamIndex: 1,
+          url: 'http://127.0.0.1/source-b',
+          thumbnails: [],
+        },
+      ],
+    })),
+  });
+  const view = render(<RecordingStudioScreen />);
+  fireEvent.click(
+    await screen.findByRole('combobox', { name: 'Video source' }),
+  );
+  fireEvent.click(await screen.findByRole('option', { name: 'Screen B' }));
+  await waitFor(() =>
+    expect(
+      view.container.querySelector('video')?.getAttribute('src'),
+    ).toContain('/source-b'),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
+  await screen.findByLabelText('Screen A synchronized video');
+  expect(screen.getByLabelText('Screen A redacted')).toBeTruthy();
+  expect(screen.queryByLabelText('Screen B redacted')).toBeNull();
+  fireEvent.keyDown(document.body, { key: '.', code: 'Period' });
+  await waitFor(() =>
+    expect(client.adjacentLibraryFrame).toHaveBeenCalledWith(
+      detail.id,
+      0,
+      1,
+      sourceB,
+    ),
+  );
+});
 
 function legacyOcrDocument(text: string, timestampMs: number): OcrDocument {
   return {
@@ -459,7 +568,10 @@ function mockTimelineScrollMetrics(viewport: HTMLElement) {
   });
 }
 
-function mockTimelineRect(timeline: HTMLElement) {
+async function mockTimelineRect(timeline: HTMLElement) {
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
   timeline.getBoundingClientRect = () =>
     ({
       bottom: 260,
@@ -981,7 +1093,7 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   ).toBe(false);
 });
 
-test('RecordingStudioScreen explains local Whisper GPU failures in the inspector', async () => {
+test('RecordingStudioScreen explains a legacy transcription failure and links to its configuration', async () => {
   aiClient.getRecordingAiProcessingState.mockResolvedValue({
     chunks: [
       {
@@ -1052,10 +1164,10 @@ test('RecordingStudioScreen explains local Whisper GPU failures in the inspector
   );
 
   expect(
-    await screen.findByText(/Local Whisper transcription failed/i),
+    await screen.findByText(/provider could not process this section/i),
   ).toBeTruthy();
   expect(
-    screen.getByText(/switch local transcription backend to CPU/i),
+    screen.getByRole('link', { name: 'Review transcription settings' }),
   ).toBeTruthy();
   expect(screen.getByText('ai_transcription_provider_failed')).toBeTruthy();
 });
@@ -1189,12 +1301,12 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   const vlmMarker = screen.getByRole('button', {
     name: /visual frame 1\.5s to 2\.0s, 1 vlm, 0 ocr candidates/i,
   });
-  expect(marker.textContent).toBe('0.5s');
+  expect(marker.textContent).toContain('0.5s');
   expect(marker.textContent).not.toMatch(/OCR 2|VLM 1/i);
   expect(marker.getAttribute('data-visual-frame-source')).toBe('mixed');
-  expect(ocrMarker.textContent).toBe('0:01');
+  expect(ocrMarker.textContent).toContain('0:01');
   expect(ocrMarker.getAttribute('data-visual-frame-source')).toBe('ocr');
-  expect(vlmMarker.textContent).toBe('1.5s');
+  expect(vlmMarker.textContent).toContain('1.5s');
   expect(vlmMarker.getAttribute('data-visual-frame-source')).toBe('vlm');
 
   fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
@@ -1211,9 +1323,11 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   );
   expect(screen.getByRole('button', { name: /^play$/i })).toBeTruthy();
   expect(
-    await screen.findByText(
-      'A browser checkout page is visible with a payment form and order summary.',
-    ),
+    (
+      await screen.findAllByText(
+        'A browser checkout page is visible with a payment form and order summary.',
+      )
+    ).length >= 2,
   ).toBeTruthy();
   expect(screen.queryByLabelText('Recognized text')).toBeNull();
   fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
@@ -1434,15 +1548,19 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
   fireEvent.click(
     await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
   );
-  expect(screen.queryByText('private screen secret')).toBeNull();
+  expect(screen.getByText('private screen secret')).toBeTruthy();
   fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  expect(await screen.findByText('private screen secret')).toBeTruthy();
+  expect(
+    await within(screen.getByRole('dialog')).findByText(
+      'private screen secret',
+    ),
+  ).toBeTruthy();
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   expect(screen.queryByText('Frame reference')).toBeNull();
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
   fireEvent.pointerDown(ruler, {
     button: 0,
@@ -2101,7 +2219,7 @@ test('RecordingStudioScreen ctrl-click adds a lane from the lane body', async ()
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   fireEvent.click(
     await screen.findByRole('button', {
       name: /^Select Video$/i,
@@ -2146,7 +2264,7 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
   expect(await screen.findByLabelText('Track name')).toBeTruthy();
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   fireEvent.pointerDown(timeline, {
     button: 0,
     clientX: 420,
@@ -2176,7 +2294,7 @@ test('RecordingStudioScreen selects all lanes from a ruler drag', async () => {
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
 
   fireEvent.pointerDown(ruler, {
@@ -2226,7 +2344,7 @@ test('RecordingStudioScreen persists selected ranges as lane redactions', async 
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
   fireEvent.pointerDown(ruler, {
     button: 0,
@@ -2261,7 +2379,7 @@ test('RecordingStudioScreen persists selected ranges as lane redactions', async 
       recordingId: 'recording-1',
     }),
   );
-  expect(await screen.findAllByText('Redacted')).toHaveLength(2);
+  expect(await screen.findAllByText('Redacted')).toHaveLength(1);
   expect(screen.queryByLabelText('Selected time range')).toBeNull();
 });
 
@@ -2375,7 +2493,7 @@ test('RecordingStudioScreen removes a redaction overlapped by a time selection',
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   await waitFor(() => expect(timeline.style.width).toBe('800px'));
   const ruler = await screen.findByLabelText('Time ruler');
 
@@ -2425,7 +2543,7 @@ test('RecordingStudioScreen ctrl-drag creates one additive range despite many mo
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
 
   dragTimelineRange({
@@ -2447,7 +2565,7 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
@@ -2465,6 +2583,10 @@ test('RecordingStudioScreen ctrl-drag adds one range to an existing range', asyn
   });
   await waitFor(() =>
     expect(screen.getAllByLabelText('Selected time range')).toHaveLength(1),
+  );
+  // Pointer coordinates must use the settled ResizeObserver viewport width.
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 
   dragTimelineRange({
@@ -2491,7 +2613,7 @@ test('RecordingStudioScreen ctrl-shift-drag subtracts from an existing range', a
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
@@ -2544,7 +2666,7 @@ test('RecordingStudioScreen ctrl-drag extends an overlapping existing range', as
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const ruler = await screen.findByLabelText('Time ruler');
   useStudioTimelineStore.getState().setSelection({
     clipIds: [],
@@ -2593,7 +2715,7 @@ test('RecordingStudioScreen marquee-selects only intersected lane ranges', async
   render(<RecordingStudioScreen />);
 
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const firstLaneDragStartY = TRACK_RULER_HEIGHT_PX + 16;
   const firstLaneDragEndY = TRACK_RULER_HEIGHT_PX + TRACK_LANE_HEIGHT_PX - 16;
 
@@ -3296,7 +3418,7 @@ test('RecordingStudioScreen commits a lower mouse-lane seek before playback', as
 
   const { container } = render(<RecordingStudioScreen />);
   const timeline = await screen.findByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   await mockPlaybackStartAt(timeline, 12_000);
 
   await waitFor(() =>
@@ -3524,6 +3646,42 @@ test('RecordingStudioScreen toggles playback from focused Space and ignores edit
   expect(screen.getByRole('button', { name: /^Play$/i })).toBeTruthy();
   expect(window.HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(2);
   expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
+});
+
+test('RecordingStudioScreen steps to actual saved frames with punctuation keys and leaves text editing alone', async () => {
+  client.adjacentLibraryFrame
+    .mockResolvedValueOnce(500)
+    .mockResolvedValueOnce(0);
+  render(<RecordingStudioScreen />);
+  await screen.findByText('Tracks');
+  fireEvent.keyDown(document.body, { code: 'Period', key: '.' });
+  await waitFor(() =>
+    expect(client.adjacentLibraryFrame).toHaveBeenCalledWith(
+      'recording-1',
+      0,
+      1,
+    ),
+  );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('slider', { name: 'Playback position' })
+        .getAttribute('aria-valuenow'),
+    ).toBe('500'),
+  );
+  fireEvent.keyDown(document.body, { code: 'Comma', key: ',' });
+  await waitFor(() =>
+    expect(client.adjacentLibraryFrame).toHaveBeenLastCalledWith(
+      'recording-1',
+      500,
+      -1,
+    ),
+  );
+  const input = document.createElement('input');
+  document.body.append(input);
+  fireEvent.keyDown(input, { code: 'Period', key: '.' });
+  expect(client.adjacentLibraryFrame).toHaveBeenCalledTimes(2);
+  input.remove();
 });
 
 test('RecordingStudioScreen distinguishes desktop no-speech from microphone text and clears a cut selected transcript', async () => {
@@ -3904,7 +4062,7 @@ test('RecordingStudioScreen cuts an actual OCR sample and ignores an older obser
     nextCursor: null,
   });
   const timeline = screen.getByLabelText('Track timeline');
-  mockTimelineRect(timeline);
+  await mockTimelineRect(timeline);
   const x = timelineClientXForMs(timeline, 5_000, 38_000);
   const ruler = screen.getByLabelText('Time ruler');
   fireEvent.pointerDown(ruler, {

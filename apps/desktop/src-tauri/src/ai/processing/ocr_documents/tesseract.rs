@@ -40,17 +40,29 @@ use crate::storage::{OcrBlockInput, OcrContentInput, OcrWordHierarchy, OcrWordIn
 pub(super) fn run_tesseract_document(
     runtime: &ResolvedTesseractRuntime,
     frame: &FullFrame,
+    cancel: &AtomicBool,
 ) -> Result<OcrContentInput, AiError> {
     let mut command = Command::new(&runtime.binary);
     if let Some(directory) = &runtime.tessdata_dir {
         command.arg("--tessdata-dir").arg(directory);
     }
-    let output = command
+    command
         .args(["-l", &runtime.languages])
         .arg(&frame.path)
-        .args(["stdout", "-c", "tessedit_create_tsv=1"])
-        .output()
-        .map_err(|_| ai_error("ai_ocr_tesseract_unavailable", "Tesseract could not start."))?;
+        .args(["stdout", "-c", "tessedit_create_tsv=1"]);
+    let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(30), 8_000_000)
+        .map_err(|error| {
+        ai_error(
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                "ai_processing_cancelled"
+            } else if error.kind() == std::io::ErrorKind::TimedOut {
+                "ai_ocr_tesseract_timeout"
+            } else {
+                "ai_ocr_tesseract_unavailable"
+            },
+            "Tesseract did not finish this frame.",
+        )
+    })?;
     if !output.status.success() {
         return Err(ai_error(
             "ai_ocr_tesseract_failed",

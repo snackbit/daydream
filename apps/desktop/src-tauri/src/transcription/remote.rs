@@ -88,7 +88,10 @@ pub(super) async fn warm_local_via_rest(
             return Err(error);
         }
         return Err(transcription_error(
-            "ai_transcription_provider_failed",
+            &format!(
+                "ai_transcription_remote_{}",
+                crate::provider_http::status_code(status)
+            ),
             &format!("Transcription provider failed with status {status}."),
         ));
     }
@@ -172,11 +175,10 @@ pub(super) async fn transcribe_via_rest(
             max_initial_timestamp_seconds.to_string(),
         );
     }
-    let client = reqwest::Client::builder()
+    let mut request = crate::provider_http::client()
+        .post(endpoint)
         .timeout(timeout)
-        .build()
-        .map_err(request_build_error)?;
-    let mut request = client.post(endpoint).multipart(form);
+        .multipart(form);
     if let Some(token) = bearer_token {
         request = request.bearer_auth(token);
     }
@@ -198,7 +200,10 @@ pub(super) async fn transcribe_via_rest(
             return Err(error);
         }
         return Err(transcription_error(
-            "ai_transcription_provider_failed",
+            &format!(
+                "ai_transcription_remote_{}",
+                crate::provider_http::status_code(status)
+            ),
             &format!("Transcription provider failed with status {status}."),
         ));
     }
@@ -268,8 +273,22 @@ fn parse_typed_transcription_error(body: &str) -> Option<TranscriptionError> {
         return None;
     }
     let code = object.get("code")?.as_str()?;
-    let message = object.get("message")?.as_str()?;
-    Some(transcription_error(code, message))
+    // Only our local worker protocol has typed errors. Never surface arbitrary
+    // provider content as an error code or log message.
+    if !matches!(
+        code,
+        "ai_transcription_local_worker_crashed"
+            | "ai_transcription_local_worker_unavailable"
+            | "ai_transcription_local_gpu_failed"
+            | "ai_transcription_local_model_unavailable"
+            | "ai_transcription_cancelled"
+    ) {
+        return None;
+    }
+    Some(transcription_error(
+        code,
+        "The local transcription worker could not complete this section.",
+    ))
 }
 
 fn missing_timestamp_error() -> TranscriptionError {

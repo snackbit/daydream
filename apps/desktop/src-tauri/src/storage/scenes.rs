@@ -35,6 +35,7 @@ pub struct SaveRecorderSceneSourceInput {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecorderSceneRow {
+    pub independent_video: bool,
     pub canvas_height: i64,
     pub canvas_width: i64,
     pub desktop_audio_source_id: Option<String>,
@@ -69,8 +70,25 @@ pub fn save_recorder_scene(
     connection: &mut Connection,
     input: &SaveRecorderSceneInput,
 ) -> rusqlite::Result<RecorderSceneRow> {
-    let transaction = connection.transaction()?;
+    save_recorder_scene_with_mode(connection, input, false)
+}
 
+pub fn save_recorder_scene_with_mode(
+    connection: &mut Connection,
+    input: &SaveRecorderSceneInput,
+    independent_video: bool,
+) -> rusqlite::Result<RecorderSceneRow> {
+    let transaction = connection.transaction()?;
+    save_recorder_scene_rows(&transaction, input, independent_video)?;
+    transaction.commit()?;
+    get_recorder_scene(connection, &input.id)
+}
+
+pub fn save_recorder_scene_rows(
+    transaction: &Connection,
+    input: &SaveRecorderSceneInput,
+    independent_video: bool,
+) -> rusqlite::Result<()> {
     transaction.execute(
         r#"
         INSERT INTO recorder_scenes (
@@ -158,9 +176,11 @@ pub fn save_recorder_scene(
         )?;
     }
 
-    transaction.commit()?;
-
-    get_recorder_scene(connection, &input.id)
+    transaction.execute(
+        "UPDATE recorder_scenes SET independent_video=?2 WHERE id=?1",
+        params![input.id, independent_video],
+    )?;
+    Ok(())
 }
 
 pub fn get_recorder_scene(connection: &Connection, id: &str) -> rusqlite::Result<RecorderSceneRow> {
@@ -173,13 +193,15 @@ pub fn get_recorder_scene(connection: &Connection, id: &str) -> rusqlite::Result
             canvas_height,
             layout_mode,
             desktop_audio_source_id,
-            microphone_audio_source_id
+            microphone_audio_source_id,
+            independent_video
         FROM recorder_scenes
         WHERE id = ?1
         "#,
         [id],
         |row| {
             Ok(RecorderSceneRow {
+                independent_video: row.get(7)?,
                 id: row.get(0)?,
                 name: row.get(1)?,
                 canvas_width: row.get(2)?,
@@ -210,7 +232,8 @@ pub fn get_latest_recorder_scene(
                 canvas_height,
                 layout_mode,
                 desktop_audio_source_id,
-                microphone_audio_source_id
+                microphone_audio_source_id,
+                independent_video
             FROM recorder_scenes
             ORDER BY updated_at_ms DESC, id ASC
             LIMIT 1
@@ -218,6 +241,7 @@ pub fn get_latest_recorder_scene(
             [],
             |row| {
                 Ok(RecorderSceneRow {
+                    independent_video: row.get(7)?,
                     id: row.get(0)?,
                     name: row.get(1)?,
                     canvas_width: row.get(2)?,

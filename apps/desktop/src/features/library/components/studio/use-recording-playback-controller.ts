@@ -24,10 +24,12 @@ export function useRecordingPlaybackController({
   detail,
   mutedTrackIds,
   playbackAssets,
+  autoSkipRedacted = true,
 }: {
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
   playbackAssets: LibraryPlaybackAssets | null;
+  autoSkipRedacted?: boolean;
 }) {
   const playbackIntentRef = useRef(false);
   const redactedTrackIdsRef = useRef(new Set<string>());
@@ -263,7 +265,7 @@ export function useRecordingPlaybackController({
     manualSkip: skipToNextUnredactedVideo,
   } = usePlaybackVideoRedactionSkip({
     recordingId: detail.id,
-    targetMs: redactionSkipTargetMs,
+    targetMs: autoSkipRedacted ? redactionSkipTargetMs : null,
     seek: seekTimeline,
     isPlaying,
     timelineMs: currentTimelineMs,
@@ -375,6 +377,7 @@ export function useRecordingPlaybackController({
       togglePlayback,
     },
     state: {
+      seekRevision,
       currentPlaybackSegment,
       currentSegment,
       displayedTimelineMs,

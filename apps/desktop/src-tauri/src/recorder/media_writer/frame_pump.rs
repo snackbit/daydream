@@ -1,6 +1,7 @@
 use std::{sync::mpsc, time::Duration};
 
 use gstreamer as gst;
+use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use tracing::info;
 
@@ -56,6 +57,83 @@ pub(super) fn pump_synthetic_frames(
             Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+    }
+}
+
+pub(super) fn pump_source_frames(
+    sources: Vec<(crate::storage::RecordingVideoSource, gst_app::AppSrc)>,
+    frames: FrameReceiver,
+    stop: mpsc::Receiver<FramePumpStop>,
+    timing: Option<SharedCaptureTiming>,
+    fps: f64,
+    started_at_ms: u64,
+    benchmark: Option<RecorderBenchmarkSession>,
+) -> Result<(), String> {
+    let mut state = sources
+        .into_iter()
+        .enumerate()
+        .map(|(index, (config, source))| {
+            (
+                config.source_id.clone(),
+                (index, config, source, None, 0u64),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let interval = frame_interval(fps);
+    let mut cutoff = None;
+    loop {
+        match stop.try_recv() {
+            Ok(request) => cutoff = Some(request.stop_at_ms),
+            Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        let frame = match frames.recv_timeout(if cutoff.is_some() {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(50)
+        }) {
+            Ok(frame) => frame,
+            Err(mpsc::RecvTimeoutError::Timeout) if cutoff.is_some() => return Ok(()),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+        };
+        if cutoff.is_some_and(|cutoff| frame.timestamp_ms > cutoff) {
+            continue;
+        }
+        let (index, config, source, last_pts, last_key_period) = state
+            .get_mut(&frame.source_id)
+            .ok_or_else(|| "An unexpected video source reached the writer.".to_string())?;
+        if frame.width != config.width || frame.height != config.height {
+            return Err("Video source dimensions changed during recording.".into());
+        }
+        let key_period = frame.timestamp_ms.saturating_sub(started_at_ms) / 30_000;
+        if key_period > *last_key_period {
+            let event = gstreamer_video::video_event::DownstreamForceKeyUnitEvent::builder()
+                .running_time(gst::ClockTime::from_mseconds(
+                    frame.timestamp_ms.saturating_sub(started_at_ms),
+                ))
+                .all_headers(true)
+                .build();
+            if !source
+                .static_pad("src")
+                .is_some_and(|pad| pad.push_event(event))
+            {
+                return Err("Video keyframes could not be synchronized.".into());
+            }
+            *last_key_period = key_period;
+        }
+        push_composed_frame(
+            source,
+            frame,
+            ComposedFramePushContext {
+                benchmark: benchmark.as_ref(),
+                fps,
+                frame_interval: interval,
+                last_pts,
+                started_at_ms,
+                timing: if *index == 0 { timing.as_ref() } else { None },
+            },
+        )?;
     }
 }
 

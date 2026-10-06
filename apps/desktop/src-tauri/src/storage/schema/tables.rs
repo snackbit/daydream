@@ -1,4 +1,6 @@
-pub(in crate::storage) const CORE_TABLES: [&str; 24] = [
+pub(in crate::storage) const CORE_TABLES: [&str; 26] = [
+    "recording_video_sources",
+    "recording_segment_videos",
     "app_settings",
     "ai_model_assets",
     "notifications",

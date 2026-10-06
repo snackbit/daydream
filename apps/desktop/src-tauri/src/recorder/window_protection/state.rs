@@ -30,6 +30,15 @@ pub(super) enum ProtectionDecision {
 }
 
 impl ProtectionState {
+    pub(super) fn classified_through_ms(&self, started: u64, now: u64) -> i64 {
+        self.candidate
+            .as_ref()
+            .map(|(_, since)| *since)
+            .unwrap_or(now)
+            .saturating_sub(started)
+            .try_into()
+            .unwrap_or(i64::MAX)
+    }
     pub(super) fn observe(
         &mut self,
         storage: &AppStorage,

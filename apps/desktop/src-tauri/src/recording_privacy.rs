@@ -6,6 +6,84 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
+pub(crate) type ProcessingLease = Arc<OwnedRwLockReadGuard<()>>;
+
+/// Resolve a crashed capture conservatively. Candidate state existed only in
+/// the monitor; anything after its durable watermark becomes a reversible mask.
+pub(crate) fn seal_interrupted_capture(
+    connection: &Connection,
+    id: &str,
+    timestamp: i64,
+) -> rusqlite::Result<()> {
+    use rusqlite::OptionalExtension;
+    let recording = storage::get_recording(connection, id)?;
+    let start = recording.started_at_ms.unwrap_or(recording.created_at_ms);
+    let end = storage::list_recording_segments(connection, id)?
+        .iter()
+        .filter_map(|segment| segment.ended_at_ms)
+        .max()
+        .unwrap_or(start)
+        .saturating_sub(start)
+        .max(0);
+    let state:Option<(bool,i64)>=connection.query_row("SELECT classifier_required,classified_through_ms FROM recording_live_state WHERE recording_id=?1",[id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
+    if let Some((true, watermark)) = state {
+        if end > watermark {
+            storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    recording_id: id.into(),
+                    start_offset_ms: watermark,
+                    end_offset_ms: end,
+                    created_at_ms: timestamp.max(0),
+                    track_ids_json: "[]".into(),
+                    reason: Some("Recording protection: metadata gap after interruption".into()),
+                },
+            )?;
+        }
+    }
+    for span in storage::list_recording_protection_spans(connection, id)? {
+        if span.status == "materialized" {
+            continue;
+        }
+        let span = if span.status == "open" {
+            storage::close_recording_protection_span(
+                connection,
+                &span.id,
+                end.max(span.start_offset_ms),
+                timestamp.max(span.opened_at_ms),
+            )?
+        } else {
+            span
+        };
+        if let Some(boundary) = span
+            .end_offset_ms
+            .filter(|boundary| *boundary > span.start_offset_ms)
+        {
+            let cut = storage::create_redaction(
+                connection,
+                &storage::CreateRedactionInput {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    recording_id: id.into(),
+                    start_offset_ms: span.start_offset_ms,
+                    end_offset_ms: boundary,
+                    created_at_ms: timestamp.max(0),
+                    track_ids_json: "[]".into(),
+                    reason: Some("Recording protection recovered after interruption".into()),
+                },
+            )?;
+            storage::mark_recording_protection_span_materialized(connection, &span.id, &cut.id)?;
+        } else {
+            connection.execute(
+                "UPDATE recording_protection_spans SET status='materialized' WHERE id=?1",
+                [&span.id],
+            )?;
+        }
+    }
+    connection.execute("UPDATE recording_live_state SET classified_through_ms=MAX(classified_through_ms,?2) WHERE recording_id=?1",rusqlite::params![id,end])?;
+    connection.execute("UPDATE processing_job_runtime SET input_open=0 WHERE job_id IN(SELECT id FROM processing_jobs WHERE recording_id=?1)",[id])?;
+    Ok(())
+}
 
 fn recording_lock(recording_id: &str) -> Arc<RwLock<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Weak<RwLock<()>>>>> = OnceLock::new();
@@ -79,7 +157,9 @@ pub(crate) fn chunk_eligible(
     connection: &Connection,
     chunk: &ProcessingChunkRow,
 ) -> rusqlite::Result<bool> {
-    if !protection_ready(connection, &chunk.recording_id)? {
+    let start = chunk.start_offset_ms.ok_or(rusqlite::Error::InvalidQuery)?;
+    let end = chunk.end_offset_ms.ok_or(rusqlite::Error::InvalidQuery)?;
+    if !range_protection_ready(connection, &chunk.recording_id, start, end)? {
         return Ok(false);
     }
     let segments = storage::list_recording_segments(connection, &chunk.recording_id)?;
@@ -90,8 +170,6 @@ pub(crate) fn chunk_eligible(
         return Ok(false);
     };
     let redactions = storage::list_redactions(connection, &chunk.recording_id)?;
-    let start = chunk.start_offset_ms.ok_or(rusqlite::Error::InvalidQuery)?;
-    let end = chunk.end_offset_ms.ok_or(rusqlite::Error::InvalidQuery)?;
     if chunk.source_kind == "activity" {
         return Ok(!redactions
             .iter()
@@ -115,10 +193,50 @@ pub(crate) fn chunk_eligible(
     } else {
         chunk.source_kind.clone()
     };
-    if let Some(id) = source_track_id(segment, &role) {
+    if let Some(id) =
+        if chunk.track_id.is_some() && matches!(chunk.source_kind.as_str(), "ocr" | "vlm") {
+            None
+        } else {
+            source_track_id(segment, &role)
+        }
+    {
         ids.push(id);
     }
     Ok(!range_redacted(&redactions, &ids, start, end))
+}
+
+pub(crate) fn range_protection_ready(
+    connection: &Connection,
+    recording_id: &str,
+    start: i64,
+    end: i64,
+) -> rusqlite::Result<bool> {
+    let recording = storage::get_recording(connection, recording_id)?;
+    if !matches!(recording.status.as_str(), "recording" | "paused") {
+        return protection_ready(connection, recording_id);
+    }
+    if matches!(recording.status.as_str(), "recording" | "paused") {
+        use rusqlite::OptionalExtension;
+        let watermark: Option<i64> = connection
+            .query_row(
+                "SELECT classified_through_ms FROM recording_live_state WHERE recording_id=?1",
+                [recording_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if watermark.is_none_or(|watermark| end > watermark) {
+            return Ok(false);
+        }
+    }
+    Ok(
+        storage::list_recording_protection_spans(connection, recording_id)?
+            .iter()
+            .all(|span| {
+                span.status == "materialized"
+                    || end <= span.start_offset_ms
+                    || span.end_offset_ms.is_some_and(|boundary| start >= boundary)
+            }),
+    )
 }
 
 pub(crate) fn chunk_active(

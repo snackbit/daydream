@@ -81,6 +81,7 @@ fn apply_setting_row(
             settings.ai.transcription.word_timestamps_enabled = setting_value(row)?;
         }
         "ai.vision.provider" => settings.ai.vision.provider = setting_value(row)?,
+        "ai.vision.authMode" => settings.ai.vision.auth_mode = setting_value(row)?,
         "ai.vision.baseUrl" => settings.ai.vision.base_url = setting_value(row)?,
         "ai.vision.apiKeyRef" => settings.ai.vision.api_key_ref = setting_value(row)?,
         "ai.vision.model" => settings.ai.vision.model = setting_value(row)?,
@@ -272,6 +273,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "ai.vision.provider",
             &settings.ai.vision.provider,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.vision.authMode",
+            &settings.ai.vision.auth_mode,
             false,
             timestamp_ms,
         )?,

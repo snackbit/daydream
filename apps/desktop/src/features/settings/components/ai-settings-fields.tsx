@@ -57,9 +57,11 @@ export function RemoteProviderFields({
           value={keyDraft}
         />
         <FieldDescription>
-          {hasSavedKey
-            ? 'A key is saved. Enter a new key to replace it.'
-            : 'No key is saved for this provider.'}
+          {keyDraft.trim()
+            ? 'New key, not saved.'
+            : hasSavedKey
+              ? 'Key saved.'
+              : 'Enter an API key.'}
         </FieldDescription>
       </Field>
     </>

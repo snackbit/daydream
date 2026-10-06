@@ -31,7 +31,7 @@ export function getCaptureStartBlocker({
     return 'Add at least one monitor source before recording.';
   }
   if (isDirty) {
-    return 'Save the scene before recording.';
+    return 'Save the source setup before recording.';
   }
   if (!status.backendHealth.portal.available) {
     return (

@@ -1,28 +1,53 @@
 use super::super::super::*;
 use super::{OcrCandidate, PreviousVisualObservation};
 
+#[cfg(test)]
 pub(in crate::ai) fn previous_visual_observations(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<Vec<PreviousVisualObservation>, AiError> {
+    previous_visual_observations_for_source(storage, recording_id, None)
+}
+
+pub(super) fn previous_visual_observations_for_source(
+    storage: &AppStorage,
+    recording_id: &str,
+    source: Option<&str>,
+) -> Result<Vec<PreviousVisualObservation>, AiError> {
     let visible = visible_visual_observation_rows_for_recording(storage, recording_id)?;
-    let mut observations =
-        visible
-            .ocr_regions
-            .into_iter()
-            .map(|region| PreviousVisualObservation {
-                frame_timestamp_ms: region.frame_timestamp_ms,
-                kind: "ocr".to_string(),
-                text: region.text,
+    let mut observations = visible
+        .ocr_regions
+        .into_iter()
+        .filter(|region| {
+            source.is_none_or(|track| {
+                region
+                    .source_frame_ref
+                    .contains(&format!(":stream:{track}:"))
             })
-            .chain(visible.vlm_observations.into_iter().map(|observation| {
-                PreviousVisualObservation {
+        })
+        .map(|region| PreviousVisualObservation {
+            frame_timestamp_ms: region.frame_timestamp_ms,
+            kind: "ocr".to_string(),
+            text: region.text,
+        })
+        .chain(
+            visible
+                .vlm_observations
+                .into_iter()
+                .filter(|observation| {
+                    source.is_none_or(|track| {
+                        observation
+                            .source_frame_ref
+                            .contains(&format!(":stream:{track}:"))
+                    })
+                })
+                .map(|observation| PreviousVisualObservation {
                     frame_timestamp_ms: observation.frame_timestamp_ms,
                     kind: observation.observation_kind,
                     text: observation.text,
-                }
-            }))
-            .collect::<Vec<_>>();
+                }),
+        )
+        .collect::<Vec<_>>();
     observations.sort_by(|left, right| {
         left.frame_timestamp_ms
             .cmp(&right.frame_timestamp_ms)
@@ -35,10 +60,18 @@ pub(in crate::ai) fn previous_visual_observations(
 pub(super) fn persisted_ocr_candidates_by_timestamp(
     storage: &AppStorage,
     recording_id: &str,
+    source: Option<&str>,
 ) -> Result<BTreeMap<i64, Vec<OcrCandidate>>, AiError> {
     let visible = visible_visual_observation_rows_for_recording(storage, recording_id)?;
     let mut by_timestamp = BTreeMap::<i64, Vec<OcrCandidate>>::new();
     for region in visible.ocr_regions {
+        if source.is_some_and(|track| {
+            !region
+                .source_frame_ref
+                .contains(&format!(":stream:{track}:"))
+        }) {
+            continue;
+        }
         by_timestamp
             .entry(region.frame_timestamp_ms)
             .or_default()

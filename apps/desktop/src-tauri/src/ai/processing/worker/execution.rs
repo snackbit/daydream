@@ -27,13 +27,23 @@ pub(super) async fn process_recording_ai_job(
         .ai
         .processing
         .max_parallel_chunks_per_job
-        .max(1) as usize;
+        .max(1)
+        .min(
+            if app_settings.ai.processing.resource_mode == "background" {
+                2
+            } else {
+                u32::MAX
+            },
+        ) as usize;
     let mut active_chunks = futures_util::stream::FuturesUnordered::new();
 
     loop {
         match handle_current_job_status(&app, &storage, &job_id)? {
             JobStatusAction::Continue => {}
-            JobStatusAction::Stop => return Ok(()),
+            JobStatusAction::Stop => {
+                while let Some(_remaining) = active_chunks.next().await {}
+                return Ok(());
+            }
         }
 
         while active_chunks.len() < max_parallel_chunks {
@@ -43,9 +53,17 @@ pub(super) async fn process_recording_ai_job(
 
             let app = app.clone();
             let job_id = job_id.clone();
-            active_chunks.push(tauri::async_runtime::spawn(async move {
-                process_processing_chunk(&app, &job_id, chunk).await
-            }));
+            active_chunks.push(async move {
+                let worker_app=app.clone();let worker_id=job_id.clone();let worker_chunk=chunk.clone();
+                match tauri::async_runtime::spawn(async move {process_processing_chunk(&worker_app,&worker_id,worker_chunk).await}).await {
+                    Ok(result)=>result,
+                    Err(_)=>{
+                        super::chunk_context::ProcessingChunkContext::new(&app,&job_id,&chunk).mark_failed("ai_processing_chunk_worker_failed")?;
+                        emit_processing_state(&app,&chunk.recording_id);
+                        Err(ai_error("ai_processing_chunk_worker_failed","A processing worker stopped unexpectedly. Other sections will continue."))
+                    }
+                }
+            });
         }
 
         if active_chunks.is_empty() {
@@ -57,8 +75,21 @@ pub(super) async fn process_recording_ai_job(
                     ai_error("ai_processing_job_missing", "Processing job is missing.")
                 })?;
             if current.status == "running" {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                continue;
+                // Delayed retries and an open recording release worker capacity.
+                // The scheduler wakes jobs only when useful work is ready.
+                storage
+                    .with_connection(|connection| {
+                        storage::update_processing_job_status(
+                            connection,
+                            &job_id,
+                            "queued",
+                            None,
+                            now_ms(),
+                        )
+                    })
+                    .map_err(storage_error)?;
+                emit_processing_state(&app, &job.recording_id);
+                return Ok(());
             }
             tracing::info!(
                 job_id = %job.id,
@@ -70,16 +101,17 @@ pub(super) async fn process_recording_ai_job(
         }
 
         if let Some(result) = active_chunks.next().await {
-            let result = result.map_err(|error| {
-                ai_error(
-                    "ai_processing_chunk_worker_failed",
-                    &format!("AI processing chunk worker failed: {error}"),
-                )
-            })?;
             match result {
                 Ok(()) => {}
-                Err(error) if error.code == "ai_processing_paused" => return Ok(()),
-                Err(error) if error.code == "ai_processing_cancelled" => return Ok(()),
+                Err(error)
+                    if matches!(
+                        error.code.as_str(),
+                        "ai_processing_paused" | "ai_processing_cancelled"
+                    ) =>
+                {
+                    while let Some(_remaining) = active_chunks.next().await {}
+                    return Ok(());
+                }
                 Err(error) => {
                     tracing::warn!(
                         job_id = %job.id,
@@ -88,9 +120,15 @@ pub(super) async fn process_recording_ai_job(
                         elapsed_ms = elapsed_ms(started),
                         "ai_processing_job_chunk_failed"
                     );
-                    fail_processing_job(&app, &storage, &job_id, &error.code)?;
-                    while let Some(_remaining) = active_chunks.next().await {}
-                    return Err(error);
+                    if error.code == "ai_storage_failed"
+                        || error.code == "ai_processing_job_missing"
+                    {
+                        fail_processing_job(&app, &storage, &job_id, &error.code)?;
+                        while let Some(_remaining) = active_chunks.next().await {}
+                        return Err(error);
+                    }
+                    // Source errors belong to their persisted chunks. Keep
+                    // claiming independent work; aggregation owns completion.
                 }
             }
         }
