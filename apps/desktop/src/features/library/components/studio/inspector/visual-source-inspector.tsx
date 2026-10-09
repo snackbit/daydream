@@ -72,10 +72,10 @@ export function VisualSourceInspector({
           <div className="divide-y">
             {frame.vlmObservations.map((observation) => (
               <div className="space-y-1 py-2" key={observation.id}>
-                <p className="text-[11px] leading-5 break-words whitespace-pre-wrap">
+                <p className="text-sm leading-5 break-words whitespace-pre-wrap">
                   {observation.text}
                 </p>
-                <p className="text-muted-foreground text-[10px]">
+                <p className="text-muted-foreground text-xs">
                   {observation.observationKind === 'corrected-ocr'
                     ? 'Visual-model OCR correction observation'
                     : 'Visual-model screen observation'}{' '}
@@ -85,7 +85,7 @@ export function VisualSourceInspector({
             ))}
           </div>
         ) : (
-          <p className="text-muted-foreground text-[10px]">
+          <p className="text-muted-foreground text-xs">
             No screen observation for this frame.
           </p>
         )}

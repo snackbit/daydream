@@ -7,6 +7,7 @@ import type {
   OcrTimelineFrame,
   OcrOccurrenceStatus,
 } from '@daydream/shared';
+import { timelineDurationMs } from '../../library-timeline';
 
 export interface StudioVisualFrame {
   /** Navigation-cell end, not the duration of observed OCR evidence. */
@@ -223,14 +224,7 @@ function frameEndTimestampMs({
   frameTimestampMs: number;
   nextFrameTimestampMs: number | null;
 }): number {
-  const recordingDurationMs =
-    detail.durationMs ??
-    Math.max(
-      frameTimestampMs + 1,
-      ...detail.segments.map(
-        (segment) => segment.playbackOffsetMs + (segment.durationMs ?? 0),
-      ),
-    );
+  const recordingDurationMs = timelineDurationMs(detail.segments);
   const containingSegment = detail.segments.find((segment) => {
     const segmentStartMs = segment.playbackOffsetMs;
     const segmentEndMs = segmentStartMs + (segment.durationMs ?? 0);

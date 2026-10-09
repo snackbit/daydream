@@ -174,10 +174,7 @@ pub(super) fn summary_from_rows(
         started_at_ms: recording.started_at_ms,
         status: recording.status.clone(),
         storage_dir: recording.storage_dir.clone(),
-        thumbnail_path: playable_segments
-            .iter()
-            .find(|segment| Path::new(&segment.file_path).is_file())
-            .map(|segment| segment.file_path.clone()),
+        thumbnail_path: None,
         title: recording.title.clone(),
     }
 }
@@ -213,16 +210,10 @@ fn library_redactions(
 }
 
 pub(super) fn library_segments(segments: &[RecordingSegmentRow]) -> Vec<LibraryRecordingSegment> {
-    let mut playback_offset_ms = 0;
+    let bases = storage::segment_playback_bases(segments);
     let mut output = Vec::with_capacity(segments.len());
 
     for (index, segment) in segments.iter().enumerate() {
-        let duration_ms = segment.duration_ms.unwrap_or_else(|| {
-            segment
-                .ended_at_ms
-                .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
-                .unwrap_or(0)
-        });
         let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
         let pause_after_ms = segment
             .ended_at_ms
@@ -231,6 +222,7 @@ pub(super) fn library_segments(segments: &[RecordingSegmentRow]) -> Vec<LibraryR
             .unwrap_or(0);
 
         output.push(LibraryRecordingSegment {
+            capture_run_id: segment.capture_run_id.clone(),
             video_streams: Vec::new(),
             desktop_audio_stream_index: segment.desktop_audio_stream_index,
             duration_ms: segment.duration_ms,
@@ -240,15 +232,12 @@ pub(super) fn library_segments(segments: &[RecordingSegmentRow]) -> Vec<LibraryR
             id: segment.id.clone(),
             microphone_audio_stream_index: segment.microphone_audio_stream_index,
             pause_after_ms,
-            playback_offset_ms,
+            playback_offset_ms: bases[index],
             segment_index: segment.segment_index,
             started_at_ms: segment.started_at_ms,
             state: segment.state.clone(),
             video_stream_index: segment.video_stream_index,
         });
-        if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
-            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
-        }
     }
 
     output
@@ -333,21 +322,18 @@ pub(super) fn playable_segments(segments: &[RecordingSegmentRow]) -> Vec<&Record
 }
 
 fn recording_duration_ms(
-    recording: &RecordingRow,
+    _recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
 ) -> Option<i64> {
-    if let (Some(started_at_ms), Some(ended_at_ms)) =
-        (recording.started_at_ms, recording.ended_at_ms)
-    {
-        return Some(ended_at_ms.saturating_sub(started_at_ms));
+    if segments.is_empty() || segments.iter().any(|segment| segment.duration_ms.is_none()) {
+        return None;
     }
-
     let total = playable_segments(segments)
         .iter()
         .filter_map(|segment| segment.duration_ms)
         .sum::<i64>();
 
-    (total > 0).then_some(total)
+    Some(total)
 }
 
 pub(super) fn timeline_duration_ms(segments: &[RecordingSegmentRow]) -> i64 {

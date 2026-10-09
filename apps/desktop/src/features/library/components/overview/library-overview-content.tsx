@@ -129,6 +129,15 @@ export function LibraryOverviewContent({
                 key={recording.id}
                 recording={recording}
                 thumbnailPath={model.thumbnailPaths[recording.id] ?? null}
+                thumbnailState={
+                  model.thumbnailPaths[recording.id] === undefined
+                    ? 'loading'
+                    : model.thumbnailPaths[recording.id] === null
+                      ? 'hidden'
+                      : model.thumbnailPaths[recording.id] === ''
+                        ? 'unavailable'
+                        : 'ready'
+                }
                 viewMode={model.viewMode}
               />
             ))}

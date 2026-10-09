@@ -11,6 +11,10 @@ The package declares Rust 1.95 minimum; check dependency MSRVs before upgrades.
 - SQLite owns durable relational metadata, explicit embedded migrations and job
   state. Test migrations and preserve schema/command/event/payload compatibility
   unless an approved task changes the contract.
+- New providers and transfer statuses must be accepted by SQLite migrations and
+  verified through native admission/persistence, not solely mocked UI tests.
+  Persist model and notification admission atomically before reserving a runtime
+  queue slot. Pause flushes and closes partial output before releasing that slot.
 - Keep Linux portal/PipeWire/GStreamer, input/window providers, media writing and
   unsupported-platform adapters behind typed interfaces. Do not assume frontend
   tests prove native permission, device, session or media behavior.
@@ -22,6 +26,12 @@ The package declares Rust 1.95 minimum; check dependency MSRVs before upgrades.
   for chunk planning, timestamp alignment, eligibility and metadata mapping.
 - Do not hold synchronous locks across async work. Trace existing lock/request
   ownership before modifying lifecycle, cancellation, background workers or IPC.
+- Stop/cancel acknowledgements require actual resource completion. Bound recorder
+  finalization with one absolute deadline; preserve media and quarantine resources
+  whose exit cannot be confirmed. Do not replace a hang with false idle/success.
+- Destructive maintenance closes runtime admission, cancels and awaits owners,
+  revalidates impact, and records retryable partial completion. Never delete files
+  still owned by capture, playback, model children or background work.
 - Follow [protected-window rules](../../../docs/protected-window-recording-rules.md)
   for continuous matches, user pause precedence, unknown metadata and durable
   protection. Failed protection persistence must not enable unsafe processing.

@@ -3,9 +3,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useStartupStore } from '../startup-store';
 
 export function StartupWarningBanner() {
-  const warnings = useStartupStore((state) => state.status?.warnings ?? []);
+  const warnings = useStartupStore((state) => state.status?.warnings);
 
-  if (warnings.length === 0) {
+  if (!warnings || warnings.length === 0) {
     return null;
   }
 

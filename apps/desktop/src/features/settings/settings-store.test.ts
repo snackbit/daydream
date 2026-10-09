@@ -4,7 +4,8 @@ import type {
   RecordWindowProtectionSettings,
 } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
-import { useSettingsStore } from './settings-store';
+import { recallSettingsFixture } from '../recall/recall-test-fixtures';
+import { createSettingsStore, useSettingsStore } from './settings-store';
 
 const settingsClient = vi.hoisted(() => ({
   getAppSettings: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('./settings-client', () => settingsClient);
 vi.mock('@/features/recorder/recorder-client', () => recorderClient);
 
 const defaultAiSettings = {
+  recall: recallSettingsFixture(),
   activity: {
     frameDeltas: {
       enabled: true,
@@ -191,6 +193,28 @@ const scene = {
   sources: [],
 } satisfies RecorderScene;
 
+test('preference invalidation prevents a late settings read restoring removed scenes', async () => {
+  let finish: ((settings: AppSettingsState) => void) | undefined;
+  settingsClient.getAppSettings
+    .mockReturnValueOnce(
+      new Promise<AppSettingsState>((resolve) => {
+        finish = resolve;
+      }),
+    )
+    .mockResolvedValueOnce(settingsState);
+  recorderClient.getRecorderScene
+    .mockResolvedValueOnce(scene)
+    .mockResolvedValueOnce(null);
+  const store = createSettingsStore();
+  const old = store.getState().load();
+  store.getState().invalidatePreferences();
+  await store.getState().load();
+  finish?.(settingsState);
+  await old;
+  expect(store.getState().savedScene).toBeNull();
+  expect(store.getState().loadStatus).toBe('ready');
+});
+
 beforeEach(() => {
   vi.resetAllMocks();
   settingsClient.getAppSettings.mockResolvedValue(settingsState);
@@ -309,6 +333,58 @@ test('settings store treats ai edits as dirty settings', async () => {
   });
 
   expect(useSettingsStore.getState().isDirty).toBe(true);
+});
+
+test('recall profile and both credentials use the same save while newer draft edits survive', async () => {
+  await useSettingsStore.getState().load();
+  const submitted = {
+    ...settingsState.settings,
+    ai: {
+      ...settingsState.settings.ai,
+      recall: {
+        ...recallSettingsFixture(),
+        generation: {
+          ...recallSettingsFixture().generation,
+          enabled: true,
+          model: 'synthetic-model',
+        },
+      },
+    },
+  };
+  const newer = {
+    ...submitted,
+    ai: {
+      ...submitted.ai,
+      recall: { ...submitted.ai.recall, autoGenerate: false },
+    },
+  };
+  let settle: (result: AppSettingsState) => void = () => {
+    throw new Error('save not started');
+  };
+  settingsClient.saveAppSettings.mockImplementation(
+    () =>
+      new Promise<AppSettingsState>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  useSettingsStore.getState().setDraft(submitted);
+  const credentials = {
+    recallEmbeddingKey: 'synthetic-embedding-key',
+    recallGenerationKey: 'synthetic-generation-key',
+  };
+  const saving = useSettingsStore.getState().save(submitted, credentials);
+  useSettingsStore.getState().setDraft(newer);
+  settle({ ...settingsState, settings: submitted });
+  await saving;
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledWith({
+    settings: submitted,
+    credentials,
+  });
+  expect(useSettingsStore.getState()).toMatchObject({
+    draft: newer,
+    isDirty: true,
+    settingsState: { settings: submitted },
+  });
 });
 
 test('settings store previews storage cleanup and summarizes cleanup results', async () => {

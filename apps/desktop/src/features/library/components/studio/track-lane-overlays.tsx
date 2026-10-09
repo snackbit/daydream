@@ -43,7 +43,7 @@ export function RedactionOverlay({
   return (
     <div
       aria-hidden="true"
-      className="bg-muted pointer-events-none absolute inset-y-0 z-30"
+      className="studio-redaction-pattern bg-muted border-muted-foreground/40 border-y-border pointer-events-none absolute inset-y-0 z-30 border-x border-y"
       style={{
         left,
         width: Math.max(4, width),

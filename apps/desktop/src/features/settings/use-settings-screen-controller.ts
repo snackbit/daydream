@@ -6,18 +6,12 @@ import type {
 } from '@daydream/shared';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 import type { CadenceMode } from '@/features/settings/components/record-settings-tab';
-import {
-  collectSupersededAiSecretRefs,
-  settingsForCleanupPreview,
-} from '@/features/settings/settings-ai-secret-utils';
+import { settingsForCleanupPreview } from '@/features/settings/settings-ai-secret-utils';
 import { validateDraftSettings } from '@/features/settings/settings-screen-utils';
 import { useSettingsStore } from '@/features/settings/settings-store';
 import { useSettingsAiController } from '@/features/settings/use-settings-ai-controller';
 
-type CleanupConfirmationAction = 'reset' | 'save';
-
 export interface CleanupConfirmation {
-  action: CleanupConfirmationAction;
   proceedAfterSuccess: boolean;
   preview: AppSettingsStorageCleanupPreview;
   settings: AppSettings;
@@ -33,11 +27,13 @@ export function useSettingsScreenController() {
   const previewStorageCleanup = useSettingsStore(
     (state) => state.previewStorageCleanup,
   );
-  const reset = useSettingsStore((state) => state.reset);
   const save = useSettingsStore((state) => state.save);
   const savedScene = useSettingsStore((state) => state.savedScene);
   const setDraft = useSettingsStore((state) => state.setDraft);
   const settingsState = useSettingsStore((state) => state.settingsState);
+  const preferenceRevision = useSettingsStore(
+    (state) => state.preferenceRevision,
+  );
   const successMessage = useSettingsStore((state) => state.successMessage);
   const loadNotifications = useNotificationsStore((state) => state.load);
   const [cadenceMode, setCadenceMode] = useState<CadenceMode | null>(null);
@@ -45,16 +41,25 @@ export function useSettingsScreenController() {
     useState<CleanupConfirmation | null>(null);
   const [cleanupPreviewing, setCleanupPreviewing] = useState(false);
   const [preparingSave, setPreparingSave] = useState(false);
-  const [resetOpen, setResetOpen] = useState(false);
   const selectedAiModelId = draft?.ai.transcription.localModelId ?? null;
   const ai = useSettingsAiController({
     loadNotifications,
     selectedAiModelId,
   });
+  const { clearSecretDrafts, clearPendingSecretRefsForDeletion } = ai;
+  useEffect(() => {
+    clearSecretDrafts();
+    clearPendingSecretRefsForDeletion();
+    setCadenceMode(null);
+  }, [
+    preferenceRevision,
+    clearSecretDrafts,
+    clearPendingSecretRefsForDeletion,
+  ]);
 
   useEffect(() => {
     if (loadStatus === 'idle') {
-      void load();
+      void load().catch(() => undefined);
     }
   }, [load, loadStatus]);
 
@@ -89,34 +94,21 @@ export function useSettingsScreenController() {
     setDraft(updater(draft));
   }
 
+  function retryLoadSettings() {
+    void load().catch(() => undefined);
+  }
+
   async function requestSave() {
     if (!draft) {
       return;
     }
 
-    await runWithCleanupConfirmation('save', settingsForCleanupPreview(draft), {
-      proceedAfterSuccess: false,
-    });
-  }
-
-  async function requestReset() {
-    if (!settingsState) {
-      return;
-    }
-
-    ai.setPendingSecretRefsForDeletion(
-      collectSupersededAiSecretRefs(
-        settingsState.settings,
-        settingsState.defaults,
-      ),
-    );
-    await runWithCleanupConfirmation('reset', settingsState.defaults, {
+    await runWithCleanupConfirmation(settingsForCleanupPreview(draft), {
       proceedAfterSuccess: false,
     });
   }
 
   async function runWithCleanupConfirmation(
-    action: CleanupConfirmationAction,
     settings: AppSettings,
     { proceedAfterSuccess }: { proceedAfterSuccess: boolean },
   ): Promise<boolean> {
@@ -127,11 +119,7 @@ export function useSettingsScreenController() {
         return false;
       }
       if (preview.recordingCount > 0) {
-        if (action === 'reset') {
-          setResetOpen(false);
-        }
         setCleanupConfirmation({
-          action,
           preview,
           proceedAfterSuccess,
           settings,
@@ -139,23 +127,10 @@ export function useSettingsScreenController() {
         return false;
       }
 
-      if (action === 'save') {
-        return await savePreparedSettings(settings);
-      }
-
-      return await confirmReset();
+      return await savePreparedSettings(settings);
     } finally {
       setCleanupPreviewing(false);
     }
-  }
-
-  async function confirmReset(): Promise<boolean> {
-    await reset();
-    await ai.deletePendingAiSecrets();
-    await ai.refreshAiScaffolds();
-    setCadenceMode(null);
-    setResetOpen(false);
-    return true;
   }
 
   async function confirmCleanup() {
@@ -165,13 +140,9 @@ export function useSettingsScreenController() {
     }
 
     setCleanupConfirmation(null);
-    if (confirmation.action === 'save') {
-      const saved = await savePreparedSettings(confirmation.settings);
-      if (saved && confirmation.proceedAfterSuccess) {
-        blocker.proceed?.();
-      }
-    } else {
-      await confirmReset();
+    const saved = await savePreparedSettings(confirmation.settings);
+    if (saved && confirmation.proceedAfterSuccess) {
+      blocker.proceed?.();
     }
   }
 
@@ -189,7 +160,7 @@ export function useSettingsScreenController() {
         return false;
       }
 
-      ai.clearSecretDrafts();
+      ai.clearSavedSecretDrafts(preparation.credentials);
       await ai.refreshAiScaffolds();
       return true;
     } finally {
@@ -203,7 +174,6 @@ export function useSettingsScreenController() {
     }
 
     const saved = await runWithCleanupConfirmation(
-      'save',
       settingsForCleanupPreview(draft),
       { proceedAfterSuccess: true },
     );
@@ -242,21 +212,25 @@ export function useSettingsScreenController() {
     draft,
     error,
     loadStatus,
+    retryLoadSettings,
     inputActivityRepairMessage: ai.inputActivityRepairMessage,
     inputActivityRepairing: ai.inputActivityRepairing,
     inputActivityStatus: ai.inputActivityStatus,
-    requestReset,
     requestSave,
-    resetOpen,
     refreshInputActivityStatus: ai.refreshInputActivityStatus,
     repairInputActivity: ai.repairInputActivity,
     runAiModelAction: ai.runAiModelAction,
+    runModelTransferAction: ai.runModelTransferAction,
+    modelActionErrors: ai.modelActionErrors,
     savedScene,
     saving,
     setCadenceMode,
-    setResetOpen,
     setTranscriptionKeyDraft: ai.setTranscriptionKeyDraft,
     setVisionKeyDraft: ai.setVisionKeyDraft,
+    setRecallEmbeddingKeyDraft: ai.setRecallEmbeddingKeyDraft,
+    setRecallGenerationKeyDraft: ai.setRecallGenerationKeyDraft,
+    recallEmbeddingKeyDraft: ai.recallEmbeddingKeyDraft,
+    recallGenerationKeyDraft: ai.recallGenerationKeyDraft,
     settingsState,
     successMessage,
     transcriptionKeyDraft: ai.transcriptionKeyDraft,

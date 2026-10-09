@@ -33,6 +33,7 @@ use crate::storage;
 mod failures;
 mod live_processing;
 mod protection;
+mod setup;
 
 #[test]
 fn unavailable_error_uses_locked_gate_a_shape() {
@@ -559,7 +560,8 @@ fn manager_begin_and_complete_pause_exposes_async_pausing_state() {
     let pausing = manager
         .begin_pause_recording(&recording_id, 20)
         .expect("begin pause");
-    assert_eq!(pausing.state, RecorderState::Paused);
+    assert_eq!(pausing.state, RecorderState::Pausing);
+    assert!(pausing.status_revision > started.status_revision);
     assert_eq!(
         pausing.active_recording_id.as_deref(),
         Some(recording_id.as_str())
@@ -622,8 +624,12 @@ fn manager_begin_and_complete_stop_exposes_async_stopping_state() {
     let stopping = manager
         .begin_stop_recording(&recording_id, 20)
         .expect("begin stop");
-    assert_eq!(stopping.state, RecorderState::Idle);
-    assert_eq!(stopping.active_recording_id, None);
+    assert_eq!(stopping.state, RecorderState::Stopping);
+    assert!(stopping.status_revision > started.status_revision);
+    assert_eq!(
+        stopping.active_recording_id.as_deref(),
+        Some(recording_id.as_str())
+    );
     assert_eq!(
         stopping.active_segment_id.as_deref(),
         started.active_segment_id.as_deref()
@@ -1042,18 +1048,37 @@ fn empty_scene_preview_start_resets_pending_preview_before_platform_start() {
 
 #[test]
 fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() {
+    assert_fake_capture_public_lifecycle(false, Duration::from_millis(250));
+}
+
+#[test]
+fn public_commands_record_pause_resume_stop_with_independent_fake_capture_and_real_writer() {
+    assert_fake_capture_public_lifecycle(true, Duration::from_millis(250));
+}
+
+#[test]
+fn public_commands_record_pause_resume_stop_with_sparse_independent_fake_capture_and_real_writer() {
+    assert_fake_capture_public_lifecycle(true, Duration::from_millis(750));
+}
+
+fn assert_fake_capture_public_lifecycle(independent_video: bool, capture_duration: Duration) {
     let app = tauri::test::mock_app();
     let app_data_dir = test_app_data_dir();
     let storage = test_storage();
     let scene_id = Uuid::now_v7().to_string();
-    save_recorder_scene_for_storage(
-        &storage,
-        SaveRecorderSceneInput {
-            scene: fake_test_scene(&scene_id),
-        },
-        10,
-    )
-    .expect("save fake scene");
+    let mut scene = fake_test_scene(&scene_id);
+    scene.independent_video = independent_video;
+    if independent_video {
+        scene.sources[0].rect.width = 160.0;
+        scene.sources[0].rect.height = 90.0;
+        let mut second = scene.sources[0].clone();
+        second.id = Uuid::now_v7().to_string();
+        second.rect.width = 128.0;
+        second.rect.height = 72.0;
+        scene.sources.push(second);
+    }
+    save_recorder_scene_for_storage(&storage, SaveRecorderSceneInput { scene }, 10)
+        .expect("save fake scene");
     app.manage(storage);
     app.manage(RecorderManager::new(app_data_dir.clone()));
 
@@ -1068,7 +1093,7 @@ fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() 
         .active_recording_id
         .clone()
         .expect("active recording id");
-    thread::sleep(Duration::from_millis(250));
+    thread::sleep(capture_duration);
 
     let pausing = pause_recording(
         PauseRecordingInput {
@@ -1098,7 +1123,7 @@ fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() 
     ))
     .expect("resume fake recording");
     assert_eq!(resumed.state, RecorderState::Recording);
-    thread::sleep(Duration::from_millis(250));
+    thread::sleep(capture_duration);
 
     let stopping = stop_recording(
         StopRecordingInput {
@@ -1121,9 +1146,34 @@ fn public_commands_record_pause_resume_stop_with_fake_capture_and_real_writer() 
         .expect("list stopped segments");
 
     assert_eq!(recording.status, "completed");
+    let stopped_at_ms = recording.ended_at_ms.expect("recording stop timestamp");
     assert_eq!(segments.len(), 2);
+    for segment in &segments {
+        assert!(
+            segment.started_at_ms <= stopped_at_ms,
+            "segment cannot start after recording stopped"
+        );
+    }
     assert_finalized_probeable_segment(&segments[0]);
     assert_finalized_probeable_segment(&segments[1]);
+    if independent_video {
+        for segment in &segments {
+            let probe: serde_json::Value =
+                serde_json::from_str(segment.probe_json.as_deref().expect("segment probe"))
+                    .expect("parse independent video probe");
+            let mut dimensions: Vec<_> = probe["videos"]
+                .as_array()
+                .expect("independent video streams")
+                .iter()
+                .map(|video| (video["width"].as_u64(), video["height"].as_u64()))
+                .collect();
+            dimensions.sort();
+            assert_eq!(
+                dimensions,
+                vec![(Some(128), Some(72)), (Some(160), Some(90))]
+            );
+        }
+    }
 
     let _ = fs::remove_dir_all(app_data_dir);
 }
@@ -1177,6 +1227,7 @@ fn saved_test_scene(storage: &storage::AppStorage) -> String {
 
 fn start_input(scene_id: &str) -> StartRecordingInput {
     StartRecordingInput {
+        setup: None,
         desktop_audio_source_id: None,
         microphone_audio_source_id: None,
         quality_preset: RecorderQualityPreset::BalancedOcr,

@@ -9,8 +9,8 @@ use super::super::{
     manager::{now_ms, RecorderManager},
     platform,
     types::{
-        ProtectableWindowList, RecorderError, RecorderPerformanceStats, RecorderRecordingStats,
-        RecorderStatus, WindowProtectionStatus,
+        RecorderError, RecorderPerformanceStats, RecorderRecordingStats, RecorderStatus,
+        WindowProtectionStatus,
     },
 };
 
@@ -33,8 +33,11 @@ pub fn get_recorder_recording_stats(
     collect_recorder_recording_stats(&storage, &manager, now_ms())
 }
 
-pub fn list_protectable_windows() -> ProtectableWindowList {
-    platform::list_protectable_windows()
+pub async fn list_protectable_windows(
+    app: tauri::AppHandle,
+) -> super::super::window_application_icons::WindowPickerList {
+    super::super::window_application_icons::enrich_picker(app, platform::list_protectable_windows())
+        .await
 }
 
 pub fn get_window_protection_status() -> WindowProtectionStatus {

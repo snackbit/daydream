@@ -12,6 +12,7 @@ export type LibraryRecordingViewMode = 'grid' | 'list';
 
 export interface LibraryRecordingSummary {
   availability: LibraryRecordingAvailability;
+  /** Captured time excluding pauses; segment offsets define the playback timeline. */
   durationMs: number | null;
   endedAtMs: number | null;
   id: string;
@@ -27,6 +28,8 @@ export interface LibraryRecordingSummary {
 }
 
 export interface LibraryRecordingSegment {
+  fragmentIds?: string[];
+  captureRunId?: string | null;
   videoStreams?: SegmentVideoStream[];
   desktopAudioStreamIndex: number | null;
   durationMs: number | null;
@@ -223,10 +226,18 @@ export interface LibraryRecordingThumbnail {
 }
 
 export interface LibraryPlaybackAssets {
+  runs?: LibraryPlaybackRun[];
   error: string | null;
   recordingId: string;
   segments: LibraryPlaybackSegment[];
   sessionId: string;
+}
+export interface LibraryPlaybackRun {
+  runId: string;
+  segmentIds: string[];
+  durationMs: number;
+  playbackOffsetMs: number;
+  assets: LibraryPlaybackSegment;
 }
 
 export interface LibraryPlaybackSegment {

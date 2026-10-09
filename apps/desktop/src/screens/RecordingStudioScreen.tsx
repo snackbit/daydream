@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { AlertTriangle } from 'lucide-react';
 import { FullHeightLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { RecordingStudio } from '@/features/library/components/studio/recording-studio';
+import { useStudioRecallEvidence } from '@/features/library/components/studio/use-studio-recall-evidence';
 import { RecordingDebugDialog } from '@/features/library/recording-studio-route/recording-debug-dialog';
 import { RecordingDeleteDialog } from '@/features/library/recording-studio-route/recording-delete-dialog';
 import { RecordingRenameDialog } from '@/features/library/recording-studio-route/recording-rename-dialog';
@@ -12,9 +14,8 @@ import { useRecordingStudioController } from '@/features/library/recording-studi
 import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 
 export function RecordingStudioScreen() {
-  const { recordingId } = useParams({ strict: false }) as {
-    recordingId: string;
-  };
+  const search = useSearch({ from: '/library/$recordingId' });
+  const { recordingId } = useParams({ from: '/library/$recordingId' });
   const navigate = useNavigate();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -27,27 +28,63 @@ export function RecordingStudioScreen() {
     onDeleted,
     recordingId,
   });
+  const recall = useStudioRecallEvidence(
+    search,
+    recordingId,
+    JSON.stringify(state.detail?.redactions ?? []),
+  );
+  const openDebug = useCallback(() => setDebugDialogOpen(true), []);
+  const openDelete = useCallback(() => setDeleteDialogOpen(true), []);
+  const openRename = useCallback(() => setRenameDialogOpen(true), []);
+  const refresh = useCallback(() => void actions.load(), [actions]);
+  const startProcessing = useCallback(
+    () => void actions.startAiProcessing(),
+    [actions],
+  );
+  const confirmDelete = useCallback(() => actions.confirmDelete(), [actions]);
 
   return (
-    <FullHeightLayout className="h-full min-h-0">
+    <FullHeightLayout className="bg-background text-foreground h-full min-h-0">
       <RecordingStudioToolbar
         aiProcessing={state.aiProcessing}
         debugEnabled={debugEnabled}
         detail={state.detail}
         loadStatus={state.status}
         processingStartBusy={state.processingStartBusy}
-        onDebug={() => setDebugDialogOpen(true)}
-        onDelete={() => setDeleteDialogOpen(true)}
-        onRefresh={() => void actions.load()}
-        onRename={() => setRenameDialogOpen(true)}
-        onStartAiProcessing={() => void actions.startAiProcessing()}
+        onDebug={openDebug}
+        onDelete={openDelete}
+        onRefresh={refresh}
+        onRename={openRename}
+        onStartAiProcessing={startProcessing}
       />
+      {recall.state?.status === 'loading' ? (
+        <p
+          role="status"
+          className="text-muted-foreground px-5 pb-6 text-sm lg:px-8"
+        >
+          Checking recall source…
+        </p>
+      ) : recall.state?.status === 'unavailable' ? (
+        <div className="rounded-panel mx-5 mb-6 flex flex-wrap items-center gap-4 border p-6 lg:mx-8">
+          <p role="status" className="text-sm">
+            This recall source is unavailable. It may have been hidden, deleted
+            or replaced.
+          </p>
+          <Button variant="outline" onClick={recall.retry}>
+            Check again
+          </Button>
+        </div>
+      ) : null}
 
       {state.error ? (
         <div className="p-4">
           <Alert variant="destructive">
             <AlertTriangle />
-            <AlertTitle>Recording failed to load</AlertTitle>
+            <AlertTitle>
+              {state.status === 'error'
+                ? 'Recording failed to load'
+                : 'Recording action failed'}
+            </AlertTitle>
             <AlertDescription>{state.error}</AlertDescription>
           </Alert>
         </div>
@@ -69,7 +106,7 @@ export function RecordingStudioScreen() {
         </div>
       ) : state.ocrTimelineStatus === 'loading' ? (
         <p
-          className="text-muted-foreground px-4 py-1 text-[10px]"
+          className="text-muted-foreground px-5 py-3 text-xs lg:px-8"
           role="status"
         >
           Loading OCR observation index…
@@ -90,12 +127,14 @@ export function RecordingStudioScreen() {
           thumbnailStatus={state.thumbnailStatus}
           visualObservations={state.visualObservations.state}
           ocrFrames={state.ocrFrames}
+          initialEvidence={recall.state?.evidence ?? null}
+          initialSeek={search.evidenceId === null ? search.seek : null}
         />
       ) : null}
 
       <RecordingDeleteDialog
         open={deleteDialogOpen}
-        onConfirm={() => void actions.confirmDelete()}
+        onConfirm={confirmDelete}
         onOpenChange={setDeleteDialogOpen}
       />
       {renameDialogOpen ? (

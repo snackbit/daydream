@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "resources": { "resources/vad/": "vad/" },
+    "resources": { "resources/vad/": "vad/", "resources/embedding/": "embedding/", "resources/licenses/": "licenses/" },
     "targets": "all",
     "icon": [
       "icons/32x32.png",

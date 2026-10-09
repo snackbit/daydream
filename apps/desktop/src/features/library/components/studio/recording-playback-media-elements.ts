@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { driftCorrection } from './playback-clock';
 
 interface PlaybackMediaElementsInput {
   isMuted: boolean;
@@ -16,6 +17,22 @@ export function usePlaybackMediaElements({
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const fullscreenElementRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const majorDrift = useRef(new Map<HTMLMediaElement, number | null>());
+  const clockElement = useCallback((): HTMLMediaElement | null => {
+    const available = [...audioRefs.current.entries()].filter(
+      ([, audio]) =>
+        audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !audio.ended,
+    );
+    return (
+      available.find(([id]) => id.startsWith('desktop-audio'))?.[1] ??
+      available.find(([id]) => id.startsWith('microphone'))?.[1] ??
+      videoRef.current
+    );
+  }, []);
+  const clockTime = useCallback(
+    () => clockElement()?.currentTime ?? 0,
+    [clockElement],
+  );
 
   const applyMediaSettings = useCallback(
     (
@@ -51,14 +68,37 @@ export function usePlaybackMediaElements({
 
   const syncAudioElements = useCallback(
     (currentTimeSeconds: number, force = false) => {
+      const master = clockElement();
+      const time = force
+        ? currentTimeSeconds
+        : (master?.currentTime ?? currentTimeSeconds);
       for (const [trackId, audio] of audioRefs.current) {
         updateMediaSettings(audio, trackId);
-        if (force || Math.abs(audio.currentTime - currentTimeSeconds) > 0.25) {
-          setMediaCurrentTime(audio, currentTimeSeconds);
+      }
+      for (const element of [
+        ...audioRefs.current.values(),
+        ...(videoRef.current ? [videoRef.current] : []),
+      ]) {
+        if (force) {
+          setMediaCurrentTime(element, time);
+          element.playbackRate = 1;
+          majorDrift.current.delete(element);
+        } else if (element === master) {
+          element.playbackRate = 1;
+          majorDrift.current.delete(element);
+        } else if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const correction = driftCorrection(
+            time - element.currentTime,
+            performance.now(),
+            majorDrift.current.get(element) ?? null,
+          );
+          majorDrift.current.set(element, correction.majorSinceMs);
+          element.playbackRate = correction.rate;
+          if (correction.seek) setMediaCurrentTime(element, time);
         }
       }
     },
-    [updateMediaSettings],
+    [clockElement, updateMediaSettings],
   );
 
   const pauseMediaElements = useCallback(() => {
@@ -74,6 +114,8 @@ export function usePlaybackMediaElements({
         audioRefs.current.set(trackId, element);
         applyMediaSettings(element, trackId, redactedTrackIdsRef.current);
       } else {
+        const previous = audioRefs.current.get(trackId);
+        if (previous) majorDrift.current.delete(previous);
         audioRefs.current.delete(trackId);
       }
     },
@@ -108,6 +150,7 @@ export function usePlaybackMediaElements({
   return {
     actions: {
       applyRedactedAudioSettings,
+      clockTime,
       pauseMediaElements,
       registerAudioElement,
       requestFullscreen,

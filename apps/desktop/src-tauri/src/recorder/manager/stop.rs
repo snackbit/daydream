@@ -8,6 +8,9 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<RecorderStatus, RecorderError> {
         let mut runtime = self.lock_runtime()?;
+        if runtime.status.state == RecorderState::Error {
+            return Ok(runtime.status.clone());
+        }
         if status_has_pending_lifecycle(&runtime.status) {
             return Err(lifecycle_error(
                 "recorder_already_active",
@@ -36,6 +39,7 @@ impl RecorderManager {
             runtime.status.backend_health.clone(),
         );
         runtime.status = status.clone();
+        self.begin_lifecycle_deadline();
 
         Ok(status)
     }
@@ -58,7 +62,9 @@ impl RecorderManager {
 
         // Capture is stopped before spans are closed. Completion never publishes
         // processable metadata before every automatic protection span is durable.
-        self.stop_protection_monitor()?;
+        if let Err(error) = self.stop_protection_monitor() {
+            return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
         let protection_barrier = storage
             .with_connection(|connection| storage::get_recording(connection, recording_id))
             .and_then(|recording| {
@@ -77,9 +83,26 @@ impl RecorderManager {
         }
 
         let mut runtime = self.lock_runtime()?;
+        if let Some(error) = self.forced_lifecycle_error(recording_id) {
+            drop(runtime);
+            return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
         if let Some(error) = runtime.pending_failure.take() {
             drop(runtime);
             return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
+        if runtime.status.state == RecorderState::Error
+            || runtime
+                .active
+                .as_ref()
+                .is_none_or(|active| active.recording_id != recording_id)
+        {
+            return Err(runtime.status.last_error.clone().unwrap_or_else(|| {
+                lifecycle_error(
+                    "recorder_completion_superseded",
+                    "Recording completion was superseded by a failure.",
+                )
+            }));
         }
         let completion = storage
             .with_connection(|connection| {
@@ -98,6 +121,10 @@ impl RecorderManager {
             let _ = self.abort_recording(storage, recording_id, error.clone(), timestamp_ms);
             return Err(error);
         }
+        if let Some(error) = self.forced_lifecycle_error(recording_id) {
+            drop(runtime);
+            return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
 
         let status =
             idle_status_with_backend_health(timestamp_ms, runtime.status.backend_health.clone());
@@ -106,6 +133,15 @@ impl RecorderManager {
         runtime.automatic_resume_pending = false;
         runtime.status = status.clone();
         drop(runtime);
+
+        Ok(status)
+    }
+
+    pub(crate) fn cleanup_after_stop(&self, storage: &AppStorage, timestamp_ms: u64) {
+        #[cfg(target_os = "linux")]
+        if !super::super::media_worker::is_quiescent() {
+            return;
+        }
 
         match settings::load_app_settings(storage) {
             Ok(app_settings) => {
@@ -126,8 +162,6 @@ impl RecorderManager {
                 "Storage cleanup after recording stop skipped because settings failed to load."
             ),
         }
-
-        Ok(status)
     }
 
     pub(super) fn finalize_media_segment(
@@ -138,6 +172,7 @@ impl RecorderManager {
         timestamp_ms: u64,
     ) -> Result<(), RecorderError> {
         let mut final_segment = segment.clone();
+        let mut terminal_probe = None;
         if let Some(runtime) = &segment.runtime {
             let segment_runtime = runtime
                 .lock()
@@ -150,10 +185,13 @@ impl RecorderManager {
                 .take();
 
             if let Some(segment_runtime) = segment_runtime {
-                match segment_runtime.stop(timestamp_ms) {
-                    Ok(events) => {
+                match segment_runtime.stop(timestamp_ms, self.lifecycle_deadline()) {
+                    Ok(media) => {
+                        let _completion_guard =
+                            self.ensure_completion_active(&active.recording_id)?;
+                        terminal_probe = media.probe;
                         final_segment =
-                            self.save_fragment_events(storage, active, segment, &events)?;
+                            self.save_fragment_events(storage, active, segment, &media.events)?;
                     }
                     Err(error) => {
                         self.fail_active_recording(
@@ -176,7 +214,27 @@ impl RecorderManager {
         }
 
         let segment = &final_segment;
-        let probe = media_writer::probe_segment_best_effort(&segment.file_path);
+        let _completion_guard = self.ensure_completion_active(&active.recording_id)?;
+        let probe = match terminal_probe {
+            Some((path, probe))
+                if path == segment.file_path
+                    && probe.available
+                    && probe.videos.len() == active.video_sources.len().max(1)
+                    && probe.audio.len()
+                        == usize::from(active.desktop_audio_source_id.is_some())
+                            + usize::from(active.microphone_audio_source_id.is_some()) =>
+            {
+                probe
+            }
+            #[cfg(test)]
+            None => media_writer::probe_segment_best_effort(&segment.file_path),
+            _ => {
+                return Err(lifecycle_error(
+                    "recorder_media_probe_missing",
+                    "Finalized media metadata was not returned by the media worker.",
+                ))
+            }
+        };
         let wall_duration_ms = duration_ms(segment.started_at_ms, timestamp_ms);
         if let Some(probe_duration_ms) = probe.duration_ms {
             if probe_duration_ms > wall_duration_ms.saturating_add(100) {
@@ -223,6 +281,9 @@ impl RecorderManager {
         expected_action: RecorderFinalizationAction,
     ) -> Result<ActiveRecording, RecorderError> {
         let runtime = self.lock_runtime()?;
+        if let Some(error) = self.forced_lifecycle_error(recording_id) {
+            return Err(error);
+        }
         let Some(finalization) = &runtime.status.finalization else {
             return Err(lifecycle_error(
                 "recorder_invalid_transition",
@@ -247,6 +308,34 @@ impl RecorderManager {
         }
 
         Ok(active)
+    }
+
+    fn ensure_completion_active(
+        &self,
+        recording_id: &str,
+    ) -> Result<std::sync::MutexGuard<'_, RecorderRuntime>, RecorderError> {
+        if let Some(error) = self.forced_lifecycle_error(recording_id) {
+            return Err(error);
+        }
+        let runtime = self.lock_runtime()?;
+        if let Some(error) = &runtime.pending_failure {
+            return Err(error.clone());
+        }
+        if runtime.status.state == RecorderState::Error
+            || runtime
+                .active
+                .as_ref()
+                .is_none_or(|active| active.recording_id != recording_id)
+            || runtime.status.finalization.is_none()
+        {
+            return Err(runtime.status.last_error.clone().unwrap_or_else(|| {
+                lifecycle_error(
+                    "recorder_completion_superseded",
+                    "Recording completion was superseded by a failure.",
+                )
+            }));
+        }
+        Ok(runtime)
     }
 
     pub(super) fn fail_active_recording(

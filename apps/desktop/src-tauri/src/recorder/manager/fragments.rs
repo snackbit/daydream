@@ -112,6 +112,17 @@ impl RecorderManager {
                         &active.video_sources,
                         active.fps,
                     )?;
+                    transaction.execute(
+                        "UPDATE recording_segments SET capture_run_id=?2 WHERE id=?1",
+                        rusqlite::params![row.id, active.capture_run_id],
+                    )?;
+                    super::capture_provenance::persist_segment_provenance(
+                        &transaction,
+                        active,
+                        segment,
+                        &row.id,
+                        row.started_at_ms.max(0) as u64,
+                    )?;
                     if row.started_at_ms >= current.started_at_ms as i64 {
                         current.file_path = event.path.clone();
                         current.id = row.id;

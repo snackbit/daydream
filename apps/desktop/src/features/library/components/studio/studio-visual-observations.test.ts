@@ -9,7 +9,7 @@ import { buildStudioVisualFrames } from './studio-visual-observations';
 
 const detail: LibraryRecordingDetail = {
   availability: 'available',
-  durationMs: 7_000,
+  durationMs: 4_000,
   endedAtMs: 7_000,
   id: 'recording-1',
   missingReasons: [],

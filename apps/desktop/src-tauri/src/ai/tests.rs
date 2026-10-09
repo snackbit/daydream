@@ -1501,7 +1501,7 @@ fn manager_queues_one_download_while_another_is_active() {
 }
 
 #[test]
-fn manager_clears_cancelled_state_when_retrying_active_download() {
+fn manager_preserves_cancel_intent_until_owner_drains_and_retry_joins_fifo() {
     let manager = AiModelManager::new();
 
     assert_eq!(
@@ -1515,7 +1515,20 @@ fn manager_clears_cancelled_state_when_retrying_active_download() {
         manager.request_download("tiny"),
         DownloadRequestState::AlreadyRunning
     );
+    assert!(manager.is_cancelled("tiny"));
+    assert!(manager.is_active_or_queued("tiny"));
+    assert_eq!(
+        manager.request_download("small"),
+        DownloadRequestState::Queued
+    );
+    assert_eq!(manager.finish_download("tiny"), Some("small".to_string()));
+    assert!(!manager.is_active_or_queued("tiny"));
+    assert_eq!(
+        manager.request_download("tiny"),
+        DownloadRequestState::Queued
+    );
     assert!(!manager.is_cancelled("tiny"));
+    assert_eq!(manager.finish_download("small"), Some("tiny".to_string()));
 }
 
 #[test]
@@ -2085,6 +2098,8 @@ fn ffmpeg_audio_extract_args_include_slice_seek_and_duration() {
             "-map",
             "0:2",
             "-vn",
+            "-af",
+            "aresample=16000:async=1:first_pts=0,apad=whole_dur=1023.456,atrim=duration=1023.456",
             "-ac",
             "1",
             "-ar",
@@ -2584,6 +2599,9 @@ struct TestSegmentInput<'a> {
 
 fn test_segment(input: TestSegmentInput<'_>) -> RecordingSegmentRow {
     RecordingSegmentRow {
+        capture_run_id: None,
+        timeline_base_ms: None,
+        timeline_basis_version: None,
         desktop_audio_stream_index: input.desktop_audio_stream_index,
         duration_ms: Some(input.duration_ms),
         ended_at_ms: Some(input.started_at_ms + input.duration_ms),

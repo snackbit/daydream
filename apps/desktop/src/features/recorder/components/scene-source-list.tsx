@@ -35,7 +35,7 @@ export function SceneSourceList({
 
         return (
           <div
-            className="group/source hover:bg-muted/60 data-[selected=true]:border-l-primary data-[selected=true]:bg-accent/30 flex items-center gap-2 border-l-2 border-l-transparent px-2 py-1.5 transition-colors"
+            className="group/source hover:bg-background/60 data-[selected=true]:border-l-primary data-[selected=true]:bg-background flex items-center gap-3 rounded-lg border-l-2 border-l-transparent px-3 py-3 transition-colors"
             data-selected={isSelected}
             key={source.id}
           >
@@ -53,26 +53,20 @@ export function SceneSourceList({
                 className="text-muted-foreground size-3.5 shrink-0"
               />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium">
+                <span className="block text-sm font-medium break-words">
                   {source.displayName}
                 </span>
-                <span className="text-muted-foreground block font-mono text-[10px] tabular-nums">
+                <span className="text-muted-foreground block font-mono text-xs tabular-nums">
                   {formatPixels(source.rect.width)} x{' '}
                   {formatPixels(source.rect.height)}
                 </span>
-              </span>
-              <span className="text-muted-foreground hidden shrink-0 text-[10px] group-data-[selected=true]/source:block">
-                Focused
-              </span>
-              <span className="text-muted-foreground hidden shrink-0 text-[10px] group-data-[selected=false]/source:block">
-                Click to focus
               </span>
             </Button>
             <Button
               aria-label={`Delete ${source.displayName}`}
               disabled={deleteDisabled}
               onClick={handleDelete}
-              size="icon-xs"
+              size="icon"
               type="button"
               variant="ghost"
             >

@@ -33,6 +33,31 @@ struct TranscriptionProviderState {
 }
 
 impl TranscriptionProviderManager {
+    /// Called after request admission is closed and existing requests have drained.
+    pub(crate) async fn shutdown_for_maintenance(&self) -> Result<(), String> {
+        let provider = self.clone();
+        tauri::async_runtime::spawn_blocking(move || provider.shutdown_local_resources())
+            .await
+            .map_err(|_| "Could not wait for the local transcription service to stop.".to_string())?
+            .map_err(|_| {
+                "Could not stop the local transcription service. Retry maintenance.".to_string()
+            })
+    }
+    fn shutdown_local_resources(&self) -> Result<(), TranscriptionError> {
+        let server = self
+            .inner
+            .lock()
+            .map_err(|_| {
+                transcription_error(
+                    "ai_transcription_shutdown_failed",
+                    "Could not stop the local transcription service.",
+                )
+            })?
+            .local_server
+            .take();
+        drop(server);
+        self.local_runner.shutdown()
+    }
     pub fn new(app_data_dir: PathBuf) -> Result<Self, TranscriptionError> {
         Ok(Self::with_local_runner(Arc::new(
             WhisperProcessTranscriptionRunner::new(app_data_dir)?,

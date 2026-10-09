@@ -1,5 +1,7 @@
 //! Filesystem cleanup shared by explicit deletion and retention.
+mod recovery_outputs;
 use crate::storage::{self, AppStorage, RecordingRow};
+pub(crate) use recovery_outputs::remove_recovery_outputs;
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
@@ -59,6 +61,7 @@ pub(crate) fn delete_recording(
     recordings_root: &Path,
     recording: &RecordingRow,
 ) -> Result<(), String> {
+    remove_recovery_outputs(storage, recordings_root, Some(&recording.id))?;
     let jobs = storage
         .with_connection(|connection| {
             storage::list_processing_jobs(connection, Some(&recording.id))

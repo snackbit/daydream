@@ -23,6 +23,7 @@ import type {
 } from '@daydream/shared';
 import {
   decodeVideoAssets,
+  decodePlaybackRuns,
   decodeVideoStreams,
 } from './video-metadata-decoder';
 
@@ -144,6 +145,9 @@ export async function createLibraryPlaybackSession(
   );
   return {
     ...assets,
+    ...(assets.runs === undefined
+      ? {}
+      : { runs: decodePlaybackRuns(assets.runs) }),
     segments: assets.segments.map((segment) => ({
       ...segment,
       ...(segment.videos === undefined

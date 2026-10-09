@@ -15,7 +15,11 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
+import {
+  chooseSelectOption,
+  waitForSelectDismissal,
+} from '@/components/ui/testing/select-interactions';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
 import '@/index.css';
 import { CaptureScreen } from './CaptureScreen';
@@ -27,6 +31,7 @@ const client = vi.hoisted(() => ({
   getRecorderRecordingStats: vi.fn(),
   getRecorderScene: vi.fn(),
   getRecorderStatus: vi.fn(),
+  updateRecorderPreviewDemand: vi.fn(),
   listenToRecorderPreviewFrames: vi.fn(),
   listenToRecorderStatusChanged: vi.fn(),
   pauseRecording: vi.fn(),
@@ -42,6 +47,7 @@ const client = vi.hoisted(() => ({
 vi.mock('@/features/recorder/recorder-client', () => client);
 const setupClient = vi.hoisted(() => ({
   getCaptureSetup: vi.fn(),
+  listenToCaptureSetupSaved: vi.fn().mockResolvedValue(() => undefined),
   saveCaptureSetup: vi.fn(),
 }));
 vi.mock('@/features/recorder/source-capture-client', () => setupClient);
@@ -163,6 +169,8 @@ const audioSources: AudioSourceList = {
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
+  setupClient.listenToCaptureSetupSaved.mockResolvedValue(() => undefined);
+  client.updateRecorderPreviewDemand.mockResolvedValue(undefined);
   setupClient.getCaptureSetup.mockResolvedValue({
     scene: null,
     fps: 0.2,
@@ -217,8 +225,14 @@ afterEach(() => {
 test.each([
   ['light', 1440],
   ['dark', 1440],
-  ['light', 420],
-  ['dark', 420],
+  ['light', 1024],
+  ['dark', 1024],
+  ['light', 768],
+  ['dark', 768],
+  ['light', 390],
+  ['dark', 390],
+  ['light', 320],
+  ['dark', 320],
 ] as const)(
   'source crop controls remain reachable in %s at %i pixels',
   async (theme, width) => {
@@ -228,15 +242,22 @@ test.each([
       sceneFixture(['main', 'secondary']),
     );
     const view = render(<CaptureScreen />);
+    if (width < 1200)
+      await userEvent.click(
+        await screen.findByRole('button', { name: 'Source output' }),
+      );
     const scale = await screen.findByRole('combobox', { name: 'Output scale' });
     const crop = screen.getByRole('combobox', { name: 'Capture area' });
-    fireEvent.click(crop);
-    fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+    await chooseSelectOption(crop, 'Region');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Precision crop controls' }),
+    );
     const x = await screen.findByRole('spinbutton', { name: 'Crop X' });
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Crop width' }), {
-      target: { value: '1000' },
-    });
-    fireEvent.change(x, { target: { value: '20' } });
+    await userEvent.fill(
+      screen.getByRole('spinbutton', { name: 'Crop width' }),
+      '1000',
+    );
+    await userEvent.fill(x, '20');
     for (const control of [
       scale,
       crop,
@@ -251,14 +272,29 @@ test.each([
     }
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
     await page.screenshot({ element: view.container });
-    if (width === 420) {
-      const output = scale.closest('aside');
+    if (width < 1200) {
+      const output = screen.getByRole('dialog', {
+        name: 'Source output settings',
+      });
       const shared = screen.getByRole('region', {
         name: 'Shared recording settings',
       });
       if (!output) throw new Error('Source output controls are not visible');
       await page.screenshot({ element: output });
       await page.screenshot({ element: shared });
+      await userEvent.keyboard('{Escape}');
+      const interval = screen.getByRole('spinbutton', {
+        name: 'Frame interval (seconds)',
+      });
+      await userEvent.fill(interval, '2');
+      expect(document.activeElement).toBe(interval);
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Source output' }),
+      );
+      expect(
+        screen.getByRole<HTMLInputElement>('spinbutton', { name: 'Crop X' })
+          .value,
+      ).toBe('20');
     }
   },
 );
@@ -384,10 +420,10 @@ test('CaptureScreen records an ultrawide source at half its width and height', a
   source.rect = { x: 0, y: 0, width: 5120, height: 1440 };
   client.getRecorderScene.mockResolvedValue(wide);
   render(<CaptureScreen />);
-  fireEvent.click(
+  await chooseSelectOption(
     await screen.findByRole('combobox', { name: 'Output scale' }),
+    '50%',
   );
-  fireEvent.click(await screen.findByRole('option', { name: '50%' }));
   await screen.findByText('Saved video: 2560 × 720');
   fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
   await waitFor(() =>
@@ -413,10 +449,13 @@ test('CaptureScreen crops the right half of an ultrawide source in physical pixe
   source.rect = { x: 0, y: 0, width: 5120, height: 1440 };
   client.getRecorderScene.mockResolvedValue(wide);
   render(<CaptureScreen />);
-  fireEvent.click(
+  await chooseSelectOption(
     await screen.findByRole('combobox', { name: 'Capture area' }),
+    'Region',
   );
-  fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Precision crop controls' }),
+  );
   fireEvent.change(screen.getByLabelText('Crop width'), {
     target: { value: '2560' },
   });
@@ -441,20 +480,30 @@ test('CaptureScreen crops the right half of an ultrawide source in physical pixe
   );
 });
 
-test('CaptureScreen keeps an invalid crop editable and restores valid settings through reset', async () => {
+test('CaptureScreen clamps an oversized crop and restores the full source through reset', async () => {
   client.getRecorderScene.mockResolvedValue(sceneFixture(['main']));
   render(<CaptureScreen />);
-  fireEvent.click(
+  await chooseSelectOption(
     await screen.findByRole('combobox', { name: 'Capture area' }),
+    'Region',
   );
-  fireEvent.click(await screen.findByRole('option', { name: 'Region' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Precision crop controls' }),
+  );
   fireEvent.change(screen.getByLabelText('Crop X'), {
     target: { value: '2000' },
   });
-  await screen.findByRole('alert');
+  await waitFor(() =>
+    expect(
+      Number(
+        screen.getByRole<HTMLInputElement>('spinbutton', { name: 'Crop X' })
+          .value,
+      ),
+    ).toBeLessThan(2000),
+  );
   expect(
     screen.getByRole<HTMLButtonElement>('button', { name: /^save$/i }).disabled,
-  ).toBe(true);
+  ).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Reset crop and scale' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   expect(
@@ -537,7 +586,8 @@ test('CaptureScreen renders live preview frames for a saved scene', async () => 
     }),
   );
   previewFrameHandler?.({
-    dataUrl: 'data:image/png;base64,abc',
+    dataUrl:
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZWQAAAAASUVORK5CYII=',
     height: 180,
     sceneSourceId: savedScene.sources[0]?.id ?? '',
     sourceId: 'main',
@@ -548,7 +598,7 @@ test('CaptureScreen renders live preview frames for a saved scene', async () => 
   const preview = await screen.findByRole('img', {
     name: /main preview/i,
   });
-  expect(preview.getAttribute('src')).toBe('data:image/png;base64,abc');
+  expect(preview.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
   expect(screen.getByLabelText('Capture region')).toBeTruthy();
 });
 
@@ -1017,7 +1067,7 @@ test('CaptureScreen audio picker shows every unadded device', async () => {
   });
   const select = within(dialog).getByLabelText(/audio source/i);
 
-  fireEvent.click(select);
+  await userEvent.click(select);
 
   expect(
     await screen.findByRole('option', {
@@ -1035,9 +1085,10 @@ test('CaptureScreen audio picker shows every unadded device', async () => {
     }),
   ).toBeNull();
 
-  fireEvent.click(
+  await userEvent.click(
     screen.getByRole('option', { name: 'Secondary desktop monitor' }),
   );
+  await waitForSelectDismissal(select);
   fireEvent.click(within(dialog).getByRole('button', { name: /^add$/i }));
   await waitFor(() =>
     expect(

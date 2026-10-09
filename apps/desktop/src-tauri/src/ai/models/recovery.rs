@@ -4,6 +4,7 @@ use super::{
     partial_model_path, prepare_partial_download, save_catalog_model, spawn_model_download,
     CatalogModel, DownloadRequestState, ModelAssetPatch, PartialDownloadResume,
 };
+use rusqlite::OptionalExtension;
 
 pub fn recover_model_downloads(app: AppHandle) {
     if let Err(error) = recover_model_downloads_inner(&app) {
@@ -17,8 +18,41 @@ pub fn recover_model_downloads(app: AppHandle) {
 pub(in crate::ai) fn recover_model_downloads_inner(app: &AppHandle) -> Result<(), AiError> {
     let storage = app.state::<AppStorage>();
     let manager = app.state::<AiModelManager>();
-    let mut recoverable = storage
-        .with_connection(storage::list_ai_model_assets)
+    let recoverable = storage
+        .with_connection(|connection| {
+            let mut rows = storage::list_ai_model_assets(connection)?;
+            for row in &mut rows {
+                let paused = connection
+                    .query_row(
+                        "SELECT control='pause' FROM ai_model_download_runtime WHERE model_id=?1",
+                        [&row.id],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
+                if paused && matches!(row.download_status.as_str(), "queued" | "downloading") {
+                    row.download_status = "paused".into();
+                    connection.execute(
+                        "UPDATE ai_model_assets SET download_status='paused' WHERE id=?1",
+                        [&row.id],
+                    )?;
+                }
+            }
+            let mut statement =
+                connection.prepare("SELECT model_id,queue_order FROM ai_model_download_runtime")?;
+            let orders = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+            rows.sort_by_key(|row| {
+                (
+                    row.download_status != "downloading",
+                    orders.get(&row.id).copied().unwrap_or(row.updated_at_ms),
+                )
+            });
+            Ok(rows)
+        })
         .map_err(storage_error)?
         .into_iter()
         .filter_map(|row| {
@@ -28,9 +62,6 @@ pub(in crate::ai) fn recover_model_downloads_inner(app: &AppHandle) -> Result<()
             catalog_model(&row.id).map(|catalog| (catalog, row))
         })
         .collect::<Vec<_>>();
-
-    recoverable
-        .sort_by_key(|(_catalog, row)| (row.download_status != "downloading", row.updated_at_ms));
 
     for (catalog, row) in recoverable {
         recover_model_download(app, &storage, &manager, catalog, &row)?;
@@ -144,51 +175,55 @@ fn resume_recovered_model_download(
     catalog: &'static CatalogModel,
     downloaded_bytes: i64,
 ) -> Result<(), AiError> {
-    let state = manager.request_download(catalog.id);
-    let status = if state == DownloadRequestState::Queued {
-        "queued"
-    } else {
-        "downloading"
-    };
-    storage
-        .with_connection(|connection| {
-            let timestamp_ms = now_ms();
-            save_catalog_model(
-                connection,
-                catalog,
-                ModelAssetPatch {
-                    download_status: status.into(),
-                    downloaded_bytes,
-                    error_code: None,
-                    local_path: None,
-                    total_bytes: Some(catalog.size_bytes),
-                    verification_status: "pending".into(),
-                    ..ModelAssetPatch::from_existing(connection, catalog)?
-                },
-                timestamp_ms,
-            )?;
-            save_model_download_notification(
-                connection,
-                ModelDownloadNotificationInput {
-                    actions: &[model_download_cancel_action(catalog.id)],
-                    message: &format!(
-                        "{} download will resume from local partial data.",
-                        catalog.label
-                    ),
-                    model_id: catalog.id,
-                    preferred_notification_id: None,
-                    status: status_to_notification_status(status),
-                    timestamp_ms,
-                    title: if state == DownloadRequestState::Queued {
-                        "Model download queued"
-                    } else {
-                        "Model download resumed"
+    let (state, ()) = manager.admit(catalog.id, |state| {
+        storage
+            .with_connection(|connection| {
+                let transaction = connection.unchecked_transaction()?;
+                let connection = &transaction;
+                let status = if *state == DownloadRequestState::Queued {
+                    "queued"
+                } else {
+                    "downloading"
+                };
+                let timestamp_ms = now_ms();
+                save_catalog_model(
+                    connection,
+                    catalog,
+                    ModelAssetPatch {
+                        download_status: status.into(),
+                        downloaded_bytes,
+                        error_code: None,
+                        local_path: None,
+                        total_bytes: Some(catalog.size_bytes),
+                        verification_status: "pending".into(),
+                        ..ModelAssetPatch::from_existing(connection, catalog)?
                     },
-                },
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)?;
+                    timestamp_ms,
+                )?;
+                save_model_download_notification(
+                    connection,
+                    ModelDownloadNotificationInput {
+                        actions: &[model_transfer_action(catalog.id,false),model_download_cancel_action(catalog.id)],
+                        message: &format!(
+                            "{} download will resume from local partial data.",
+                            catalog.label
+                        ),
+                        model_id: catalog.id,
+                        preferred_notification_id: None,
+                        status: status_to_notification_status(status),
+                        timestamp_ms,
+                        title: if *state == DownloadRequestState::Queued {
+                            "Model download queued"
+                        } else {
+                            "Model download resumed"
+                        },
+                    },
+                )?;
+            connection.execute("INSERT INTO ai_model_download_runtime(model_id,phase,queue_order) VALUES (?1,?2,?3) ON CONFLICT(model_id) DO UPDATE SET attempt=attempt+1,phase=excluded.phase,control='run'",rusqlite::params![catalog.id,if status=="queued" {"queued"} else {"connecting"},timestamp_ms])?;
+            transaction.commit()
+            })
+            .map_err(storage_error)
+    })?;
     emit_model_list(app);
 
     if state == DownloadRequestState::Started {

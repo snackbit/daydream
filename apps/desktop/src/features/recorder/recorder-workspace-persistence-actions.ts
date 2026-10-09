@@ -1,3 +1,4 @@
+import type { RecorderScene } from '@daydream/shared';
 import { runAsyncStoreAction } from '@/lib/async-store-action';
 import {
   saveRecorderScene,
@@ -28,7 +29,7 @@ import type {
 
 type PersistenceActions = Pick<
   RecorderWorkspaceState,
-  'load' | 'saveScene' | 'updateCaptureSources'
+  'load' | 'reloadPreferences' | 'saveScene' | 'updateCaptureSources'
 >;
 
 export function createRecorderWorkspacePersistenceActions(
@@ -37,12 +38,27 @@ export function createRecorderWorkspacePersistenceActions(
 ): PersistenceActions {
   return {
     load: () => load(set, get),
+    reloadPreferences: (savedScene) => load(set, get, savedScene),
     saveScene: () => saveScene(set, get),
     updateCaptureSources: () => updateCaptureSources(set, get),
   };
 }
 
-async function load(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
+function revisionScopedSet(
+  set: RecorderWorkspaceSet,
+  get: RecorderWorkspaceGet,
+): RecorderWorkspaceSet {
+  const revision = get().workspaceRevision;
+  return (patch) => {
+    if (revision === get().workspaceRevision) set(patch);
+  };
+}
+async function load(
+  set: RecorderWorkspaceSet,
+  get: RecorderWorkspaceGet,
+  savedSceneOverride?: RecorderScene | null,
+) {
+  set = revisionScopedSet(set, get);
   const statusBeforeRead = get().status;
   await runAsyncStoreAction({
     before: () => set({ error: null, loadStatus: 'loading' }),
@@ -51,7 +67,7 @@ async function load(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
         error: errorMessage(error),
         loadStatus: 'error',
       }),
-    run: loadRecorderWorkspaceSnapshot,
+    run: () => loadRecorderWorkspaceSnapshot(savedSceneOverride),
     success: (snapshot) =>
       applyLoadedRecorderWorkspace(set, {
         ...snapshot,
@@ -64,6 +80,8 @@ async function load(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
 }
 
 async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
+  const revision = get().workspaceRevision;
+  set = revisionScopedSet(set, get);
   if (workspaceConfigurationLocked(get()) || get().saveStatus === 'loading') {
     return;
   }
@@ -88,6 +106,7 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
     return;
   }
 
+  if (revision !== get().workspaceRevision) return;
   await runAsyncStoreAction({
     before: () => set({ error: null, saveStatus: 'loading' }),
     failure: (error) =>
@@ -145,6 +164,8 @@ async function updateCaptureSources(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ) {
+  const revision = get().workspaceRevision;
+  set = revisionScopedSet(set, get);
   if (workspaceConfigurationLocked(get())) {
     return;
   }
@@ -171,6 +192,7 @@ async function updateCaptureSources(
     }
   }
 
+  if (revision !== get().workspaceRevision) return;
   await runAsyncStoreAction({
     before: () => set({ error: null, loadStatus: 'loading' }),
     failure: (error) => {

@@ -45,12 +45,7 @@ impl RecordingSegmentRuntime {
     }
 
     pub(crate) fn abort(mut self, timestamp_ms: u64) {
-        if let Some(monitor) = self.activity_monitor.take() {
-            monitor.stop();
-        }
-        if let Some(capture) = self.capture.take() {
-            let _ = capture.stop(timestamp_ms);
-        }
+        let _ = self.stop_capture(timestamp_ms);
         self.media_writer.abort();
     }
 
@@ -61,15 +56,24 @@ impl RecordingSegmentRuntime {
     pub(super) fn stop(
         mut self,
         stop_at_ms: u64,
-    ) -> Result<Vec<super::super::media_writer::FragmentEvent>, RecorderError> {
-        if let Some(activity_monitor) = self.activity_monitor.take() {
-            activity_monitor.stop();
-        }
-        let capture_error = self
-            .capture
-            .take()
-            .and_then(|capture| capture.stop(stop_at_ms).err());
-        let media_writer_result = self.media_writer.stop(stop_at_ms);
+        deadline: std::time::Instant,
+    ) -> Result<super::super::media_writer::FinalizedSegmentMedia, RecorderError> {
+        #[cfg(target_os = "linux")]
+        let cutoff_error = self.media_writer.apply_cutoff(stop_at_ms).err();
+        #[cfg(not(target_os = "linux"))]
+        let cutoff_error: Option<RecorderError> = None;
+        let capture_error = self.stop_capture(stop_at_ms).err();
+        #[cfg(target_os = "linux")]
+        let media_writer_result = self
+            .media_writer
+            .stop_with_probe_until(stop_at_ms, deadline);
+        #[cfg(not(target_os = "linux"))]
+        let media_writer_result = self.media_writer.stop(stop_at_ms).map(|events| {
+            super::super::media_writer::FinalizedSegmentMedia {
+                events,
+                probe: None,
+            }
+        });
         if let Some(timing) = &self.timing {
             let snapshot = capture_timing_snapshot(timing);
             info!(
@@ -88,7 +92,36 @@ impl RecordingSegmentRuntime {
         if let Some(error) = capture_error {
             return Err(error);
         }
+        if let Some(error) = cutoff_error {
+            return Err(error);
+        }
 
         media_writer_result
+    }
+
+    fn stop_capture(&mut self, timestamp_ms: u64) -> Result<(), RecorderError> {
+        let activity = self.activity_monitor.take();
+        let capture = self.capture.take();
+        if activity.is_none() && capture.is_none() {
+            return Ok(());
+        }
+        let (sender, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Some(activity) = activity {
+                activity.stop();
+            }
+            let stopped = capture.map_or(Ok(()), |capture| capture.stop(timestamp_ms));
+            let _ = sender.send(stopped);
+        });
+        result
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or_else(|_| {
+                #[cfg(target_os = "linux")]
+                super::super::media_worker::quarantine();
+                Err(super::super::errors::lifecycle_error(
+                    "recorder_capture_stop_timeout",
+                    "Capture cleanup timed out. Recording files have been preserved.",
+                ))
+            })
     }
 }

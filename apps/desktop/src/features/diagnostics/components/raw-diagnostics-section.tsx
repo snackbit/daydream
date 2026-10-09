@@ -1,4 +1,5 @@
 import type { DaydreamDiagnostics } from '@daydream/shared';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import type { DiagnosticsScreenModel } from '../use-diagnostics-screen-controller';
 
 interface RawDiagnosticsSectionProps {
@@ -11,13 +12,10 @@ export function RawDiagnosticsSection({
   status,
 }: RawDiagnosticsSectionProps) {
   return (
-    <details className="border-y py-2">
-      <summary className="cursor-pointer text-xs font-medium">
-        Raw diagnostics JSON
-      </summary>
-      <pre className="bg-muted mt-2 max-h-72 overflow-auto p-2 text-[10px] leading-4">
+    <SharedDisclosure label="Raw diagnostics JSON" className="bg-muted">
+      <pre className="bg-background mt-4 max-h-72 overflow-auto rounded-lg p-4 text-xs leading-5">
         {JSON.stringify(diagnostics ?? { status }, null, 2)}
       </pre>
-    </details>
+    </SharedDisclosure>
   );
 }

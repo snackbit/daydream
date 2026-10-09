@@ -1,10 +1,10 @@
 import {
   Activity,
-  Database,
   Home,
   Settings,
   Video,
   ListTodo,
+  Search,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -16,11 +16,10 @@ export interface NavigationItem {
 
 export const navigationItems: NavigationItem[] = [
   {
-    description:
-      'A private workspace for capture, review, and privacy controls.',
-    href: '/',
+    description: 'Review Days and recordings saved on this device.',
+    href: '/library',
     icon: Home,
-    label: 'Home',
+    label: 'Library',
   },
   {
     description: 'Choose sources, check permissions, and control recording.',
@@ -29,11 +28,10 @@ export const navigationItems: NavigationItem[] = [
     label: 'Capture',
   },
   {
-    description:
-      'Review, rename, edit, and remove recordings saved on this device.',
-    href: '/library',
-    icon: Database,
-    label: 'Library',
+    description: 'Find text and meaning in eligible screen and audio evidence.',
+    href: '/search',
+    icon: Search,
+    label: 'Search',
   },
   {
     description: 'Progress, background work, and processing recovery.',

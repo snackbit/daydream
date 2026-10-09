@@ -25,12 +25,12 @@ export function OcrHistoryPanel({
 }: OcrHistoryPanelProps) {
   return (
     <div className="space-y-2">
-      <p className="text-muted-foreground text-[10px]">
+      <p className="text-muted-foreground text-xs">
         Identical adjacent text is grouped. Ranges show supporting samples, not
         continuous visibility.
       </p>
       {error ? (
-        <div role="alert" className="text-destructive text-[11px]">
+        <div role="alert" className="text-destructive text-sm">
           {error}
           <Button onClick={onRetry} size="sm" variant="outline">
             Retry history
@@ -38,7 +38,7 @@ export function OcrHistoryPanel({
         </div>
       ) : null}
       {items.length === 0 && !loading && !error ? (
-        <p className="text-muted-foreground text-[11px]">
+        <p className="text-muted-foreground text-sm">
           No OCR history for this source.
         </p>
       ) : null}
@@ -54,7 +54,7 @@ export function OcrHistoryPanel({
         ))}
       </div>
       {loading ? (
-        <p className="text-muted-foreground text-[10px]" role="status">
+        <p className="text-muted-foreground text-xs" role="status">
           Loading OCR history…
         </p>
       ) : null}
@@ -111,7 +111,7 @@ function OcrHistoryRevision({
         <span className="font-medium">
           {start === end ? start : `${start} – ${end}`}
         </span>
-        <span className="text-muted-foreground text-[10px]">
+        <span className="text-muted-foreground text-xs">
           {entry.occurrenceCount} supporting{' '}
           {entry.occurrenceCount === 1 ? 'sample' : 'samples'} ·{' '}
           {entry.engine === 'vision'
@@ -120,7 +120,7 @@ function OcrHistoryRevision({
               ? 'Legacy OCR'
               : 'Tesseract'}
         </span>
-        <span className="line-clamp-2 text-[11px]">
+        <span className="line-clamp-2 text-sm">
           {entry.status === 'failed'
             ? 'OCR failed for this sample.'
             : entry.status === 'gap'
@@ -129,15 +129,15 @@ function OcrHistoryRevision({
         </span>
       </Button>
       {entry.errorCode ? (
-        <p className="text-muted-foreground text-[10px]">{entry.errorCode}</p>
+        <p className="text-muted-foreground text-xs">{entry.errorCode}</p>
       ) : null}
       {entry.provenance === 'reconstructed' ? (
-        <p className="text-muted-foreground text-[10px]">
+        <p className="text-muted-foreground text-xs">
           Reconstructed legacy evidence
         </p>
       ) : null}
       {diff && (diff.added || diff.removed) ? (
-        <div className="space-y-1 px-1 text-[10px]">
+        <div className="space-y-1 px-1 text-xs">
           <div>
             Removed:{' '}
             <del className="break-words text-red-700 dark:text-red-300">
@@ -152,12 +152,12 @@ function OcrHistoryRevision({
           </div>
         </div>
       ) : previous && !comparable ? (
-        <p className="text-muted-foreground text-[10px]">
+        <p className="text-muted-foreground text-xs">
           Comparison starts after a source, engine, settings or processing
           boundary.
         </p>
       ) : !previous ? (
-        <p className="text-muted-foreground text-[10px]">
+        <p className="text-muted-foreground text-xs">
           Earlier revision not loaded.
         </p>
       ) : null}

@@ -66,7 +66,7 @@ export function NotificationHistory({
       {loading && notifications.length === 0 ? (
         <div
           aria-busy="true"
-          className="flex min-h-12 items-center gap-2 border-y px-2"
+          className="bg-muted rounded-panel flex min-h-24 items-center gap-3 p-6"
           role="status"
         >
           <Clock3
@@ -86,9 +86,9 @@ export function NotificationHistory({
       ) : null}
 
       {groups.length === 0 && !loading && status === 'ready' ? (
-        <div className="border-y px-2 py-4" role="status">
-          <h2 className="text-xs font-medium">All caught up</h2>
-          <p className="text-muted-foreground mt-1 text-xs leading-5">
+        <div className="bg-muted rounded-panel p-6" role="status">
+          <h2 className="text-sm font-medium">All caught up</h2>
+          <p className="text-muted-foreground mt-2 text-sm leading-6">
             Capture, local processing, and model download updates will appear
             here when there is something to review.
           </p>
@@ -103,18 +103,18 @@ export function NotificationHistory({
         >
           <div className="flex items-center justify-between gap-3">
             <h2
-              className="text-xs font-semibold tracking-tight"
+              className="text-sm font-medium"
               id={`notification-group-${group.id}`}
             >
               {group.label}
             </h2>
-            <span className="text-muted-foreground text-[10px] tabular-nums">
+            <span className="text-muted-foreground text-xs tabular-nums">
               {group.notifications.length}{' '}
               {group.notifications.length === 1 ? 'update' : 'updates'}
             </span>
           </div>
 
-          <div className="divide-y border-y">
+          <div className="bg-muted rounded-panel divide-y overflow-hidden">
             {group.notifications.map((notification) => (
               <NotificationHistoryItem
                 actions={actions}

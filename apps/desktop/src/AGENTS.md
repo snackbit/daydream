@@ -5,10 +5,11 @@ rules still apply. Read nearby owners and tests before choosing a pattern.
 
 ## UI and state ownership
 
-- Follow the user's studio direction: dense, precise controls, quiet neutral
-  surfaces, restrained color and minimal radius/borders. Shadcn primitives do not
-  require oversized cards or default rounded styling. Keep layout changes coherent
-  with that direction; check current screenshots rather than inventing new tokens.
+- Follow the approved warm, spacious design with compact, precise controls,
+  quiet neutral surfaces and restrained color. Use existing semantic tokens and
+  component variants for spacing, radius and borders. Inspect current screenshots
+  rather than inventing competing styles. Information-rich picker rows use
+  left-aligned titles and secondary identity details.
   Light and dark modes need equal quality and readable critical states. Provide a
   persistent, accessible appearance control that users can reach easily.
 
@@ -55,6 +56,17 @@ rules still apply. Read nearby owners and tests before choosing a pattern.
   media refs, derived state, mutations and error recovery in one hook.
 
 ## Visible behavior and tests
+
+- Use shared Select/Popover/SharedDisclosure controls for overlays and expandable
+  content. Do not use bare details/summary outside the component system. Verify
+  popup selection, dismissal, focus return and narrow layouts in both themes.
+- Translate structured failures into short guidance. Never render raw provider
+  codes, SQL or arbitrary transport messages in normal UI. Keep an action's error
+  beside that action until success, explicit dismissal or a relevant input change;
+  unrelated refreshes must not erase it. Critical errors and consent stay visible.
+- Transfer progress distinguishes receiving, verification and ready. Throughput
+  and ETA require native measurements. Group processing by recording and expose
+  each current lane's outcome and scoped recovery action.
 
 - Before UI work, identify the primary workflow and visible result, plus relevant
   loading, empty, error, disabled and success states. Cover meaningful combinations:

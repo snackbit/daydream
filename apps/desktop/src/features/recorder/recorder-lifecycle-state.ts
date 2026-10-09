@@ -20,7 +20,11 @@ export function recorderConfigurationLocked(
 }
 
 export function statusBlocksLifecycle(status: RecorderStatus | null): boolean {
-  return status?.finalization != null || statusShowsCommandInProgress(status);
+  return (
+    status?.cleanupDisposition === 'quarantined' ||
+    status?.finalization != null ||
+    statusShowsCommandInProgress(status)
+  );
 }
 
 export function statusShowsCommandInProgress(

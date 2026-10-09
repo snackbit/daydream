@@ -26,6 +26,8 @@ interface SettingsState {
   error: string | null;
   isDirty: boolean;
   load: () => Promise<void>;
+  invalidatePreferences: () => void;
+  preferenceRevision: number;
   loadStatus: AsyncStatus;
   mutationStatus: MutationStatus;
   previewStorageCleanup: (
@@ -42,152 +44,182 @@ interface SettingsState {
   successMessage: string | null;
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
-  draft: null,
-  error: null,
-  isDirty: false,
-  async load() {
-    await runAsyncStoreAction({
-      before: () =>
-        set({
-          error: null,
-          loadStatus: 'loading',
-          successMessage: null,
-        }),
-      failure: (error) =>
-        set({
-          error: settingsErrorMessage(error),
-          loadStatus: 'error',
-        }),
-      run: async () => {
-        const [settingsState, savedScene] = await Promise.all([
-          getAppSettings(),
-          getRecorderScene(),
-        ]);
-
-        return { savedScene, settingsState };
-      },
-      success: ({ savedScene, settingsState }) =>
-        set({
-          draft: settingsState.settings,
-          error: null,
-          isDirty: false,
-          loadStatus: 'ready',
-          savedScene,
-          settingsState,
-        }),
-    });
-  },
-  loadStatus: 'idle',
-  mutationStatus: 'idle',
-  async previewStorageCleanup(settings) {
-    set({
-      error: null,
-      successMessage: null,
-    });
-    try {
-      return await previewAppSettingsStorageCleanup({ settings });
-    } catch (error) {
+export function createSettingsStore() {
+  let generation = 0;
+  return create<SettingsState>((set, get) => ({
+    preferenceRevision: 0,
+    invalidatePreferences() {
+      generation++;
       set({
-        error: settingsErrorMessage(error),
-        mutationStatus: 'error',
+        draft: null,
+        error: null,
+        isDirty: false,
+        loadStatus: 'loading',
+        mutationStatus: 'idle',
+        savedScene: null,
+        settingsState: null,
+        successMessage: null,
+        preferenceRevision: get().preferenceRevision + 1,
       });
-      return null;
-    }
-  },
-  async reset() {
-    if (get().mutationStatus === 'loading')
-      throw new Error('A settings request is already running.');
-    await runAsyncStoreAction({
-      before: () =>
-        set({
-          error: null,
-          mutationStatus: 'loading',
-          successMessage: null,
-        }),
-      failure: (error) =>
-        set({
-          error: settingsErrorMessage(error),
-          mutationStatus: 'error',
-        }),
-      run: resetAppSettings,
-      success: (settingsState) =>
-        set({
-          draft: settingsState.settings,
-          error: null,
-          isDirty: false,
-          mutationStatus: 'success',
-          settingsState,
-          successMessage: settingsMutationMessage(
-            'Settings reset.',
-            settingsState.storageCleanup,
-          ),
-        }),
-    });
-  },
-  savedScene: null,
-  async save(settings, credentials) {
-    if (get().mutationStatus === 'loading')
-      throw new Error('A settings request is already running.');
-    const draftAtSave = get().draft;
-    const settingsToSave = settings ?? get().draft;
-    if (!settingsToSave) {
-      set({ error: 'No settings are loaded.' });
-      return;
-    }
+    },
+    draft: null,
+    error: null,
+    isDirty: false,
+    async load() {
+      const ownedGeneration = generation;
+      await runAsyncStoreAction({
+        before: () =>
+          set({
+            error: null,
+            loadStatus: 'loading',
+            successMessage: null,
+          }),
+        failure: (error) => {
+          if (ownedGeneration !== generation) return false;
+          set({ error: settingsErrorMessage(error), loadStatus: 'error' });
+          return undefined;
+        },
+        run: async () => {
+          const [settingsState, savedScene] = await Promise.all([
+            getAppSettings(),
+            getRecorderScene(),
+          ]);
 
-    await runAsyncStoreAction({
-      before: () =>
-        set({
-          error: null,
-          mutationStatus: 'loading',
-          successMessage: null,
-        }),
-      failure: (error) =>
+          return { savedScene, settingsState };
+        },
+        success: ({ savedScene, settingsState }) => {
+          if (ownedGeneration === generation)
+            set({
+              draft: settingsState.settings,
+              error: null,
+              isDirty: false,
+              loadStatus: 'ready',
+              savedScene,
+              settingsState,
+            });
+        },
+      });
+    },
+    loadStatus: 'idle',
+    mutationStatus: 'idle',
+    async previewStorageCleanup(settings) {
+      const ownedGeneration = generation;
+      set({
+        error: null,
+        successMessage: null,
+      });
+      try {
+        const preview = await previewAppSettingsStorageCleanup({ settings });
+        return ownedGeneration === generation ? preview : null;
+      } catch (error) {
+        if (ownedGeneration !== generation) return null;
         set({
           error: settingsErrorMessage(error),
           mutationStatus: 'error',
-        }),
-      run: () =>
-        saveAppSettings({
-          settings: settingsToSave,
-          ...(credentials && Object.keys(credentials).length
-            ? { credentials }
-            : {}),
-        }),
-      success: (settingsState) => {
-        const draft =
-          get().draft === draftAtSave ? settingsState.settings : get().draft;
-        set({
-          draft,
-          error: null,
-          isDirty:
-            draft !== null && !settingsEqual(draft, settingsState.settings),
-          mutationStatus: 'success',
-          settingsState,
-          successMessage: settingsMutationMessage(
-            'Settings saved.',
-            settingsState.storageCleanup,
-          ),
         });
-      },
-    });
-  },
-  setDraft(draft) {
-    const settingsState = get().settingsState;
-    set({
-      draft,
-      error: null,
-      isDirty: settingsState
-        ? !settingsEqual(draft, settingsState.settings)
-        : true,
-      mutationStatus: get().mutationStatus === 'loading' ? 'loading' : 'idle',
-      successMessage: null,
-    });
-  },
-  settingsState: null,
-  successMessage: null,
-}));
+        return null;
+      }
+    },
+    async reset() {
+      const ownedGeneration = generation;
+      if (get().mutationStatus === 'loading')
+        throw new Error('A settings request is already running.');
+      await runAsyncStoreAction({
+        before: () =>
+          set({
+            error: null,
+            mutationStatus: 'loading',
+            successMessage: null,
+          }),
+        failure: (error) => {
+          if (ownedGeneration !== generation) return false;
+          set({ error: settingsErrorMessage(error), mutationStatus: 'error' });
+          return undefined;
+        },
+        run: resetAppSettings,
+        success: (settingsState) => {
+          if (ownedGeneration === generation)
+            set({
+              draft: settingsState.settings,
+              error: null,
+              isDirty: false,
+              mutationStatus: 'success',
+              settingsState,
+              successMessage: settingsMutationMessage(
+                'Settings reset.',
+                settingsState.storageCleanup,
+              ),
+            });
+        },
+      });
+    },
+    savedScene: null,
+    async save(settings, credentials) {
+      const ownedGeneration = generation;
+      if (get().mutationStatus === 'loading')
+        throw new Error('A settings request is already running.');
+      const draftAtSave = get().draft;
+      const settingsToSave = settings ?? get().draft;
+      if (!settingsToSave) {
+        set({ error: 'No settings are loaded.' });
+        return;
+      }
+
+      await runAsyncStoreAction({
+        before: () =>
+          set({
+            error: null,
+            mutationStatus: 'loading',
+            successMessage: null,
+          }),
+        failure: (error) => {
+          if (ownedGeneration !== generation) return false;
+          set({ error: settingsErrorMessage(error), mutationStatus: 'error' });
+          return undefined;
+        },
+        run: () =>
+          saveAppSettings({
+            settings: settingsToSave,
+            ...(credentials && Object.keys(credentials).length
+              ? { credentials }
+              : {}),
+          }),
+        success: (settingsState) => {
+          if (ownedGeneration !== generation) return;
+          const draft =
+            get().draft === draftAtSave ? settingsState.settings : get().draft;
+          set({
+            draft,
+            error: null,
+            isDirty:
+              draft !== null && !settingsEqual(draft, settingsState.settings),
+            mutationStatus: 'success',
+            settingsState,
+            successMessage: settingsMutationMessage(
+              'Settings saved.',
+              settingsState.storageCleanup,
+            ),
+          });
+        },
+      });
+    },
+    setDraft(draft) {
+      const settingsState = get().settingsState;
+      set({
+        draft,
+        error: null,
+        isDirty: settingsState
+          ? !settingsEqual(draft, settingsState.settings)
+          : true,
+        mutationStatus: get().mutationStatus === 'loading' ? 'loading' : 'idle',
+        successMessage: null,
+      });
+    },
+    settingsState: null,
+    successMessage: null,
+  }));
+}
+export const useSettingsStore = createSettingsStore();
 
 function settingsEqual(left: AppSettings, right: AppSettings): boolean {
   return (

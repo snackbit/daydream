@@ -1,27 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type {
   AppSettings,
   AppSettingsLimits,
-  ProtectedWindowAction,
   ProtectedWindowRule,
-  ProtectedWindowRuleAction,
-  ProtectedWindowTitleMatcherKind,
   ProtectableWindow,
-  ProtectableWindowList,
   WindowProtectionStatus,
 } from '@daydream/shared';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
 import {
   Field,
   FieldContent,
@@ -30,19 +18,11 @@ import {
   FieldLabel,
   FieldTitle,
 } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  getWindowProtectionStatus,
-  listProtectableWindows,
-} from '@/features/recorder/recorder-client';
+import { getWindowProtectionStatus } from '@/features/recorder/recorder-client';
+import { NumberSetting } from './protected-windows/number-setting';
+import { ProtectedWindowPicker } from './protected-windows/protected-window-picker';
+import { ProtectedWindowRuleEditor } from './protected-windows/protected-window-rule-editor';
 
 interface ProtectedWindowSettingsCardProps {
   draft: AppSettings;
@@ -55,11 +35,9 @@ export function ProtectedWindowSettingsCard({
   limits,
   onUpdateDraft,
 }: ProtectedWindowSettingsCardProps) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [picker, setPicker] = useState<ProtectableWindowList | null>(null);
-  const [pickerLoading, setPickerLoading] = useState(false);
   const [providerStatus, setProviderStatus] =
     useState<WindowProtectionStatus | null>(null);
+  const [providerError, setProviderError] = useState(false);
   const settings = draft.record.windowProtection;
   const hasEnabledRules = settings.rules.some((rule) => rule.enabled);
   const protectionUnavailable =
@@ -68,64 +46,106 @@ export function ProtectedWindowSettingsCard({
     providerStatus !== null &&
     providerStatus.status !== 'available';
 
-  async function refreshPicker() {
-    setPickerLoading(true);
-    try {
-      const [nextPicker, nextStatus] = await Promise.all([
-        listProtectableWindows(),
-        getWindowProtectionStatus(),
-      ]);
-      setPicker(nextPicker);
-      setProviderStatus(nextStatus);
-    } finally {
-      setPickerLoading(false);
-    }
-  }
-
   useEffect(() => {
     let cancelled = false;
-    void getWindowProtectionStatus().then((status) => {
-      if (!cancelled) {
-        setProviderStatus(status);
-      }
-    });
+    void getWindowProtectionStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setProviderStatus(status);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setProviderError(true);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  function updateWindowProtection(
-    updater: (
-      current: AppSettings['record']['windowProtection'],
-    ) => AppSettings['record']['windowProtection'],
-  ) {
-    onUpdateDraft((current) => ({
-      ...current,
-      record: {
-        ...current.record,
-        windowProtection: updater(current.record.windowProtection),
-      },
-    }));
-  }
+  const updateWindowProtection = useCallback(
+    (
+      updater: (
+        current: AppSettings['record']['windowProtection'],
+      ) => AppSettings['record']['windowProtection'],
+    ) => {
+      onUpdateDraft((current) => ({
+        ...current,
+        record: {
+          ...current.record,
+          windowProtection: updater(current.record.windowProtection),
+        },
+      }));
+    },
+    [onUpdateDraft],
+  );
 
-  function addRule(rule: ProtectedWindowRule) {
-    updateWindowProtection((current) => ({
-      ...current,
-      rules: [...current.rules, rule],
-    }));
-  }
+  const addRule = useCallback(
+    (rule: ProtectedWindowRule) => {
+      updateWindowProtection((current) => ({
+        ...current,
+        rules: [...current.rules, rule],
+      }));
+    },
+    [updateWindowProtection],
+  );
 
-  function updateRule(
-    ruleId: string,
-    updater: (rule: ProtectedWindowRule) => ProtectedWindowRule,
-  ) {
-    updateWindowProtection((current) => ({
-      ...current,
-      rules: current.rules.map((rule) =>
-        rule.id === ruleId ? updater(rule) : rule,
-      ),
-    }));
-  }
+  const handlePickWindow = useCallback(
+    (window: ProtectableWindow) => addRule(ruleFromWindow(window)),
+    [addRule],
+  );
+  const handleProviderStatus = useCallback((status: WindowProtectionStatus) => {
+    setProviderStatus(status);
+    setProviderError(false);
+  }, []);
+
+  const updateRule = useCallback(
+    (
+      ruleId: string,
+      updater: (rule: ProtectedWindowRule) => ProtectedWindowRule,
+    ) => {
+      updateWindowProtection((current) => ({
+        ...current,
+        rules: current.rules.map((rule) =>
+          rule.id === ruleId ? updater(rule) : rule,
+        ),
+      }));
+    },
+    [updateWindowProtection],
+  );
+  const handleDeleteRule = useCallback(
+    (ruleId: string) =>
+      updateWindowProtection((current) => ({
+        ...current,
+        rules: current.rules.filter((item) => item.id !== ruleId),
+      })),
+    [updateWindowProtection],
+  );
+  const handleAddRule = useCallback(() => addRule(blankRule()), [addRule]);
+  const handleEnabled = useCallback(
+    (checked: boolean | 'indeterminate') =>
+      updateWindowProtection((current) => ({
+        ...current,
+        enabled: checked === true,
+      })),
+    [updateWindowProtection],
+  );
+  const handleDefaultAction = useCallback(
+    (defaultAction: string) => {
+      if (defaultAction === 'pause' || defaultAction === 'redact')
+        updateWindowProtection((current) => ({ ...current, defaultAction }));
+    },
+    [updateWindowProtection],
+  );
+  const handleDwell = useCallback(
+    (dwellMs: number) =>
+      updateWindowProtection((current) => ({ ...current, dwellMs })),
+    [updateWindowProtection],
+  );
+  const handleMergeGap = useCallback(
+    (mergeGapMs: number) =>
+      updateWindowProtection((current) => ({ ...current, mergeGapMs })),
+    [updateWindowProtection],
+  );
 
   return (
     <FieldGroup>
@@ -139,12 +159,7 @@ export function ProtectedWindowSettingsCard({
         <Checkbox
           aria-label="Enable protected windows"
           checked={settings.enabled}
-          onCheckedChange={(checked) => {
-            updateWindowProtection((current) => ({
-              ...current,
-              enabled: checked === true,
-            }));
-          }}
+          onCheckedChange={handleEnabled}
         />
       </Field>
 
@@ -152,6 +167,16 @@ export function ProtectedWindowSettingsCard({
         <Alert variant="destructive">
           <AlertTitle>Protected-window automation unavailable</AlertTitle>
           <AlertDescription>{providerStatus.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {providerError && settings.enabled && hasEnabledRules ? (
+        <Alert variant="destructive">
+          <AlertTitle>
+            Protected-window availability could not be checked
+          </AlertTitle>
+          <AlertDescription>
+            Recheck in the window picker before recording.
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -162,12 +187,7 @@ export function ProtectedWindowSettingsCard({
         <RadioGroup
           aria-labelledby="protected-window-default-action"
           className="max-w-sm gap-2"
-          onValueChange={(value) => {
-            updateWindowProtection((current) => ({
-              ...current,
-              defaultAction: value as ProtectedWindowAction,
-            }));
-          }}
+          onValueChange={handleDefaultAction}
           value={settings.defaultAction}
         >
           <FieldLabel htmlFor="protected-window-default-pause">
@@ -206,18 +226,14 @@ export function ProtectedWindowSettingsCard({
           label="Focus dwell"
           max={limits.record.windowProtectionDwellMsMax}
           min={limits.record.windowProtectionDwellMsMin}
-          onChange={(dwellMs) => {
-            updateWindowProtection((current) => ({ ...current, dwellMs }));
-          }}
+          onChange={handleDwell}
           value={settings.dwellMs}
         />
         <NumberSetting
           label="Merge gap"
           max={limits.record.windowProtectionMergeGapMsMax}
           min={limits.record.windowProtectionMergeGapMsMin}
-          onChange={(mergeGapMs) => {
-            updateWindowProtection((current) => ({ ...current, mergeGapMs }));
-          }}
+          onChange={handleMergeGap}
           value={settings.mergeGapMs}
         />
       </div>
@@ -227,7 +243,7 @@ export function ProtectedWindowSettingsCard({
           <p className="text-sm font-medium">Rules</p>
           <div className="flex flex-wrap gap-2">
             <Button
-              onClick={() => addRule(blankRule())}
+              onClick={handleAddRule}
               size="sm"
               type="button"
               variant="outline"
@@ -235,39 +251,10 @@ export function ProtectedWindowSettingsCard({
               <Plus className="size-3.5" />
               Add rule
             </Button>
-            <Dialog
-              open={pickerOpen}
-              onOpenChange={(open) => {
-                setPickerOpen(open);
-                if (open) {
-                  void refreshPicker();
-                }
-              }}
-            >
-              <DialogTrigger asChild>
-                <Button size="sm" type="button" variant="outline">
-                  Pick window
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Pick a window</DialogTitle>
-                  <DialogDescription>
-                    Add a rule from currently open app windows.
-                  </DialogDescription>
-                </DialogHeader>
-                <WindowPickerContent
-                  loading={pickerLoading}
-                  onPick={(window) => {
-                    addRule(ruleFromWindow(window));
-                    setPickerOpen(false);
-                  }}
-                  onRefresh={() => void refreshPicker()}
-                  picker={picker}
-                  status={providerStatus}
-                />
-              </DialogContent>
-            </Dialog>
+            <ProtectedWindowPicker
+              onPick={handlePickWindow}
+              onStatusLoaded={handleProviderStatus}
+            />
           </div>
         </div>
 
@@ -280,301 +267,14 @@ export function ProtectedWindowSettingsCard({
             <ProtectedWindowRuleEditor
               key={rule.id}
               maxTextChars={limits.record.windowProtectionTextMaxChars}
-              onDelete={() => {
-                updateWindowProtection((current) => ({
-                  ...current,
-                  rules: current.rules.filter((item) => item.id !== rule.id),
-                }));
-              }}
-              onUpdate={(updater) => updateRule(rule.id, updater)}
+              onDelete={handleDeleteRule}
+              onUpdate={updateRule}
               rule={rule}
             />
           ))
         )}
       </div>
     </FieldGroup>
-  );
-}
-
-function ProtectedWindowRuleEditor({
-  maxTextChars,
-  onDelete,
-  onUpdate,
-  rule,
-}: {
-  maxTextChars: number;
-  onDelete: () => void;
-  onUpdate: (
-    updater: (rule: ProtectedWindowRule) => ProtectedWindowRule,
-  ) => void;
-  rule: ProtectedWindowRule;
-}) {
-  return (
-    <div className="grid gap-3 border p-3">
-      <div className="flex items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <Checkbox
-            aria-label={`Enable ${rule.label || 'protected window rule'}`}
-            checked={rule.enabled}
-            onCheckedChange={(checked) =>
-              onUpdate((current) => ({ ...current, enabled: checked === true }))
-            }
-          />
-          Enabled
-        </label>
-        <Button
-          aria-label={`Delete ${rule.label || 'protected window rule'}`}
-          onClick={onDelete}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <Trash2 className="size-3.5" />
-        </Button>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2">
-        <TextSetting
-          label="Label"
-          maxLength={maxTextChars}
-          onChange={(label) => onUpdate((current) => ({ ...current, label }))}
-          value={rule.label}
-        />
-        <SelectSetting
-          label="Action"
-          onChange={(action) =>
-            onUpdate((current) => ({
-              ...current,
-              action: action as ProtectedWindowRuleAction,
-            }))
-          }
-          options={[
-            ['inherit', 'Use default'],
-            ['pause', 'Pause'],
-            ['redact', 'Redact'],
-          ]}
-          value={rule.action}
-        />
-        <TextSetting
-          label="App identity"
-          maxLength={maxTextChars}
-          onChange={(appIdentity) =>
-            onUpdate((current) => ({
-              ...current,
-              appIdentity: emptyToNull(appIdentity),
-            }))
-          }
-          value={rule.appIdentity ?? ''}
-        />
-        <TextSetting
-          label="Process"
-          maxLength={maxTextChars}
-          onChange={(processName) =>
-            onUpdate((current) => ({
-              ...current,
-              processName: emptyToNull(processName),
-            }))
-          }
-          value={rule.processName ?? ''}
-        />
-        <SelectSetting
-          label="Title matcher"
-          onChange={(kind) =>
-            onUpdate((current) => ({
-              ...current,
-              titleMatcher: {
-                caseSensitive: current.titleMatcher?.caseSensitive ?? false,
-                kind: kind as ProtectedWindowTitleMatcherKind,
-                value: current.titleMatcher?.value ?? '',
-              },
-            }))
-          }
-          options={[
-            ['contains', 'Contains'],
-            ['regex', 'Regex'],
-          ]}
-          value={rule.titleMatcher?.kind ?? 'contains'}
-        />
-        <TextSetting
-          label="Title value"
-          maxLength={maxTextChars}
-          onChange={(value) =>
-            onUpdate((current) => ({
-              ...current,
-              titleMatcher:
-                value.trim().length === 0
-                  ? null
-                  : {
-                      caseSensitive:
-                        current.titleMatcher?.caseSensitive ?? false,
-                      kind: current.titleMatcher?.kind ?? 'contains',
-                      value,
-                    },
-            }))
-          }
-          value={rule.titleMatcher?.value ?? ''}
-        />
-      </div>
-    </div>
-  );
-}
-
-function WindowPickerContent({
-  loading,
-  onPick,
-  onRefresh,
-  picker,
-  status,
-}: {
-  loading: boolean;
-  onPick: (window: ProtectableWindow) => void;
-  onRefresh: () => void;
-  picker: ProtectableWindowList | null;
-  status: WindowProtectionStatus | null;
-}) {
-  if (!picker || loading) {
-    return (
-      <div className="grid gap-3">
-        <p className="text-muted-foreground text-sm">Loading windows.</p>
-        <Button onClick={onRefresh} type="button" variant="outline">
-          <RefreshCw className="size-3.5" />
-          Refresh
-        </Button>
-      </div>
-    );
-  }
-
-  if (picker.status !== 'available') {
-    return (
-      <div className="grid gap-3">
-        <Alert variant="destructive">
-          <AlertTitle>Window picker unavailable</AlertTitle>
-          <AlertDescription>
-            {status?.message ?? unavailablePickerMessage(picker.status)}
-          </AlertDescription>
-        </Alert>
-        <Button onClick={onRefresh} type="button" variant="outline">
-          <RefreshCw className="size-3.5" />
-          Refresh
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid max-h-80 gap-2 overflow-auto">
-      {picker.windows.map((window) => (
-        <Button
-          className="h-auto justify-start whitespace-normal"
-          key={window.id}
-          onClick={() => onPick(window)}
-          type="button"
-          variant="outline"
-        >
-          {window.processName ?? window.appIdentity ?? 'Unknown app'}
-          {window.title ? ` - ${window.title}` : ''}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-function unavailablePickerMessage(status: ProtectableWindowList['status']) {
-  switch (status) {
-    case 'permission-denied':
-      return 'Focused-window detection needs desktop permission before windows can be listed.';
-    case 'provider-unavailable':
-      return 'Focused-window detection is not available in this desktop session.';
-    case 'session-unsupported':
-      return 'Focused-window detection is not supported in this desktop session.';
-    case 'unsupported-platform':
-      return 'Focused-window detection is not implemented on this platform.';
-    case 'available':
-      return 'Focused-window detection is available.';
-  }
-}
-
-function NumberSetting({
-  label,
-  max,
-  min,
-  onChange,
-  value,
-}: {
-  label: string;
-  max: number;
-  min: number;
-  onChange: (value: number) => void;
-  value: number;
-}) {
-  return (
-    <Field>
-      <FieldLabel>{label}</FieldLabel>
-      <div className="flex items-center gap-2">
-        <Input
-          max={max}
-          min={min}
-          onChange={(event) => onChange(Math.round(Number(event.target.value)))}
-          step={250}
-          type="number"
-          value={value}
-        />
-        <span className="text-muted-foreground shrink-0 text-xs">ms</span>
-      </div>
-    </Field>
-  );
-}
-
-function TextSetting({
-  label,
-  maxLength,
-  onChange,
-  value,
-}: {
-  label: string;
-  maxLength: number;
-  onChange: (value: string) => void;
-  value: string;
-}) {
-  return (
-    <Field>
-      <FieldLabel>{label}</FieldLabel>
-      <Input
-        maxLength={maxLength}
-        onChange={(event) => onChange(event.target.value)}
-        value={value}
-      />
-    </Field>
-  );
-}
-
-function SelectSetting({
-  label,
-  onChange,
-  options,
-  value,
-}: {
-  label: string;
-  onChange: (value: string) => void;
-  options: Array<[string, string]>;
-  value: string;
-}) {
-  return (
-    <Field>
-      <FieldLabel>{label}</FieldLabel>
-      <Select onValueChange={onChange} value={value}>
-        <SelectTrigger>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([optionValue, optionLabel]) => (
-            <SelectItem key={optionValue} value={optionValue}>
-              {optionLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Field>
   );
 }
 
@@ -606,9 +306,4 @@ function ruleFromWindow(window: ProtectableWindow): ProtectedWindowRule {
         }
       : null,
   };
-}
-
-function emptyToNull(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }

@@ -1,6 +1,7 @@
 use std::{fs, sync::mpsc, thread, time::Duration};
 
 use gstreamer as gst;
+use gstreamer::prelude::*;
 use uuid::Uuid;
 
 use crate::recorder::capture_runtime::{bounded_frame_channel, CapturedFrame, CapturedFrameFormat};
@@ -52,6 +53,28 @@ fn keyframe_interval_uses_frame_count_for_low_fps() {
     assert_eq!(key_int_max(1.0, 20), 20);
     assert_eq!(key_int_max(0.2, 20), 4);
     assert_eq!(key_int_max(0.1, 20), 2);
+}
+
+#[test]
+fn audio_queue_budget_covers_sparse_cadence_with_a_byte_cap() {
+    gst::init().unwrap();
+    for (fps, seconds) in [(5., 2), (0.2, 10), (1. / 60., 120)] {
+        let mut input = segment_input(Some("__synthetic_audio__"), Some("__synthetic_audio__"));
+        input.fps = fps;
+        let pipeline = super::pipeline::build_pipeline(&input).unwrap();
+        for name in [
+            "desktop_audio_cutoff_queue",
+            "microphone_audio_cutoff_queue",
+        ] {
+            let queue = pipeline.by_name(name).unwrap();
+            assert_eq!(
+                queue.property::<u64>("max-size-time"),
+                seconds * 1_000_000_000
+            );
+            assert_eq!(queue.property::<u32>("max-size-bytes"), 16_777_216);
+            assert_eq!(queue.property::<u32>("max-size-buffers"), 0);
+        }
+    }
 }
 
 #[test]

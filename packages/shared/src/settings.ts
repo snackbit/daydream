@@ -96,6 +96,8 @@ export interface SaveAppSettingsInput {
 }
 
 export interface SettingsCredentialDrafts {
+  recallEmbeddingKey?: string | null;
+  recallGenerationKey?: string | null;
   transcriptionKey?: string | null;
   visionKey?: string | null;
 }

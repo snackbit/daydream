@@ -1,3 +1,4 @@
+import type { RecallSettings } from '../recall.js';
 import type {
   AiOcrEngine,
   AiProviderKind,
@@ -6,6 +7,7 @@ import type {
 } from './provider-kinds.js';
 
 export interface AiSettings {
+  recall: RecallSettings;
   activity: AiActivitySettings;
   ocr: AiOcrSettings;
   processing: AiProcessingSettings;

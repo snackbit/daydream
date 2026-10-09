@@ -96,14 +96,12 @@ export function OcrDetailsPanel({
               </dl>
               {document.blocks.map((block) => (
                 <div className="border-t pt-2" key={block.id}>
-                  <p className="text-[10px] font-medium">
-                    Block {block.order + 1}
-                  </p>
-                  <p className="text-[11px] break-words">{block.text}</p>
+                  <p className="text-xs font-medium">Block {block.order + 1}</p>
+                  <p className="text-sm break-words">{block.text}</p>
                   <div className="mt-1 divide-y">
                     {block.words.map((word) => (
                       <div
-                        className="grid grid-cols-[1fr_auto] gap-2 py-1 text-[10px]"
+                        className="grid grid-cols-[1fr_auto] gap-2 py-1 text-xs"
                         key={word.id}
                       >
                         <span className="break-words">{word.text}</span>
@@ -132,7 +130,7 @@ export function OcrDetailsPanel({
           ) : null}
         </>
       ) : (
-        <p className="text-muted-foreground text-[10px]">
+        <p className="text-muted-foreground text-xs">
           {document.status === 'succeeded'
             ? 'Raw region details are available when Debug is enabled in Settings.'
             : 'Raw OCR details are unavailable for this sample.'}

@@ -80,6 +80,17 @@ pub(crate) fn enforce_storage_cleanup_at(
     settings: &StorageSettings,
     now_ms: i64,
 ) -> StorageCleanupResult {
+    match storage.with_connection(storage::maintenance::retention_cleanup_paused) {
+        Ok(true) => return StorageCleanupResult::default(),
+        Ok(false) => {}
+        Err(_) => {
+            warn!("Storage cleanup withheld because its authorization could not be read.");
+            return StorageCleanupResult {
+                failed_recording_count: 1,
+                ..StorageCleanupResult::default()
+            };
+        }
+    }
     let plan = match storage_cleanup_plan(storage, recordings_root, settings, now_ms) {
         Ok(plan) => plan,
         Err(_error) => {
@@ -379,6 +390,45 @@ mod tests {
         assert!(!recordings_root.join(expired).exists());
 
         let _ = fs::remove_dir_all(app_dir);
+    }
+
+    #[test]
+    fn preference_reset_pauses_retention_across_reopen_until_explicit_settings_save() {
+        let app_dir = test_dir("retention-preference-reset");
+        let recordings_root = app_dir.join("recordings");
+        fs::create_dir_all(&recordings_root).unwrap();
+        let path = app_dir.join("daydream.sqlite3");
+        let storage = storage::test_file_storage(path.clone());
+        let id = insert_recording(&storage, &recordings_root, "completed", 1000, 2000, 10);
+        storage
+            .with_connection(storage::maintenance::pause_retention_after_reset)
+            .unwrap();
+        drop(storage);
+        let storage = storage::test_file_storage(path);
+        let settings = StorageSettings {
+            retention_days: 7,
+            size_limit_bytes: 1024,
+        };
+        let outcome =
+            enforce_storage_cleanup_at(&storage, &recordings_root, &settings, DAY_MS * 30);
+        assert_eq!(outcome.deleted_recording_count, 0);
+        assert!(recordings_root.join(&id).exists());
+        assert_eq!(
+            preview_storage_cleanup(&storage, &recordings_root, &settings)
+                .unwrap()
+                .recording_count,
+            1,
+            "Explicit save still previews the deletion impact while automatic cleanup is paused"
+        );
+        storage
+            .with_connection(storage::maintenance::authorize_retention_on_settings_save)
+            .unwrap();
+        let outcome =
+            enforce_storage_cleanup_at(&storage, &recordings_root, &settings, DAY_MS * 30);
+        assert_eq!(outcome.deleted_recording_count, 1);
+        assert!(!recordings_root.join(&id).exists());
+        drop(storage);
+        fs::remove_dir_all(app_dir).unwrap();
     }
 
     fn insert_recording(

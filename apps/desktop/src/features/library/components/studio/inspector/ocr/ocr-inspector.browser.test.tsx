@@ -15,6 +15,8 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { useSettingsStore } from '@/features/settings/settings-store';
+import { defaultSettingsState } from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { VisualSourceInspector } from '../visual-source-inspector';
 
@@ -114,6 +116,7 @@ const context = {
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
+  useSettingsStore.setState(useSettingsStore.getInitialState(), true);
   ipc.listen.mockResolvedValue(() => undefined);
   ipc.copy.mockResolvedValue(undefined);
   const navigatorMock = Object.create(navigator);
@@ -122,19 +125,21 @@ beforeEach(async () => {
   });
   vi.stubGlobal('navigator', navigatorMock);
   ipc.invoke.mockImplementation((command: string) =>
-    command === 'getOcrDocument'
-      ? Promise.resolve({
-          document,
-          recordingId: context.recordingId,
-          job: null,
-          sourceTrackId: context.sourceTrackId,
-        })
-      : command === 'getOcrHistory'
+    command === 'getAppSettings'
+      ? Promise.resolve(structuredClone(defaultSettingsState))
+      : command === 'getOcrDocument'
         ? Promise.resolve({
-            items: [document],
-            nextCursor: null,
-          } satisfies OcrHistoryPage)
-        : Promise.reject(new Error(`Unexpected command ${command}`)),
+            document,
+            recordingId: context.recordingId,
+            job: null,
+            sourceTrackId: context.sourceTrackId,
+          })
+        : command === 'getOcrHistory'
+          ? Promise.resolve({
+              items: [document],
+              nextCursor: null,
+            } satisfies OcrHistoryPage)
+          : Promise.reject(new Error(`Unexpected command ${command}`)),
   );
 });
 afterEach(() => {
@@ -436,17 +441,19 @@ test('a failed Vision document retries real processing and preserves the blocked
     errorCode: 'ai_ocr_vision_unconfigured',
   });
   ipc.invoke.mockImplementation((command: string) =>
-    command === 'reprocessRecordingOcr'
-      ? Promise.reject({
-          message: 'Configure Vision OCR before retrying.',
-          code: 'ai_ocr_vision_unconfigured',
-        })
-      : Promise.resolve({
-          document: failed,
-          recordingId: context.recordingId,
-          job: null,
-          sourceTrackId: context.sourceTrackId,
-        }),
+    command === 'getAppSettings'
+      ? Promise.resolve(structuredClone(defaultSettingsState))
+      : command === 'reprocessRecordingOcr'
+        ? Promise.reject({
+            message: 'Private synthetic provider diagnostic body.',
+            code: 'ai_ocr_vision_unconfigured',
+          })
+        : Promise.resolve({
+            document: failed,
+            recordingId: context.recordingId,
+            job: null,
+            sourceTrackId: context.sourceTrackId,
+          }),
   );
   render(
     <VisualSourceInspector
@@ -458,10 +465,32 @@ test('a failed Vision document retries real processing and preserves the blocked
   );
   expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
   expect(screen.queryByLabelText('Recognized text')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Retry processing' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Retry processing' }),
+  );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('button', { name: 'Retry processing' })
+        .hasAttribute('disabled'),
+    ).toBe(false),
+  );
   expect(
-    await screen.findByText('Configure Vision OCR before retrying.'),
+    screen
+      .getAllByRole('alert')
+      .some((alert) =>
+        alert.textContent?.includes(
+          'valid provider, endpoint, and model configuration',
+        ),
+      ),
+  ).toBe(true);
+  expect(
+    screen.getByRole('link', { name: 'Review vision settings' }),
   ).toBeTruthy();
+  expect(
+    screen.queryByText('Private synthetic provider diagnostic body.'),
+  ).toBeNull();
+  expect(screen.queryByText('ai_ocr_vision_unconfigured')).toBeNull();
   expect(ipc.invoke).toHaveBeenCalledWith('reprocessRecordingOcr', {
     input: { recordingId: context.recordingId },
   });
@@ -578,16 +607,19 @@ test('pre-frame OCR job phases refresh from processing events and retry the actu
     },
   );
   ipc.invoke.mockImplementation((command: string) =>
-    command === 'retryProcessingJob'
-      ? Promise.reject({
-          message: 'Configure the saved Vision OCR profile before retrying.',
-        })
-      : Promise.resolve({
-          document: null,
-          job: currentJob,
-          recordingId: context.recordingId,
-          sourceTrackId: context.sourceTrackId,
-        }),
+    command === 'getAppSettings'
+      ? Promise.resolve(structuredClone(defaultSettingsState))
+      : command === 'retryProcessingJob'
+        ? Promise.reject({
+            message: 'Private synthetic saved provider diagnostic body.',
+            code: 'ai_ocr_vision_unconfigured',
+          })
+        : Promise.resolve({
+            document: null,
+            job: currentJob,
+            recordingId: context.recordingId,
+            sourceTrackId: context.sourceTrackId,
+          }),
   );
   render(
     <VisualSourceInspector
@@ -607,12 +639,32 @@ test('pre-frame OCR job phases refresh from processing events and retry the actu
   };
   processingChanged({ payload: { recordingId: context.recordingId } });
   expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
-  fireEvent.click(screen.getByRole('button', { name: 'Retry processing' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Retry processing' }),
+  );
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole('button', { name: 'Retry processing' })
+        .hasAttribute('disabled'),
+    ).toBe(false),
+  );
   expect(
-    await screen.findByText(
-      'Configure the saved Vision OCR profile before retrying.',
-    ),
+    screen
+      .getAllByRole('alert')
+      .some((alert) =>
+        alert.textContent?.includes(
+          'valid provider, endpoint, and model configuration',
+        ),
+      ),
+  ).toBe(true);
+  expect(
+    screen.getByRole('link', { name: 'Review vision settings' }),
   ).toBeTruthy();
+  expect(
+    screen.queryByText('Private synthetic saved provider diagnostic body.'),
+  ).toBeNull();
+  expect(screen.queryByText('ai_ocr_vision_unconfigured')).toBeNull();
   expect(ipc.invoke).toHaveBeenCalledWith('retryProcessingJob', {
     input: { jobId: job.id },
   });

@@ -20,9 +20,11 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
 import { GroupedRedactions } from './redactions/grouped-redactions';
+import { useSelectionRedactionMutation } from './redactions/use-redaction-mutation';
 import { isStudioActivityLaneKind } from './studio-activity-lanes';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
@@ -40,7 +42,6 @@ import {
   TimeRuler,
   TrackTimelineToolbar,
 } from './track-timeline-parts';
-import { redactionRangesFromSelection } from './track-timeline-redaction-actions';
 import { useTrackTimelineViewModel } from './track-timeline-view-model';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
 import { useTrackTimelineSelection } from './use-track-timeline-selection';
@@ -105,6 +106,12 @@ export function TrackTimeline({
     (store) => store.selectVisualFrame,
   );
   const selection = useStudioTimelineStore((store) => store.selection);
+  const redactionMutation = useSelectionRedactionMutation({
+    ranges: selection.ranges,
+    onCreate: onCreateRedactions,
+    onUnredact: onUnredactRanges,
+    onClear: clearSelection,
+  });
   const setSelection = useStudioTimelineStore((store) => store.setSelection);
   const totalDurationMs = Math.max(1, timelineDurationMs(detail.segments));
   const {
@@ -226,22 +233,6 @@ export function TrackTimeline({
     selectRedaction(redactionId, additive);
   }
 
-  async function redactSelection() {
-    if (selection.ranges.length === 0) {
-      return;
-    }
-    await onCreateRedactions(redactionRangesFromSelection(selection.ranges));
-    clearSelection();
-  }
-
-  async function unredactSelection() {
-    if (viewModel.selectedRangeRedactions.length === 0) {
-      return;
-    }
-    await onUnredactRanges(redactionRangesFromSelection(selection.ranges));
-    clearSelection();
-  }
-
   function selectVisualFrameForInspection(
     frame: StudioVisualFrame,
     additive: boolean,
@@ -280,9 +271,20 @@ export function TrackTimeline({
         zoomPercent={viewModel.zoomPercent}
         onZoomIn={() => zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)}
         onZoomOut={() => zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)}
-        onRedactSelection={() => void redactSelection()}
-        onUnredactSelection={() => void unredactSelection()}
+        onRedactSelection={redactionMutation.redact}
+        onUnredactSelection={redactionMutation.unredact}
+        redactionPending={redactionMutation.pending}
       />
+      {redactionMutation.error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{redactionMutation.error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {redactionMutation.pending ? (
+        <p role="status" className="text-muted-foreground px-6 py-2 text-xs">
+          Updating redactions…
+        </p>
+      ) : null}
       <ScrollArea
         className="min-h-0 flex-1"
         scrollbars="both"
@@ -291,7 +293,7 @@ export function TrackTimeline({
         <div
           ref={contentRef}
           aria-label="Track timeline"
-          className="relative cursor-crosshair"
+          className="relative isolate cursor-crosshair"
           role="group"
           style={{
             width: TRACK_LABEL_WIDTH_PX + viewModel.timelineWidthPx,
@@ -327,7 +329,7 @@ export function TrackTimeline({
             }}
           >
             <div
-              className="bg-background sticky left-0 z-40 border-r border-b px-3"
+              className="bg-background sticky left-0 z-60 border-r border-b px-3"
               style={{ height: TRACK_RULER_HEIGHT_PX }}
             />
             <TimeRuler

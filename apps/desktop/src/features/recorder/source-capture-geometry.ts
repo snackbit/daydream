@@ -5,6 +5,9 @@ import type {
   RecorderSceneSource,
 } from '@daydream/shared';
 
+// Editor-only intent survives immutable draft copies; JSON stores output pixels.
+const outputScale = Symbol('outputScale');
+
 export function sourceDimensions(
   source: RecorderSceneSource,
   available: readonly CaptureSource[],
@@ -101,8 +104,9 @@ export function resizeSource(
   scale: number,
 ): RecorderSceneSource {
   const crop = croppedDimensions(source);
-  return {
+  const resized = {
     ...source,
+    [outputScale]: scale,
     rect: {
       x: 0,
       y: 0,
@@ -110,13 +114,29 @@ export function resizeSource(
       height: even(crop.height * scale),
     },
   };
+  return resized;
 }
 export function cropSource(
   source: RecorderSceneSource,
   rect: { x: number; y: number; width: number; height: number },
 ): RecorderSceneSource {
+  const sourceWidth = source.sourceWidth ?? 2,
+    sourceHeight = source.sourceHeight ?? 2;
+  const x = Math.max(0, Math.min(sourceWidth - 2, Math.round(rect.x))),
+    y = Math.max(0, Math.min(sourceHeight - 2, Math.round(rect.y)));
+  rect = {
+    x,
+    y,
+    width: Math.max(2, Math.min(sourceWidth - x, Math.round(rect.width))),
+    height: Math.max(2, Math.min(sourceHeight - y, Math.round(rect.height))),
+  };
   const previous = croppedDimensions(source);
-  const scale = previous.width > 0 ? source.rect.width / previous.width : 1;
+  const scale =
+    outputScale in source && typeof source[outputScale] === 'number'
+      ? source[outputScale]
+      : previous.width > 0
+        ? source.rect.width / previous.width
+        : 1;
   return resizeSource(
     {
       ...source,

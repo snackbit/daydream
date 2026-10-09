@@ -21,6 +21,12 @@ export function createRecorderWorkspaceStore() {
     ...createRecorderWorkspaceSceneActions(set, get),
     ...createRecorderWorkspacePreviewActions(set, get),
     ...createRecorderWorkspaceLifecycleActions(set, get),
+    invalidatePreferences: () =>
+      set({
+        ...recorderWorkspaceInitialState,
+        loadStatus: 'loading',
+        workspaceRevision: get().workspaceRevision + 1,
+      }),
   }));
 }
 export const useRecorderWorkspaceStore = createRecorderWorkspaceStore();

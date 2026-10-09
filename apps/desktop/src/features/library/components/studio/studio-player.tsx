@@ -129,10 +129,10 @@ export function StudioPlayer({
     state.playableSegments.indexOf(state.currentSegment) + 1;
 
   return (
-    <div className="flex h-full flex-col bg-black text-white">
+    <div className="bg-background text-foreground flex h-full min-h-0 flex-col">
       <div
         ref={(element) => actions.setFullscreenElement(element)}
-        className="relative min-h-0 flex-1 bg-black"
+        className="relative min-h-0 flex-1 bg-black text-white"
       >
         <video
           key={`${currentPlaybackSegment.segmentId}-${state.streamStartMs}-${state.streamRevision}-video`}
@@ -150,6 +150,8 @@ export function StudioPlayer({
             actions.handleVideoTimeUpdate(event.currentTarget)
           }
           onCanPlay={() => actions.handleVideoCanPlay()}
+          onWaiting={actions.handleBuffering}
+          onStalled={actions.handleBuffering}
           onEnded={() => actions.handleEnded()}
           onError={() => actions.handleVideoError()}
         />
@@ -160,6 +162,9 @@ export function StudioPlayer({
               actions.registerAudioElement(audio.trackId, element)
             }
             preload="metadata"
+            onCanPlay={actions.handleVideoCanPlay}
+            onWaiting={actions.handleBuffering}
+            onStalled={actions.handleBuffering}
             src={streamUrl(
               audio.url,
               state.streamStartMs,
@@ -241,7 +246,7 @@ export function StudioPlayer({
         ) : null}
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t border-white/10 bg-black/90 p-3">
+      <div className="bg-background text-foreground flex shrink-0 flex-col gap-4 border-t p-5 sm:p-6">
         <SegmentScrubber
           privacy={detail}
           currentTimelineMs={Math.min(
@@ -256,8 +261,8 @@ export function StudioPlayer({
             actions.handleTimelineInput(timelineMs)
           }
         />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               aria-label="Skip back"
               size="icon"
@@ -303,7 +308,7 @@ export function StudioPlayer({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               aria-label={state.isMuted ? 'Unmute' : 'Mute'}
               size="icon"

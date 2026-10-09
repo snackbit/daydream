@@ -1,4 +1,5 @@
 import type {
+  SaveCaptureSetupInput,
   AudioSource,
   AudioSourceRole,
   CaptureSource,
@@ -22,6 +23,9 @@ export interface RecorderWorkspaceState {
   desktopAudioSourceId: string | null;
   error: string | null;
   isDirty: boolean;
+  workspaceRevision: number;
+  invalidatePreferences: () => void;
+  reloadPreferences: (savedScene: RecorderScene | null) => Promise<void>;
   deleteSceneSource: (sceneSourceId: string) => void;
   load: () => Promise<void>;
   loadStatus: AsyncStatus;
@@ -46,7 +50,7 @@ export interface RecorderWorkspaceState {
   selectSceneSource: (sourceId: string | null) => void;
   selectedSceneSourceId: string | null;
   setDraftScene: (scene: RecorderScene) => void;
-  start: () => Promise<void>;
+  start: (setup?: SaveCaptureSetupInput) => Promise<void>;
   startPreview: (sceneId: string) => Promise<void>;
   status: RecorderStatus | null;
   stop: () => Promise<void>;

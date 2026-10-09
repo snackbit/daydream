@@ -7,6 +7,25 @@ impl RecorderManager {
         input: StartRecordingInput,
         timestamp_ms: u64,
     ) -> Result<PendingRecordingStart, RecorderError> {
+        if self
+            .lifecycle_background_work
+            .load(std::sync::atomic::Ordering::SeqCst)
+            || self
+                .forced_failure
+                .lock()
+                .map_err(|_| {
+                    lifecycle_error(
+                        "recorder_state_unavailable",
+                        "Recorder state is unavailable.",
+                    )
+                })?
+                .is_some()
+        {
+            return Err(lifecycle_error(
+                "recorder_cleanup_pending",
+                "Recorder cleanup must finish before starting another capture.",
+            ));
+        }
         let scene = storage
             .with_connection(|connection| storage::get_recorder_scene(connection, &input.scene_id))
             .map_err(|error| scene_or_storage_error(error, &input.scene_id))
@@ -50,6 +69,7 @@ impl RecorderManager {
             timing: None,
         };
         let active = ActiveRecording {
+            capture_run_id: Uuid::now_v7().to_string(),
             video_sources: segment_input.video_sources.clone(),
             active_segment: Some(segment.clone()),
             canvas_height: segment_input.canvas_height,
@@ -134,11 +154,22 @@ impl RecorderManager {
                     &pending.active.video_sources,
                     pending.segment.started_at_ms as i64,
                 )?;
+                transaction.execute(
+                    "UPDATE recording_segments SET capture_run_id=?2 WHERE id=?1",
+                    rusqlite::params![pending.segment.id, pending.active.capture_run_id],
+                )?;
                 storage::save_segment_video_streams(
                     &transaction,
                     &pending.segment.id,
                     &pending.active.video_sources,
                     pending.active.fps,
+                )?;
+                super::capture_provenance::persist_segment_provenance(
+                    &transaction,
+                    &pending.active,
+                    &pending.segment,
+                    &pending.segment.id,
+                    pending.segment.started_at_ms,
                 )?;
                 transaction.commit()
             })

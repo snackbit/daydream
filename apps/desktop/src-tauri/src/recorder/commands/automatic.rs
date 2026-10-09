@@ -89,7 +89,7 @@ pub(crate) fn request_auto_resume<R: tauri::Runtime>(app: &AppHandle<R>, recordi
             restore_paused_after_resume_failure(&app, &manager, &storage, pending.active.clone());
             return;
         }
-        let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
+        let mut media = match platform::start_live_segment(&pending.segment_input, prepared).await {
             Ok(media) => media,
             Err(error) => {
                 let _ = manager.fail_pending_segment(&storage, &pending, now_ms(), &error);

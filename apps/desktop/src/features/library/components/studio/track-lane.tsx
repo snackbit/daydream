@@ -169,7 +169,7 @@ export function TrackLane({
       />
       <div
         className={cn(
-          'bg-muted/60 group-hover/lane:bg-muted/80 relative cursor-pointer overflow-hidden border-b transition-colors',
+          'bg-muted/60 group-hover/lane:bg-muted/80 relative isolate z-0 cursor-pointer overflow-hidden border-b transition-colors',
           selectedLane && 'bg-accent/20',
         )}
         data-lane-content

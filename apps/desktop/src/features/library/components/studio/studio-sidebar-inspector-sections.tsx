@@ -6,6 +6,7 @@ import type {
   RecordingAiProcessingState,
 } from '@daydream/shared';
 import { FileText, ShieldOff, ShieldX } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatDuration } from '../../library-format';
+import { useSelectionRedactionMutation } from './redactions/use-redaction-mutation';
 import { redactionsIntersectingRanges } from './studio-redactions';
 import { EditableLaneFields, trackKindLabel } from './studio-sidebar-editing';
 import { MetadataRow, StudioSidebarSection } from './studio-sidebar-section';
@@ -257,6 +259,12 @@ export function StudioSidebarComponentSelection({
   ) => Promise<void>;
   selections: StudioTimeRangeSelection[];
 }) {
+  const mutation = useSelectionRedactionMutation({
+    ranges: selections,
+    onCreate: onCreateRedactions,
+    onUnredact: onUnredactRanges,
+    onClear: clearSelection,
+  });
   const intersectingRedactions = redactionsIntersectingRanges(
     detail.redactions,
     selections,
@@ -294,35 +302,31 @@ export function StudioSidebarComponentSelection({
         selections={selections}
       />
       <div className="grid gap-2">
+        {mutation.pending ? (
+          <p role="status" className="text-muted-foreground text-xs">
+            Updating redactions…
+          </p>
+        ) : null}
+        {mutation.error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{mutation.error}</AlertDescription>
+          </Alert>
+        ) : null}
         <Button
+          disabled={mutation.pending}
           type="button"
           variant="outline"
-          onClick={() => {
-            void onCreateRedactions(
-              selections.map((selection) => ({
-                endOffsetMs: Math.round(selection.endMs),
-                startOffsetMs: Math.round(selection.startMs),
-                trackIds: selection.laneIds,
-              })),
-            ).then(clearSelection);
-          }}
+          onClick={mutation.redact}
         >
           <ShieldX data-icon="inline-start" />
           Redact
         </Button>
         {intersectingRedactions.length > 0 ? (
           <Button
+            disabled={mutation.pending}
             type="button"
             variant="outline"
-            onClick={() => {
-              void onUnredactRanges(
-                selections.map((selection) => ({
-                  endOffsetMs: Math.round(selection.endMs),
-                  startOffsetMs: Math.round(selection.startMs),
-                  trackIds: selection.laneIds,
-                })),
-              ).then(clearSelection);
-            }}
+            onClick={mutation.unredact}
           >
             <ShieldOff data-icon="inline-start" />
             Unredact

@@ -47,8 +47,17 @@ pub fn save_ocr_frame_result(
         .into_iter()
         .find(|segment| Some(segment.id.as_str()) == chunk.segment_id.as_deref())
         .ok_or(rusqlite::Error::InvalidQuery)?;
-    if recording_privacy::source_track_id(&segment, "video").as_deref()
-        != Some(input.source_track_id.as_str())
+    let streams = storage::segment_video_streams(&transaction, &segment)?;
+    let selected_source = streams.iter().find(|source| {
+        source.track_id == input.source_track_id
+            && match &chunk.track_id {
+                Some(track_id) => track_id == &source.track_id,
+                // Source-less chunks predate independent video streams. They
+                // may address only the legacy composite, never a UUID source.
+                None => source.source_id.is_none(),
+            }
+    });
+    if selected_source.is_none()
         || input.frame_timestamp_ms < chunk.start_offset_ms.unwrap_or(i64::MAX)
         || input.sample_end_ms > chunk.end_offset_ms.unwrap_or(-1)
     {

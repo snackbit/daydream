@@ -1,5 +1,347 @@
 # Refactoring Tasks
 
+## Completed: review privacy ownership, recovery outputs and timeline consumers
+
+Recall indexing now acquires a source recording's processing lease before
+eligibility validation and retains it through embedding completion, including
+provider waits. Native regressions reproduced missing ownership and validation
+before an in-flight privacy mutation.
+
+Migration 29 appends nullable pending-output identity to the recovery ledger.
+Recovery persists that identity before creating copies; successful publication
+transfers ownership transactionally. Failed publication/repair removes files
+only after media writers stop. Startup, deletion and retention clean tracked
+unpublished copies before the original ledger can cascade away. Cleanup errors
+retain retryable ownership; published copies and symbolic links are refused.
+Cleanup checks media ownership even when entered through deletion or retention;
+an active or quarantined writer leaves its copy and ledger entry intact until
+exit. The real synthetic media-worker regression reproduced premature cleanup
+before the guard, then passed with deferred cleanup and a successful retry.
+Legacy rows remain compatible, but previously orphaned directories without
+recorded identity cannot be safely attributed or removed automatically.
+
+Studio uses segment timeline bounds for recall links and OCR/VLM navigation;
+captured duration continues to exclude real pauses. Search error/invalidation
+recovery resets pagination to page one rather than repeatedly sending a stale
+cursor. Focused timeline and real-route pagination regressions failed first,
+then passed. Existing segment contracts and the shared timeline helper avoid
+adding IPC fields or duplicate duration rules. New cleanup code has a focused
+directory; existing dense Studio modules gain no additional production files.
+The focused native privacy/recovery checks passed all 19 scenarios. The settled
+JavaScript gate passed lint, all consumer typechecks and 581 tests (571 desktop,
+9 shared and 1 FFmpeg); immutable dependency installation also passed. Native
+format/Clippy passed without warnings, followed by 572 unit tests and 3
+resource-staging tests, with 4 optional benchmark/display tests ignored. Fresh
+production assets and synthetic Tauri/WebKit initial, restart and keyboard
+journeys passed, including capture and advancing playback. Artifacts are in
+`/tmp/daydream-native-e2e.EsC80j`. The maintained-source diff check passed;
+vendored upstream whitespace remains unchanged. There are no new UI layouts or
+IPC fields in these review fixes. Real devices and portal permissions were not
+manually retested; no user media or authored data was modified.
+
+## Completed: capture startup runtime ownership
+
+Start opens the portal on an async command, but synchronous startup error
+cleanup calls `block_on` on that same async worker. The nested runtime panic
+prevents an IPC reply and leaves the UI showing Starting. Preflight, media
+startup, Resume and preview startup share this boundary. Preflight now awaits
+portal cleanup, and synchronous capture/preview setup runs on an awaited
+blocking worker. Manual and automatic Resume await that same startup boundary.
+The original startup error reaches existing lifecycle/UI recovery; an unexpected
+setup-worker failure returns a typed error instead of stranding IPC.
+
+A focused native regression reproduced the supplied nested-runtime panic before
+the fix, then passed with completed cleanup and the original startup error.
+Existing browser failure/retry lifecycle coverage passed (4 tests). Native
+format/Clippy passed without warnings; the settled native suite passed 564 unit
+tests and 3 resource-staging tests, with 4 optional benchmark/display tests
+ignored. Fresh production build and synthetic Tauri/WebKit initial, restart and
+keyboard journeys passed, including Save/Start/Pause/Resume/Stop and playback.
+Artifacts are in `/tmp/daydream-native-e2e.CFTRyi`. No IPC, dependency or
+storage-format changes were needed. Real portal/device startup was not manually
+retested; the running native app must restart to load the fix. The underlying
+startup error was masked by the panic and may still require recovery once shown.
+
+## Completed: sparse capture audio, OCR identity and timeline annotations
+
+Confirmed capture backpressure at 0.2 FPS drops both audio sources before the
+next video frame. Synthetic live input reproduced the gaps; a ten-second encoded
+audio queue eliminated them. Timestamp-free PCM extraction also compresses the
+missing time in waveforms and transcription. OCR persistence rejects UUID video
+tracks through a legacy identity comparison. Timeline transcript controls exceed
+their strip height, and annotation layers paint over sticky headers.
+
+Encoded audio queues now cover two video intervals with an independent 16 MiB
+byte cap; raw/video queues and recording FPS stay unchanged. A shared FFmpeg
+filter retains timestamp gaps and pads/trims at the requested end before output
+seeking. Waveform bins use fixed time boundaries, including partial final bins;
+cache version 3 invalidates compressed timing. Single-bin waveforms paint a
+visible area. OCR uses authoritative segment source mappings and keeps legacy,
+selected-source, attempt, cancellation and redaction validation.
+
+Transcript strips now fit two lines inside taller audio lanes. Opaque sticky
+headers and isolated annotation content prevent OCR/focus markers bleeding
+through while scrolling. Browser coverage includes light/dark desktop/narrow,
+hover/selection, transcript inspection and short waveform rendering.
+
+The settled JavaScript gate passed lint, all consumer typechecks and 579 tests
+(569 desktop, 9 shared and 1 FFmpeg). Focused native extraction, fixed-bin,
+queue-budget and UUID/privacy checks passed. The final native format/Clippy gate
+passed without warnings, followed by 563 unit tests and 3 resource-staging tests
+(3 opt-in performance benchmarks and 1 display/icon integration test remain
+ignored).
+The 37-second live production-writer test confirms both audio tracks retain
+packet continuity across the actual storage boundary; sparse FFmpeg run/tail
+tests also passed. Fresh production assets and synthetic Tauri/WebKit initial,
+restart and keyboard journeys passed; artifacts are in
+`/tmp/daydream-native-e2e.WSZrrm`. The first full JS run exposed lazy-route and
+dialog-close synchronization races; explicit observable browser waits fixed
+both, and their focused workflows passed before the gate.
+
+No existing media or authored data is rewritten. Missing captured samples cannot
+be recovered; previous generated transcripts are not automatically regenerated.
+Real PulseAudio devices/portal permissions require a manual check after restart.
+
+Source structure: new live-capture and visual tests are grouped under focused
+test directories. Existing `track-timeline.tsx` (424 lines) and playback `http.rs`
+(414 lines) remain cohesive composition/streaming owners; these changes alter
+layout classes and the shared filter call, without adding another responsibility.
+The existing dense Studio and media-writer module directories remain follow-up
+navigation debt; no additional production module was added to either.
+
+## Completed implementation: Days, crop editor and continuous playback
+
+Readiness feedback follow-up: manual checks now expose an in-flight state and a
+timestamped completion even when the returned status is unchanged. Existing
+results remain visible during refresh, duplicate clicks are blocked, and failures
+retain a visible retry path. Refresh metadata follows the shared read request's
+ownership and privacy fences. Focused browser checks passed for completion,
+failure/recovery and existing Settings/Recall privacy workflows (24 tests).
+The expanded focused check passed 32 tests, including all ten picker layouts;
+readiness screenshots were reviewed at desktop and narrow widths in both themes.
+Visual cases now have individual test ownership, and the first lazy-route review
+control uses the browser's retrying visible assertion instead of a one-second DOM
+wait. The settled `yarn check` passed lint, all consumer typechecks and 574 tests
+(564 desktop, 9 shared and 1 FFmpeg). This follow-up changes no native commands or
+shared IPC contracts; native/device journeys were not repeated.
+
+Capture metadata now supplies day recordings and durations independently of
+summary generation. Days retain chronological pagination and source links.
+Start saves its reviewed setup under native lifecycle ownership; durable Stop
+completion drives Studio navigation. Preview demand and crop coordinates are
+separate from the portal session and recording FPS.
+
+Migration 28 adds nullable capture-run identity. Playback groups compatible
+fragments without changing original media, owns private concat manifests with
+its subprocesses, and aligns independent streams to one transport clock.
+
+Risk coverage: unit tests protect source-coordinate transforms, preview bounds,
+counter warm-up and drift correction; browser journeys cover capture setup,
+failure recovery and useful days without summaries; native tests cover metadata
+timing, dependency retry ownership, migration compatibility and synthetic
+two-track audio continuity past rollover. Privacy reads use current eligibility;
+all automated media is synthetic. Durable run identity owns continuity for new
+recordings even when fragment wall-clock metadata drifts; older recordings retain
+the conservative 50 ms compatibility limit.
+
+Verification completed:
+
+- `yarn install --immutable` and `yarn check`: passed (553 desktop, 9 shared,
+  and 1 FFmpeg JavaScript tests; lint and all consumer typechecks passed).
+- `yarn rust:fmt`, `yarn rust:clippy`, and locked native tests: passed
+  (557 tests and 3 resource-staging tests; 4 existing tests ignored).
+- The additional sparse-video/two-track rollover scenario passes for both PCM
+  and Opus, including sample continuity through 30 seconds and the final video
+  frame through the audio tail.
+- `yarn test:dev-watch`: passed. `yarn test:e2e:native`: passed after a fresh
+  frontend/custom-protocol native build, with initial, restart and keyboard
+  phases; Stop opens Studio only after completion and WebKit decodes, plays,
+  advances and pauses the saved synthetic media.
+- Light/dark desktop and narrow Days, Day and crop workflows passed; their
+  synthetic screenshots were reviewed. The browser gate logs Chromium resize
+  observer notifications during layout checks without failing its assertions.
+
+Existing production owners reviewed above 400 physical lines remain the playback
+controller (428), Studio composition (404), Library overview controller (440),
+native Library commands (468), native day projection (448) and generation/index
+worker (488). They retain transport, feature composition, listing effects,
+command adaptation, storage projection and queue coordination responsibilities,
+respectively; new crop math, decoding, run grouping and recording rows have
+separate owners. Recorder, Studio, recall, playback-server and storage directories
+retain their established multi-file ownership; this change adds focused siblings
+rather than a new global abstraction or catch-all module.
+No personal media was used. Stored feedback and physical fragment metadata remain
+compatible. Real portal/device capture and packaged hardware behavior still need
+manual verification.
+
+## Completed Studio thumbnails and timeline correction
+
+- [x] Thumbnail extraction selects the frame visible at the requested millisecond
+      rather than seeking forward to a later sample. The final video sample is
+      held through a longer audio tail; streams remain independently mapped.
+- [x] JPEG generation scales before buffering, emits one image and bounds decoder,
+      filter and encoder threads. Existing session cancellation/cache ownership
+      remains in the playback service.
+- [x] Theme-aware seek progress, a continuous player outline, and per-lane opaque
+      hatch masks with visible selection labels replace the low-contrast styling.
+      Redaction selection/resizing and media masking retain their original policy.
+- [x] Failed image loads have an explicit state; this is secondary to the actual
+      native extraction fix, not a substitute for generating thumbnails.
+
+The real-FFmpeg regression uses synthetic video samples at 0 and 5 seconds, two
+video streams and audio lasting 12 seconds. It verifies samples before, exactly
+at and after the second frame, including 9/11-second thumbnails, without future
+frames appearing early. The original extraction was observed failing this case.
+All 16 playback native tests and 97 affected browser tests pass. Light/dark
+seekbar and error-overlay contrast checks and screenshots were reviewed; the
+final two-theme checks pass. Desktop typecheck and native Clippy pass.
+The final workspace gate passes 545 JavaScript tests (535 desktop, nine shared,
+one FFmpeg); the full native gate passes 550 tests and three staging tests, with
+the four existing opt-in checks excluded. The production desktop build passes.
+Evidence: `/tmp/daydream-thumbnail-native.log`, `/tmp/daydream-thumbnail-clippy.log`,
+`/tmp/daydream-studio-verified-browser.log`, `/tmp/daydream-studio-final-visual.log`,
+`/tmp/daydream-studio-js-gate.log`, `/tmp/daydream-studio-native-gate.log`,
+and `/tmp/daydream-studio-build.log`.
+Tests use synthetic media and do not inspect or modify personal recordings.
+
+## Completed feedback upgrade
+
+Approved scope and owners: [feedback implementation](feedback-upgrade-implementation.md).
+
+Media worker ownership, lock investigation and fixture limits are recorded in
+[recorder media validation](recorder-media-worker-validation.md).
+
+- [x] Isolated writer, bounded stop, truthful status and explicit partial recovery.
+- [x] Atomic embedding admission, durable pause/resume and shared transfer feedback.
+- [x] Shared dropdown/disclosure controls, local-icon picker and concise errors.
+- [x] Exclusive, drained, journaled reset/clear/factory maintenance.
+- [x] Recording-first processing groups, current lanes and scoped retry.
+- [x] Native failure tests, user workflows and final integrated gates.
+
+Verification: immutable install and `yarn check` pass (532 desktop tests, nine
+shared and one FFmpeg). Native formatting and warning-free Clippy pass. The full
+native run passed 548 tests plus three staging integration tests; four tests were
+explicitly excluded (three performance benchmarks and the GTK display smoke).
+After that run, a real GTK smoke exposed nullable executable metadata in installed
+desktop entries. The focused three-test icon regression gate and the real GTK
+PNG smoke both pass after the narrow adapter correction; Clippy remains clean.
+
+Fresh-build Tauri journeys pass all 11 unique stories / 13 phase entries:
+recording start/pause/resume/stop, decoded playback, settings persistence,
+two-confirmation preference reset with retained playable media, and trusted native
+keyboard input. The pointer driver now observes real pointer gestures for Radix
+Select, which suppresses compatibility mouse events; reset assertions resolve
+the current labeled checkbox after the preferences UI remounts.
+
+Evidence: `/tmp/daydream-feedback-js-verified.log`,
+`/tmp/daydream-feedback-native-fixed.log`,
+`/tmp/daydream-feedback-icon-clippy.log`,
+`/tmp/daydream-feedback-icon-verified.log`,
+`/tmp/daydream-feedback-e2e-final.log`, and native UI artifacts
+`/tmp/daydream-native-e2e.Tc2NFC/`. Tests use isolated synthetic content and never
+clear the user's library or Secret Service key. The existing occasional
+ResizeObserver teardown warning remains visible in the browser log; all workflow
+tests pass and no suppression was added. Exact Pulse device/server reproduction,
+real device permissions and destructive factory reset against a live keyring
+remain outside the executed checks. See [writer evidence and limits](recorder-media-worker-validation.md).
+
+## Dev rebuild-loop correction
+
+- [x] Generated embedding resources use content-aware staging instead of being
+      overwritten on every build; executable permissions remain intact.
+- [x] Tauri `.taurignore` excludes only generated embedding resources, preserving
+      source-triggered rebuilds.
+- [x] Real CLI watcher coverage reproduces unignored resource-triggered rebuilds,
+      verifies ignored writes stay quiet and confirms source edits still rebuild.
+- [x] Scoped native build checks for this correction.
+
+`yarn test:dev-watch` runs against temporary synthetic projects without launching
+the app or accessing user data. Filesystem staging scenarios cover unchanged
+timestamps, changed content, missing sources and executable permissions.
+Formatting, warning-free Clippy, the CLI watcher scenarios and all three Cargo
+staging integration tests pass. The restricted native run failed loopback tests;
+the authorized run passed 491 tests with one media-rotation failure. That remaining
+case passed when isolated. No media-writer code changed for this correction; the
+full-run timing-sensitive failure remains recorded rather than claimed green.
+Evidence: `/tmp/daydream-dev-watch-final.log`, `/tmp/daydream-staging-cargo-tests.log`,
+`/tmp/daydream-watch-native-clippy.log`, `/tmp/daydream-watch-native-authorized.log`
+and `/tmp/daydream-watch-media-isolated.log`.
+
+## Completed implementation: full redesign and recall workspace
+
+- [x] Semantic tokens, shadcn primitives, shell and saved appearance compatibility.
+- [x] Spacious Capture/Studio and existing screen workflows in both themes.
+- [x] Recall contracts, provider settings and atomic credentials.
+- [x] Canonical evidence, stable segment bases, Day aggregation and privacy lineage.
+- [x] Managed local/API embeddings, model packaging and actual model validation.
+- [x] Hybrid search, bounded indexing and cancellation/performance proof.
+- [x] Grounded automatic Day interpretation, local tasks/corrections/review state.
+- [x] Real Library Days/Search/Day routes and source-linked Studio inspection.
+- [x] Integration, migration/deletion/invalidation and final native/JS/build gates.
+
+Approved decisions and coordination boundaries are recorded in
+[recall redesign implementation](recall-redesign-implementation.md).
+
+The redesign baseline `yarn check` passes all workspace lint/typechecks and 465 tests: 455 desktop,
+9 shared and 1 FFmpeg. Immutable install and the desktop production build pass.
+The final native gate passes formatting, warning-free all-target Clippy and 490
+tests; three explicit performance benchmarks are excluded from normal test runs.
+The measured SQLite scan and full-search runs are recorded separately; the redundant
+isolated scorer benchmark was not run. The combined gate includes both
+Whisper and embeddings after repairing shared CMake output-directory contamination.
+
+Actual E5/BGE CPU tokenizer/vector parity was checked against pinned official
+weights across nine fixtures, including English/German and literal special tokens.
+Both models passed actual Vulkan parity and Auto/CPU fallback on the tested RTX4090.
+The optimized full native 100k-source search benchmark measured 770 ms warm with
+856 KiB incremental RSS, excluding query-model inference; the separately measured
+warm E5 CPU query p95 is 5.76 ms. A 1m-vector scan completed without silent source
+caps, within the bounded-memory check. Unoptimized 100k scan timing was 1.946 s.
+
+Browser workflow proofs cover both themes at 1440/1024/768/390/320 pixels. Computed
+essential-text contrast and control/focus contrast pass; keyboard and zoom-equivalent
+reflow were exercised. Full browser collections still emit a small number of browser
+ResizeObserver notifications during teardown; these were not suppressed and did
+not fail Vitest. Focused layout, privacy and keyboard gates are warning-free.
+Real recording-device, native WebKit zoom and distribution-installer checks remain
+operator checks. No ambient capture or user database was used for verification.
+
+## Completed follow-up: production user journeys
+
+- [x] Inventory production controls and define user stories by feature owner.
+- [x] Capture setup/lifecycle/recovery: 40 focused browser checks pass.
+- [x] Settings/startup, Processing, Notifications and Diagnostics: 26 new stories pass.
+- [x] Studio mutation, media, keyboard and selection-race journeys.
+- [x] Library/Recall routed journeys and React lazy-loading regression.
+- [x] Checked-in native UI driver, synthetic recording and process-restart proof.
+- [x] Combined final `yarn test:e2e` gate after all changes settle.
+
+The suite and external boundaries are recorded in
+[production user stories](user-story-validation.md). Reproduced regressions cover
+Capture command failures unmounting controls, notification promise handling,
+protected-window label associations, initial Settings loading without Retry,
+Studio mutation error/retry states, and late redaction selection ownership.
+The running native app also reproduced enabled Resume during pause finalization;
+Capture now shares the store/global lifecycle lock. The synthetic adapter now
+honors independent source identities/dimensions and configured sparse cadence.
+Protected-window field components have focused owners; their existing 525-line
+parent still owns rule editing and picker orchestration. This follow-up does not
+change native commands or shared payloads.
+
+The final combined command exits 0 with 522 JavaScript tests (512 desktop, 9 shared,
+1 FFmpeg), 492 native tests, warning-free Clippy, formatting and production build.
+It adds 57 browser journeys and passes 11 unique real-app stories across 13 phase
+entries. Actual media playback and process-restart persistence use the real native
+services. Keyboard uses matching official WebKitWebDriver; three isolated runs
+and the complete fresh suite pass. Evidence: `/tmp/daydream-production-e2e-verified.log`
+and `/tmp/daydream-native-e2e.3eXHeR/`.
+
+Three explicit performance benchmarks remain outside ordinary test runs. The
+combined browser run logs one ResizeObserver teardown error/console pair without
+failing Vitest; it was not suppressed. Private headless D-Bus emits missing systemd
+service notices. Real device permissions, native zoom and installers remain operator
+checks, and no ambient capture or user database was used.
+
 ## Source capture review follow-up
 
 - [x] Redaction create/unhide use the same source-aware track mapping as detail

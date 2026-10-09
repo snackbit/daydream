@@ -75,7 +75,7 @@ export function RecordingInspectorSummary({
             />
           </dl>
         ) : (
-          <p className="text-muted-foreground text-[10px]">
+          <p className="text-muted-foreground text-xs">
             No processing job status is available.
           </p>
         )}
@@ -93,7 +93,7 @@ export function RecordingInspectorSummary({
             ))}
           </div>
         ) : (
-          <p className="text-muted-foreground text-[10px]">
+          <p className="text-muted-foreground text-xs">
             No source-specific transcription status is available.
           </p>
         )}
@@ -116,7 +116,7 @@ function TranscriptionSourceSummary({
 
   return (
     <section className="grid gap-1.5 py-2 first:pt-0 last:pb-0">
-      <h4 className="text-[10px] font-medium">{sourceName}</h4>
+      <h4 className="text-xs font-medium">{sourceName}</h4>
       <dl className="space-y-1">
         <InspectorField label="Status" value={track.statusLabel} />
         <InspectorField

@@ -37,6 +37,7 @@ pub(crate) async fn resize_library_redaction(
     input: ResizeLibraryRedactionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-redaction")?;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|_| "Recording could not be read.")?;

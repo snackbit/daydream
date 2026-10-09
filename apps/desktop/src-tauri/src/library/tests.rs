@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::debug::{debug_data_for_recording, ensure_debug_tools_enabled};
 use super::waveforms::{
-    parse_volumedetect_max_amplitude, waveform_bins, waveform_peak_rms_bins, waveform_tile_bin_ms,
-    waveform_tile_ranges_for_segment, waveform_tile_sample_count, waveforms_for_recording,
+    parse_volumedetect_max_amplitude, waveform_bins, waveform_peak_rms_time_bins,
+    waveform_tile_bin_ms, waveform_tile_ranges_for_segment, waveforms_for_recording,
 };
 use super::*;
 
@@ -515,18 +515,22 @@ fn waveform_bins_return_peak_buckets() {
 
 #[test]
 fn waveform_peak_rms_bins_return_native_amplitude_buckets() {
-    let (peak_samples, rms_samples) = waveform_peak_rms_bins(&[0.3, -0.4, 0.6, -0.8], 2);
+    let samples = [vec![0.3; 24], vec![-0.4; 24], vec![0.6; 24], vec![-0.8; 24]].concat();
+    let (peak_samples, rms_samples) = waveform_peak_rms_time_bins(&samples, 2, 1);
 
     assert_eq!(peak_samples, vec![0.4, 0.8]);
-    assert!((rms_samples[0] - 0.353_553_390_593_273_8).abs() < f64::EPSILON);
-    assert!((rms_samples[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < f64::EPSILON);
+    assert!((rms_samples[0] - 0.353_553_390_593_273_8).abs() < 1e-12);
+    assert!((rms_samples[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-12);
 }
 
 #[test]
-fn waveform_tile_sample_count_keeps_short_non_empty_tiles_visible() {
-    assert_eq!(waveform_tile_sample_count(10, 250, false), 2);
-    assert_eq!(waveform_tile_sample_count(10, 250, true), 1);
-    assert_eq!(waveform_tile_sample_count(1_000, 250, false), 4);
+fn waveform_time_bins_keep_short_tiles_visible_without_stretching_samples() {
+    assert_eq!(
+        waveform_peak_rms_time_bins(&vec![0.5; 480], 10, 250).0,
+        vec![0.5]
+    );
+    assert_eq!(waveform_peak_rms_time_bins(&[], 10, 250).0, vec![0.]);
+    assert_eq!(waveform_peak_rms_time_bins(&[], 1_000, 250).0.len(), 4);
 }
 
 #[test]
@@ -563,6 +567,7 @@ fn waveform_tile_bin_ms_tracks_visible_ms_per_pixel() {
 #[test]
 fn waveform_tile_ranges_follow_segment_timeline_offsets() {
     let segment = LibraryRecordingSegment {
+        capture_run_id: None,
         video_streams: Vec::new(),
         desktop_audio_stream_index: Some(1),
         duration_ms: Some(10_000),
@@ -688,6 +693,9 @@ fn recording_row(storage_dir: &Path) -> RecordingRow {
 
 fn segment_row(file_path: PathBuf, state: &str) -> RecordingSegmentRow {
     RecordingSegmentRow {
+        capture_run_id: None,
+        timeline_base_ms: None,
+        timeline_basis_version: None,
         desktop_audio_stream_index: Some(1),
         duration_ms: Some(4_000),
         ended_at_ms: Some(5_000),

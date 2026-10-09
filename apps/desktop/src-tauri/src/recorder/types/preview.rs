@@ -31,6 +31,8 @@ pub struct RecorderPreviewStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderPreviewFrame {
+    pub(crate) generation: u64,
+    pub(crate) sequence: u64,
     pub(crate) source_width: u32,
     pub(crate) source_height: u32,
     pub(crate) data_url: String,
@@ -39,4 +41,12 @@ pub struct RecorderPreviewFrame {
     pub(crate) source_id: String,
     pub(crate) timestamp_ms: u64,
     pub(crate) width: u32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecorderPreviewDemand {
+    pub scene_source_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub generation: u64,
 }

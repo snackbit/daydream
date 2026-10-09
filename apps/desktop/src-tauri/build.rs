@@ -3,9 +3,85 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "build_support/resource_staging.rs"]
+mod resource_staging;
+use resource_staging::copy_if_changed;
+
 fn main() {
     build_whisper_cpp();
+    build_embedding_worker();
     tauri_build::build()
+}
+
+fn build_embedding_worker() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let source = manifest_dir.join("embedding-worker");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("out dir"));
+    let install = cmake::Config::new(&source)
+        .out_dir(out.join("embedding-cpu"))
+        .define("DAYDREAM_MODEL_VALIDATION", "OFF")
+        .define("GGML_VULKAN", "OFF")
+        .build_target("install")
+        .build();
+    let name = if cfg!(target_os = "windows") {
+        "daydream-embedding-worker.exe"
+    } else {
+        "daydream-embedding-worker"
+    };
+    let worker = install.join("bin").join(name);
+    println!(
+        "cargo:rustc-env=DAYDREAM_EMBEDDING_WORKER={}",
+        worker.display()
+    );
+    // A resource binary remains independent of Whisper's ggml symbols.
+    let resources = manifest_dir.join("resources/embedding");
+    std::fs::create_dir_all(&resources).expect("create embedding resource directory");
+    copy_if_changed(&worker, &resources.join(name)).expect("stage embedding worker resource");
+    let gpu_name = if cfg!(target_os = "windows") {
+        "daydream-embedding-worker-vulkan.exe"
+    } else {
+        "daydream-embedding-worker-vulkan"
+    };
+    if cfg!(feature = "embedding-vulkan") {
+        let mut gpu_config = cmake::Config::new(&source);
+        gpu_config
+            .out_dir(out.join("embedding-vulkan"))
+            .define("DAYDREAM_MODEL_VALIDATION", "OFF")
+            .define("GGML_VULKAN", "ON")
+            .build_target("install");
+        if let Some(glslc) = env::var_os("DAYDREAM_VULKAN_GLSLC") {
+            gpu_config.define("Vulkan_GLSLC_EXECUTABLE", glslc);
+        }
+        let gpu_install = gpu_config.build();
+        let gpu = gpu_install.join("bin").join(name);
+        copy_if_changed(&gpu, &install.join("bin").join(gpu_name))
+            .expect("stage development Vulkan worker");
+        copy_if_changed(&gpu, &resources.join(gpu_name)).expect("stage Vulkan worker resource");
+    } else {
+        // A preceding feature-enabled build must not leak its optional binary
+        // into a later CPU-only package.
+        for stale in [install.join("bin").join(gpu_name), resources.join(gpu_name)] {
+            if stale.exists() {
+                std::fs::remove_file(stale).expect("remove stale Vulkan worker");
+            }
+        }
+    }
+    for (source, name) in [
+        ("vendor/llama.cpp/LICENSE", "LLAMA-LICENSE.txt"),
+        ("embedding-worker/JSON-LICENSE.txt", "JSON-LICENSE.txt"),
+        ("embedding-worker/E5-LICENSE.txt", "E5-LICENSE.txt"),
+        ("embedding-worker/SPIRV-LICENSE.txt", "SPIRV-LICENSE.txt"),
+    ] {
+        copy_if_changed(&manifest_dir.join(source), &resources.join(name))
+            .expect("stage embedding license");
+    }
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed=build_support/resource_staging.rs");
+    println!("cargo:rerun-if-env-changed=DAYDREAM_VULKAN_GLSLC");
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("vendor/llama.cpp").display()
+    );
 }
 
 fn build_whisper_cpp() {
@@ -14,6 +90,7 @@ fn build_whisper_cpp() {
     let header = whisper_dir.join("include/whisper.h");
     let ggml_include_dir = whisper_dir.join("ggml/include");
     let install_dir = cmake::Config::new(&whisper_dir)
+        .out_dir(PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("whisper"))
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("GGML_STATIC", "ON")
         .define("GGML_CCACHE", "OFF")

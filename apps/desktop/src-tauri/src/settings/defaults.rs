@@ -99,6 +99,7 @@ pub fn default_window_protection_settings() -> RecordWindowProtectionSettings {
 
 pub fn default_ai_settings() -> AiSettings {
     AiSettings {
+        recall: RecallSettings::default(),
         activity: AiActivitySettings {
             frame_deltas: AiActivitySourceSettings { enabled: true },
             keyboard: AiActivityWindowSettings {

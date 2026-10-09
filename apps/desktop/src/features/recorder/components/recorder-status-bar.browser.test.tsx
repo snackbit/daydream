@@ -32,8 +32,8 @@ test('recorder status bar renders idle recorder stats', async () => {
   render(<RecorderStatusBar />);
 
   expect(await screen.findByText('Recorder idle')).toBeDefined();
-  expect(screen.getByText('FPS --')).toBeDefined();
-  expect(screen.getByText('Capture cost --')).toBeDefined();
+  expect(screen.queryByText('FPS --')).toBeNull();
+  expect(screen.queryByText('Capture cost --')).toBeNull();
   expect(screen.getByLabelText('Recorder performance: Idle')).toBeDefined();
 });
 
@@ -42,7 +42,18 @@ test('recorder status bar reports unavailable stats fetches', async () => {
     new Error('Stats unavailable'),
   );
 
-  render(<RecorderStatusBar />);
+  render(
+    <RecorderStatusBar
+      session={{
+        status: { state: 'recording', finalization: null },
+        stats: null,
+        locked: false,
+        pause: vi.fn().mockResolvedValue(undefined),
+        resume: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+      }}
+    />,
+  );
 
   expect(await screen.findByText('Capture stats unavailable')).toBeDefined();
 });

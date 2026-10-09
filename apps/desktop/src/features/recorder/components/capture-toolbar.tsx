@@ -10,6 +10,7 @@ import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 import { getCaptureStartBlocker } from './capture-toolbar/start-blocker';
 
 export interface CaptureToolbarProps {
+  setupBlocker?: string | null;
   configurationLocked: boolean;
   isDirty: boolean;
   lifecycleLocked: boolean;
@@ -27,6 +28,7 @@ export interface CaptureToolbarProps {
 }
 
 export function CaptureToolbar({
+  setupBlocker,
   configurationLocked,
   isDirty,
   lifecycleLocked,
@@ -55,21 +57,29 @@ export function CaptureToolbar({
   const canShowStart =
     !isRecording && status?.state !== 'paused' && status?.state !== 'stopping';
   const startBlocker = canShowStart
-    ? getCaptureStartBlocker({
+    ? (setupBlocker ??
+      getCaptureStartBlocker({
         isDirty,
         lifecycleLocked,
         loadStatus,
         scene,
         status,
-      })
+      }))
     : null;
   const startDisabled = startBlocker !== null;
 
   return (
-    <div className="bg-background flex shrink-0 flex-col gap-1.5 border-b px-3 py-2">
+    <div className="bg-background flex shrink-0 flex-col gap-4 px-5 py-6 lg:px-8 lg:py-8">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h1 className="text-sm font-semibold">Capture</h1>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div>
+          <h1 className="text-[32px] font-light tracking-tight lg:text-4xl">
+            Capture
+          </h1>
+          <p className="text-muted-foreground mt-2 text-sm">
+            Choose your sources and shape what you record.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             className="gap-2"
             disabled={

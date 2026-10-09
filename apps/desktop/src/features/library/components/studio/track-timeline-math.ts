@@ -4,6 +4,7 @@ export const TRACK_LABEL_WIDTH_PX = 216;
 export const TRACK_RULER_HEIGHT_PX = 32;
 export const TRACK_LANE_HEIGHT_PX = 96;
 export const TRACK_DERIVED_LANE_HEIGHT_PX = 24;
+export const TRACK_TRANSCRIPTION_LANE_HEIGHT_PX = 48;
 export const TRACK_ZOOM_STEP = 1.25;
 export const TRACK_FOLLOW_EDGE_PX = 48;
 export const DEFAULT_TRACK_VIEWPORT_WIDTH_PX = 800;
@@ -177,6 +178,12 @@ export function intersectTimelineLaneIds({
 export function trackLaneHeightPxForKind(kind: string): number {
   if (kind === 'activity-focus') return 48;
   if (kind === 'video') return TRACK_LANE_HEIGHT_PX + 48;
+  if (kind === 'desktop-audio' || kind === 'microphone')
+    return (
+      TRACK_LANE_HEIGHT_PX +
+      TRACK_TRANSCRIPTION_LANE_HEIGHT_PX -
+      TRACK_DERIVED_LANE_HEIGHT_PX
+    );
   return kind.startsWith('activity-')
     ? TRACK_DERIVED_LANE_HEIGHT_PX
     : TRACK_LANE_HEIGHT_PX;

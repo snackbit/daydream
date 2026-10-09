@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import type { RecorderScene } from '@daydream/shared';
 import { errorMessage } from './recorder-error-utils';
 import { useRecorderWorkspaceStore } from './recorder-workspace-store';
-import { getCaptureSetup, saveCaptureSetup } from './source-capture-client';
+import {
+  getCaptureSetup,
+  saveCaptureSetup,
+  listenToCaptureSetupSaved,
+} from './source-capture-client';
 
 export function useSourceCaptureSetup() {
   const [defaults, setDefaults] = useState<{
@@ -16,6 +20,37 @@ export function useSourceCaptureSetup() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listenToCaptureSetupSaved((saved) => {
+      if (!active) return;
+      const state = useRecorderWorkspaceStore.getState();
+      if (
+        state.pendingLifecycleAction === 'start' &&
+        saved.scene?.id === state.scene?.id
+      ) {
+        useRecorderWorkspaceStore.setState({
+          scene: saved.scene,
+          isDirty: false,
+          saveStatus: 'ready',
+        });
+        setSavedDefaults({
+          fps: saved.fps,
+          videoBitrateKbps: saved.videoBitrateKbps,
+        });
+      }
+    })
+      .then((listener) => {
+        if (active) unlisten = listener;
+        else listener();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
   useEffect(() => {
     let active = true;
     void getCaptureSetup()

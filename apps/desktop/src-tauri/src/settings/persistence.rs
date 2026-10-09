@@ -32,6 +32,7 @@ fn apply_setting_row(
     row: &AppSettingRow,
 ) -> Result<(), AppSettingsError> {
     match row.key.as_str() {
+        "ai.recall" => settings.ai.recall = setting_value(row)?,
         "ai.vision.observationsEnabled" => {
             settings.ai.vision.observations_enabled = setting_value(row)?
         }
@@ -155,6 +156,7 @@ pub(super) fn settings_to_storage_inputs(
     timestamp_ms: i64,
 ) -> Result<Vec<SaveAppSettingInput>, AppSettingsError> {
     Ok(vec![
+        setting_input("ai.recall", &settings.ai.recall, false, timestamp_ms)?,
         setting_input(
             "debug.enabled",
             &settings.debug.enabled,

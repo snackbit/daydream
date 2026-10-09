@@ -14,9 +14,9 @@ export function DiagnosticCard({
   title,
 }: DiagnosticCardProps) {
   return (
-    <section className={cn('min-w-0 border-b pb-3', className)}>
-      <h2 className="text-xs font-semibold tracking-tight">{title}</h2>
-      <div className="mt-2">{children}</div>
+    <section className={cn('bg-muted rounded-panel min-w-0 p-6', className)}>
+      <h2 className="text-sm font-medium">{title}</h2>
+      <div className="mt-4">{children}</div>
     </section>
   );
 }
@@ -30,11 +30,11 @@ export interface HealthBlockProps {
 export function HealthBlock({ available, children, label }: HealthBlockProps) {
   return (
     <section
-      className="min-w-0 border-b pb-3"
+      className="bg-muted rounded-panel min-w-0 p-6"
       data-health={available ? 'available' : 'unavailable'}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="flex min-w-0 items-center gap-2 text-xs font-medium">
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-medium">
           {available ? (
             <CheckCircle2
               aria-hidden="true"
@@ -50,14 +50,14 @@ export function HealthBlock({ available, children, label }: HealthBlockProps) {
         </h3>
         <span
           className={cn(
-            'shrink-0 text-[10px]',
+            'shrink-0 text-xs',
             available ? 'text-muted-foreground' : 'text-destructive',
           )}
         >
           {available ? 'Available' : 'Unavailable'}
         </span>
       </div>
-      <dl className="mt-2 grid gap-1.5 text-sm">{children}</dl>
+      <dl className="mt-4 grid gap-3 text-sm">{children}</dl>
     </section>
   );
 }

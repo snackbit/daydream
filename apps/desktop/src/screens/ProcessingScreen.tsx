@@ -1,125 +1,117 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { BackgroundTask } from '@daydream/shared';
+import { useCallback, useState } from 'react';
+import type { RecordingProcessingLaneKind } from '@daydream/shared';
+import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useBackgroundTaskStore } from '@/features/processing/background-task-store';
-import { TaskDetailDialog } from '@/features/processing/components/task-detail-dialog';
-import { TaskRow } from '@/features/processing/components/task-row';
-import { taskNeedsAttention } from '@/features/processing/task-format';
+import { RecordingLaneDialog } from '@/features/processing/components/recording-lane-dialog';
+import { RecordingProcessingCard } from '@/features/processing/components/recording-processing-card';
+import { SharedProcessingWork } from '@/features/processing/components/shared-processing-work';
+import { useRecordingProcessingStore } from '@/features/processing/recording-processing-store';
+import { useRecordingProcessingSync } from '@/features/processing/use-recording-processing-sync';
 
-type Filter = 'all' | 'active' | 'attention' | 'history';
 export function ProcessingScreen() {
-  const tasks = useBackgroundTaskStore((state) => state.tasks);
-  const status = useBackgroundTaskStore((state) => state.status);
-  const error = useBackgroundTaskStore((state) => state.error);
-  const loading = useBackgroundTaskStore((state) => state.loading);
-  const refresh = useBackgroundTaskStore((state) => state.refresh);
-  const loadMore = useBackgroundTaskStore((state) => state.loadMore);
-  const nextCursor = useBackgroundTaskStore((state) => state.nextCursor);
-  const [filter, setFilter] = useState<Filter>('all');
-  const [selected, setSelected] = useState<BackgroundTask | null>(null);
-  const selectedTask = selected
-    ? (tasks.find((task) => task.id === selected.id) ?? selected)
-    : null;
-  useEffect(() => {
-    if (status === 'idle') void refresh();
-  }, [refresh, status]);
-  const handleRefresh = useCallback(() => void refresh(), [refresh]);
-  const handleLoadMore = useCallback(() => void loadMore(), [loadMore]);
-  const handleInspect = useCallback(
-    (task: BackgroundTask) => setSelected(task),
+  useRecordingProcessingSync();
+  const groups = useRecordingProcessingStore((state) => state.groups);
+  const counts = useRecordingProcessingStore((state) => state.counts);
+  const filter = useRecordingProcessingStore((state) => state.filter);
+  const setFilter = useRecordingProcessingStore((state) => state.setFilter);
+  const loading = useRecordingProcessingStore((state) => state.loading);
+  const status = useRecordingProcessingStore((state) => state.status);
+  const error = useRecordingProcessingStore((state) => state.error);
+  const nextCursor = useRecordingProcessingStore((state) => state.nextCursor);
+  const refresh = useRecordingProcessingStore((state) => state.refresh);
+  const loadMore = useRecordingProcessingStore((state) => state.loadMore);
+  const [selection, setSelection] = useState<{
+    recordingId: string;
+    kind: RecordingProcessingLaneKind;
+  } | null>(null);
+  const inspect = useCallback(
+    (recordingId: string, kind: RecordingProcessingLaneKind) =>
+      setSelection({ recordingId, kind }),
     [],
   );
-  const handleClose = useCallback(() => setSelected(null), []);
-  const handleFilterChange = useCallback((value: string) => {
-    if (
-      value === 'all' ||
-      value === 'active' ||
-      value === 'attention' ||
-      value === 'history'
-    )
-      setFilter(value);
-  }, []);
-  const active = tasks.filter(
-    (task) => task.status === 'running' || task.status === 'queued',
-  ).length;
-  const failed = tasks.filter(taskNeedsAttention).length;
-  const visible = tasks.filter(
-    (task) =>
-      filter === 'all' ||
-      (filter === 'active' &&
-        ['running', 'queued', 'paused'].includes(task.status)) ||
-      (filter === 'attention' && taskNeedsAttention(task)) ||
-      (filter === 'history' &&
-        ['succeeded', 'cancelled', 'completed-with-errors', 'failed'].includes(
-          task.status,
-        )),
+  const close = useCallback(() => setSelection(null), []);
+  const reload = useCallback(() => void refresh(), [refresh]);
+  const loadEarlier = useCallback(() => void loadMore(), [loadMore]);
+  const changeFilter = useCallback(
+    (value: string) => {
+      if (
+        value === 'all' ||
+        value === 'active' ||
+        value === 'attention' ||
+        value === 'history'
+      )
+        setFilter(value);
+    },
+    [setFilter],
   );
   return (
-    <section className="mx-auto flex max-w-6xl flex-col gap-4 p-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">Processing</h1>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Background work stays independent of recording and navigation.
-          </p>
-        </div>
-        <Button
-          disabled={loading}
-          onClick={handleRefresh}
-          size="sm"
-          variant="outline"
-        >
-          Refresh
-        </Button>
-      </header>
-      <div className="flex flex-wrap gap-x-6 gap-y-2 border-y py-3 text-sm">
-        <span>{active} active or queued</span>
-        <span>{failed} need attention</span>
-        <span className="text-muted-foreground">
-          Completed results remain available
-        </span>
+    <PageLayout>
+      <PageHeader
+        title="Processing"
+        description="Follow each recording’s processing lanes and recover affected sections."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            onClick={reload}
+          >
+            Refresh
+          </Button>
+        }
+      />
+      <div className="text-muted-foreground flex flex-wrap gap-x-6 gap-y-1 text-sm">
+        <span>{counts.active} recordings active or queued</span>
+        <span>{counts.attention} recordings need attention</span>
       </div>
-      <Tabs value={filter} onValueChange={handleFilterChange}>
-        <TabsList className="rounded-none">
-          <TabsTrigger value="all">All work</TabsTrigger>
+      <Tabs value={filter} onValueChange={changeFilter}>
+        <TabsList className="h-auto max-w-full flex-wrap justify-start">
+          <TabsTrigger value="all">All recordings</TabsTrigger>
           <TabsTrigger value="active">Active</TabsTrigger>
           <TabsTrigger value="attention">Needs attention</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
       </Tabs>
       {error ? (
-        <div role="alert" className="text-destructive border p-3 text-sm">
+        <p role="alert" className="text-destructive text-sm">
           {error}
-        </div>
+        </p>
       ) : null}
-      {status === 'loading' && !tasks.length ? (
+      {status === 'loading' && !groups.length ? (
         <p role="status" className="text-muted-foreground text-sm">
-          Loading processing activity…
+          Loading recording activity…
         </p>
       ) : null}
-      {status === 'ready' && !visible.length ? (
-        <p className="text-muted-foreground border p-4 text-sm">
-          No processing work in this view.
+      {status === 'ready' && !groups.length ? (
+        <p className="text-muted-foreground bg-card rounded-panel p-4 text-sm">
+          No recordings in this view.
         </p>
       ) : null}
-      {visible.length ? (
-        <ul aria-label="Background tasks" className="border">
-          {visible.map((task) => (
-            <TaskRow key={task.id} task={task} onInspect={handleInspect} />
+      {groups.length ? (
+        <ul aria-label="Recording processing" className="space-y-3">
+          {groups.map((group) => (
+            <RecordingProcessingCard
+              key={group.recordingId}
+              group={group}
+              onInspect={inspect}
+            />
           ))}
         </ul>
       ) : null}
       {nextCursor ? (
-        <Button disabled={loading} onClick={handleLoadMore} variant="outline">
-          Load earlier work
+        <Button variant="outline" disabled={loading} onClick={loadEarlier}>
+          Load earlier recordings
         </Button>
       ) : null}
-      <TaskDetailDialog
-        key={selected?.id ?? 'closed'}
-        task={selectedTask}
-        onClose={handleClose}
+      <SharedProcessingWork />
+      <RecordingLaneDialog
+        key={
+          selection ? `${selection.recordingId}:${selection.kind}` : 'closed'
+        }
+        selection={selection}
+        onClose={close}
       />
-    </section>
+    </PageLayout>
   );
 }

@@ -30,6 +30,12 @@ pub(crate) struct LivePortalStream {
 }
 
 impl LivePortalSession {
+    pub(crate) async fn close(self, context: &'static str) -> Result<(), RecorderError> {
+        let (fd, session) = self.into_fd_and_session();
+        drop(fd);
+        close_portal_session(&session, context).await
+    }
+
     pub(crate) fn close_blocking(self, context: &'static str) -> Result<(), RecorderError> {
         let session = self.session;
         drop(self.fd);

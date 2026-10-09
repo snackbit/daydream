@@ -33,6 +33,14 @@ then turns that evidence into a timeline you can review and process locally.
 - Optional OpenAI-compatible remote transcription and vision endpoints.
 - Atomic provider/settings saves, anonymous Vision endpoints and a generated-image
   Vision test. Studio can select a video source or show a synchronized grid.
+- A review-first Days library, factual capture coverage, cited AI interpretations,
+  editable local tasks, corrections and review history.
+- Local text and semantic search over eligible OCR and both transcript tracks,
+  with links to the exact source in Studio.
+- Managed multilingual E5 and English BGE embedding models on CPU or optional
+  Vulkan, plus separately enabled OpenAI-compatible embedding and generation APIs.
+- A shared warm light/dark design system, responsive workspace controls and a
+  persistent recording strip. New installations start in light mode.
 - Rust-owned SQLite storage with embedded migrations.
 
 ## Recorded by Daydream
@@ -61,6 +69,10 @@ that data on the local machine.
 - Vision OCR sends original full-frame images only when selected and configured;
   it is independent of screen-observation processing. Existing OCR data is
   reconstructed locally without an automatic remote request.
+- Remote embeddings and Day generation each require their own enabled profile;
+  selecting Vision does not enable those uploads. Local feedback stays local.
+- Recall results, prompts and vectors retain source lineage. Changed redactions
+  withhold affected interpretations and tasks, including uncited prompt inputs.
 - Recording state stays visible and user-controlled.
 
 The codebase treats deletion and redaction as data-model concerns, not visual
@@ -71,8 +83,11 @@ downstream cleanup path equally complete.
 
 - Development and real capture testing currently focus on Linux, especially KDE
   Plasma on Wayland. Windows and macOS capture adapters are not implemented.
-- The searchable day index, semantic search, daily digest, task extraction, and
-  cited question answering are planned work.
+- Day interpretations and tasks require a configured text-generation endpoint.
+  They remain proposals for review; cited conversational question answering is
+  still planned work.
+- Ambiguous legacy source timing is excluded from timed recall until repaired.
+  GPU embeddings require a feature-enabled build and compatible Vulkan runtime.
 - There is no stable installer, automatic updater, or supported release channel.
 - Some Linux capabilities depend on desktop portal, PipeWire, GStreamer,
   Tesseract, input-device permissions, and compositor support.
@@ -116,6 +131,16 @@ Settings select the OCR engine separately from screen observations. Retry keeps 
 job's pinned configuration; explicit OCR reprocessing uses current settings without
 rerunning audio. See [OCR document behavior](docs/ocr-documents-design.md) for schema,
 legacy reconstruction, provider failure and privacy details.
+
+Recall indexes current eligible OCR and transcript evidence locally, combining
+FTS5 text retrieval with normalized embeddings. Long documents retain bounded,
+source-linked passages. Day generation runs after a five-minute quiet period,
+at most every fifteen minutes while recording; explicit regeneration remains
+available. Follow-ups stay inside Daydream and never execute external actions.
+In AI/LLM Settings, choose/download a local embedding model or explicitly enable
+an embedding API, then separately configure generation if wanted.
+See [redesign and recall behavior](docs/recall-redesign-implementation.md) and
+[embedding runtime](docs/embedding-runtime.md) for model pins, validation and limits.
 
 ## Development
 
@@ -187,6 +212,12 @@ CARGO_BUILD_JOBS=2 COREPACK_HOME=/tmp/corepack corepack yarn rust:test -- --test
 `check` covers JavaScript lint, typechecks and tests; native checks are separate.
 See the [validation map](docs/agent-validation.md) for focused commands,
 formatting, worker budgets and Playwright/loopback prerequisites.
+
+`COREPACK_HOME=/tmp/corepack corepack yarn test:e2e` runs the combined gates and
+the isolated native UI journeys. It builds fresh assets, uses synthetic capture
+through the real media writer, and checks settings across a process restart.
+See [production user stories](docs/user-story-validation.md) for control coverage,
+failure/recovery scenarios and the device boundaries that still need operator checks.
 
 ## Project documents
 

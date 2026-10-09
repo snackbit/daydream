@@ -11,7 +11,7 @@ import {
 } from './derived-ai-lane-strip';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import type { studioColorById } from './studio-timeline-store';
-import { TRACK_DERIVED_LANE_HEIGHT_PX } from './track-timeline-math';
+import { TRACK_TRANSCRIPTION_LANE_HEIGHT_PX } from './track-timeline-math';
 
 export function TrackClip({
   children,
@@ -55,11 +55,11 @@ export function TrackClip({
       data-selected={selected}
       style={{
         backgroundColor: finalized
-          ? `color-mix(in oklch, ${color.fill} 12%, var(--color-card))`
-          : 'var(--color-muted)',
+          ? `color-mix(in oklch, ${color.fill} 12%, var(--card))`
+          : 'var(--muted)',
         borderColor: selected
-          ? 'var(--color-primary)'
-          : `color-mix(in oklch, ${color.border} 24%, var(--color-border))`,
+          ? 'var(--foreground)'
+          : `color-mix(in oklch, ${color.border} 24%, var(--border))`,
         left: (segment.playbackOffsetMs / totalDurationMs) * timelineWidthPx,
         bottom: track.kind === 'video' ? 52 : 4,
         width: Math.max(
@@ -73,7 +73,7 @@ export function TrackClip({
         aria-pressed={selected}
         className={cn(
           'absolute inset-0 z-0 flex h-full w-full flex-col items-stretch justify-start overflow-hidden rounded-sm px-0 py-0 text-left font-normal whitespace-normal outline-none',
-          'focus-visible:ring-ring/40 focus-visible:ring-2',
+          'focus-visible:ring-ring focus-visible:ring-2',
           selected && 'ring-primary ring-1 ring-inset',
           !finalized && 'opacity-60',
         )}
@@ -83,7 +83,7 @@ export function TrackClip({
         onClick={handleSelectClip}
       >
         <div
-          className="bg-muted/80 text-foreground absolute inset-x-0 top-0 z-10 flex h-4 items-center truncate border-b px-1 text-[0.625rem] font-medium"
+          className="bg-muted/80 text-foreground absolute inset-x-0 top-0 z-10 flex h-5 items-center truncate border-b px-1 text-xs font-medium"
           data-library-action
         >
           <span className="truncate">{title}</span>
@@ -91,7 +91,9 @@ export function TrackClip({
         <div
           className="bg-background/60 absolute inset-x-0 top-4 overflow-hidden"
           style={{
-            bottom: hasTranscriptionLayer ? TRACK_DERIVED_LANE_HEIGHT_PX : 0,
+            bottom: hasTranscriptionLayer
+              ? TRACK_TRANSCRIPTION_LANE_HEIGHT_PX
+              : 0,
           }}
         >
           {children}
@@ -99,7 +101,7 @@ export function TrackClip({
       </Button>
       {hasTranscriptionLayer ? (
         <SegmentTranscriptionLayer
-          color={`color-mix(in oklch, ${color.strong} 44%, var(--color-muted-foreground))`}
+          color={`color-mix(in oklch, ${color.strong} 44%, var(--muted-foreground))`}
           lane={derivedLane}
           segment={segment}
           track={track}

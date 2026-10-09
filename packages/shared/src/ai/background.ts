@@ -20,6 +20,7 @@ export interface BackgroundTask {
   title: string;
   recordingId: string | null;
   modelId: string | null;
+  dayId?: string | null;
   status: ProcessingJobStatus;
   phase: string;
   progress: number | null;
@@ -49,6 +50,7 @@ export interface BackgroundTaskCursor {
   id: string;
 }
 export interface ListBackgroundTasksInput {
+  scope?: 'shared';
   recordingId?: string | null;
   limit?: number;
   cursor?: BackgroundTaskCursor | null;
@@ -70,7 +72,94 @@ export interface BackgroundTasksChanged {
 }
 export interface RetryProcessingUnitsInput {
   jobId: string;
+  sourceKind?: RecordingProcessingLaneKind;
   chunkId?: string | null;
   unitId?: string | null;
   useCurrentSettings?: boolean;
+}
+
+export type RecordingProcessingLaneKind = 'audio' | 'ocr' | 'vlm' | 'activity';
+export type RecordingProcessingFilter =
+  'all' | 'active' | 'attention' | 'history';
+export type ProcessingApplicability =
+  | 'available'
+  | 'disabled'
+  | 'no-source'
+  | 'protected'
+  | 'no-eligible-input'
+  | 'waiting';
+export interface RecordingProcessingLane {
+  kind: RecordingProcessingLaneKind;
+  applicability: ProcessingApplicability;
+  status: ProcessingJobStatus | null;
+  jobIds: string[];
+  total: number;
+  completed: number;
+  failed: number;
+  skipped: number;
+  cancelled: number;
+  running: number;
+  queued: number;
+  progress: number | null;
+  inputOpen: boolean;
+  errorCode: string | null;
+  nextRetryAtMs: number | null;
+}
+export interface RecordingIndexCoverage {
+  applicability: ProcessingApplicability;
+  indexed: number;
+  total: number;
+  pending: number;
+}
+export interface RecordingProcessingGroup {
+  recordingId: string;
+  title: string;
+  startedAtMs: number | null;
+  updatedAtMs: number;
+  status: ProcessingJobStatus;
+  inputOpen: boolean;
+  etaMs: number | null;
+  jobIds: string[];
+  lanes: RecordingProcessingLane[];
+  indexCoverage: RecordingIndexCoverage;
+}
+export interface ListRecordingProcessingGroupsInput {
+  recordingId?: string | null;
+  filter?: RecordingProcessingFilter;
+  limit?: number;
+  cursor?: BackgroundTaskCursor | null;
+  /** Reconcile loaded cards after deletions, invalidation and lost events. */
+  knownRecordingIds?: string[];
+}
+export interface RecordingProcessingGroupPage {
+  groups: RecordingProcessingGroup[];
+  nextCursor: BackgroundTaskCursor | null;
+  counts: { all: number; active: number; attention: number; history: number };
+  reconciledGroups: RecordingProcessingGroup[];
+}
+export interface RecordingProcessingUnit extends BackgroundTaskUnit {
+  jobId: string;
+  sourceTrackId: string | null;
+  sourceRole: 'desktop-audio' | 'microphone' | null;
+}
+export interface GetRecordingProcessingLaneInput {
+  recordingId: string;
+  sourceKind: RecordingProcessingLaneKind;
+  limit?: number;
+  cursor?: { chunkId: string; unitId: string } | null;
+  history?: boolean;
+}
+export interface RecordingProcessingLaneDetail {
+  lane: RecordingProcessingLane;
+  units: RecordingProcessingUnit[];
+  nextCursor: { chunkId: string; unitId: string } | null;
+}
+export interface ControlRecordingProcessingGroupsInput {
+  recordingId: string;
+  action: 'pause' | 'resume' | 'cancel' | 'retry';
+  sourceKind?: RecordingProcessingLaneKind;
+  useCurrentSettings?: boolean;
+}
+export interface RecordingProcessingActionResult {
+  results: { jobId: string; succeeded: boolean; errorCode: string | null }[];
 }

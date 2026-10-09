@@ -19,6 +19,7 @@ pub(crate) use lifecycle_commands::{
 pub(crate) use preview_commands::stop_empty_preview_start;
 pub(crate) use preview_commands::{
     get_recorder_preview_status, start_recorder_preview, stop_recorder_preview,
+    update_recorder_preview_demand,
 };
 pub(crate) use source_commands::{
     get_audio_sources, get_capture_sources, get_recorder_scene, save_recorder_scene,

@@ -32,6 +32,7 @@ pub struct RetryProcessingUnitsInput {
     pub job_id: String,
     pub chunk_id: Option<String>,
     pub unit_id: Option<String>,
+    pub source_kind: Option<String>,
     #[serde(default)]
     pub use_current_settings: bool,
 }
@@ -40,6 +41,16 @@ pub(crate) fn retry_processing_units_for_action(
     storage: &AppStorage,
     input: &RetryProcessingUnitsInput,
 ) -> Result<ProcessingJob, AiError> {
+    if input
+        .source_kind
+        .as_deref()
+        .is_some_and(|kind| !matches!(kind, "audio" | "ocr" | "vlm" | "activity"))
+    {
+        return Err(ai_error(
+            "ai_processing_selection_invalid",
+            "Choose a supported processing lane.",
+        ));
+    }
     let configuration = if input.use_current_settings {
         Some(
             serde_json::to_string(&settings::load_app_settings(storage).map_err(settings_error)?)
@@ -59,7 +70,7 @@ pub(crate) fn retry_processing_units_for_action(
         let chunks=storage::list_processing_chunks(&transaction,&input.job_id)?;
         let mut selected=0;
         for chunk in chunks {
-            if input.chunk_id.as_ref().is_some_and(|id|id!=&chunk.id)||!matches!(chunk.status.as_str(),"failed"|"cancelled"|"completed-with-errors") {continue;}
+            if input.chunk_id.as_ref().is_some_and(|id|id!=&chunk.id)||input.source_kind.as_ref().is_some_and(|kind|kind!=&chunk.source_kind)||!matches!(chunk.status.as_str(),"failed"|"cancelled"|"completed-with-errors") {continue;}
             let mut selection=UnitSelection::default();
             if matches!(chunk.source_kind.as_str(),"ocr"|"vlm") {
                 let mut statement=transaction.prepare("SELECT id,frame_timestamp_ms FROM visual_frame_processing_states WHERE chunk_id=?1 AND status IN ('failed','cancelled','queued') ORDER BY frame_timestamp_ms")?;

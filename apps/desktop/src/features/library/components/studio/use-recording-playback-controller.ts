@@ -76,6 +76,7 @@ export function useRecordingPlaybackController({
   const { videoRef } = media.refs;
   const {
     applyRedactedAudioSettings,
+    clockTime,
     pauseMediaElements,
     registerAudioElement,
     requestFullscreen,
@@ -85,7 +86,9 @@ export function useRecordingPlaybackController({
   } = media.actions;
   const redaction = usePlaybackRedactionController({
     applyRedactedAudioSettings,
+    clockTime,
     currentSegment,
+    audioRefs: media.refs.audioRefs,
     currentTimelineMs,
     detail,
     isPlaying,
@@ -116,6 +119,7 @@ export function useRecordingPlaybackController({
       return false;
     }
     setPlaybackError(null);
+    updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime, true);
     try {
       await video.play();
@@ -144,7 +148,12 @@ export function useRecordingPlaybackController({
     }
 
     return true;
-  }, [syncAudioElements, updateMediaSettings]);
+  }, [
+    syncAudioElements,
+    updateMediaSettings,
+    updateRedactionStateForTimeline,
+    videoTimelineMs,
+  ]);
 
   const advanceToSegment = useCallback(
     (nextIndex: number, shouldPlay: boolean) => {
@@ -333,7 +342,7 @@ export function useRecordingPlaybackController({
   }
 
   function handleVideoTimeUpdate(video: HTMLVideoElement) {
-    setCurrentTime(streamStartSeconds + video.currentTime);
+    setCurrentTime(streamStartSeconds + clockTime());
     updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime);
   }
@@ -343,8 +352,22 @@ export function useRecordingPlaybackController({
     if (!pendingAutoplay || resumeProgress !== null) {
       return;
     }
+    if (
+      (videoRef.current?.readyState ?? 0) < HTMLMediaElement.HAVE_FUTURE_DATA ||
+      [...media.refs.audioRefs.current.values()].some(
+        (audio) => audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA,
+      )
+    )
+      return;
     setPendingAutoplay(false);
     void playMediaElements();
+  }
+
+  function handleBuffering() {
+    if (!playbackIntentRef.current || resumeProgress !== null) return;
+    setPendingAutoplay(true);
+    pauseMediaElements();
+    setIsPlaying(false);
   }
 
   function handleVideoError() {
@@ -358,6 +381,7 @@ export function useRecordingPlaybackController({
     actions: {
       commitTimelineInput,
       cancelTimelineInput,
+      handleBuffering,
       handleEnded,
       handleTimelineInput,
       handleVideoCanPlay,

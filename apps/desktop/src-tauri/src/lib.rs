@@ -3,9 +3,11 @@ mod background_tasks;
 mod diagnostics;
 mod ffmpeg;
 mod library;
+mod maintenance;
 mod notifications;
 mod playback_server;
 mod provider_http;
+mod recall;
 pub mod recorder;
 mod recording_deletion;
 mod recording_privacy;
@@ -48,42 +50,88 @@ pub fn run() {
             })?;
             let startup_manager = startup::AppStartupManager::new();
             let storage = storage::initialize(app.handle())?;
-            recording_deletion::remove_stale_processing_artifacts(&app_data_dir)
+            let runtime_registry = maintenance::RuntimeActivityRegistry::default();
+            let maintenance_owner = maintenance::commands::initialize(&storage, &runtime_registry)
                 .map_err(std::io::Error::other)?;
-            match settings::load_app_settings(&storage) {
-                Ok(app_settings) => {
-                    let cleanup = storage_limits::enforce_storage_cleanup(
-                        &storage,
-                        &app_data_dir.join("recordings"),
-                        &app_settings.storage,
-                    );
-                    if cleanup.failed_recording_count > 0 {
-                        warn!(
-                            failed_recording_count = cleanup.failed_recording_count,
-                            "Startup storage cleanup had failures."
+            let maintenance_pending = runtime_registry.is_maintenance_active();
+            app.manage(runtime_registry);
+            app.manage(maintenance_owner);
+            if !maintenance_pending {
+                recording_deletion::remove_recovery_outputs(
+                    &storage,
+                    &app_data_dir.join("recordings"),
+                    None,
+                )
+                .map_err(std::io::Error::other)?;
+                recording_deletion::remove_stale_processing_artifacts(&app_data_dir)
+                    .map_err(std::io::Error::other)?;
+                match settings::load_app_settings(&storage) {
+                    Ok(app_settings) => {
+                        let cleanup = storage_limits::enforce_storage_cleanup(
+                            &storage,
+                            &app_data_dir.join("recordings"),
+                            &app_settings.storage,
                         );
+                        if cleanup.failed_recording_count > 0 {
+                            warn!(
+                                failed_recording_count = cleanup.failed_recording_count,
+                                "Startup storage cleanup had failures."
+                            );
+                        }
                     }
-                }
-                Err(_error) => {
-                    warn!("Startup storage cleanup skipped because settings failed to load.")
+                    Err(_error) => {
+                        warn!("Startup storage cleanup skipped because settings failed to load.")
+                    }
                 }
             }
             let playback_server = playback_server::PlaybackServer::start()?;
+            playback_server.attach_runtime_registry(
+                app.state::<maintenance::RuntimeActivityRegistry>()
+                    .inner()
+                    .clone(),
+            );
             app.manage(storage);
             app.manage(ai_model_manager);
             app.manage(transcription_provider_manager);
             app.manage(recorder_manager);
             app.manage(playback_server);
             app.manage(startup_manager);
-            ai::recover_model_downloads(app.handle().clone());
+            app.manage(recall::search_service::SearchControl::default());
+            if !maintenance_pending {
+                ai::recover_model_downloads(app.handle().clone());
+            }
             ai::commands::worker_startup::start_processing_worker(app.handle().clone());
+            recall::worker::start_worker(app.handle().clone());
+            recall::mutations::start_revision_observer(app.handle().clone());
             startup::start_app_startup(app.handle().clone());
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            maintenance::commands::preview_maintenance,
+            maintenance::commands::execute_maintenance,
+            maintenance::commands::get_maintenance_status,
+            maintenance::commands::acknowledge_maintenance_theme_reset,
+            recall::commands::list_recall_days,
+            recall::commands::get_recall_day,
+            recall::commands::search_recall_evidence,
+            recall::commands::cancel_recall_search,
+            recall::commands::resolve_recall_evidence,
+            recall::commands::regenerate_recall_day,
+            recall::commands::set_recall_feedback,
+            recall::commands::set_recall_session_correction,
+            recall::commands::accept_recall_suggestion,
+            recall::commands::dismiss_recall_suggestion,
+            recall::commands::update_recall_task,
+            recall::commands::set_recall_day_reviewed,
+            recall::commands::get_recall_status,
+            recall::commands::test_recall_provider,
+            recall::commands::control_recall_job,
             background_tasks::list_background_tasks,
             background_tasks::get_background_task,
+            background_tasks::group_commands::list_recording_processing_groups,
+            background_tasks::group_commands::get_recording_processing_lane,
+            background_tasks::group_commands::control_recording_processing_groups,
             ai::commands::processing_commands::retry_processing_units,
             ai::commands::processing_commands::reprocess_recording_transcription,
             startup::get_app_startup_status,
@@ -113,6 +161,7 @@ pub fn run() {
             library::commands::list_library_recordings,
             library::commands::prepare_library_recording_thumbnail,
             library::commands::rename_library_recording,
+            recorder::recovery::recover_library_recording,
             library::commands::unredact_library_redactions,
             settings::commands::get_app_settings,
             settings::commands::get_input_activity_status,
@@ -129,6 +178,9 @@ pub fn run() {
             ai::commands::model_commands::list_ai_models,
             ai::commands::model_commands::download_ai_model,
             ai::commands::model_commands::cancel_ai_model_download,
+            ai::commands::model_commands::pause_ai_model_download,
+            ai::commands::model_commands::resume_ai_model_download,
+            ai::commands::model_commands::remove_ai_model_partial,
             ai::commands::model_commands::delete_ai_model,
             ai::commands::model_commands::self_test_ai_model,
             ai::commands::provider_commands::get_ai_provider_status,
@@ -145,6 +197,7 @@ pub fn run() {
             recorder::get_recorder_performance_stats,
             recorder::get_recorder_recording_stats,
             recorder::list_protectable_windows,
+            recorder::get_window_application_icon,
             recorder::get_window_protection_status,
             recorder::get_capture_sources,
             recorder::get_recorder_scene,
@@ -156,6 +209,7 @@ pub fn run() {
             recorder::get_recorder_preview_status,
             recorder::start_recorder_preview,
             recorder::stop_recorder_preview,
+            recorder::update_recorder_preview_demand,
             recorder::start_recording,
             recorder::pause_recording,
             recorder::resume_recording,
@@ -167,4 +221,9 @@ pub fn run() {
 
 pub fn run_whisper_worker_process(app_data_dir: std::path::PathBuf) -> i32 {
     transcription::run_whisper_worker_process(app_data_dir)
+}
+
+#[cfg(target_os = "linux")]
+pub fn run_media_worker_process(control_fd: i32, frames_fd: i32) -> i32 {
+    recorder::media_worker::run_worker_process(control_fd, frames_fd)
 }

@@ -4,7 +4,9 @@ use gstreamer as gst;
 
 mod audio;
 mod capabilities;
+mod finalization;
 mod frame_pump;
+pub(crate) use finalization::FinalizedSegmentMedia;
 mod pipeline;
 mod probe;
 mod session;
@@ -14,8 +16,15 @@ pub(crate) use capabilities::{collect_media_writer_health, validate_segment_capa
 pub(crate) use pipeline::stream_indexes;
 pub(crate) use probe::{probe_json_string, probe_segment_best_effort};
 #[cfg(test)]
-pub(crate) use session::start_synthetic_segment;
-pub(crate) use session::{start_segment_from_frames, MediaWriterSegment};
+pub(crate) fn start_synthetic_segment(
+    input: &MediaSegmentInput,
+) -> Result<MediaWriterSegment, super::types::RecorderError> {
+    session::start_synthetic_segment(input).map(MediaWriterSegment::Local)
+}
+pub(crate) use super::media_worker::{start_segment_from_frames, MediaWriterSegment};
+pub(crate) use session::start_segment_from_frames as start_in_process_segment;
+#[cfg(test)]
+pub(crate) use session::MediaWriterSegment as InProcessMediaWriterSegment;
 pub(crate) use types::*;
 
 fn gst_framerate_fraction(fps: f64) -> gst::Fraction {
@@ -61,6 +70,9 @@ fn launch_value(value: impl AsRef<std::ffi::OsStr>) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+#[cfg(test)]
+#[path = "tests/cadence.rs"]
+mod cadence_tests;
 #[cfg(test)]
 mod supervision_tests;
 #[cfg(test)]

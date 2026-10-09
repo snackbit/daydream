@@ -6,6 +6,7 @@ export const recorderWorkspaceInitialState = {
   desktopAudioSourceId: null,
   error: null,
   isDirty: false,
+  workspaceRevision: 0,
   loadStatus: 'idle',
   microphoneAudioSourceId: null,
   pendingDuplicateCaptureSources: [],
@@ -26,6 +27,7 @@ export const recorderWorkspaceInitialState = {
   | 'desktopAudioSourceId'
   | 'error'
   | 'isDirty'
+  | 'workspaceRevision'
   | 'loadStatus'
   | 'microphoneAudioSourceId'
   | 'pendingDuplicateCaptureSources'

@@ -185,10 +185,10 @@ function TranscriptSegmentFields({
       </dl>
 
       <div className="border-t pt-2">
-        <div className="text-muted-foreground mb-1 text-[10px] font-medium">
+        <div className="text-muted-foreground mb-1 text-xs font-medium">
           Transcript text
         </div>
-        <p className="bg-muted/50 max-h-36 overflow-auto px-2 py-1.5 text-[11px] leading-4 whitespace-pre-wrap">
+        <p className="bg-muted/50 max-h-36 overflow-auto px-2 py-1.5 text-sm leading-4 whitespace-pre-wrap">
           {selection.text}
         </p>
       </div>

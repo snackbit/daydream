@@ -30,6 +30,13 @@ pub(crate) async fn test_vision_provider(
     app: AppHandle,
     input: TestVisionProviderInput,
 ) -> Result<VisionProviderTestResult, AiError> {
+    let _lease =
+        crate::maintenance::runtime::admit(&app, "vision-provider-test").map_err(|_| {
+            ai_error(
+                "ai_maintenance_active",
+                "Maintenance is in progress. Retry when it finishes.",
+            )
+        })?;
     let mut draft =
         settings::load_app_settings(&app.state::<AppStorage>()).map_err(settings_error)?;
     draft.ai.vision = input.vision;

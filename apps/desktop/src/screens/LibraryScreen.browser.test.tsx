@@ -1,14 +1,26 @@
-import type { ReactNode } from 'react';
-import type { LibraryRecordingSummary } from '@daydream/shared';
+import type { ComponentProps } from 'react';
+import type {
+  LibraryRecordingSummary,
+  RecallDayCard,
+  LibraryRecordingThumbnail,
+} from '@daydream/shared';
 import {
   cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
+  act,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
 import { formatTimestamp } from '@/features/library/library-format';
+import { LibraryDayCard } from '@/features/recall/library/library-day-card';
+import {
+  recallDayFixture,
+  recallStatusFixture,
+} from '@/features/recall/testing/recall-browser-fixtures';
+import '../index.css';
 import { LibraryScreen } from './LibraryScreen';
 
 const client = vi.hoisted(() => ({
@@ -24,17 +36,41 @@ const router = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/library/library-client', () => client);
+const recall = vi.hoisted(() => ({
+  listRecallDays: vi.fn<() => Promise<RecallDayCard[]>>(async () => []),
+  getRecallStatus: vi.fn(),
+  listenToRecallStateChanged: vi.fn(async () => () => undefined),
+}));
+vi.mock('@/features/recall/recall-client', () => recall);
+
+async function renderRecordings() {
+  render(<LibraryScreen />);
+  await userEvent.click(screen.getByRole('tab', { name: 'Recordings' }));
+}
 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     children,
     params,
     to,
+    ...anchorProps
   }: {
-    children: ReactNode;
-    params?: { recordingId: string };
+    params?: { recordingId?: string; date?: string };
     to: string;
-  }) => <a href={params ? `/library/${params.recordingId}` : to}>{children}</a>,
+  } & ComponentProps<'a'>) => (
+    <a
+      {...anchorProps}
+      href={
+        params?.recordingId
+          ? `/library/${params.recordingId}`
+          : params?.date
+            ? `/day/${params.date}`
+            : to
+      }
+    >
+      {children}
+    </a>
+  ),
   useNavigate: () => router.navigate,
 }));
 
@@ -86,8 +122,11 @@ const lockedRecording = {
   title: null,
 } satisfies LibraryRecordingSummary;
 
-beforeEach(() => {
+beforeEach(async () => {
+  await page.viewport(1440, 960);
   vi.resetAllMocks();
+  vi.setSystemTime(new Date('2026-10-06T12:00:00'));
+  recall.getRecallStatus.mockResolvedValue(recallStatusFixture);
   client.listLibraryRecordings.mockResolvedValue([
     readyRecording,
     missingRecording,
@@ -114,10 +153,129 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  delete document.documentElement.dataset.theme;
+});
+
+test('Library defaults to newest-first Days regardless of review status', async () => {
+  recall.listRecallDays.mockResolvedValue([
+    { ...recallDayFixture.day, dayId: '2026-10-06', reviewed: true },
+    recallDayFixture.day,
+  ]);
+  render(<LibraryScreen />);
+  expect(
+    screen.getByRole('tab', { name: 'Days' }).getAttribute('aria-selected'),
+  ).toBe('true');
+  await screen.findByRole('link', { name: /open day.*october 6/i });
+  expect(
+    screen.getAllByRole('link', { name: /open day/i })[0],
+  ).toHaveAccessibleName(/october 6/i);
+  expect(screen.queryByText('Most recent unreviewed day')).toBeNull();
+  expect(screen.queryByText(recallDayFixture.day.summary ?? '')).toBeNull();
+  expect(screen.getByRole('link', { name: /today/i })).toBeTruthy();
+  await userEvent.click(screen.getByRole('tab', { name: 'Recordings' }));
+  await screen.findByRole('status', { name: 'Library summary' });
+});
+
+test('Library Days preserves primary links in both themes at desktop and narrow widths', async () => {
+  recall.listRecallDays.mockResolvedValue([recallDayFixture.day]);
+  for (const dark of [false, true]) {
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    for (const width of [1440, 1024, 768, 390, 320]) {
+      await page.viewport(width, 960);
+      const view = render(<LibraryScreen />);
+      await screen.findByRole('link', { name: /open day/i });
+      await expect
+        .element(page.getByRole('link', { name: /today/i }))
+        .toBeVisible();
+      await page.screenshot({ element: view.container });
+      cleanup();
+    }
+  }
+});
+
+test('Day thumbnails use the native privacy adapter and reject old callbacks after eligibility changes', async () => {
+  let finishOld: ((thumbnail: LibraryRecordingThumbnail) => void) | undefined;
+  let finishCurrent:
+    ((thumbnail: LibraryRecordingThumbnail) => void) | undefined;
+  client.prepareLibraryRecordingThumbnail.mockImplementation(
+    ({ recordingId }: { recordingId: string }) =>
+      new Promise<LibraryRecordingThumbnail>((resolve) => {
+        if (recordingId === 'recording-old') finishOld = resolve;
+        else finishCurrent = resolve;
+      }),
+  );
+  const view = render(
+    <LibraryDayCard
+      day={{ ...recallDayFixture.day, thumbnailRecordingId: 'recording-old' }}
+    />,
+  );
+  await waitFor(() =>
+    expect(client.prepareLibraryRecordingThumbnail).toHaveBeenCalledWith({
+      recordingId: 'recording-old',
+    }),
+  );
+  view.rerender(
+    <LibraryDayCard
+      day={{
+        ...recallDayFixture.day,
+        privacyRevision: 2,
+        thumbnailRecordingId: 'recording-current',
+      }}
+    />,
+  );
+  await act(async () => {
+    finishOld?.({
+      recordingId: 'recording-old',
+      path: '/tmp/synthetic-old-preview.jpg',
+      error: null,
+    });
+  });
+  expect(screen.queryByRole('img')).toBeNull();
+  await waitFor(() =>
+    expect(client.prepareLibraryRecordingThumbnail).toHaveBeenCalledWith({
+      recordingId: 'recording-current',
+    }),
+  );
+  await act(async () => {
+    finishCurrent?.({
+      recordingId: 'recording-current',
+      path: '/tmp/synthetic-current-preview.jpg',
+      error: null,
+    });
+  });
+  expect(
+    await screen.findByRole('img', { name: 'Privacy-aware recording preview' }),
+  ).toHaveProperty('src', 'asset:///tmp/synthetic-current-preview.jpg');
+  view.rerender(
+    <LibraryDayCard
+      day={{
+        ...recallDayFixture.day,
+        privacyRevision: 3,
+        thumbnailRecordingId: null,
+      }}
+    />,
+  );
+  expect(screen.queryByRole('img')).toBeNull();
+});
+
+test('Today follows the local calendar after midnight when the window resumes', async () => {
+  render(<LibraryScreen />);
+  const today = await screen.findByRole('link', { name: /today/i });
+  expect(today.getAttribute('href')).toBe('/day/2026-10-06');
+  act(() => {
+    vi.setSystemTime(new Date('2026-10-07T12:00:00'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole('link', { name: /today/i }).getAttribute('href'),
+    ).toBe('/day/2026-10-07'),
+  );
 });
 
 test('LibraryScreen defaults to dense list view and disables play for missing files', async () => {
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   expect(await screen.findByText('Missing files')).toBeTruthy();
   expect(
@@ -152,7 +310,7 @@ test('LibraryScreen defaults to dense list view and disables play for missing fi
 test('LibraryScreen explains an empty local library and links to capture setup', async () => {
   client.listLibraryRecordings.mockResolvedValue([]);
 
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   expect(await screen.findByText('Your Library is empty')).toBeTruthy();
   expect(
@@ -168,7 +326,7 @@ test('LibraryScreen retries a failed local listing and shows recovered sessions'
     .mockRejectedValueOnce(new Error('Local library is unavailable.'))
     .mockResolvedValueOnce([readyRecording]);
 
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.getByText('Local library is unavailable.')).toBeTruthy();
@@ -181,7 +339,7 @@ test('LibraryScreen retries a failed local listing and shows recovered sessions'
 });
 
 test('LibraryScreen preserves multi-selection across views and deletes selected recordings', async () => {
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   await screen.findByText('Ready');
   fireEvent.click(screen.getByText('Ready'));
@@ -206,7 +364,7 @@ test('LibraryScreen preserves multi-selection across views and deletes selected 
 });
 
 test('LibraryScreen exposes labeled row selection controls for bulk actions', async () => {
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   const rowSelections = await screen.findAllByRole('checkbox', {
     name: /select recording/i,
@@ -230,7 +388,7 @@ test('LibraryScreen keeps locked recordings out of selection and delete actions'
     missingRecording,
   ]);
 
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   await screen.findByText('In progress');
   fireEvent.click(screen.getByText('In progress'));
@@ -253,7 +411,7 @@ test('LibraryScreen keeps locked recordings out of selection and delete actions'
 });
 
 test('LibraryScreen opens playable recordings on double click', async () => {
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   await screen.findByText('Ready');
   fireEvent.doubleClick(screen.getByText('Ready'));
@@ -265,17 +423,19 @@ test('LibraryScreen opens playable recordings on double click', async () => {
 });
 
 test('LibraryScreen deletes a recording from its visible row action after confirmation', async () => {
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   await screen.findByText('Ready');
   const readyDeleteLabel = `Delete Recording, ${formatTimestamp(readyRecording.startedAtMs)}`;
-  fireEvent.click(screen.getByRole('button', { name: readyDeleteLabel }));
+  await userEvent.click(screen.getByRole('button', { name: readyDeleteLabel }));
   expect(client.deleteLibraryRecording).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(client.deleteLibraryRecording).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole('button', { name: readyDeleteLabel }));
-  fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+  await userEvent.click(
+    await screen.findByRole('button', { name: readyDeleteLabel }),
+  );
+  await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
   await waitFor(() =>
     expect(client.deleteLibraryRecording).toHaveBeenCalledWith({
@@ -292,16 +452,14 @@ test('LibraryScreen renames and clears a recording from the context menu', async
   } satisfies LibraryRecordingSummary;
   client.listLibraryRecordings.mockResolvedValue([titledRecording]);
 
-  render(<LibraryScreen />);
+  await renderRecordings();
 
   await screen.findByText('Initial capture name');
-  fireEvent.click(
+  await userEvent.click(
     screen.getByRole('button', { name: /rename initial capture name/i }),
   );
-  fireEvent.change(screen.getByLabelText('Title'), {
-    target: { value: 'Updated capture name' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await userEvent.fill(screen.getByLabelText('Title'), 'Updated capture name');
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
   await waitFor(() =>
     expect(client.renameLibraryRecording).toHaveBeenCalledWith({
@@ -311,13 +469,11 @@ test('LibraryScreen renames and clears a recording from the context menu', async
   );
   expect(await screen.findByText('Updated capture name')).toBeTruthy();
 
-  fireEvent.click(
-    screen.getByRole('button', { name: /rename updated capture name/i }),
+  await userEvent.click(
+    await screen.findByRole('button', { name: /rename updated capture name/i }),
   );
-  fireEvent.change(screen.getByLabelText('Title'), {
-    target: { value: '   ' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await userEvent.fill(screen.getByLabelText('Title'), '   ');
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
   await waitFor(() =>
     expect(client.renameLibraryRecording).toHaveBeenLastCalledWith({

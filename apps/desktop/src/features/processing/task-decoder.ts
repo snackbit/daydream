@@ -18,7 +18,7 @@ const statuses: readonly ProcessingJobStatus[] = [
   'running',
   'succeeded',
 ];
-function invalid(): never {
+export function invalid(): never {
   throw new Error(
     'Background processing returned an invalid response. Reload to reconnect.',
   );
@@ -26,11 +26,11 @@ function invalid(): never {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-function record(value: unknown): Record<string, unknown> {
+export function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) return invalid();
   return value;
 }
-function string(value: unknown): string {
+export function string(value: unknown): string {
   return typeof value === 'string' ? value : invalid();
 }
 function number(value: unknown): number {
@@ -38,24 +38,27 @@ function number(value: unknown): number {
     ? value
     : invalid();
 }
-function count(value: unknown): number {
+export function count(value: unknown): number {
   const n = number(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : invalid();
 }
-function progress(value: unknown): number {
+export function progress(value: unknown): number {
   const n = number(value);
   return n >= 0 && n <= 1 ? n : invalid();
 }
-function boolean(value: unknown): boolean {
+export function boolean(value: unknown): boolean {
   return typeof value === 'boolean' ? value : invalid();
 }
-function nullable<T>(value: unknown, decode: (value: unknown) => T): T | null {
+export function nullable<T>(
+  value: unknown,
+  decode: (value: unknown) => T,
+): T | null {
   return value === null ? null : decode(value);
 }
-function array<T>(value: unknown, decode: (value: unknown) => T): T[] {
+export function array<T>(value: unknown, decode: (value: unknown) => T): T[] {
   return Array.isArray(value) ? value.map(decode) : invalid();
 }
-function status(value: unknown): ProcessingJobStatus {
+export function status(value: unknown): ProcessingJobStatus {
   for (const status of statuses) if (status === value) return status;
   return invalid();
 }
@@ -84,6 +87,7 @@ function task(value: unknown): BackgroundTask {
     title: string(r.title),
     recordingId: nullable(r.recordingId, string),
     modelId: nullable(r.modelId, string),
+    ...(r.dayId === undefined ? {} : { dayId: nullable(r.dayId, string) }),
     status: status(r.status),
     phase: string(r.phase),
     progress: nullable(r.progress, progress),
@@ -96,7 +100,7 @@ function task(value: unknown): BackgroundTask {
     stages: array(r.stages, stage),
   };
 }
-function unit(value: unknown): BackgroundTaskUnit {
+export function unit(value: unknown): BackgroundTaskUnit {
   const r = record(value);
   return {
     id: string(r.id),
@@ -110,7 +114,7 @@ function unit(value: unknown): BackgroundTaskUnit {
     attemptCount: count(r.attemptCount),
   };
 }
-function cursor(value: unknown) {
+export function cursor(value: unknown) {
   const r = record(value);
   return { id: string(r.id), updatedAtMs: count(r.updatedAtMs) };
 }

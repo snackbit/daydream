@@ -7,6 +7,25 @@ impl RecorderManager {
         active: ActiveRecording,
         timestamp_ms: u64,
     ) -> Result<PendingSegmentStart, RecorderError> {
+        if self
+            .lifecycle_background_work
+            .load(std::sync::atomic::Ordering::SeqCst)
+            || self
+                .forced_failure
+                .lock()
+                .map_err(|_| {
+                    lifecycle_error(
+                        "recorder_state_unavailable",
+                        "Recorder state is unavailable.",
+                    )
+                })?
+                .is_some()
+        {
+            return Err(lifecycle_error(
+                "recorder_cleanup_pending",
+                "Recorder cleanup must finish before resuming capture.",
+            ));
+        }
         let media_writer_health = media_writer::collect_media_writer_health();
         let scene = storage
             .with_connection(|connection| storage::get_recorder_scene(connection, &active.scene_id))
@@ -51,6 +70,7 @@ impl RecorderManager {
         };
 
         let mut active = active;
+        active.capture_run_id = Uuid::now_v7().to_string();
         active.media_writer = media_writer_health
             .writer
             .clone()
@@ -102,6 +122,17 @@ impl RecorderManager {
                     &pending.segment.id,
                     &pending.active.video_sources,
                     pending.active.fps,
+                )?;
+                transaction.execute(
+                    "UPDATE recording_segments SET capture_run_id=?2 WHERE id=?1",
+                    rusqlite::params![pending.segment.id, pending.active.capture_run_id],
+                )?;
+                super::capture_provenance::persist_segment_provenance(
+                    &transaction,
+                    &pending.active,
+                    &pending.segment,
+                    &pending.segment.id,
+                    pending.segment.started_at_ms,
                 )?;
                 transaction.commit()
             })

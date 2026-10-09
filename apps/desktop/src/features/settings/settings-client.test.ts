@@ -3,6 +3,7 @@ import type {
   SaveAppSettingsInput,
 } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
+import { recallSettingsFixture } from '../recall/recall-test-fixtures';
 import {
   getAppSettings,
   getInputActivityStatus,
@@ -36,6 +37,7 @@ test('settings client uses typed camelCase command names', async () => {
   const input: SaveAppSettingsInput = {
     settings: {
       ai: {
+        recall: recallSettingsFixture(),
         activity: {
           frameDeltas: {
             enabled: true,

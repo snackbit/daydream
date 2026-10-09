@@ -33,7 +33,7 @@ export function PlayerSeekbarRedactions({
         return (
           <span
             aria-label={`Redacted ${label}, ${formatDuration(start)} to ${formatDuration(end)}`}
-            className="pointer-events-none absolute inset-y-0 z-10 border-x border-white/70 bg-neutral-700 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.28)_0,rgba(255,255,255,0.28)_2px,transparent_2px,transparent_6px)]"
+            className="studio-redaction-pattern bg-muted border-muted-foreground/60 pointer-events-none absolute inset-y-0 z-10 border-x"
             data-playback-redaction={
               affected.length === mediaTracks.length ? 'full' : 'partial'
             }

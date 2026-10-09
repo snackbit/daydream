@@ -5,163 +5,196 @@
 
 @custom-variant dark (&:is([data-theme='dark'] *));
 
+/* The solid surface masks media; the theme-aware hatch marks reversible hiding. */
+@utility studio-redaction-pattern {
+  background-image: repeating-linear-gradient(135deg, color-mix(in oklab, var(--muted-foreground) 18%, transparent) 0 1px, transparent 1px 7px);
+}
+
+/* Utilities inline these mappings. SVG/canvas/dynamic styles use the runtime
+   variables below (--foreground, --card, --annotation-*, --status-*). */
 @theme inline {
   --font-sans: 'Inter Variable', sans-serif;
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--background);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--foreground);
+  --color-primary-foreground: var(--background);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--control-border);
+  --color-ring: var(--secondary-foreground);
+  --color-sidebar: var(--card);
+  --color-sidebar-foreground: var(--foreground);
+  --color-sidebar-primary: var(--foreground);
+  --color-sidebar-primary-foreground: var(--background);
+  --color-sidebar-accent: var(--muted);
+  --color-sidebar-accent-foreground: var(--foreground);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-ring: var(--secondary-foreground);
+  --color-chart-1: var(--status-info);
+  --color-chart-2: var(--annotation-teal);
+  --color-chart-3: var(--status-success);
+  --color-chart-4: var(--status-warning);
+  --color-chart-5: var(--status-recording);
+  --color-status-recording: var(--status-recording);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-info: var(--status-info);
+  --color-annotation-blue: var(--annotation-blue);
+  --color-annotation-teal: var(--annotation-teal);
+  --color-annotation-purple: var(--annotation-purple);
+  --color-annotation-violet: var(--annotation-violet);
+  --color-annotation-cyan: var(--annotation-cyan);
+  --color-annotation-emerald: var(--annotation-emerald);
+  --color-annotation-lime: var(--annotation-lime);
+  --color-annotation-orange: var(--annotation-orange);
+  --color-annotation-pink: var(--annotation-pink);
+  --color-annotation-sky: var(--annotation-sky);
+  --color-annotation-indigo: var(--annotation-indigo);
+  --color-annotation-green: var(--annotation-green);
+  --color-annotation-chartreuse: var(--annotation-chartreuse);
+  --color-annotation-gold: var(--annotation-gold);
+  --color-annotation-tangerine: var(--annotation-tangerine);
+  --color-annotation-rose: var(--annotation-rose);
+  --color-annotation-fuchsia: var(--annotation-fuchsia);
+  --color-annotation-grape: var(--annotation-grape);
+  --color-annotation-slate: var(--annotation-slate);
+  --color-annotation-stone: var(--annotation-stone);
+  --color-annotation-sea: var(--annotation-sea);
+  --color-annotation-steel: var(--annotation-steel);
+  --color-annotation-amber: var(--status-warning);
+  --color-annotation-red: var(--status-recording);
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.5rem;
+  --radius-panel: 1.25rem;
+  --radius-workspace: 1.5rem;
+  --text-body: 0.875rem;
+  --text-control: 0.8125rem;
+  --text-metadata: 0.75rem;
+  --text-heading-sm: 2rem;
+  --text-heading-sm--line-height: 1.13;
+  --text-heading: 2.25rem;
+  --text-heading--line-height: 1.17;
 }
 
 :root {
-  color-scheme: dark;
-  --background: oklch(0.165 0.003 260);
-  --foreground: oklch(0.94 0.002 260);
-  --card: oklch(0.205 0.003 260);
-  --card-foreground: oklch(0.94 0.002 260);
-  --popover: oklch(0.205 0.003 260);
-  --popover-foreground: oklch(0.94 0.002 260);
-  --primary: oklch(0.7 0.075 255);
-  --primary-foreground: oklch(0.18 0.012 255);
-  --secondary: oklch(0.275 0.004 260);
-  --secondary-foreground: oklch(0.94 0.002 260);
-  --muted: oklch(0.245 0.003 260);
-  --muted-foreground: oklch(0.69 0.005 260);
-  --accent: oklch(0.29 0.008 255);
-  --accent-foreground: oklch(0.94 0.002 260);
-  --destructive: oklch(0.67 0.15 25);
-  --border: oklch(1 0.002 260 / 12%);
-  --input: oklch(1 0.002 260 / 16%);
-  --ring: oklch(0.68 0.075 255);
-  --chart-1: oklch(0.67 0.08 255);
-  --chart-2: oklch(0.7 0.055 225);
-  --chart-3: oklch(0.7 0.055 160);
-  --chart-4: oklch(0.76 0.07 80);
-  --chart-5: oklch(0.69 0.13 25);
-  --radius: 0.25rem;
-  --sidebar: oklch(0.185 0.003 260);
-  --sidebar-foreground: oklch(0.94 0.002 260);
-  --sidebar-primary: oklch(0.7 0.075 255);
-  --sidebar-primary-foreground: oklch(0.18 0.012 255);
-  --sidebar-accent: oklch(0.29 0.008 255);
-  --sidebar-accent-foreground: oklch(0.94 0.002 260);
-  --sidebar-border: oklch(1 0.002 260 / 12%);
-  --sidebar-ring: oklch(0.68 0.075 255);
+  color-scheme: light;
+  --background: #fdfcfc;
+  --foreground: #000000;
+  --card: #f5f3f1;
+  --muted: #ebe8e4;
+  --secondary-foreground: #44403b;
+  --muted-foreground: #6d675f;
+  --border: #ebe8e4;
+  --control-border: #8a8379;
+  --destructive: #b42318;
+  --status-recording: #b42318;
+  --status-success: #26713c;
+  --status-warning: #8a5900;
+  --status-info: #245ec0;
+  --annotation-blue: #245ec0;
+  --annotation-teal: #087b80;
+  --annotation-purple: #7848ac;
+  --annotation-amber: var(--status-warning);
+  --annotation-red: var(--status-recording);
+  --annotation-violet: #6d28d9;
+  --annotation-cyan: #0e7490;
+  --annotation-emerald: #047857;
+  --annotation-lime: #4d7c0f;
+  --annotation-orange: #c2410c;
+  --annotation-pink: #be185d;
+  --annotation-sky: #0369a1;
+  --annotation-indigo: #4338ca;
+  --annotation-green: #15803d;
+  --annotation-chartreuse: #557f0d;
+  --annotation-gold: #b45309;
+  --annotation-tangerine: #c8560c;
+  --annotation-rose: #be123c;
+  --annotation-fuchsia: #a21caf;
+  --annotation-grape: #5b21b6;
+  --annotation-slate: #334155;
+  --annotation-stone: #57534e;
+  --annotation-sea: #115e59;
+  --annotation-steel: #075985;
 }
 
-:root[data-theme='light'] {
-  color-scheme: light;
-  --background: oklch(0.972 0.002 260);
-  --foreground: oklch(0.22 0.004 260);
-  --card: oklch(0.993 0.001 260);
-  --card-foreground: oklch(0.22 0.004 260);
-  --popover: oklch(0.993 0.001 260);
-  --popover-foreground: oklch(0.22 0.004 260);
-  --primary: oklch(0.48 0.085 255);
-  --primary-foreground: oklch(0.99 0.002 260);
-  --secondary: oklch(0.934 0.003 260);
-  --secondary-foreground: oklch(0.29 0.006 260);
-  --muted: oklch(0.946 0.002 260);
-  --muted-foreground: oklch(0.49 0.006 260);
-  --accent: oklch(0.928 0.004 255);
-  --accent-foreground: oklch(0.26 0.01 255);
-  --destructive: oklch(0.52 0.16 25);
-  --border: oklch(0.88 0.003 260);
-  --input: oklch(0.87 0.004 260);
-  --ring: oklch(0.52 0.085 255);
-  --chart-1: oklch(0.54 0.09 255);
-  --chart-2: oklch(0.58 0.06 225);
-  --chart-3: oklch(0.57 0.07 160);
-  --chart-4: oklch(0.66 0.08 80);
-  --chart-5: oklch(0.57 0.12 25);
-  --sidebar: oklch(0.958 0.002 260);
-  --sidebar-foreground: oklch(0.22 0.004 260);
-  --sidebar-primary: oklch(0.48 0.085 255);
-  --sidebar-primary-foreground: oklch(0.99 0.002 260);
-  --sidebar-accent: oklch(0.928 0.004 255);
-  --sidebar-accent-foreground: oklch(0.26 0.01 255);
-  --sidebar-border: oklch(0.88 0.003 260);
-  --sidebar-ring: oklch(0.52 0.085 255);
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #191715;
+  --foreground: #fdfcfc;
+  --card: #24211e;
+  --muted: #302b26;
+  --secondary-foreground: #ded8d1;
+  --muted-foreground: #b7aea4;
+  --border: #443d36;
+  --control-border: #8a8075;
+  --destructive: #ff8e85;
+  --status-recording: #ff8e85;
+  --status-success: #85d79a;
+  --status-warning: #e6bf71;
+  --status-info: #91b7fa;
+  --annotation-blue: #91b7fa;
+  --annotation-teal: #7ad7d5;
+  --annotation-purple: #c3a0ed;
+  --annotation-violet: #b59cf5;
+  --annotation-cyan: #67cbe3;
+  --annotation-emerald: #6bd4a9;
+  --annotation-lime: #b2d973;
+  --annotation-orange: #f9a178;
+  --annotation-pink: #f39cbd;
+  --annotation-sky: #76c3ee;
+  --annotation-indigo: #a9a5fa;
+  --annotation-green: #85d79a;
+  --annotation-chartreuse: #c6de7d;
+  --annotation-gold: #e8b965;
+  --annotation-tangerine: #f6b177;
+  --annotation-rose: #f794ac;
+  --annotation-fuchsia: #df9ce9;
+  --annotation-grape: #c0a5e8;
+  --annotation-slate: #abb9cc;
+  --annotation-stone: #c4b9ac;
+  --annotation-sea: #93c9bf;
+  --annotation-steel: #91bad5;
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-  button:not(:disabled), [role="button"]:not(:disabled) {
-    cursor: pointer;
-  }
-  html {
-    @apply font-sans;
-  }
-  body {
-    @apply min-w-80;
-  }
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground min-w-80 text-body; }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
 }
 
 @keyframes ai-processing-construction-scroll {
-  from {
-    background-position: 0 0;
-  }
-  to {
-    background-position: 24px 0;
-  }
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
 }
 
 .ai-processing-construction {
-  background-image: repeating-linear-gradient(
-    135deg,
-    color-mix(in oklch, var(--color-amber-400), transparent 10%) 0,
-    color-mix(in oklch, var(--color-amber-400), transparent 10%) 8px,
-    color-mix(in oklch, var(--color-amber-700), transparent 10%) 8px,
-    color-mix(in oklch, var(--color-amber-700), transparent 10%) 16px
-  );
+  background-image: repeating-linear-gradient(135deg,
+    color-mix(in oklch, var(--status-warning), transparent 35%) 0,
+    color-mix(in oklch, var(--status-warning), transparent 35%) 8px,
+    color-mix(in oklch, var(--status-warning), transparent 65%) 8px,
+    color-mix(in oklch, var(--status-warning), transparent 65%) 16px);
   background-size: 24px 24px;
   animation: ai-processing-construction-scroll 900ms linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;

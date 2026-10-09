@@ -20,6 +20,8 @@ pub(super) fn waveform_from_ffmpeg(
             &segment.file_path,
             "-map",
             &format!("0:{stream_index}"),
+            "-af",
+            &crate::ffmpeg::audio_timeline_filter(100, segment.duration_ms.unwrap_or(0)),
             "-ac",
             "1",
             "-ar",
@@ -125,14 +127,16 @@ pub(super) fn waveform_tile_samples_from_ffmpeg(
             "-hide_banner",
             "-v",
             "error",
-            "-ss",
-            &start_seconds,
             "-i",
             &segment.file_path,
+            "-ss",
+            &start_seconds,
             "-t",
             &duration_seconds,
             "-map",
             &format!("0:{stream_index}"),
+            "-af",
+            &crate::ffmpeg::audio_timeline_filter(48_000, tile_start_ms.saturating_add(duration_ms)),
             "-ac",
             "1",
             "-ar",
@@ -173,4 +177,40 @@ pub(crate) fn parse_volumedetect_max_amplitude(output: &str) -> Option<f64> {
     let db = value.strip_suffix(" dB")?.parse::<f64>().ok()?;
 
     Some(10_f64.powf(db / 20.0).clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn waveform_pcm_preserves_timestamp_gaps_and_slice_origin() {
+        let segment = crate::ffmpeg::audio_timeline_tests::gap_fixture();
+        for stream in [1, 2] {
+            for (start, duration) in [(0, 12_000), (4500, 1000)] {
+                let samples = waveform_tile_samples_from_ffmpeg(
+                    &crate::ffmpeg::binary_path(),
+                    &segment,
+                    stream,
+                    start,
+                    duration,
+                )
+                .unwrap();
+                assert_eq!(
+                    samples.len(),
+                    duration as usize * 48,
+                    "waveform must represent elapsed time"
+                );
+                let gap = if start == 0 {
+                    4600 * 48..5100 * 48
+                } else {
+                    100 * 48..600 * 48
+                };
+                assert!(samples[gap].iter().all(|s| s.abs() < 0.0001));
+                assert!(samples[samples.len() - 4800..]
+                    .iter()
+                    .any(|s| s.abs() > 0.01));
+            }
+        }
+        std::fs::remove_file(segment.file_path).unwrap();
+    }
 }

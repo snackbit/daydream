@@ -2,14 +2,14 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct FragmentEvent {
     pub(crate) opened: bool,
     pub(crate) path: PathBuf,
     pub(crate) timestamp_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MediaSegmentInput {
     pub(crate) video_sources: Vec<crate::storage::RecordingVideoSource>,
     pub(crate) benchmarks_dir: PathBuf,

@@ -16,6 +16,7 @@ is the command source of truth for contributors and agents.
 | Rust owner | `corepack yarn rust:test <module-or-test-filter> -- --test-threads=2` | Native gate below. |
 | Migrations/redaction/deletion/processing | Relevant Rust failure/recovery/privacy scenarios | Native gate and affected browser workflow. |
 | Dependencies/config | Immutable install, engine/peer review, affected checks | Relevant gates; build if bundling/packaging changed. |
+| Native dev watcher/resource staging | `corepack yarn test:dev-watch` plus `rust:test --test resource_staging` | Native format/Clippy; watcher proof uses the real CLI and a synthetic runner. |
 
 Use `COREPACK_HOME=/tmp/corepack` when the normal Corepack cache is not writable.
 For constrained native checks use the authorized writable `CARGO_HOME`; do not
@@ -28,6 +29,21 @@ COREPACK_HOME=/tmp/corepack corepack yarn rust:test recorder:: -- --test-threads
 ```
 
 ## Final gates
+
+The production user-story suite combines the JavaScript gate, native gate and
+actual Tauri UI journeys:
+
+```sh
+COREPACK_HOME=/tmp/corepack CARGO_HOME=/tmp/daydream-cargo-home corepack yarn test:e2e
+```
+
+It requires the Linux build/runtime prerequisites and the native driver's GTK
+Broadway/D-Bus/Playwright setup. See [user-story coverage](user-story-validation.md)
+and [native runner](../apps/desktop/scripts/native-e2e/README.md). The runner
+also requires matching WebKitWebDriver on `PATH` or `DAYDREAM_WEBKIT_WEBDRIVER`.
+It isolates app data, uses synthetic capture, builds fresh assets and fails on missing
+prerequisites; it never starts ambient devices. `yarn test:e2e:native` runs only
+that native layer. Run one instance at a time.
 
 After a coherent owned edit batch, run targeted autofix and inspect the diff:
 

@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn failure_during_pending_stop_clears_saving_and_rejects_late_completion() {
+    let storage = test_storage();
+    let app_data_dir = test_app_data_dir();
+    let manager = RecorderManager::new(app_data_dir.clone());
+    let scene_id = saved_test_scene(&storage);
+    let initial = start_test_recording(&manager, &storage, start_input(&scene_id), 100).unwrap();
+    let id = initial.active_recording_id.unwrap();
+    let saving = manager.begin_stop_recording(&id, 200).unwrap();
+    let failed = manager
+        .report_active_failure(
+            &storage,
+            &id,
+            super::super::errors::dependency_error(
+                "synthetic_capture_failed",
+                "Synthetic capture failed.",
+            ),
+            201,
+        )
+        .unwrap();
+    assert_eq!(failed.state, RecorderState::Error);
+    assert!(failed.finalization.is_none());
+    assert!(failed.status_revision > saving.status_revision);
+    assert!(manager.complete_stop_recording(&storage, &id, 202).is_err());
+    assert_eq!(
+        storage
+            .with_connection(|connection| storage::get_recording(connection, &id))
+            .unwrap()
+            .status,
+        "failed"
+    );
+    std::fs::remove_dir_all(app_data_dir).unwrap();
+}
+
+#[test]
 fn selecting_failure_cannot_be_hidden_by_resume_preparation_recovery() {
     let storage = test_storage();
     let app_data_dir = test_app_data_dir();
@@ -88,16 +122,25 @@ fn failure_while_pause_finalizes_cannot_be_overwritten_by_paused_success() {
         "recorder_window_protection_lost",
         "Window protection lost.",
     );
-    manager
-        .report_active_failure(&storage, &id, error, 201)
+    let failed = manager
+        .report_active_failure(&storage, &id, error.clone(), 201)
         .unwrap();
     assert_eq!(
         manager
             .complete_pause_recording(&storage, &id, 202)
-            .unwrap()
-            .state,
-        RecorderState::Error
+            .unwrap_err()
+            .code,
+        "recorder_invalid_transition"
     );
+    let current = manager.status().unwrap();
+    assert_eq!(current.state, RecorderState::Error);
+    assert!(current.finalization.is_none());
+    assert!(current.active_recording_id.is_none());
+    assert_eq!(
+        current.last_error.as_ref().map(|error| error.code.as_str()),
+        Some(error.code.as_str())
+    );
+    assert_eq!(current.status_revision, failed.status_revision);
     assert_eq!(
         storage
             .with_connection(|connection| storage::get_recording(connection, &id))

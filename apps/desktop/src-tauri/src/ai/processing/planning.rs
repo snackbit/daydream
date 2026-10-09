@@ -28,21 +28,16 @@ pub(in crate::ai) fn audio_chunk_plans(
     segments: &[RecordingSegmentRow],
     redactions: &[RedactionRow],
 ) -> Vec<AudioChunkPlan> {
-    let mut playback_offset_ms = 0;
+    let bases = storage::segment_playback_bases(segments);
     let mut plans = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
+        let playback_offset_ms = bases[index];
         let duration_ms = segment.duration_ms.unwrap_or_else(|| {
             segment
                 .ended_at_ms
                 .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
                 .unwrap_or(0)
         });
-        let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
-        let pause_after_ms = segment
-            .ended_at_ms
-            .zip(next_started_at_ms)
-            .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
-            .unwrap_or(0);
         if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
             if segment.desktop_audio_stream_index.is_some() {
                 append_audio_slice_plans(
@@ -64,7 +59,6 @@ pub(in crate::ai) fn audio_chunk_plans(
                     redactions,
                 );
             }
-            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
     }
 
@@ -83,21 +77,16 @@ pub(in crate::ai) fn activity_chunk_plans(
         return Vec::new();
     }
 
-    let mut playback_offset_ms = 0;
+    let bases = storage::segment_playback_bases(segments);
     let mut plans = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
+        let playback_offset_ms = bases[index];
         let duration_ms = segment.duration_ms.unwrap_or_else(|| {
             segment
                 .ended_at_ms
                 .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
                 .unwrap_or(0)
         });
-        let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
-        let pause_after_ms = segment
-            .ended_at_ms
-            .zip(next_started_at_ms)
-            .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
-            .unwrap_or(0);
         if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
             let start_offset_ms = playback_offset_ms;
             let end_offset_ms = playback_offset_ms + duration_ms.max(0);
@@ -113,7 +102,6 @@ pub(in crate::ai) fn activity_chunk_plans(
                     start = end;
                 }
             }
-            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
     }
 
@@ -135,21 +123,16 @@ pub(in crate::ai) fn visual_chunk_plans(
         return Vec::new();
     }
 
-    let mut playback_offset_ms = 0;
+    let bases = storage::segment_playback_bases(segments);
     let mut plans = Vec::new();
     for (index, segment) in segments.iter().enumerate() {
+        let playback_offset_ms = bases[index];
         let duration_ms = segment.duration_ms.unwrap_or_else(|| {
             segment
                 .ended_at_ms
                 .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
                 .unwrap_or(0)
         });
-        let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
-        let pause_after_ms = segment
-            .ended_at_ms
-            .zip(next_started_at_ms)
-            .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
-            .unwrap_or(0);
         if segment.state == "finalized"
             && segment.video_stream_index.is_some()
             && Path::new(&segment.file_path).is_file()
@@ -177,9 +160,6 @@ pub(in crate::ai) fn visual_chunk_plans(
                     start = end;
                 }
             }
-        }
-        if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
-            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
         }
     }
 
@@ -299,31 +279,12 @@ pub(in crate::ai) fn playback_offset_for_segment(
     segments: &[RecordingSegmentRow],
     segment_id: &str,
 ) -> Option<i64> {
-    let mut playback_offset_ms = 0;
-    for (index, segment) in segments.iter().enumerate() {
-        let duration_ms = segment.duration_ms.unwrap_or_else(|| {
-            segment
-                .ended_at_ms
-                .map(|ended_at_ms| ended_at_ms.saturating_sub(segment.started_at_ms))
-                .unwrap_or(0)
-        });
-        let next_started_at_ms = segments.get(index + 1).map(|next| next.started_at_ms);
-        let pause_after_ms = segment
-            .ended_at_ms
-            .zip(next_started_at_ms)
-            .map(|(ended_at_ms, next_started_at_ms)| next_started_at_ms.saturating_sub(ended_at_ms))
-            .unwrap_or(0);
-
-        if segment.id == segment_id {
-            return Some(playback_offset_ms);
-        }
-
-        if segment.state == "finalized" && Path::new(&segment.file_path).is_file() {
-            playback_offset_ms += duration_ms.max(0) + pause_after_ms.max(0);
-        }
-    }
-
-    None
+    let index = segments
+        .iter()
+        .position(|segment| segment.id == segment_id)?;
+    storage::segment_playback_bases(segments)
+        .get(index)
+        .copied()
 }
 
 pub(in crate::ai) fn ensure_audio_track(

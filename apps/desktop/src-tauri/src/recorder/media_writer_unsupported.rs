@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[path = "media_writer/finalization.rs"]
+mod finalization;
+pub(crate) use finalization::FinalizedSegmentMedia;
 
 use super::{
     capture_runtime::{FrameReceiver, SharedCaptureTiming},

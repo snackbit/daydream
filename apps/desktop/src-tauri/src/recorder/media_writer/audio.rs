@@ -23,6 +23,8 @@ pub(super) fn send_audio_source_eos(
     pipeline: &gst::Pipeline,
     audio_branches: &[AudioBranch],
 ) -> Result<(), RecorderError> {
+    let mut pending = Vec::new();
+    let deadline = std::time::Instant::now() + SOURCE_EOS_TIMEOUT;
     for branch in audio_branches {
         let source_name = branch.source_name;
         let source = pipeline.by_name(source_name).ok_or_else(|| {
@@ -35,8 +37,20 @@ pub(super) fn send_audio_source_eos(
             source = source_name,
             "media_writer_audio_source_eos_requested"
         );
-        send_element_eos_with_timeout(source, source_name)?;
-        trace!(source = source_name, "media_writer_audio_source_eos_sent");
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = sender.send(source.send_event(gst::event::Eos::new()));
+        });
+        pending.push((source_name, receiver));
+    }
+    // BaseSrc EOS holds the element state lock while taking its streaming lock.
+    // Resolve video EOS first and dispatch every audio branch before waiting.
+    for (source_name, receiver) in pending {
+        await_element_eos(
+            receiver,
+            source_name,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )?;
     }
 
     Ok(())
@@ -109,17 +123,12 @@ pub(super) fn audio_buffer_is_after_cutoff(
     buffer.pts().is_some_and(|pts| pts > cutoff_pts)
 }
 
-fn send_element_eos_with_timeout(
-    element: gst::Element,
+fn await_element_eos(
+    receiver: mpsc::Receiver<bool>,
     source_name: &'static str,
+    timeout: Duration,
 ) -> Result<(), RecorderError> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let sent = element.send_event(gst::event::Eos::new());
-        let _ = sender.send(sent);
-    });
-
-    match receiver.recv_timeout(SOURCE_EOS_TIMEOUT) {
+    match receiver.recv_timeout(timeout) {
         Ok(true) => Ok(()),
         Ok(false) => Err(dependency_error(
             "recorder_media_writer_finalize_failed",

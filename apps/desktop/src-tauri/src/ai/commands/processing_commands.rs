@@ -1,11 +1,24 @@
 use super::super::*;
 
+pub(crate) fn admit_processing(
+    app: &AppHandle,
+    kind: &str,
+) -> Result<Option<crate::maintenance::runtime::RuntimeActivityLease>, AiError> {
+    crate::maintenance::runtime::admit(app, kind).map_err(|_| {
+        ai_error(
+            "ai_maintenance_active",
+            "Maintenance is in progress. Retry when it finishes.",
+        )
+    })
+}
+
 #[tauri::command(rename = "reprocessRecordingTranscription")]
 pub fn reprocess_recording_transcription(
     app: AppHandle,
     input: RecordingAiResultInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "reprocess-transcription")?;
     let job = reprocess_recording_audio(&storage, &input.recording_id)?;
     emit_processing_state(&app, &input.recording_id);
     Ok(job)
@@ -17,6 +30,7 @@ pub fn retry_processing_units(
     input: RetryProcessingUnitsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "retry-processing-sections")?;
     let job = retry_processing_units_for_action(&storage, &input)?;
     emit_processing_state(&app, &job.recording_id);
     Ok(job)
@@ -42,6 +56,7 @@ pub fn pause_processing_job(
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "pause-processing")?;
     tracing::info!(job_id = %input.job_id, action = "paused", "ai_processing_action_requested");
     let job = update_processing_job_for_action(&storage, &input.job_id, "paused")?;
     emit_processing_state(&app, &job.recording_id);
@@ -54,6 +69,7 @@ pub fn resume_processing_job(
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "resume-processing")?;
     tracing::info!(job_id = %input.job_id, action = "queued", "ai_processing_action_requested");
     let job = update_processing_job_for_action(&storage, &input.job_id, "queued")?;
     emit_processing_state(&app, &job.recording_id);
@@ -66,6 +82,7 @@ pub fn cancel_processing_job(
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "cancel-processing")?;
     tracing::info!(job_id = %input.job_id, action = "cancelled", "ai_processing_action_requested");
     let job = update_processing_job_for_action(&storage, &input.job_id, "cancelled")?;
     emit_processing_state(&app, &job.recording_id);
@@ -78,6 +95,7 @@ pub fn retry_processing_job(
     input: ProcessingJobActionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "retry-processing")?;
     tracing::info!(job_id = %input.job_id, action = "retry", "ai_processing_action_requested");
     let job = retry_processing_job_for_action(&storage, &input.job_id)?;
     emit_processing_state(&app, &job.recording_id);
@@ -90,6 +108,7 @@ pub fn start_recording_ai_processing(
     input: StartRecordingAiProcessingInput,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = admit_processing(&app, "start-processing")?;
     let job = enqueue_recording_ai_processing(&app, &storage, &input.recording_id)?;
     Ok(processing_job_from_row_with_storage(&storage, job))
 }

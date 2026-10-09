@@ -19,6 +19,7 @@ import {
   statusBlocksLifecycle,
   statusShowsCommandInProgress,
 } from './recorder-lifecycle-state';
+import { recorderStatusIsCurrent } from './recorder-status-order';
 import type {
   RecorderLifecycleAction,
   RecorderWorkspaceGet,
@@ -32,7 +33,7 @@ import {
 } from './scene-layout';
 
 const FINALIZATION_POLL_INTERVAL_MS = 250;
-const FINALIZATION_POLL_TIMEOUT_MS = 15_000;
+const FINALIZATION_POLL_TIMEOUT_MS = 25_000;
 
 export function workspaceConfigurationLocked(
   state: RecorderWorkspaceState,
@@ -52,7 +53,9 @@ export function selectExistingSceneSource(
     : (scene.sources[0]?.id ?? null);
 }
 
-export async function loadRecorderWorkspaceSnapshot() {
+export async function loadRecorderWorkspaceSnapshot(
+  savedSceneOverride?: RecorderScene | null,
+) {
   const [
     status,
     previewStatus,
@@ -64,7 +67,9 @@ export async function loadRecorderWorkspaceSnapshot() {
     getRecorderPreviewStatus(),
     getCaptureSources(),
     getAudioSources(),
-    getRecorderScene(),
+    savedSceneOverride === undefined
+      ? getRecorderScene()
+      : Promise.resolve(savedSceneOverride),
   ]);
 
   return {
@@ -97,11 +102,13 @@ export function applyLoadedRecorderWorkspace(
     !!savedScene &&
     (scene.desktopAudioSourceId !== savedScene.desktopAudioSourceId ||
       scene.microphoneAudioSourceId !== savedScene.microphoneAudioSourceId);
-  set({
+  set((current) => ({
     audioSources: audioSourceList.sources,
     captureSources: captureSourceList.sources,
     desktopAudioSourceId: scene.desktopAudioSourceId,
-    error: null,
+    error: recorderStatusIsCurrent(current.status, status)
+      ? null
+      : current.error,
     isDirty:
       droppedSavedAudioSource ||
       (!savedScene && captureSourceList.sources.length > 0),
@@ -113,8 +120,10 @@ export function applyLoadedRecorderWorkspace(
     recordingStatsError: null,
     scene,
     selectedSceneSourceId: scene.sources[0]?.id ?? null,
-    status,
-  });
+    status: recorderStatusIsCurrent(current.status, status)
+      ? status
+      : current.status,
+  }));
 }
 
 export function applySelectedCaptureSources(
@@ -192,6 +201,7 @@ export async function runStatusMutation(
     },
     run: mutation,
     success: (status) => {
+      if (!recorderStatusIsCurrent(get().status, status)) return;
       set({
         pendingLifecycleAction: statusShowsCommandInProgress(status)
           ? action
@@ -230,6 +240,7 @@ async function reconcileStatusUntilSettled(
       },
       run: () => getRecorderStatus(),
       success: (nextStatus) => {
+        if (!recorderStatusIsCurrent(get().status, nextStatus)) return;
         set({
           error: nextStatus.lastError?.message ?? null,
           pendingLifecycleAction: statusShowsCommandInProgress(nextStatus)
@@ -243,7 +254,7 @@ async function reconcileStatusUntilSettled(
         });
       },
     });
-    if (!status || !statusBlocksLifecycle(status)) {
+    if (!status || !statusBlocksLifecycle(get().status)) {
       return;
     }
   }

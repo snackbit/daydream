@@ -3,8 +3,6 @@ import type {
   AppSettingsLimits,
   InputActivityStatus,
 } from '@daydream/shared';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -28,6 +26,7 @@ import {
 } from '@/features/settings/settings-draft-updaters';
 import { formatFps } from '@/features/settings/settings-format';
 import { CheckboxField, SliderField } from './ai-settings-fields';
+import { InputActivityStatusLine } from './input-activity-status-line';
 
 interface AiActivityProcessingCardProps {
   draft: AppSettings;
@@ -285,7 +284,7 @@ export function AiActivityProcessingCard({
               }));
             }}
           />
-          <InputActivityStatusPanel
+          <InputActivityStatusLine
             onRefresh={onRefreshInputActivityStatus}
             onRepair={onRepairInputActivity}
             repairMessage={inputActivityRepairMessage}
@@ -334,88 +333,6 @@ export function AiActivityProcessingCard({
         </FieldGroup>
       </CardContent>
     </Card>
-  );
-}
-
-function InputActivityStatusPanel({
-  onRefresh,
-  onRepair,
-  repairMessage,
-  repairing,
-  status,
-}: {
-  onRefresh: () => void;
-  onRepair: () => void;
-  repairMessage: string | null;
-  repairing: boolean;
-  status: InputActivityStatus | null;
-}) {
-  if (!status) {
-    return (
-      <Alert>
-        <AlertTitle>Input activity status unknown</AlertTitle>
-        <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-          <span>Daydream has not checked keyboard and mouse access yet.</span>
-          <Button onClick={onRefresh} size="sm" type="button" variant="outline">
-            Recheck
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  const canRepair = !status.available && status.repairAvailable;
-  const needsLogout =
-    !status.available &&
-    status.reason === 'permission-denied' &&
-    status.userInInputGroup;
-  const variant = status.available ? 'default' : 'destructive';
-  const deviceSummary =
-    status.platform === 'linux'
-      ? `${status.readableDeviceCount}/${status.candidateDeviceCount} input devices readable.`
-      : null;
-
-  return (
-    <Alert variant={variant}>
-      <AlertTitle>
-        {status.available
-          ? 'Input activity available'
-          : 'Input activity unavailable'}
-      </AlertTitle>
-      <AlertDescription>
-        <div className="grid gap-3">
-          <p>
-            {status.message}
-            {deviceSummary ? ` ${deviceSummary}` : ''}
-          </p>
-          {needsLogout ? (
-            <p>Log out and back in, then reopen Daydream.</p>
-          ) : null}
-          {repairMessage ? <p>{repairMessage}</p> : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={onRefresh}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Recheck
-            </Button>
-            {canRepair ? (
-              <Button
-                disabled={repairing}
-                onClick={onRepair}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                {repairing ? 'Repairing...' : 'Repair permissions'}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </AlertDescription>
-    </Alert>
   );
 }
 

@@ -25,7 +25,19 @@ impl RecorderManager {
     pub(crate) fn stop_protection_monitor(&self) -> Result<(), RecorderError> {
         let monitor = self.lock_runtime()?.protection_monitor.take();
         if let Some(monitor) = monitor {
-            monitor.stop();
+            let (sender, result) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                monitor.stop();
+                let _ = sender.send(());
+            });
+            if result
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_err()
+            {
+                #[cfg(target_os = "linux")]
+                super::super::media_worker::quarantine();
+                return Err(lifecycle_error("recorder_protection_stop_timeout","Protected-window monitoring did not stop. Recording files have been preserved."));
+            }
         }
         Ok(())
     }
@@ -92,8 +104,12 @@ impl RecorderManager {
         }
         if status_has_pending_lifecycle(&runtime.status) {
             runtime.pending_failure = Some(error.clone());
-            runtime.status.last_error = Some(error.clone());
-            return Ok((runtime.status.clone(), false));
+            runtime.status = error_status_with_backend_health(
+                timestamp_ms,
+                runtime.status.backend_health.clone(),
+                error.clone(),
+            );
+            return Ok((runtime.status.clone(), true));
         }
         runtime.status = error_status_with_backend_health(
             timestamp_ms,
@@ -132,7 +148,7 @@ impl RecorderManager {
             active
         };
         // Change visible state before joining workers. No resume can claim this recording.
-        self.stop_protection_monitor()?;
+        let protection_cleanup_error = self.stop_protection_monitor().err();
         if let Some(segment) = &active.active_segment {
             if let Some(shared) = &segment.runtime {
                 if let Some(media) = shared
@@ -164,6 +180,9 @@ impl RecorderManager {
                 storage::get_recording(connection,recording_id)
             })
             .map_err(storage_error)?;
+        if let Some(error) = protection_cleanup_error {
+            return Err(error);
+        }
         self.status()
     }
 }

@@ -1,4 +1,4 @@
-import { useCallback, type MouseEvent } from 'react';
+import { useCallback, useState, type MouseEvent } from 'react';
 import type {
   LibraryRecordingSummary,
   LibraryRecordingViewMode,
@@ -39,6 +39,7 @@ interface RecordingLibraryItemProps {
   isSelected: boolean;
   recording: LibraryRecordingSummary;
   thumbnailPath: string | null;
+  thumbnailState?: 'loading' | 'ready' | 'hidden' | 'unavailable';
   viewMode: LibraryRecordingViewMode;
 }
 
@@ -47,6 +48,7 @@ export function RecordingLibraryItem({
   isSelected,
   recording,
   thumbnailPath,
+  thumbnailState = 'loading',
   viewMode,
 }: RecordingLibraryItemProps) {
   const {
@@ -126,6 +128,7 @@ export function RecordingLibraryItem({
             displayTitle={displayTitle}
             recording={recording}
             thumbnailPath={thumbnailPath}
+            thumbnailState={thumbnailState}
             viewMode={viewMode}
           />
           <div
@@ -225,13 +228,16 @@ function RecordingThumbnail({
   displayTitle,
   recording,
   thumbnailPath,
+  thumbnailState,
   viewMode,
 }: {
   displayTitle: string;
   recording: LibraryRecordingSummary;
   thumbnailPath: string | null;
+  thumbnailState: 'loading' | 'ready' | 'hidden' | 'unavailable';
   viewMode: LibraryRecordingViewMode;
 }) {
+  const [failedPath, setFailedPath] = useState<string | null>(null);
   const sizeClassName =
     viewMode === 'grid'
       ? 'aspect-video w-full'
@@ -265,17 +271,21 @@ function RecordingThumbnail({
     );
   }
 
-  if (!thumbnailPath) {
+  if (!thumbnailPath || failedPath === thumbnailPath) {
     return (
       <div
-        aria-label={`Preparing preview for ${displayTitle}`}
+        aria-label={`${thumbnailState === 'loading' ? 'Preparing preview' : 'Preview unavailable'} for ${displayTitle}`}
         className={cn(
           'bg-muted text-muted-foreground flex items-center justify-center text-[11px]',
           sizeClassName,
         )}
         role="status"
       >
-        Preparing preview…
+        {thumbnailState === 'hidden'
+          ? 'Preview hidden'
+          : thumbnailState === 'loading' && failedPath !== thumbnailPath
+            ? 'Loading preview…'
+            : 'Preview unavailable'}
       </div>
     );
   }
@@ -285,6 +295,7 @@ function RecordingThumbnail({
       alt={`Preview of ${displayTitle}`}
       className={cn('bg-black object-cover', sizeClassName)}
       src={localAssetUrl(thumbnailPath)}
+      onError={() => setFailedPath(thumbnailPath)}
     />
   );
 }

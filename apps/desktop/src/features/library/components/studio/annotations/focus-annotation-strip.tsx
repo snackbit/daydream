@@ -96,7 +96,7 @@ function FocusDescription({
       aria-label={`Inspect ${label}`}
       title={label}
       data-library-action
-      className="absolute h-6 justify-start gap-1 overflow-hidden rounded-none border-r px-1 text-[11px] font-normal"
+      className="absolute h-6 justify-start gap-1 overflow-hidden rounded-none border-r px-1 text-[13px] font-normal"
       style={{
         left: (event.offsetMs / totalDurationMs) * timelineWidthPx,
         width: ((endMs - event.offsetMs) / totalDurationMs) * timelineWidthPx,

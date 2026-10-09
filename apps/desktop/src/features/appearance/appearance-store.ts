@@ -11,6 +11,14 @@ interface AppearanceState {
 
 const appearanceStorageKey = 'daydream.appearance';
 
+/** Destructive maintenance acknowledges this only after browser persistence clears. */
+export function resetAppearancePreference(): void {
+  window.localStorage.removeItem(appearanceStorageKey);
+  document.cookie = `${appearanceStorageKey}=; Max-Age=0; Path=/; SameSite=Lax`;
+  applyAppearance('light');
+  useAppearanceStore.setState({ mode: 'light', persistence: 'saved' });
+}
+
 interface LoadedAppearancePreference {
   mode: AppearanceMode;
   persistence: AppearancePersistence;
@@ -19,7 +27,7 @@ interface LoadedAppearancePreference {
 export function parseAppearancePreference(
   value: string | null,
 ): AppearanceMode {
-  return value === 'light' ? 'light' : 'dark';
+  return value === 'dark' ? 'dark' : 'light';
 }
 
 function loadAppearancePreference(): LoadedAppearancePreference {
@@ -31,7 +39,7 @@ function loadAppearancePreference(): LoadedAppearancePreference {
       persistence: 'saved',
     };
   } catch {
-    return { mode: 'dark', persistence: 'session-only' };
+    return { mode: 'light', persistence: 'session-only' };
   }
 }
 

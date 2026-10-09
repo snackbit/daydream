@@ -173,6 +173,9 @@ export * from './ai.js';
 export * from './settings.js';
 export * from './startup.js';
 export * from './window-protection.js';
+export * from './recall.js';
+export * from './maintenance.js';
+export * from './recovery.js';
 
 export interface DebugLoggingDiagnostics {
   enabled: boolean;

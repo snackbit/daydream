@@ -1,3 +1,4 @@
+pub use super::recall_types::{RecallEmbeddingSettings, RecallExternalProfile, RecallSettings};
 use serde::{Deserialize, Serialize};
 
 use crate::storage_limits::StorageCleanupResult;
@@ -37,6 +38,8 @@ pub struct ExpertSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettings {
+    #[serde(default)]
+    pub recall: RecallSettings,
     pub activity: AiActivitySettings,
     pub ocr: AiOcrSettings,
     pub processing: AiProcessingSettings,
@@ -302,6 +305,8 @@ pub struct SaveAppSettingsInput {
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsCredentialDrafts {
+    pub recall_embedding_key: Option<String>,
+    pub recall_generation_key: Option<String>,
     pub transcription_key: Option<String>,
     pub vision_key: Option<String>,
 }

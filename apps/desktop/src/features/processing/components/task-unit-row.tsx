@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { BackgroundTaskUnit } from '@daydream/shared';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -11,11 +12,20 @@ export interface TaskUnitRowProps {
   unit: BackgroundTaskUnit;
   jobId: string;
   onRetried: () => Promise<void>;
+  sourceLink?: ReactNode;
 }
-export function TaskUnitRow({ unit, jobId, onRetried }: TaskUnitRowProps) {
+export function TaskUnitRow({
+  unit,
+  jobId,
+  onRetried,
+  sourceLink,
+}: TaskUnitRowProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const admission = useRef(false);
   async function retry(useCurrentSettings: boolean) {
+    if (admission.current) return;
+    admission.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -29,6 +39,7 @@ export function TaskUnitRow({ unit, jobId, onRetried }: TaskUnitRowProps) {
     } catch (error) {
       setError(processingFailureSummary(error));
     } finally {
+      admission.current = false;
       setBusy(false);
     }
   }
@@ -66,6 +77,7 @@ export function TaskUnitRow({ unit, jobId, onRetried }: TaskUnitRowProps) {
         />
       ) : null}
       {unit.errorCode ? <ProcessingError errorCode={unit.errorCode} /> : null}
+      {sourceLink}
       {failed ? (
         <div className="mt-1 flex gap-1">
           <Button

@@ -304,6 +304,7 @@ pub(crate) async fn adjacent_library_frame(
     input: AdjacentFrameInput,
 ) -> Result<Option<i64>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _activity = crate::maintenance::runtime::admit(&app, "frame-read")?;
         let operation = crate::background_tasks::operations::Operation::start(
             &app,
             "frame-index",

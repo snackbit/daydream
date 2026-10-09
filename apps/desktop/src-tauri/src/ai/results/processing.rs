@@ -167,6 +167,7 @@ pub(crate) fn emit_processing_state<R: tauri::Runtime>(app: &AppHandle<R>, recor
     };
     let _ = app.emit(AI_PROCESSING_CHANGED_EVENT, &changed);
     crate::background_tasks::emit_changed(app, Some(recording_id));
+    crate::recall::mutations::emit_changed(app, None);
 }
 
 pub(in crate::ai) fn processing_chunk_status_counts(chunks: &[ProcessingChunkRow]) -> String {

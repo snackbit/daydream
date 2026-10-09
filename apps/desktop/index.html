@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Daydream — Local recall workspace</title>
     <script>
       try {
-        if (localStorage.getItem('daydream.appearance') === 'light') {
-          document.documentElement.dataset.theme = 'light';
+        if (localStorage.getItem('daydream.appearance') === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
         }
       } catch {
-        // Keep the dark default when browser storage is unavailable.
+        // Keep the light default when browser storage is unavailable.
       }
     </script>
   </head>

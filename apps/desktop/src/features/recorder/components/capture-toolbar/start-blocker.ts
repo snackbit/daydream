@@ -9,7 +9,6 @@ export interface CaptureStartBlockerOptions {
 }
 
 export function getCaptureStartBlocker({
-  isDirty,
   lifecycleLocked,
   loadStatus,
   scene,
@@ -29,9 +28,6 @@ export function getCaptureStartBlocker({
   }
   if (!scene || scene.sources.length === 0) {
     return 'Add at least one monitor source before recording.';
-  }
-  if (isDirty) {
-    return 'Save the source setup before recording.';
   }
   if (!status.backendHealth.portal.available) {
     return (

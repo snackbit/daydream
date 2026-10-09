@@ -76,6 +76,7 @@ pub async fn reprocess_recording_ocr(
     app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<ProcessingJob, AiError> {
+    let _lease = super::processing_commands::admit_processing(&app, "reprocess-ocr")?;
     if input.recording_id.is_empty() {
         return Err(invalid_input());
     }

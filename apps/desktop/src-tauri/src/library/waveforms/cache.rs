@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::super::{path_to_string, system_time_ms, LibraryWaveformTile};
 use crate::storage::{RecordingRow, RecordingSegmentRow};
 
-const WAVEFORM_TILE_CACHE_VERSION: &str = "v2";
+const WAVEFORM_TILE_CACHE_VERSION: &str = "v3";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

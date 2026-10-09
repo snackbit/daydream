@@ -33,7 +33,7 @@ export function AppearanceControl() {
               : undefined
           }
           aria-label="Color appearance"
-          className="w-[5.25rem]"
+          className="w-28 rounded-full"
         >
           {mode === 'dark' ? (
             <Moon

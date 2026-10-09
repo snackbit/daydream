@@ -17,11 +17,11 @@ use super::portal::{close_portal_session_blocking, LivePortalSession, LivePortal
 use crate::recorder::{
     benchmark::{RecorderBenchmarkSession, RecorderBenchmarkStage},
     capture_runtime::{
-        bounded_frame_channel, new_capture_timing, record_capture_frame, record_compose_duration,
-        record_composed_frame, record_dmabuf_frame_read_back_to_cpu, record_scheduler_tick,
-        CapturePreviewSession, CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession,
-        CapturedDmaBufFrame, CapturedDmaBufFrameInput, CapturedFrame, CapturedFrameFormat,
-        CapturedFrameStorage, FrameSender, FrameTrySendError, RuntimeWorker, SharedCaptureTiming,
+        new_capture_timing, record_capture_frame, record_compose_duration, record_composed_frame,
+        record_dmabuf_frame_read_back_to_cpu, record_scheduler_tick, CapturePreviewSession,
+        CaptureRuntimeSource, CaptureRuntimeSourceHandle, CaptureSession, CapturedDmaBufFrame,
+        CapturedDmaBufFrameInput, CapturedFrame, CapturedFrameFormat, CapturedFrameStorage,
+        FrameSender, FrameTrySendError, RuntimeWorker, SharedCaptureTiming,
     },
     commands::RECORDER_PREVIEW_FRAME_EVENT,
     compositor::{SceneCompositorInput, SceneCompositorPlan},

@@ -7,7 +7,9 @@ import {
   waitFor,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
+import '@/index.css';
 import { NotificationsScreen } from './NotificationsScreen';
 
 const client = vi.hoisted(() => ({
@@ -246,6 +248,84 @@ test('NotificationsScreen shows an empty history state', () => {
   expect(screen.getByRole('status').textContent).toContain('All caught up');
 });
 
+test('NOT-01 failed permanent deletion keeps history available until the user retries', async () => {
+  vi.useRealTimers();
+  client.deleteNotifications
+    .mockRejectedValueOnce(new Error('Local history is busy.'))
+    .mockResolvedValueOnce({ notifications: [] });
+  useNotificationsStore.setState({
+    notifications: [seenNotification],
+    status: 'ready',
+  });
+  render(<NotificationsScreen />);
+  await page
+    .getByRole('button', { name: /permanently dismiss older update/i })
+    .click();
+  expect(await screen.findByText('Local history is busy.')).toBeTruthy();
+  expect(screen.getByText('Older update')).toBeTruthy();
+  await page
+    .getByRole('button', { name: /permanently dismiss older update/i })
+    .click();
+  expect(await screen.findByRole('status')).toHaveProperty(
+    'textContent',
+    expect.stringContaining('All caught up'),
+  );
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(client.deleteNotifications).toHaveBeenCalledTimes(2);
+});
+
+test('NOT-02 failed model retry preserves the action and can recover without deleting history', async () => {
+  vi.useRealTimers();
+  aiClient.downloadAiModel
+    .mockRejectedValueOnce(new Error('Download service is busy.'))
+    .mockResolvedValueOnce(seenNotification);
+  client.getNotifications.mockResolvedValue({
+    notifications: [seenNotification],
+  });
+  useNotificationsStore.setState({
+    notifications: [seenNotification],
+    status: 'ready',
+  });
+  render(<NotificationsScreen />);
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'The model action could not be completed',
+  );
+  expect(screen.queryByText('Download service is busy.')).toBeNull();
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(screen.getByText('Older update')).toBeTruthy();
+  expect(aiClient.downloadAiModel).toHaveBeenCalledTimes(2);
+  expect(client.deleteNotifications).not.toHaveBeenCalled();
+});
+
+test('NOT-03 clearing history retries after rejection while ongoing downloads remain protected', async () => {
+  vi.useRealTimers();
+  client.deleteNotifications
+    .mockRejectedValueOnce(new Error('History is locked.'))
+    .mockResolvedValueOnce({ notifications: [activeNotification] });
+  useNotificationsStore.setState({
+    aiModels: [activeModel],
+    notifications: [
+      { ...seenNotification, source: 'system', topic: 'status', actions: [] },
+      activeNotification,
+    ],
+    status: 'ready',
+  });
+  render(<NotificationsScreen />);
+  await page.getByRole('button', { name: 'Clear 1 update' }).click();
+  expect(await screen.findByText('History is locked.')).toBeTruthy();
+  await page.getByRole('button', { name: 'Clear 1 update' }).click();
+  await waitFor(() => expect(screen.queryByText('Older update')).toBeNull());
+  expect(screen.getByText('Model download started')).toBeTruthy();
+  expect(client.deleteNotifications).toHaveBeenLastCalledWith({
+    notificationIds: ['notification-seen'],
+  });
+  expect(
+    screen.getByRole('button', { name: 'No updates to clear' }),
+  ).toHaveProperty('disabled', true);
+});
+
 test('NotificationsScreen retries a failed history load and shows recovered updates', async () => {
   vi.useRealTimers();
   client.getNotifications
@@ -292,3 +372,30 @@ test('NotificationsScreen keeps ongoing downloads unread and undeletable', async
   }) as HTMLButtonElement;
   expect(dismissAllButton.disabled).toBe(true);
 });
+
+test.each(['light', 'dark'])(
+  'notification controls fit %s across desktop and narrow widths',
+  async (theme) => {
+    vi.useRealTimers();
+    document.documentElement.dataset.theme = theme;
+    useNotificationsStore.setState({
+      aiModels: [],
+      error: null,
+      notifications: [seenNotification, unseenNotification],
+      status: 'ready',
+    });
+    render(<NotificationsScreen />);
+    for (const width of [1440, 1024, 768, 390, 320]) {
+      await page.viewport(width, 900);
+      for (const control of screen.getAllByRole('button')) {
+        const bounds = control.getBoundingClientRect();
+        expect(bounds.left).toBeGreaterThanOrEqual(0);
+        expect(bounds.right).toBeLessThanOrEqual(width);
+      }
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+      await page.screenshot();
+    }
+    delete document.documentElement.dataset.theme;
+    await page.viewport(1440, 960);
+  },
+);

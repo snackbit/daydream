@@ -10,6 +10,8 @@ pub struct AiError {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiModelAsset {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer: Option<AiModelTransfer>,
     pub checksum: Option<String>,
     pub checksum_algorithm: Option<String>,
     pub created_at_ms: i64,
@@ -27,6 +29,15 @@ pub struct AiModelAsset {
     pub total_bytes: Option<i64>,
     pub updated_at_ms: i64,
     pub verification_status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelTransfer {
+    pub attempt: i64,
+    pub phase: String,
+    pub bytes_per_second: Option<i64>,
+    pub eta_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

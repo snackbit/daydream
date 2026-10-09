@@ -24,6 +24,13 @@ pub(super) fn spawn_job_cancel_monitor(
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
         loop {
+            if app
+                .try_state::<crate::maintenance::RuntimeActivityRegistry>()
+                .is_some_and(|registry| registry.is_maintenance_active())
+            {
+                cancel.store(true, Ordering::SeqCst);
+                return;
+            }
             if cancel.load(Ordering::SeqCst) {
                 return;
             }

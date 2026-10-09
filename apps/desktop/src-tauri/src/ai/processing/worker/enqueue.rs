@@ -35,7 +35,11 @@ fn enqueue_processing<R: tauri::Runtime>(
             "Protected recording spans must be recovered before processing.",
         ));
     }
-    if !matches!(recording.status.as_str(), "completed" | "failed") && !input_open {
+    if !matches!(
+        recording.status.as_str(),
+        "completed" | "failed" | "recovered-partial"
+    ) && !input_open
+    {
         tracing::warn!(
             recording_id = %recording_id,
             recording_status = %recording.status,

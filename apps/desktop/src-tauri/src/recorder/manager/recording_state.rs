@@ -8,6 +8,7 @@ use super::super::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveRecording {
+    pub(super) capture_run_id: String,
     pub(super) video_sources: Vec<crate::storage::RecordingVideoSource>,
     pub(super) active_segment: Option<ActiveSegment>,
     pub(super) canvas_height: u32,

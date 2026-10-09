@@ -17,6 +17,11 @@ impl RecorderManager {
         owner: PauseOwner,
     ) -> Result<(RecorderStatus, bool), RecorderError> {
         let mut runtime = self.lock_runtime()?;
+        if runtime.status.state == RecorderState::Error {
+            return Err(runtime.status.last_error.clone().unwrap_or_else(|| {
+                lifecycle_error("recorder_failed", "Recording stopped after a failure.")
+            }));
+        }
         let active = runtime
             .active
             .clone()
@@ -72,6 +77,7 @@ impl RecorderManager {
             runtime.status.backend_health.clone(),
         );
         runtime.status = status.clone();
+        self.begin_lifecycle_deadline();
         runtime.pause_owner = Some(owner);
         runtime.pause_generation = runtime.pause_generation.saturating_add(1);
 
@@ -106,9 +112,26 @@ impl RecorderManager {
             .max()
             .unwrap_or(paused.next_segment_index);
         let mut runtime = self.lock_runtime()?;
+        if let Some(error) = self.forced_lifecycle_error(recording_id) {
+            drop(runtime);
+            return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
         if let Some(error) = runtime.pending_failure.take() {
             drop(runtime);
             return self.abort_recording(storage, recording_id, error, timestamp_ms);
+        }
+        if runtime.status.state == RecorderState::Error
+            || runtime
+                .active
+                .as_ref()
+                .is_none_or(|active| active.recording_id != recording_id)
+        {
+            return Err(runtime.status.last_error.clone().unwrap_or_else(|| {
+                lifecycle_error(
+                    "recorder_completion_superseded",
+                    "Recording completion was superseded by a failure.",
+                )
+            }));
         }
         if let Err(error) = mark_recording_paused(storage, &paused.recording_id) {
             drop(runtime);

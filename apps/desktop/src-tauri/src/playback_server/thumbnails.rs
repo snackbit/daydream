@@ -16,6 +16,7 @@ const THUMBNAIL_INTERVAL_MS: i64 = 3_000;
 pub(super) struct ThumbnailService {
     sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
     state: Arc<(Mutex<ThumbnailState>, Condvar)>,
+    resources: super::resources::PlaybackResources,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -56,13 +57,15 @@ pub(super) enum ThumbnailEnqueueOutcome {
 
 pub(super) type ThumbnailResult = Result<Arc<Vec<u8>>, ThumbnailError>;
 impl ThumbnailService {
-    pub(super) fn new(
+    pub(super) fn new_with_resources(
         sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
         worker_count: usize,
+        resources: super::resources::PlaybackResources,
     ) -> Self {
         let service = Self {
             sessions,
             state: Arc::new((Mutex::new(ThumbnailState::new()), Condvar::new())),
+            resources,
         };
         for worker_index in 0..worker_count {
             let service_for_worker = service.clone();
@@ -114,6 +117,25 @@ impl ThumbnailService {
             let _ = waiter.send(Err(ThumbnailError::StaleSession));
         }
     }
+    pub(super) fn close_all(&self) {
+        let waiters = {
+            let Ok(mut state) = self.state.0.lock() else {
+                return;
+            };
+            state.queue.clear();
+            state.queued_keys.clear();
+            state.cache.clear();
+            state
+                .in_progress
+                .drain()
+                .flat_map(|(_, waiters)| waiters)
+                .collect::<Vec<_>>()
+        };
+        for waiter in waiters {
+            let _ = waiter.send(Err(ThumbnailError::StaleSession));
+        }
+        self.state.1.notify_all();
+    }
 
     fn worker_loop(&self) {
         loop {
@@ -135,9 +157,19 @@ impl ThumbnailService {
             };
 
             let result = if self.session_exists(&job.key.session_id) {
-                generate_thumbnail(&job.segment, job.video_stream_index, job.offset_ms)
+                self.resources
+                    .begin(None, Some(job.key.session_id.clone()))
+                    .map_err(|_| ThumbnailError::StaleSession)
+                    .and_then(|resource| {
+                        generate_thumbnail(
+                            &job.segment,
+                            job.video_stream_index,
+                            job.offset_ms,
+                            &resource,
+                        )
+                        .map_err(|_| ThumbnailError::Failed)
+                    })
                     .map(Arc::new)
-                    .map_err(|_error| ThumbnailError::Failed)
             } else {
                 Err(ThumbnailError::StaleSession)
             };
@@ -250,18 +282,36 @@ fn generate_thumbnail(
     segment: &PlaybackSegment,
     video_stream_index: i64,
     offset_ms: i64,
+    resource: &super::resources::ResourceLease,
 ) -> Result<Vec<u8>, String> {
-    let output = Command::new(ffmpeg::binary_path())
+    use std::io::Read;
+    let mut command = Command::new(ffmpeg::binary_path());
+    command
         .args(thumbnail_ffmpeg_args(
             segment,
             video_stream_index,
             offset_ms,
         ))
-        .output()
-        .map_err(|error| error.to_string())?;
-
-    if output.status.success() && !output.stdout.is_empty() {
-        Ok(output.stdout)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut stdout = resource
+        .spawn(&mut command)
+        .map_err(|_| "Unable to start thumbnail worker.")?;
+    let mut bytes = Vec::new();
+    stdout
+        .by_ref()
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Unable to read thumbnail.")?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        resource.kill();
+        return Err("Thumbnail exceeded memory limit.".into());
+    }
+    let status = resource
+        .wait()
+        .map_err(|_| "Unable to finish thumbnail worker.")?;
+    if status.success() && !bytes.is_empty() {
+        Ok(bytes)
     } else {
         Err("Unable to generate thumbnail".to_string())
     }

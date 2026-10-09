@@ -4,6 +4,7 @@ import type {
   RecordWindowProtectionSettings,
 } from '@daydream/shared';
 import { expect, test } from 'vitest';
+import { recallSettingsFixture } from '../recall/recall-test-fixtures';
 import {
   estimateOneHourRecordingBytes,
   formatFps,
@@ -22,6 +23,7 @@ const defaultWindowProtection: RecordWindowProtectionSettings = {
 
 const settings = {
   ai: {
+    recall: recallSettingsFixture(),
     activity: {
       frameDeltas: {
         enabled: true,

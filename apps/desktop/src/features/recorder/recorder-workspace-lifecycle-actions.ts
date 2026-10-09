@@ -1,3 +1,4 @@
+import type { SaveCaptureSetupInput } from '@daydream/shared';
 import {
   getRecorderRecordingStats,
   getRecorderStatus,
@@ -13,6 +14,7 @@ import {
   previewIsActive,
   stopPreviewForRecording,
 } from './recorder-preview-store';
+import { recorderStatusIsCurrent } from './recorder-status-order';
 import { runStatusMutation } from './recorder-workspace-store-helpers';
 import type {
   RecorderWorkspaceGet,
@@ -62,7 +64,7 @@ export function createRecorderWorkspaceLifecycleActions(
     pause: () => pause(set, get),
     refreshRecordingStats: () => refreshRecordingStats(set, get),
     resume: () => resume(set, get),
-    start: () => start(set, get),
+    start: (setup) => start(set, get, setup),
     stop: () => stop(set, get),
     subscribeToStatusEvents: subscribeShared,
   };
@@ -125,10 +127,14 @@ async function refreshRecordingStats(
   }
 }
 
-async function start(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
+async function start(
+  set: RecorderWorkspaceSet,
+  get: RecorderWorkspaceGet,
+  setup?: SaveCaptureSetupInput,
+) {
   const state = get();
   const scene = state.scene;
-  if (!scene || state.isDirty) {
+  if (!scene || (state.isDirty && !setup)) {
     set({ error: 'Save the recorder scene before starting.' });
     return;
   }
@@ -153,6 +159,7 @@ async function start(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
       microphoneAudioSourceId: state.microphoneAudioSourceId,
       qualityPreset: 'balanced-ocr',
       sceneId: scene.id,
+      ...(setup ? { setup } : {}),
     }),
   );
 }
@@ -179,7 +186,7 @@ async function subscribeToStatusEvents(
   let receivedEvent = false;
   let active = true;
   function applyStatus(status: Awaited<ReturnType<typeof getRecorderStatus>>) {
-    if (!active) return;
+    if (!active || !recorderStatusIsCurrent(get().status, status)) return;
     set({
       error: status.lastError?.message ?? null,
       pendingLifecycleAction: null,

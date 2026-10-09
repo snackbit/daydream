@@ -8,13 +8,46 @@ import type {
   ListBackgroundTasksInput,
   RetryProcessingUnitsInput,
   ProcessingJob,
+  ListRecordingProcessingGroupsInput,
+  RecordingProcessingGroupPage,
+  GetRecordingProcessingLaneInput,
+  RecordingProcessingLaneDetail,
+  ControlRecordingProcessingGroupsInput,
+  RecordingProcessingActionResult,
 } from '@daydream/shared';
 import { processingJob } from '@/features/ai/ocr/ocr-response-decoder';
+import {
+  decodeRecordingGroupPage,
+  decodeRecordingLaneDetail,
+  decodeRecordingActionResult,
+} from './group-decoder';
 import {
   decodeTaskChange,
   decodeTaskDetail,
   decodeTaskPage,
 } from './task-decoder';
+
+export async function listRecordingProcessingGroups(
+  input?: ListRecordingProcessingGroupsInput,
+): Promise<RecordingProcessingGroupPage> {
+  return decodeRecordingGroupPage(
+    await invoke<unknown>('listRecordingProcessingGroups', { input }),
+  );
+}
+export async function getRecordingProcessingLane(
+  input: GetRecordingProcessingLaneInput,
+): Promise<RecordingProcessingLaneDetail> {
+  return decodeRecordingLaneDetail(
+    await invoke<unknown>('getRecordingProcessingLane', { input }),
+  );
+}
+export async function controlRecordingProcessingGroups(
+  input: ControlRecordingProcessingGroupsInput,
+): Promise<RecordingProcessingActionResult> {
+  return decodeRecordingActionResult(
+    await invoke<unknown>('controlRecordingProcessingGroups', { input }),
+  );
+}
 
 export async function listBackgroundTasks(
   input?: ListBackgroundTasksInput,

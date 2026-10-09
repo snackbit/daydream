@@ -176,7 +176,7 @@ function RedactionGroup({
   }
   return (
     <div
-      className="border-destructive/70 bg-muted absolute z-30 border"
+      className="border-muted-foreground/50 data-[selected=true]:border-primary data-[selected=true]:ring-primary/30 absolute z-40 border-x data-[selected=true]:ring-1"
       data-library-action
       data-selected={selectedIds.has(redaction.id)}
       style={{
@@ -196,12 +196,12 @@ function RedactionGroup({
         aria-description={`Hidden tracks: ${group.labels.join(', ')}`}
         aria-pressed={selectedIds.has(redaction.id)}
         variant="ghost"
-        className="h-full w-full items-start justify-start overflow-hidden rounded-none px-2 py-0 text-[11px] data-[state=selected]:ring-2"
+        className="relative h-full w-full items-start justify-start overflow-hidden rounded-none p-0 text-xs hover:bg-transparent dark:hover:bg-transparent"
         data-state={selectedIds.has(redaction.id) ? 'selected' : 'idle'}
         disabled={saving}
         onClick={select}
       >
-        <span className="text-destructive truncate">
+        <span className="bg-muted text-foreground absolute top-2 left-2 max-w-[calc(100%-1rem)] truncate rounded-sm border px-2 py-0.5 text-xs font-medium">
           {saving ? 'Saving…' : 'Redacted'}
         </span>
         <span className="sr-only">
@@ -212,7 +212,7 @@ function RedactionGroup({
         aria-label="Resize redaction start"
         data-edge="start"
         variant="ghost"
-        className="absolute inset-y-0 left-0 h-full w-1.5 cursor-ew-resize rounded-none p-0"
+        className="hover:bg-primary/15 focus-visible:bg-primary/20 absolute inset-y-0 left-0 h-full w-1.5 cursor-ew-resize rounded-none p-0"
         disabled={saving}
         onPointerDown={down}
         onPointerMove={move}
@@ -224,7 +224,7 @@ function RedactionGroup({
         aria-label="Resize redaction end"
         data-edge="end"
         variant="ghost"
-        className="absolute inset-y-0 right-0 h-full w-1.5 cursor-ew-resize rounded-none p-0"
+        className="hover:bg-primary/15 focus-visible:bg-primary/20 absolute inset-y-0 right-0 h-full w-1.5 cursor-ew-resize rounded-none p-0"
         disabled={saving}
         onPointerDown={down}
         onPointerMove={move}

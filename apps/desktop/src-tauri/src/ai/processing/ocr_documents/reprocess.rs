@@ -17,7 +17,7 @@ pub(crate) async fn reprocess_recording_ocr<R: tauri::Runtime>(
     let job=storage.with_connection_mut(|connection|{
         let transaction=connection.transaction()?;
         let recording=storage::get_recording(&transaction,recording_id)?;
-        if recording.status!="completed" || !crate::recording_privacy::protection_ready(&transaction,recording_id)? {return Err(rusqlite::Error::InvalidQuery);}
+        if !matches!(recording.status.as_str(),"completed"|"recovered-partial") || !crate::recording_privacy::protection_ready(&transaction,recording_id)? {return Err(rusqlite::Error::InvalidQuery);}
         for job in storage::list_processing_jobs(&transaction,Some(recording_id))? {
             if matches!(job.status.as_str(),"queued"|"running"|"paused") && storage::list_processing_chunks(&transaction,&job.id)?.iter().any(|chunk|chunk.source_kind=="ocr"&&matches!(chunk.status.as_str(),"queued"|"running")) {return Err(rusqlite::Error::InvalidQuery);}
         }

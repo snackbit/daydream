@@ -5,14 +5,14 @@ use super::{
 };
 use crate::storage::RecordingVideoSource;
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SaveCaptureSetupInput {
-    scene: RecorderScene,
-    fps: f64,
-    video_bitrate_kbps: u32,
+    pub(crate) scene: RecorderScene,
+    pub(crate) fps: f64,
+    pub(crate) video_bitrate_kbps: u32,
 }
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureSetup {
     scene: Option<RecorderScene>,
@@ -37,16 +37,28 @@ pub(crate) fn get_capture_setup(
 #[tauri::command(rename = "saveCaptureSetup")]
 pub(crate) fn save_capture_setup(
     input: SaveCaptureSetupInput,
+    app: tauri::AppHandle,
     storage: tauri::State<'_, crate::storage::AppStorage>,
     manager: tauri::State<'_, super::manager::RecorderManager>,
 ) -> Result<CaptureSetup, RecorderError> {
+    let _activity =
+        crate::maintenance::runtime::admit(&app, "capture-configure").map_err(|message| {
+            super::errors::lifecycle_error("recorder_maintenance_active", &message)
+        })?;
     if manager.configuration_is_locked()? {
         return Err(super::errors::lifecycle_error(
             "recorder_configuration_locked",
             "Stop recording before changing its sources.",
         ));
     }
-    let mut settings = crate::settings::load_app_settings(&storage).map_err(|_| {
+    persist_capture_setup(input, &storage)
+}
+
+pub(crate) fn persist_capture_setup(
+    input: SaveCaptureSetupInput,
+    storage: &crate::storage::AppStorage,
+) -> Result<CaptureSetup, RecorderError> {
+    let mut settings = crate::settings::load_app_settings(storage).map_err(|_| {
         super::errors::storage_error_message("Recording settings could not be loaded.")
     })?;
     settings.record.fps = input.fps;

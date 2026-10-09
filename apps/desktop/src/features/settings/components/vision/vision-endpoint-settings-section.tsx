@@ -1,5 +1,6 @@
 import { useCallback, type ChangeEvent } from 'react';
 import type { AiOcrEngine, AiVisionProviderSettings } from '@daydream/shared';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import {
   Field,
   FieldDescription,
@@ -20,6 +21,7 @@ import {
 } from '../../settings-draft-updaters';
 import { CheckboxField } from '../ai-settings-fields';
 import { VisionProviderTest } from './vision-provider-test';
+import { visionRemoteDisclosure } from './vision-settings-format';
 
 export interface VisionEndpointSettingsSectionModel {
   ocrEnabled: boolean;
@@ -161,24 +163,52 @@ export function VisionEndpointSettingsSection({
             ocr={model.ocrEnabled && model.ocrEngine === 'vision'}
             observations={settings.observationsEnabled}
           />
-          <details className="text-muted-foreground text-xs">
-            <summary className="cursor-pointer">Data and usage</summary>
-            <p className="mt-1">
+          <p className="text-control text-secondary-foreground">
+            {visionRemoteDisclosure({
+              observationsEnabled: settings.observationsEnabled,
+              ocrEnabled: model.ocrEnabled,
+              ocrEngine: model.ocrEngine,
+            })}
+          </p>
+          <SharedDisclosure
+            label="Data and usage"
+            status={`${Number((model.sourceCount * model.samplesPerMinute).toFixed(2))} frames/min`}
+          >
+            <dl className="text-control grid gap-3 sm:grid-cols-3">
+              <div>
+                <dt className="text-muted-foreground text-metadata">
+                  Video sources
+                </dt>
+                <dd>{model.sourceCount}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-metadata">
+                  Samples per source
+                </dt>
+                <dd>{Number(model.samplesPerMinute.toFixed(2))}/min</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground text-metadata">
+                  Total frames
+                </dt>
+                <dd>
+                  {Number(
+                    (model.sourceCount * model.samplesPerMinute).toFixed(2),
+                  )}
+                  /min
+                </dd>
+              </div>
+            </dl>
+            <p className="text-muted-foreground text-metadata mt-4">
               Vision sends sampled screen frames to this endpoint. Screen
               observations can also include recognized text. API keys are
               encrypted locally.
             </p>
-            <p className="mt-1">
-              {model.sourceCount} video{' '}
-              {model.sourceCount === 1 ? 'source' : 'sources'} at up to{' '}
-              {Number(model.samplesPerMinute.toFixed(2))} samples per minute
-              each:{' '}
-              {Number((model.sourceCount * model.samplesPerMinute).toFixed(2))}{' '}
-              frames per minute in total. Each enabled Vision task can make a
-              separate request per frame. Cached OCR frames may reduce calls.
-              Provider charges vary.
+            <p className="text-muted-foreground text-metadata mt-2">
+              Each enabled Vision task can make a separate request per frame.
+              Cached OCR frames may reduce calls. Provider charges vary.
             </p>
-          </details>
+          </SharedDisclosure>
         </>
       ) : null}
     </FieldGroup>

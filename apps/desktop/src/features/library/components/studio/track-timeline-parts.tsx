@@ -23,6 +23,7 @@ export function TrackTimelineToolbar({
   hasTimeRangeSelection,
   onRedactSelection,
   onUnredactSelection,
+  redactionPending,
   onZoomIn,
   onZoomOut,
   selectedRangeRedactionCount,
@@ -34,6 +35,7 @@ export function TrackTimelineToolbar({
   hasTimeRangeSelection: boolean;
   onRedactSelection: () => void;
   onUnredactSelection: () => void;
+  redactionPending: boolean;
   onZoomIn: () => void;
   onZoomOut: () => void;
   selectedRangeRedactionCount: number;
@@ -41,12 +43,13 @@ export function TrackTimelineToolbar({
   zoomPercent: number;
 }) {
   return (
-    <div className="flex h-8 shrink-0 items-center justify-between gap-2 border-b px-2.5">
-      <div className="text-xs font-semibold">Tracks</div>
-      <div className="flex min-w-0 items-center gap-2">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+      <div className="text-sm font-medium">Tracks</div>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         {hasTimeRangeSelection ? (
           <div className="flex shrink-0 items-center gap-1">
             <Button
+              disabled={redactionPending}
               size="sm"
               type="button"
               variant="outline"
@@ -57,6 +60,7 @@ export function TrackTimelineToolbar({
             </Button>
             {selectedRangeRedactionCount > 0 ? (
               <Button
+                disabled={redactionPending}
                 size="sm"
                 type="button"
                 variant="outline"
@@ -68,9 +72,7 @@ export function TrackTimelineToolbar({
             ) : null}
           </div>
         ) : null}
-        <div className="text-muted-foreground truncate text-[10px]">
-          {statusText}
-        </div>
+        <div className="text-muted-foreground text-xs">{statusText}</div>
         <div
           aria-label="Track zoom"
           className="flex shrink-0 items-center gap-1"
@@ -78,7 +80,7 @@ export function TrackTimelineToolbar({
           <Button
             aria-label="Zoom out tracks"
             disabled={!canZoomOut}
-            size="icon-xs"
+            size="icon"
             type="button"
             variant="ghost"
             onClick={onZoomOut}
@@ -94,7 +96,7 @@ export function TrackTimelineToolbar({
           <Button
             aria-label="Zoom in tracks"
             disabled={!canZoomIn}
-            size="icon-xs"
+            size="icon"
             type="button"
             variant="ghost"
             onClick={onZoomIn}
@@ -261,7 +263,7 @@ export function TimeRuler({
           }}
         >
           {tick.major ? (
-            <div className="text-muted-foreground mt-0.5 ml-1 text-[0.625rem] tabular-nums">
+            <div className="text-muted-foreground mt-0.5 ml-1 text-xs tabular-nums">
               {formatDuration(tick.timeMs)}
             </div>
           ) : null}
@@ -290,7 +292,7 @@ export function TimelineRangeLabels({
         return (
           <div
             aria-label="Selected time range"
-            className="bg-destructive/80 text-destructive-foreground pointer-events-none absolute top-0 z-40 rounded-b-sm px-1 py-px text-[0.625rem] font-medium"
+            className="bg-destructive/80 text-destructive-foreground pointer-events-none absolute top-0 z-40 rounded-b-sm px-1 py-px text-xs font-medium"
             key={range.id}
             style={{
               left: TRACK_LABEL_WIDTH_PX + left + 4,

@@ -1,4 +1,4 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info, warn};
 
 use crate::{settings, storage::AppStorage};
@@ -22,16 +22,43 @@ use super::{
 };
 
 pub async fn start_recording<R: tauri::Runtime>(
-    input: StartRecordingInput,
+    mut input: StartRecordingInput,
     app: AppHandle<R>,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
+    let _activity =
+        crate::maintenance::runtime::admit(&app, "capture-start").map_err(|message| {
+            super::super::errors::lifecycle_error("recorder_maintenance_active", &message)
+        })?;
     let timestamp_ms = now_ms();
     info!(scene_id = %input.scene_id, "recorder_start_requested");
-    ensure_window_protection_provider_available(&storage)?;
-    manager.stop_preview(timestamp_ms)?;
     manager.begin_selecting(&input.scene_id, timestamp_ms)?;
+    let configuration = (|| {
+        if let Some(setup) = input.setup.take() {
+            if setup.scene.id != input.scene_id {
+                return Err(super::super::errors::invalid_scene_error(
+                    "The reviewed setup belongs to another scene.",
+                ));
+            }
+            if setup.scene.desktop_audio_source_id != input.desktop_audio_source_id
+                || setup.scene.microphone_audio_source_id != input.microphone_audio_source_id
+            {
+                return Err(super::super::errors::invalid_scene_error(
+                    "Review the selected audio sources before starting.",
+                ));
+            }
+            let saved = super::super::source_recording::persist_capture_setup(setup, &storage)?;
+            let _ = app.emit("capture-setup-saved", saved);
+        }
+        ensure_window_protection_provider_available(&storage)?;
+        manager.stop_preview(timestamp_ms)?;
+        Ok(())
+    })();
+    if let Err(error) = configuration {
+        let _ = manager.clear_selecting_to_idle(now_ms());
+        return Err(error);
+    }
 
     let pending = match manager.prepare_recording_start(&storage, input, timestamp_ms) {
         Ok(pending) => pending,
@@ -69,7 +96,7 @@ pub async fn start_recording<R: tauri::Runtime>(
         let _ = manager.clear_selecting_to_idle(now_ms());
         return Err(error);
     }
-    let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
+    let mut media = match platform::start_live_segment(&pending.segment_input, prepared).await {
         Ok(media) => media,
         Err(error) => {
             error!(
@@ -153,6 +180,10 @@ pub async fn resume_recording<R: tauri::Runtime>(
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderStatus, RecorderError> {
+    let _activity =
+        crate::maintenance::runtime::admit(&app, "capture-resume").map_err(|message| {
+            super::super::errors::lifecycle_error("recorder_maintenance_active", &message)
+        })?;
     let timestamp_ms = now_ms();
     info!(recording_id = %input.recording_id, "recorder_resume_requested");
     ensure_window_protection_provider_available(&storage)?;
@@ -182,7 +213,7 @@ pub async fn resume_recording<R: tauri::Runtime>(
         restore_paused_after_resume_failure(&app, &manager, &storage, pending.active.clone());
         return Err(error);
     }
-    let mut media = match platform::start_live_segment(&pending.segment_input, prepared) {
+    let mut media = match platform::start_live_segment(&pending.segment_input, prepared).await {
         Ok(media) => media,
         Err(error) => {
             let _ = manager.fail_pending_segment(&storage, &pending, now_ms(), &error);

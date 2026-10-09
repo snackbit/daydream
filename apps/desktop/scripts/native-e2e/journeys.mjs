@@ -1,0 +1,587 @@
+import assert from 'node:assert/strict';
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { chromium } from 'playwright';
+import { connectInspector } from './inspector.mjs';
+import { createNativePointer } from './pointer.mjs';
+import { connectNativeKeyboard } from './webdriver.mjs';
+
+const phase = process.argv[2] ?? 'initial';
+const artifacts = process.env.DAYDREAM_E2E_DIR;
+if (!artifacts?.startsWith('/tmp/daydream-native-e2e.')) {
+  throw new Error('Use run.sh to isolate synthetic application data');
+}
+const stories = [];
+const browser = await chromium.launch({ headless: true });
+let native;
+let viewer;
+let failure;
+let keyboard;
+try {
+  viewer = await browser.newPage({
+    viewport: { width: 1440, height: 1000 },
+  });
+  await viewer.goto('http://127.0.0.1:39188', {
+    waitUntil: 'domcontentloaded',
+  });
+  if (phase === 'keyboard') {
+    keyboard = await connectNativeKeyboard();
+    native = keyboard;
+  } else native = await connectInspector();
+  await native.wait(
+    'document.querySelector("nav a[aria-label=Settings]") !== null',
+    'application navigation',
+  );
+  const distIndex = await readFile(
+    new URL('../../dist/index.html', import.meta.url),
+    'utf8',
+  );
+  const expectedAssets = [
+    ...distIndex.matchAll(/(?:src|href)="([^"\s]+\.(?:js|css))"/g),
+  ]
+    .map((match) => match[1])
+    .sort();
+  const actualAssets = JSON.parse(
+    await native.evaluate(`JSON.stringify([
+    ...document.querySelectorAll('script[src],link[href]')
+  ].map(element => element.getAttribute(element.tagName === 'SCRIPT' ? 'src' : 'href')).filter(value => value.endsWith('.js') || value.endsWith('.css')).sort())`),
+  ).map((value) => new URL(value, 'tauri://localhost').pathname);
+  const builtAssets = await readdir(
+    new URL('../../dist/assets/', import.meta.url),
+  );
+  assert.ok(
+    expectedAssets.length > 0,
+    'production build must contain hashed assets',
+  );
+  await writeFile(
+    `${artifacts}/${phase}-assets.json`,
+    JSON.stringify({ expectedAssets, actualAssets }, null, 2),
+  );
+  for (const asset of expectedAssets) {
+    assert.ok(
+      actualAssets.includes(asset),
+      `Native startup asset must match current frontend build: ${asset}`,
+    );
+  }
+  for (const asset of actualAssets) {
+    assert.ok(
+      builtAssets.includes(asset.split('/').at(-1)),
+      `Native lazy asset must exist in current frontend build: ${asset}`,
+    );
+  }
+  stories.push('NATIVE-CURRENT-FRONTEND-ASSET-IDENTITY');
+  assert.equal(
+    await native.evaluate('devicePixelRatio'),
+    1,
+    'isolated Broadway display DPI',
+  );
+  // GTK draws titlebar and shadow inside Broadway's canvas. Locate the actual
+  // WebView origin from a temporary rendered marker instead of guessing chrome
+  // dimensions. The marker never handles input and is removed before any story.
+  await native.evaluate(`(() => {
+    const marker = document.createElement('div');
+    marker.id = 'native-e2e-origin';
+    marker.style.cssText = 'position:fixed;left:0;top:0;width:8px;height:8px;background:rgb(13,253,71);z-index:2147483647;pointer-events:none';
+    document.body.appendChild(marker);
+    return true;
+  })()`);
+  let origin;
+  try {
+    const handle = await viewer.waitForFunction(
+      () => {
+        const canvases = [...document.querySelectorAll('canvas')];
+        for (const [index, canvas] of canvases.entries()) {
+          const pixels = canvas
+            .getContext('2d')
+            .getImageData(0, 0, canvas.width, canvas.height).data;
+          for (let offset = 0; offset < pixels.length; offset += 4) {
+            if (
+              pixels[offset] === 13 &&
+              pixels[offset + 1] === 253 &&
+              pixels[offset + 2] === 71
+            ) {
+              return {
+                index,
+                x: (offset / 4) % canvas.width,
+                y: Math.floor(offset / 4 / canvas.width),
+                width: canvas.width,
+                height: canvas.height,
+              };
+            }
+          }
+        }
+        return false;
+      },
+      null,
+      { timeout: 8000 },
+    );
+    origin = await handle.jsonValue();
+    await writeFile(
+      `${artifacts}/${phase}-pointer-origin.json`,
+      JSON.stringify(origin, null, 2),
+    );
+  } finally {
+    await native.evaluate(
+      'document.getElementById("native-e2e-origin")?.remove()',
+    );
+  }
+
+  const click =
+    phase === 'keyboard'
+      ? keyboard.click
+      : createNativePointer({ native, viewer, origin });
+  async function button(text) {
+    const selector = await native.evaluate(`(() => {
+      const candidates = [...document.querySelectorAll('button')].filter(e => e.textContent.trim() === ${JSON.stringify(text)});
+      const button = candidates.find(e => e.getBoundingClientRect().width > 0);
+      if (!button) throw new Error('Missing button');
+      button.setAttribute('data-native-e2e-button','active');
+      return '[data-native-e2e-button="active"]';
+    })()`);
+    try {
+      await click(selector);
+    } finally {
+      await native.evaluate(
+        `document.querySelector(${JSON.stringify(selector)})?.removeAttribute('data-native-e2e-button')`,
+      );
+    }
+  }
+  async function navigate(label, path) {
+    await click(`nav a[aria-label="${label}"]`);
+    await native.wait(
+      `location.pathname === ${JSON.stringify(path)}`,
+      `navigate ${label}`,
+    );
+  }
+  async function checkbox(label) {
+    const selector = await native.evaluate(`(() => {
+      const label = [...document.querySelectorAll('label')].find(e => e.textContent.includes(${JSON.stringify(label)}));
+      if (!label) throw new Error('Missing checkbox label');
+      return '#' + CSS.escape(label.htmlFor);
+    })()`);
+    return selector;
+  }
+  async function searchKeyboardStory() {
+    await viewer.evaluate(() => {
+      window.__broadwayE2eKeys = [];
+      for (const type of ['keydown', 'keypress', 'keyup'])
+        document.addEventListener(
+          type,
+          (event) => {
+            const entry = {
+              type: event.type,
+              key: event.key,
+              code: event.code,
+              keyCode: event.keyCode,
+              charCode: event.charCode,
+              ctrl: event.ctrlKey,
+              alt: event.altKey,
+              special: window.getKeysymSpecial?.(event),
+            };
+            window.__broadwayE2eKeys.push(entry);
+            queueMicrotask(() => (entry.prevented = event.defaultPrevented));
+          },
+          true,
+        );
+    });
+    await navigate('Search', '/search');
+    await native.wait(
+      'document.querySelector("main input") !== null',
+      'search ready',
+    );
+    await click('#recall-query');
+    await native.wait(
+      'document.activeElement?.id === "recall-query"',
+      'native search input focused',
+    );
+    await native.evaluate(`(() => {
+      window.__nativeE2eKeys = [];
+      for (const type of ['keydown','keypress','keyup','input']) {
+        document.addEventListener(type, event => {
+          if (event.target.id === 'recall-query') {
+            const entry = {type:event.type,key:event.key,value:event.target.value,trusted:event.isTrusted,ctrl:event.ctrlKey,alt:event.altKey,shift:event.shiftKey,meta:event.metaKey,composing:event.isComposing};
+            window.__nativeE2eKeys.push(entry);
+            queueMicrotask(() => entry.prevented = event.defaultPrevented);
+          }
+        }, true);
+      }
+      return true;
+    })()`);
+    await keyboard.type('synthetic unmatched query');
+    await native.wait(
+      `document.querySelector('#recall-query').value === 'synthetic unmatched query'`,
+      'native WebDriver text committed',
+    );
+    assert.equal(
+      await native.evaluate(
+        "window.__nativeE2eKeys.filter(event => event.type === 'keydown').length",
+      ),
+      'synthetic unmatched query'.length,
+    );
+    assert.ok(
+      await native.evaluate(
+        'window.__nativeE2eKeys.every(event => event.trusted)',
+      ),
+      'native automation emits trusted keyboard events',
+    );
+    await writeFile(
+      `${artifacts}/${phase}-keyboard-events.json`,
+      await native.evaluate('JSON.stringify(window.__nativeE2eKeys, null, 2)'),
+    );
+    await writeFile(
+      `${artifacts}/${phase}-viewer-keys.json`,
+      JSON.stringify(
+        await viewer.evaluate(() => window.__broadwayE2eKeys),
+        null,
+        2,
+      ),
+    );
+    await keyboard.enter();
+    await native.wait(
+      'new URLSearchParams(location.search).get("q") === "synthetic unmatched query"',
+      'typed query submitted',
+    );
+    await native.wait(
+      `document.querySelector('section[aria-label="Search results"]') !== null && document.body.textContent.includes("No eligible matches")`,
+      'real native empty search result',
+    );
+    stories.push('NATIVE-SEARCH-TYPE-SUBMIT-EMPTY-RESULT');
+  }
+  if (phase === 'keyboard') {
+    await searchKeyboardStory();
+  } else {
+    await navigate('Settings', '/settings');
+    await native.wait(
+      'document.querySelector("[role=checkbox]") !== null',
+      'settings loaded',
+    );
+    const expert = await checkbox('Enable expert mode');
+    const initial = (await native.invoke('getAppSettings')).settings;
+    if (phase === 'restart') {
+      assert.equal(
+        initial.expert.enabled,
+        true,
+        'UI save must survive native process restart',
+      );
+      assert.equal(
+        await native.evaluate(
+          `document.querySelector(${JSON.stringify(expert)}).getAttribute('aria-checked')`,
+        ),
+        'true',
+      );
+      stories.push('NATIVE-SETTINGS-RESTART');
+      const preservedRecordings = await native.invoke('listLibraryRecordings');
+      assert.ok(
+        preservedRecordings.length > 0,
+        'synthetic recordings survive restart',
+      );
+      await click('[aria-label="Color appearance"]');
+      await native.wait(
+        'document.querySelector("[role=option]") !== null',
+        'appearance choices',
+      );
+      await native.evaluate(
+        `(() => { const option = [...document.querySelectorAll('[role=option]')].find(element => element.textContent.trim() === 'Dark'); if (!option) throw new Error('Missing dark appearance option'); option.setAttribute('data-native-e2e-dark','active'); return true; })()`,
+      );
+      await click('[data-native-e2e-dark="active"]');
+      await native.wait(
+        'document.documentElement.dataset.theme === "dark"',
+        'dark appearance saved',
+      );
+      await button('Reset preferences');
+      await native.wait(
+        'document.querySelector("[role=alertdialog]") !== null',
+        'reset impact review',
+      );
+      await button('Cancel');
+      await native.wait(
+        'document.querySelector("[role=alertdialog]") === null',
+        'reset impact review cancelled',
+      );
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        true,
+      );
+      assert.equal(
+        await native.evaluate('document.documentElement.dataset.theme'),
+        'dark',
+      );
+      await button('Reset preferences');
+      await native.wait(
+        'document.querySelector("[role=alertdialog]") !== null',
+        'reset impact review reopened',
+      );
+      await button('Continue');
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        true,
+        'impact review alone does not reset preferences',
+      );
+      await button('Confirm');
+      await native.wait(
+        `(() => { const label = [...document.querySelectorAll('label')].find(element => element.textContent.includes('Enable expert mode')); const id = label?.getAttribute('for'); return id && document.getElementById(id)?.getAttribute('aria-checked') === 'false'; })()`,
+        'reset defaults',
+      );
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        false,
+      );
+      await native.wait(
+        'document.documentElement.dataset.theme === "light" && localStorage.getItem("daydream.appearance") === null',
+        'reset appearance persisted before native acknowledgement',
+      );
+      assert.equal(
+        await native.invoke('getMaintenanceStatus'),
+        null,
+        'native cleanup and theme acknowledgement completed',
+      );
+      const afterResetRecordings = await native.invoke('listLibraryRecordings');
+      assert.deepEqual(
+        afterResetRecordings.map((recording) => recording.id).sort(),
+        preservedRecordings.map((recording) => recording.id).sort(),
+        'preference reset preserves the complete library',
+      );
+      for (const recording of afterResetRecordings) {
+        const detail = await native.invoke('getLibraryRecording', {
+          recordingId: recording.id,
+        });
+        assert.ok(detail.playableSegmentCount >= 2);
+        for (const segment of detail.segments) {
+          assert.equal(segment.fileExists, true);
+          assert.ok(segment.filePath.startsWith(`${artifacts}/data/`));
+          assert.ok((await stat(segment.filePath)).size > 0);
+        }
+      }
+      stories.push('NATIVE-SETTINGS-RESET-CANCEL-CONFIRM');
+    } else {
+      assert.equal(initial.ai.transcription.provider, 'local-whisper-cpp');
+      assert.notEqual(initial.ai.vision.provider, 'openai-compatible');
+      assert.notEqual(
+        initial.ai.recall.embedding.provider,
+        'openai-compatible',
+      );
+      assert.equal(initial.ai.recall.generation.enabled, false);
+      assert.equal(initial.expert.enabled, false);
+      stories.push('NATIVE-LOCAL-CONSENT-DEFAULTS');
+      await click(expert);
+      await native.wait(
+        'document.querySelector("header") !== null && document.body.textContent.includes("Unsaved changes")',
+        'dirty settings',
+      );
+      await button('Save');
+      await native.wait(
+        'document.body.textContent.includes("Saved just now")',
+        'saved settings',
+      );
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        true,
+      );
+      stories.push('NATIVE-SETTINGS-SAVE');
+      await click(expert);
+      await click('nav a[aria-label="Library"]');
+      await native.wait(
+        'document.querySelector("[role=dialog]") !== null',
+        'unsaved navigation dialog',
+      );
+      await button('Stay');
+      await native.wait(
+        'document.querySelector("[role=dialog]") === null',
+        'stay dialog closed',
+      );
+      assert.equal(await native.evaluate('location.pathname'), '/settings');
+      await click('nav a[aria-label="Library"]');
+      await native.wait(
+        'document.querySelector("[role=dialog]") !== null',
+        'discard navigation dialog',
+      );
+      await button('Discard changes');
+      await native.wait(
+        'location.pathname === "/library"',
+        'discard navigation',
+      );
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        true,
+      );
+      stories.push('NATIVE-SETTINGS-DIRTY-STAY-DISCARD');
+      await navigate('Search', '/search');
+      await native.wait(
+        'document.querySelector("main input") !== null',
+        'search ready',
+      );
+      await navigate('Processing', '/processing');
+      await native.wait(
+        'document.querySelector("main h1") !== null',
+        'processing ready',
+      );
+      await navigate('Library', '/library');
+      await native.wait(
+        'document.body.textContent.includes("Your next day")',
+        'empty library',
+      );
+      stories.push('NATIVE-NAVIGATION-EMPTY-LIBRARY-SEARCH-PROCESSING');
+      // Fixture setup uses the public native settings boundary. Disable ambient
+      // window providers and automatic processing before synthetic recording.
+      const captureSettings = (await native.invoke('getAppSettings')).settings;
+      captureSettings.ai.activity.windows.enabled = false;
+      captureSettings.ai.processing.timing = 'manual';
+      captureSettings.ai.processing.autoStartAfterRecording = false;
+      captureSettings.ai.ocr.enabled = false;
+      await native.invoke('saveAppSettings', {
+        input: { settings: captureSettings },
+      });
+      await navigate('Capture', '/capture');
+      await click('button[aria-label="Add monitor sources"]');
+      await native.wait(
+        `[...document.querySelectorAll('button')].some(element => element.textContent.trim() === 'Save' && !element.disabled)`,
+        'source selection ready to save',
+      );
+      await button('Save');
+      await native.wait(
+        'document.body.textContent.includes("Source setup saved")',
+        'synthetic source saved',
+      );
+      const scene = await native.invoke('getRecorderScene');
+      assert.ok(scene.sources.length > 0);
+      assert.ok(
+        scene.sources.every((source) => source.sourceId.startsWith('fake-')),
+      );
+      assert.equal(scene.desktopAudioSourceId, null);
+      assert.equal(scene.microphoneAudioSourceId, null);
+      await button('Start');
+      await native.wait(
+        'document.body.textContent.includes("Status: recording")',
+        'recording',
+      );
+      assert.equal(
+        (await native.invoke('getRecorderStatus')).state,
+        'recording',
+      );
+      let elapsed = 0;
+      for (let attempt = 0; attempt < 40 && elapsed < 1500; attempt += 1) {
+        elapsed =
+          (await native.invoke('getRecorderRecordingStats'))
+            .recordedDurationMs ?? 0;
+        await delay(100);
+      }
+      assert.ok(
+        elapsed >= 1500,
+        'native writer must capture a playable segment',
+      );
+      await button('Pause');
+      await native.wait(
+        'document.body.textContent.includes("Status: paused")',
+        'paused',
+      );
+      const pausedStatus = await native.invoke('getRecorderStatus');
+      await writeFile(
+        `${artifacts}/${phase}-paused-native.json`,
+        JSON.stringify(pausedStatus, null, 2),
+      );
+      await writeFile(
+        `${artifacts}/${phase}-source-scene.json`,
+        JSON.stringify(scene, null, 2),
+      );
+      assert.equal(pausedStatus.state, 'paused');
+      await button('Resume');
+      await native.wait(
+        'document.body.textContent.includes("Status: recording")',
+        'resumed',
+      );
+      await button('Stop');
+      await native.wait(
+        'window.location.pathname.startsWith("/library/") && document.querySelector("video") !== null',
+        'durably saved recording opened in Studio',
+      );
+      await native.wait(
+        '!document.body.textContent.includes("Saving recording")',
+        'native stop finalization completed',
+      );
+      const stoppedStatus = await native.invoke('getRecorderStatus');
+      assert.equal(stoppedStatus.state, 'idle');
+      assert.equal(stoppedStatus.finalization, null);
+      stories.push('NATIVE-SYNTHETIC-CAPTURE-SAVE-START-PAUSE-RESUME-STOP');
+      const recordings = await native.invoke('listLibraryRecordings');
+      assert.equal(recordings.length, 1);
+      assert.equal(recordings[0].availability, 'available');
+      const detail = await native.invoke('getLibraryRecording', {
+        recordingId: recordings[0].id,
+      });
+      assert.ok(detail.playableSegmentCount >= 2);
+      for (const segment of detail.segments) {
+        assert.equal(segment.fileExists, true);
+        assert.ok(segment.filePath.startsWith(`${artifacts}/data/`));
+        assert.ok((await stat(segment.filePath)).size > 0);
+      }
+      await navigate('Library', '/library');
+      await button('Recordings');
+      await click('button[aria-label^="Play "]');
+      await native.wait(
+        'document.querySelector("video") !== null',
+        'native Studio video',
+      );
+      await native.wait(
+        'document.querySelector("video").readyState >= 2',
+        'native decoded video frame',
+      );
+      assert.ok(
+        await native.evaluate('document.querySelector("video").videoWidth > 0'),
+      );
+      stories.push('NATIVE-RECORDED-MEDIA-LIBRARY-STUDIO');
+      await click('button[aria-label="Play"]');
+      await native.wait(
+        'document.querySelector("video").currentTime > 0.1 && !document.querySelector("video").paused',
+        'native video playing',
+      );
+      await click('button[aria-label="Pause"]');
+      await native.wait(
+        'document.querySelector("video").paused',
+        'native video paused',
+      );
+      stories.push('NATIVE-STUDIO-PLAY-TIME-ADVANCE-PAUSE');
+    }
+  }
+  await viewer.screenshot({ path: `${artifacts}/${phase}.png` });
+  process.stdout.write(`${JSON.stringify({ phase, passed: stories })}\n`);
+} catch (error) {
+  failure = error.message;
+  if (native) {
+    const state = await native
+      .evaluate(
+        `JSON.stringify({
+      pathname: location.pathname,
+      dialogs: [...document.querySelectorAll('[role=dialog]')].map(element => ({ state: element.dataset.state, text: element.textContent })),
+      statuses: [...document.querySelectorAll('[role=status]')].map(element => element.textContent),
+      checkboxes: [...document.querySelectorAll('[role=checkbox]')].map(element => ({ id:element.id, checked:element.getAttribute('aria-checked') })),
+      inputs: [...document.querySelectorAll('main input:not([type=password])')].map(element => ({ id:element.id, value:element.value })),
+      keyboard: window.__nativeE2eKeys,
+      pointer: window.__nativeE2ePointer,
+      headings: [...document.querySelectorAll('main h1')].map(element => element.textContent)
+    })`,
+      )
+      .catch((diagnosticError) =>
+        JSON.stringify({ diagnosticFailure: diagnosticError.message }),
+      );
+    await writeFile(`${artifacts}/${phase}-failure-state.json`, state);
+  }
+  await viewer?.screenshot({ path: `${artifacts}/${phase}-failure.png` });
+  if (viewer)
+    await writeFile(
+      `${artifacts}/${phase}-viewer-keys.json`,
+      JSON.stringify(
+        await viewer.evaluate(() => window.__broadwayE2eKeys),
+        null,
+        2,
+      ) ?? 'null',
+    );
+  throw error;
+} finally {
+  await writeFile(
+    `${artifacts}/${phase}-report.json`,
+    JSON.stringify({ phase, passed: stories, failure }, null, 2),
+  );
+  if (keyboard) await keyboard.close();
+  else native?.close();
+  await browser.close();
+}

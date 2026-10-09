@@ -25,7 +25,7 @@ export function DiagnosticsScreen() {
           title="Diagnostics"
           description="Diagnostics are hidden until Debug is enabled."
         />
-        <div className="grid gap-3 border p-4 text-sm">
+        <div className="bg-muted rounded-panel grid gap-4 p-6 text-sm">
           <p className="text-muted-foreground">
             Enable Debug in Settings to view runtime diagnostics.
           </p>
@@ -71,7 +71,7 @@ export function DiagnosticsScreen() {
       {diagnosticsController.model.status === 'loading' && !diagnostics ? (
         <div
           aria-busy="true"
-          className="text-muted-foreground flex min-h-12 items-center gap-2 border-y px-2 text-xs"
+          className="text-muted-foreground bg-muted rounded-panel flex min-h-24 items-center gap-3 p-6 text-sm"
           role="status"
         >
           <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
@@ -82,7 +82,7 @@ export function DiagnosticsScreen() {
       {diagnostics ? (
         <>
           <DiagnosticsHealthSummary diagnostics={diagnostics} />
-          <div className="grid gap-x-6 gap-y-5 xl:grid-cols-2">
+          <div className="grid gap-6 xl:grid-cols-2">
             <DiagnosticsSummarySections diagnostics={diagnostics} />
             <RecorderBackendDiagnosticsSection diagnostics={diagnostics} />
             <DatabaseDiagnosticsSection diagnostics={diagnostics} />

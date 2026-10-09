@@ -91,21 +91,37 @@ export function useTrackTimelineViewport({
       return;
     }
 
+    let frame: number | null = null;
+    let measuredWidth = DEFAULT_TRACK_VIEWPORT_WIDTH_PX;
     function updateViewportWidth() {
-      setViewportWidth(
-        Math.max(1, viewport?.clientWidth ?? DEFAULT_TRACK_VIEWPORT_WIDTH_PX),
-      );
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const nextWidth = Math.max(
+          1,
+          viewport?.clientWidth ?? DEFAULT_TRACK_VIEWPORT_WIDTH_PX,
+        );
+        if (nextWidth === measuredWidth) return;
+        measuredWidth = nextWidth;
+        setViewportWidth(nextWidth);
+      });
     }
 
     updateViewportWidth();
     if (typeof ResizeObserver === 'undefined') {
       window.addEventListener('resize', updateViewportWidth);
-      return () => window.removeEventListener('resize', updateViewportWidth);
+      return () => {
+        window.removeEventListener('resize', updateViewportWidth);
+        if (frame !== null) window.cancelAnimationFrame(frame);
+      };
     }
 
     const observer = new ResizeObserver(updateViewportWidth);
     observer.observe(viewport);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   useEffect(() => {

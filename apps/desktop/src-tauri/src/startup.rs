@@ -89,6 +89,14 @@ impl AppStartupManager {
         });
     }
 
+    fn set_maintenance(&self, app: &AppHandle) {
+        self.update(app, |status| {
+            status.active_stage_id = None;
+            status.phase = "maintenance".into();
+            status.error = None;
+        });
+    }
+
     fn set_stage(&self, app: &AppHandle, stage_id: &str, stage_status: &str) {
         self.update(app, |status| {
             status.active_stage_id = (stage_status == "loading").then(|| stage_id.to_string());
@@ -154,14 +162,25 @@ pub fn start_app_startup(app: AppHandle) {
     let manager = AppStartupManager {
         inner: app.state::<AppStartupManager>().inner.clone(),
     };
+    let Ok(activity) = crate::maintenance::runtime::admit(&app, "startup-model-warmup") else {
+        manager.set_maintenance(&app);
+        return;
+    };
     if !manager.begin() {
         return;
     }
 
     tauri::async_runtime::spawn(async move {
+        let _activity = activity;
         run_app_startup(&app, &manager).await;
         manager.finish();
     });
+}
+
+pub(crate) fn resume_after_maintenance(app: &AppHandle) {
+    if app.state::<AppStartupManager>().status().phase == "maintenance" {
+        start_app_startup(app.clone());
+    }
 }
 
 async fn run_app_startup(app: &AppHandle, manager: &AppStartupManager) {

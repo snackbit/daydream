@@ -121,11 +121,31 @@ async function stopPreview(
 
 async function subscribeToPreviewFrames(set: RecorderWorkspaceSet) {
   return listenToRecorderPreviewFrames((frame) => {
-    set((state) => ({
-      previewFramesBySceneSourceId: {
-        ...state.previewFramesBySceneSourceId,
-        [frame.sceneSourceId]: frame,
-      },
-    }));
+    set((state) =>
+      (state.scene
+        ? state.scene.sources.some(
+            (source) => source.id === frame.sceneSourceId,
+          )
+        : state.previewStatus?.state === 'live' &&
+          state.previewStatus.sourceIds.includes(frame.sourceId)) &&
+      (frame.generation === undefined ||
+        state.previewFramesBySceneSourceId[frame.sceneSourceId]?.generation ===
+          undefined ||
+        frame.generation >
+          (state.previewFramesBySceneSourceId[frame.sceneSourceId]
+            ?.generation ?? 0) ||
+        (frame.generation ===
+          state.previewFramesBySceneSourceId[frame.sceneSourceId]?.generation &&
+          (frame.sequence ?? 0) >
+            (state.previewFramesBySceneSourceId[frame.sceneSourceId]
+              ?.sequence ?? 0)))
+        ? {
+            previewFramesBySceneSourceId: {
+              ...state.previewFramesBySceneSourceId,
+              [frame.sceneSourceId]: frame,
+            },
+          }
+        : {},
+    );
   });
 }

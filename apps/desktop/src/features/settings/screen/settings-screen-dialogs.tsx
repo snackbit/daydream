@@ -1,7 +1,6 @@
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -18,7 +17,6 @@ export interface SettingsScreenDialogsModel {
   busy: boolean;
   canSave: boolean;
   cleanupConfirmation: CleanupConfirmation | null;
-  resetOpen: boolean;
   saving: boolean;
   validationError: string | null;
 }
@@ -27,10 +25,8 @@ export interface SettingsScreenDialogsActions {
   confirmCleanup: () => Promise<void>;
   discardAndLeaveSettings: () => void;
   dismissCleanupConfirmation: () => void;
-  requestReset: () => Promise<void>;
   resetLeaveBlocker: () => void;
   saveAndLeaveSettings: () => Promise<void>;
-  setResetOpen: (open: boolean) => void;
 }
 
 export interface SettingsScreenDialogsProps {
@@ -42,10 +38,6 @@ export function SettingsScreenDialogs({
   actions,
   model,
 }: SettingsScreenDialogsProps) {
-  function handleRequestReset() {
-    void actions.requestReset();
-  }
-
   function handleCleanupOpenChange(open: boolean) {
     if (!open) {
       actions.dismissCleanupConfirmation();
@@ -68,32 +60,6 @@ export function SettingsScreenDialogs({
 
   return (
     <>
-      <Dialog open={model.resetOpen} onOpenChange={actions.setResetOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reset settings?</DialogTitle>
-            <DialogDescription>
-              This restores capture and storage settings to defaults. It does
-              not delete recordings or scenes.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button disabled={model.busy} variant="outline">
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button
-              disabled={model.busy}
-              onClick={handleRequestReset}
-              variant="destructive"
-            >
-              Reset settings
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog
         open={Boolean(model.cleanupConfirmation)}
         onOpenChange={handleCleanupOpenChange}
@@ -128,9 +94,7 @@ export function SettingsScreenDialogs({
               onClick={handleConfirmCleanup}
               variant="destructive"
             >
-              {model.cleanupConfirmation?.action === 'reset'
-                ? 'Delete and reset'
-                : 'Delete and save'}
+              Delete and save
             </Button>
           </DialogFooter>
         </DialogContent>

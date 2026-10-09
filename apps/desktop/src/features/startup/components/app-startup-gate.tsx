@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { SettingsDangerZone } from '@/features/settings/components/settings-danger-zone';
 import { cn } from '@/lib/utils';
 import { useStartupStore } from '../startup-store';
 
@@ -36,6 +37,22 @@ export function AppStartupGate({ children }: AppStartupGateProps) {
 
   if (status?.phase === 'ready') {
     return <>{children}</>;
+  }
+
+  if (status?.phase === 'maintenance') {
+    return (
+      <main className="bg-background text-foreground min-h-screen p-6">
+        <div className="mx-auto max-w-2xl">
+          <h1 className="text-xl font-medium">Finish interrupted cleanup</h1>
+          <p className="text-muted-foreground mt-2 text-sm">
+            Daydream stopped normal startup because a previous cleanup is
+            incomplete. Review its remaining impact and retry the same action.
+            Recordings and background work stay blocked until it finishes.
+          </p>
+          <SettingsDangerZone />
+        </div>
+      </main>
+    );
   }
 
   const stages = status?.stages ?? [];

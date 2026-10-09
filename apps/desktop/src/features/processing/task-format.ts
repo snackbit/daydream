@@ -28,6 +28,11 @@ export function taskNeedsAttention(task: BackgroundTask): boolean {
 }
 export function stageLabel(kind: string): string {
   switch (kind) {
+    case 'recall-index':
+    case 'recall-indexing':
+      return 'Recall indexing';
+    case 'recall-generation':
+      return 'Day generation';
     case 'audio':
     case 'transcription':
       return 'Transcription';
@@ -91,6 +96,8 @@ export function formatElapsed(milliseconds: number): string {
 }
 export function formatEta(task: BackgroundTask): string {
   if (task.inputOpen) return 'Live input';
+  if (task.etaMs === null && task.kind.startsWith('recall-'))
+    return 'Time estimate unavailable';
   if (task.etaMs === null)
     return task.status === 'running' ? 'Estimating remaining time' : '—';
   return `About ${formatElapsed(task.etaMs)} remaining`;

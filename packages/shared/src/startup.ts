@@ -1,4 +1,4 @@
-export type AppStartupPhase = 'error' | 'loading' | 'ready';
+export type AppStartupPhase = 'error' | 'loading' | 'maintenance' | 'ready';
 
 export type AppStartupStageStatus =
   'error' | 'loading' | 'pending' | 'ready' | 'warning';

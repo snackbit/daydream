@@ -1,5 +1,7 @@
 import { Link } from '@tanstack/react-router';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import { Button } from '@/components/ui/button';
+import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 import { describeProcessingError } from '../processing-errors';
 
 export interface ProcessingErrorProps {
@@ -11,6 +13,7 @@ export function ProcessingError({
   technicalDetails = true,
 }: ProcessingErrorProps) {
   const description = describeProcessingError(errorCode);
+  const debugEnabled = useDebugEnabled();
   return (
     <div className="space-y-1 text-xs">
       <p className="text-destructive" role="alert">
@@ -29,13 +32,10 @@ export function ProcessingError({
           </Link>
         </Button>
       ) : null}
-      {technicalDetails ? (
-        <details>
-          <summary className="text-muted-foreground cursor-pointer">
-            Technical details
-          </summary>
+      {technicalDetails && debugEnabled ? (
+        <SharedDisclosure label="Technical details">
           <code className="break-all">{errorCode}</code>
-        </details>
+        </SharedDisclosure>
       ) : null}
     </div>
   );

@@ -1,7 +1,7 @@
 import type {
+  AiModelAsset,
   AppSettingsState,
   InputActivityStatus,
-  RecorderScene,
   RecordWindowProtectionSettings,
 } from '@daydream/shared';
 import {
@@ -13,9 +13,18 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
+import type * as RecorderClientModule from '@/features/recorder/recorder-client';
 import { useSettingsStore } from '@/features/settings/settings-store';
+import {
+  defaultAiSettings,
+  defaultWindowProtection,
+  defaultSettingsState,
+  scene,
+  aiModels,
+  availableInputActivityStatus,
+} from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { SettingsScreen } from './SettingsScreen';
 
@@ -30,6 +39,11 @@ const aiClient = vi.hoisted(() => ({
   saveAiProviderSecret: vi.fn(),
   selfTestAiModel: vi.fn(),
 }));
+const transferClient = vi.hoisted(() => ({
+  pauseAiModelDownload: vi.fn(),
+  resumeAiModelDownload: vi.fn(),
+  removeAiModelPartial: vi.fn(),
+}));
 const settingsClient = vi.hoisted(() => ({
   getAppSettings: vi.fn(),
   getInputActivityStatus: vi.fn(),
@@ -38,10 +52,26 @@ const settingsClient = vi.hoisted(() => ({
   resetAppSettings: vi.fn(),
   saveAppSettings: vi.fn(),
 }));
+const maintenanceClient = vi.hoisted(() => ({
+  getMaintenanceStatus: vi.fn(),
+  previewMaintenance: vi.fn(),
+  executeMaintenance: vi.fn(),
+  acknowledgeMaintenanceThemeReset: vi.fn(),
+}));
+vi.mock('@/features/settings/maintenance-client', () => maintenanceClient);
 const recorderClient = vi.hoisted(() => ({
+  getRecorderStatus: vi.fn(),
+  getRecorderPreviewStatus: vi.fn(),
+  getCaptureSources: vi.fn(),
+  getAudioSources: vi.fn(),
   getWindowProtectionStatus: vi.fn(),
   getRecorderScene: vi.fn(),
   listProtectableWindows: vi.fn(),
+}));
+const recallClient = vi.hoisted(() => ({
+  getRecallStatus: vi.fn(),
+  listenToRecallStateChanged: vi.fn(),
+  testRecallProvider: vi.fn(),
 }));
 const router = vi.hoisted(() => {
   const blocker = {
@@ -67,219 +97,16 @@ const router = vi.hoisted(() => {
 });
 
 vi.mock('@/features/ai/ai-client', () => aiClient);
+vi.mock('@/features/ai/models/model-transfer-client', () => transferClient);
 vi.mock('@/features/settings/settings-client', () => settingsClient);
-vi.mock('@/features/recorder/recorder-client', () => recorderClient);
+vi.mock('@/features/recorder/recorder-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof RecorderClientModule>()),
+  ...recorderClient,
+}));
+vi.mock('@/features/recall/recall-client', () => recallClient);
 vi.mock('@tanstack/react-router', () => ({
   useBlocker: router.useBlocker,
 }));
-
-const defaultAiSettings = {
-  activity: {
-    frameDeltas: {
-      enabled: true,
-    },
-    keyboard: {
-      enabled: false,
-      windowMs: 30_000,
-    },
-    mouse: {
-      enabled: false,
-      windowMs: 5_000,
-    },
-    windows: {
-      enabled: true,
-    },
-  },
-  ocr: {
-    enabled: true,
-    engine: 'tesseract',
-  },
-  processing: {
-    autoStartAfterRecording: true,
-    frameRecognitionFps: 0.2,
-    frameRecognitionSyncWithRecording: true,
-    frameSimilarityEnabled: true,
-    maxFullFrameCheckpointsPerMinute: 2,
-    maxParallelChunksPerJob: 1,
-    maxParallelJobs: 1,
-    maxParallelOcrJobs: 1,
-    maxParallelVlmJobs: 1,
-    periodicFullFrameIntervalMs: 60_000,
-    visualDeltaTileSizePx: 64,
-  },
-  transcription: {
-    language: 'auto',
-    localBackend: 'cpu',
-    localModelId: 'small',
-    maxInitialTimestampSeconds: 3,
-    mergeGapMs: 700,
-    minSpeechMs: 250,
-    provider: 'local-whisper-cpp',
-    remoteApiKeyRef: null,
-    remoteBaseUrl: null,
-    remoteModel: null,
-    silenceGateEnabled: true,
-    silenceThresholdDb: -45,
-    wordTimestampsEnabled: true,
-  },
-  vision: {
-    apiKeyRef: null,
-    baseUrl: null,
-    model: null,
-    observationsEnabled: false,
-    provider: 'disabled',
-  },
-} as const;
-
-const defaultWindowProtection: RecordWindowProtectionSettings = {
-  defaultAction: 'pause',
-  dwellMs: 2_000,
-  enabled: false,
-  mergeGapMs: 5_000,
-  rules: [],
-};
-
-const defaultSettingsState = {
-  defaults: {
-    ai: defaultAiSettings,
-    debug: {
-      enabled: false,
-    },
-    expert: {
-      enabled: false,
-    },
-    record: {
-      fps: 0.2,
-      videoBitrateKbps: 1_500,
-      windowProtection: defaultWindowProtection,
-    },
-    storage: {
-      retentionDays: 7,
-      sizeLimitBytes: 50 * 1024 * 1024 * 1024,
-    },
-  },
-  limits: {
-    ai: {
-      activity: {
-        keyboardWindowMsMax: 300_000,
-        keyboardWindowMsMin: 1_000,
-        mouseWindowMsMax: 300_000,
-        mouseWindowMsMin: 1_000,
-      },
-      processing: {
-        frameRecognitionFpsMax: 5,
-        frameRecognitionFpsMin: 1 / 60,
-        maxFullFrameCheckpointsPerMinuteMax: 60,
-        maxFullFrameCheckpointsPerMinuteMin: 1,
-        maxParallelChunksPerJobMax: 8,
-        maxParallelChunksPerJobMin: 1,
-        maxParallelJobsMax: 4,
-        maxParallelJobsMin: 1,
-        maxParallelOcrJobsMax: 8,
-        maxParallelOcrJobsMin: 1,
-        maxParallelVlmJobsMax: 8,
-        maxParallelVlmJobsMin: 1,
-        periodicFullFrameIntervalMsMax: 600_000,
-        periodicFullFrameIntervalMsMin: 5_000,
-        visualDeltaTileSizePxMax: 256,
-        visualDeltaTileSizePxMin: 32,
-      },
-      transcription: {
-        maxInitialTimestampSecondsMax: 10,
-        maxInitialTimestampSecondsMin: 1,
-        mergeGapMsMax: 5_000,
-        mergeGapMsMin: 0,
-        minSpeechMsMax: 2_000,
-        minSpeechMsMin: 50,
-        silenceThresholdDbMax: -20,
-        silenceThresholdDbMin: -80,
-      },
-    },
-    record: {
-      fpsMax: 5,
-      fpsMin: 1 / 60,
-      videoBitrateKbpsMax: 10_000,
-      videoBitrateKbpsMin: 250,
-      windowProtectionDwellMsMax: 30_000,
-      windowProtectionDwellMsMin: 250,
-      windowProtectionMergeGapMsMax: 120_000,
-      windowProtectionMergeGapMsMin: 0,
-      windowProtectionRuleCountMax: 100,
-      windowProtectionTextMaxChars: 160,
-    },
-    storage: {
-      retentionDaysMax: 365,
-      retentionDaysMin: 1,
-      sizeLimitBytesMax: null,
-      sizeLimitBytesMin: 1024 * 1024 * 1024,
-    },
-  },
-  settings: {
-    ai: defaultAiSettings,
-    debug: {
-      enabled: false,
-    },
-    expert: {
-      enabled: false,
-    },
-    record: {
-      fps: 0.2,
-      videoBitrateKbps: 1_500,
-      windowProtection: defaultWindowProtection,
-    },
-    storage: {
-      retentionDays: 7,
-      sizeLimitBytes: 50 * 1024 * 1024 * 1024,
-    },
-  },
-} satisfies AppSettingsState;
-
-const scene = {
-  canvasHeight: 1440,
-  canvasWidth: 2560,
-  desktopAudioSourceId: 'desktop',
-  id: 'scene-1',
-  layoutMode: 'horizontal',
-  microphoneAudioSourceId: 'mic',
-  name: 'Scene',
-  sources: [],
-} satisfies RecorderScene;
-
-const aiModels = [
-  {
-    checksum: '55356645c2b361a969dfd0ef2c5a50d530afd8d5',
-    checksumAlgorithm: 'sha1',
-    createdAtMs: 0,
-    downloadedBytes: 0,
-    downloadStatus: 'missing',
-    etag: null,
-    errorCode: null,
-    id: 'small',
-    label: 'Whisper small',
-    localPath: null,
-    provider: 'local-whisper-cpp',
-    selfTestStatus: 'not-run',
-    sizeBytes: null,
-    sourceUrl:
-      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
-    totalBytes: null,
-    updatedAtMs: 0,
-    verificationStatus: 'unknown',
-  },
-] as const;
-
-const availableInputActivityStatus = {
-  available: true,
-  candidateDeviceCount: 2,
-  currentUser: 'felixf',
-  message: 'Keyboard and mouse activity capture can read Linux input devices.',
-  permissionDeniedDeviceCount: 0,
-  platform: 'linux',
-  readableDeviceCount: 2,
-  reason: 'available',
-  repairAvailable: false,
-  userInInputGroup: true,
-} satisfies InputActivityStatus;
 
 async function openAiSettingsTab() {
   await screen.findByRole('tablist', { name: 'Settings sections' });
@@ -290,6 +117,190 @@ async function openAiSettingsTab() {
   await waitFor(() => expect(aiTab.getAttribute('aria-selected')).toBe('true'));
   await screen.findByText('Transcription');
 }
+
+function embeddingModel(id: string, label: string): AiModelAsset {
+  return {
+    id,
+    label,
+    provider: 'local-embedding',
+    createdAtMs: 0,
+    updatedAtMs: 0,
+    checksum: null,
+    checksumAlgorithm: 'sha256',
+    downloadedBytes: 0,
+    totalBytes: 100,
+    sizeBytes: 100,
+    downloadStatus: 'missing',
+    etag: null,
+    errorCode: null,
+    localPath: null,
+    sourceUrl: 'https://synthetic.example/model.gguf',
+    selfTestStatus: 'not-run',
+    verificationStatus: 'unknown',
+  };
+}
+
+test('E5 admission failure stays beside its model across focus refresh and BGE actions, then its retry clears it', async () => {
+  const e5 = embeddingModel(
+    'multilingual-e5-small-q8_0',
+    'Multilingual E5 Small',
+  );
+  const bge = embeddingModel('bge-small-en-v1.5-q8_0', 'BGE Small English');
+  let models = [...aiModels, e5, bge];
+  aiClient.listAiModels.mockImplementation(async () => ({ models }));
+  aiClient.downloadAiModel
+    .mockRejectedValueOnce({
+      code: 'ai_storage_failed',
+      message: 'SQLite CHECK constraint failed: private technical details',
+    })
+    .mockImplementation(async ({ modelId }: { modelId: string }) => {
+      models = models.map((model) =>
+        model.id === modelId
+          ? { ...model, downloadStatus: 'downloading' }
+          : model,
+      );
+    });
+  recallClient.getRecallStatus.mockResolvedValue({
+    privacyRevision: 0,
+    indexedEvidenceCount: 0,
+    pendingEvidenceCount: 0,
+    embeddingReady: false,
+    generationReady: false,
+    embeddingUnavailableReason: 'recall_embedding_model_missing',
+    generationUnavailableReason: 'recall_generation_disabled',
+    jobs: [],
+  });
+  render(<SettingsScreen tab="ai" />);
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Download', exact: true })
+    .click();
+  const e5Group = await screen.findByRole('group', { name: e5.label });
+  expect(await within(e5Group).findByRole('alert')).toHaveTextContent(
+    'The download could not be saved',
+  );
+  expect(screen.queryByText(/SQLite CHECK/)).toBeNull();
+  const readsBeforeFocus = aiClient.listAiModels.mock.calls.length;
+  fireEvent(window, new Event('focus'));
+  await waitFor(() =>
+    expect(aiClient.listAiModels.mock.calls.length).toBeGreaterThan(
+      readsBeforeFocus,
+    ),
+  );
+  expect(within(e5Group).getByRole('alert')).toHaveTextContent(
+    'The download could not be saved',
+  );
+  await page
+    .getByRole('group', { name: bge.label, exact: true })
+    .getByRole('button', { name: 'Download', exact: true })
+    .click();
+  await waitFor(() =>
+    expect(aiClient.downloadAiModel).toHaveBeenCalledWith({ modelId: bge.id }),
+  );
+  await within(screen.getByRole('group', { name: bge.label })).findByRole(
+    'button',
+    { name: 'Pause' },
+  );
+  expect(within(e5Group).getByRole('alert')).toHaveTextContent(
+    'The download could not be saved',
+  );
+  expect(screen.queryByText('recall_embedding_model_missing')).toBeNull();
+  expect(screen.queryByText('recall_generation_disabled')).toBeNull();
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Download', exact: true })
+    .click();
+  await waitFor(() => expect(within(e5Group).queryByRole('alert')).toBeNull());
+  await within(e5Group).findByRole('button', { name: 'Pause' });
+});
+
+test('Settings pauses an E5 transfer until native acknowledgement, resumes saved bytes and removes only partial data', async () => {
+  let e5: AiModelAsset = {
+    ...embeddingModel('multilingual-e5-small-q8_0', 'Multilingual E5 Small'),
+    downloadStatus: 'downloading',
+    downloadedBytes: 25,
+    transfer: {
+      attempt: 1,
+      phase: 'transferring',
+      bytesPerSecond: 20,
+      etaMs: 3750,
+    },
+  };
+  aiClient.listAiModels.mockImplementation(async () => ({
+    models: [...aiModels, e5],
+  }));
+  let acknowledgePause: (() => void) | undefined;
+  transferClient.pauseAiModelDownload.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        acknowledgePause = () => {
+          e5 = {
+            ...e5,
+            downloadStatus: 'paused',
+            transfer: {
+              attempt: 1,
+              phase: 'paused',
+              bytesPerSecond: null,
+              etaMs: null,
+            },
+          };
+          resolve({ models: [e5] });
+        };
+      }),
+  );
+  transferClient.resumeAiModelDownload.mockImplementation(async () => {
+    e5 = {
+      ...e5,
+      downloadStatus: 'queued',
+      transfer: {
+        attempt: 2,
+        phase: 'queued',
+        bytesPerSecond: null,
+        etaMs: null,
+      },
+    };
+  });
+  transferClient.removeAiModelPartial.mockImplementation(async () => {
+    e5 = { ...e5, downloadStatus: 'missing', downloadedBytes: 0 };
+  });
+  render(<SettingsScreen tab="ai" />);
+  const row = await screen.findByRole('group', { name: e5.label });
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Pause', exact: true })
+    .click();
+  expect(within(row).getByRole('button', { name: 'Pause' })).toBeDisabled();
+  expect(transferClient.pauseAiModelDownload).toHaveBeenCalledTimes(1);
+  if (!acknowledgePause) throw new Error('Pause command was not admitted');
+  acknowledgePause();
+  await within(row).findByRole('button', { name: 'Resume' });
+  expect(within(row).getByText(/25 B of 100 B/)).toBeTruthy();
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Resume', exact: true })
+    .click();
+  await within(row).findByRole('button', { name: 'Pause' });
+  expect(transferClient.resumeAiModelDownload).toHaveBeenCalledWith({
+    modelId: e5.id,
+  });
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Pause', exact: true })
+    .click();
+  if (!acknowledgePause)
+    throw new Error('Second pause command was not admitted');
+  acknowledgePause();
+  await within(row).findByRole('button', { name: 'Remove partial data' });
+  await page
+    .getByRole('group', { name: e5.label, exact: true })
+    .getByRole('button', { name: 'Remove partial data', exact: true })
+    .click();
+  await within(row).findByRole('button', { name: 'Download' });
+  expect(transferClient.removeAiModelPartial).toHaveBeenCalledWith({
+    modelId: e5.id,
+  });
+  expect(aiClient.deleteAiModel).not.toHaveBeenCalled();
+});
 
 async function openRecordSettingsTab() {
   await screen.findByRole('tablist', { name: 'Settings sections' });
@@ -307,7 +318,9 @@ async function selectOption(label: string, option: string) {
   const trigger = screen.getByRole('combobox', { name: label });
   trigger.focus();
   fireEvent.keyDown(trigger, { key: 'ArrowDown' });
-  fireEvent.click(await screen.findByRole('option', { name: option }));
+  await userEvent.click(await screen.findByRole('option', { name: option }));
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+  expect(document.activeElement).toBe(trigger);
 }
 
 async function selectRemoteTranscriptionProvider() {
@@ -345,6 +358,75 @@ function settingsWithVision({
 
 beforeEach(() => {
   vi.resetAllMocks();
+  recorderClient.getRecorderStatus.mockResolvedValue({
+    state: 'idle',
+    activeRecordingId: null,
+    activeSceneId: null,
+    activeSegmentId: null,
+    cleanupDisposition: 'ready',
+    finalization: null,
+    lastError: null,
+    statusRevision: 1,
+    updatedAtMs: 1,
+  });
+  recorderClient.getRecorderPreviewStatus.mockResolvedValue({
+    state: 'idle',
+    sceneId: null,
+    sourceIds: [],
+    error: null,
+    updatedAtMs: 1,
+  });
+  recorderClient.getCaptureSources.mockResolvedValue({
+    sources: [],
+    error: null,
+  });
+  recorderClient.getAudioSources.mockResolvedValue({
+    sources: [],
+    error: null,
+  });
+  maintenanceClient.getMaintenanceStatus.mockResolvedValue(null);
+  maintenanceClient.previewMaintenance.mockImplementation(
+    async ({ action }) => ({
+      action,
+      token: 'synthetic-impact',
+      recordingCount: 2,
+      libraryRowCount: 5,
+      modelCount: 1,
+      fileCount: 0,
+      sizeBytes: 0,
+    }),
+  );
+  maintenanceClient.executeMaintenance.mockImplementation(
+    async ({ action }) => ({
+      action,
+      operationId: 'synthetic-operation',
+      phase: 'awaiting-theme-reset',
+      error: null,
+    }),
+  );
+  maintenanceClient.acknowledgeMaintenanceThemeReset.mockResolvedValue({
+    action: 'reset-preferences',
+    operationId: 'synthetic-operation',
+    phase: 'completed',
+    error: null,
+  });
+  recallClient.listenToRecallStateChanged.mockResolvedValue(vi.fn());
+  recallClient.getRecallStatus.mockResolvedValue({
+    privacyRevision: 0,
+    indexedEvidenceCount: 0,
+    pendingEvidenceCount: 0,
+    embeddingReady: false,
+    generationReady: false,
+    embeddingUnavailableReason: 'Model not downloaded',
+    generationUnavailableReason: 'Generation disabled',
+    jobs: [],
+  });
+  recallClient.testRecallProvider.mockResolvedValue({
+    kind: 'generation',
+    status: 'succeeded',
+    errorCode: null,
+    elapsedMs: 12,
+  });
   settingsClient.getAppSettings.mockResolvedValue(defaultSettingsState);
   settingsClient.saveAppSettings.mockImplementation(async ({ settings }) => ({
     ...defaultSettingsState,
@@ -435,8 +517,14 @@ afterEach(async () => {
 test.each([
   ['light', 1440],
   ['dark', 1440],
-  ['light', 420],
-  ['dark', 420],
+  ['light', 1024],
+  ['dark', 1024],
+  ['light', 768],
+  ['dark', 768],
+  ['light', 390],
+  ['dark', 390],
+  ['light', 320],
+  ['dark', 320],
 ] as const)(
   'Vision settings align and remain reachable in %s at %i pixels',
   async (theme, width) => {
@@ -468,6 +556,8 @@ test.each([
       model,
       save,
       probe,
+      screen.getByRole('combobox', { name: 'Embedding provider' }),
+      screen.getByRole('button', { name: 'Test generation provider' }),
       screen.getByRole('combobox', { name: 'Authentication' }),
     ]) {
       const bounds = control.getBoundingClientRect();
@@ -475,6 +565,7 @@ test.each([
       expect(bounds.left).toBeGreaterThanOrEqual(0);
       expect(bounds.right).toBeLessThanOrEqual(width);
     }
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
     const visionSection = document.getElementById('ai-vision');
     expect(visionSection).not.toBeNull();
     if (!visionSection) throw new Error('Vision settings are not visible');
@@ -491,6 +582,9 @@ test.each([
     await page.screenshot({
       element: screen.getByRole('tablist', { name: 'Settings sections' }),
     });
+    const recallSection = document.getElementById('ai-recall');
+    if (!recallSection) throw new Error('Recall settings are not visible');
+    await page.screenshot({ element: recallSection });
   },
 );
 
@@ -577,20 +671,27 @@ test('SettingsScreen edits record and storage settings then resets them', async 
   );
   expect(await screen.findByText('Settings saved.')).toBeTruthy();
 
-  fireEvent.click(screen.getByRole('button', { name: /^reset$/i }));
-  fireEvent.click(screen.getByRole('button', { name: /^reset settings$/i }));
-
+  recorderClient.getRecorderScene.mockResolvedValue(null);
+  await page
+    .getByRole('button', { name: 'Reset preferences', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(maintenanceClient.executeMaintenance).not.toHaveBeenCalled();
+  await page.getByRole('button', { name: 'Confirm', exact: true }).click();
   await waitFor(() =>
     expect(
-      settingsClient.previewAppSettingsStorageCleanup,
-    ).toHaveBeenCalledWith({
-      settings: defaultSettingsState.defaults,
+      maintenanceClient.executeMaintenance,
+    ).toHaveBeenCalledExactlyOnceWith({
+      action: 'reset-preferences',
+      previewToken: 'synthetic-impact',
+      confirmation: 'RESET PREFERENCES',
     }),
   );
-  await waitFor(() =>
-    expect(settingsClient.resetAppSettings).toHaveBeenCalled(),
-  );
-  expect(await screen.findByText('Settings reset.')).toBeTruthy();
+  expect(settingsClient.resetAppSettings).not.toHaveBeenCalled();
+  expect(
+    settingsClient.previewAppSettingsStorageCleanup,
+  ).toHaveBeenCalledOnce();
+  expect(await screen.findByText('Reset preferences completed.')).toBeTruthy();
 });
 
 test('SettingsScreen shows protected-window provider failures', async () => {
@@ -643,8 +744,10 @@ test('SettingsScreen shows protected-window provider failures', async () => {
 
   fireEvent.click(screen.getByRole('button', { name: 'Pick window' }));
 
-  expect(await screen.findByText('Window picker unavailable')).toBeTruthy();
-  expect(screen.getAllByText(message).length).toBeGreaterThanOrEqual(1);
+  const pickerDialog = screen.getByRole('dialog', { name: 'Pick a window' });
+  expect(
+    (await within(pickerDialog).findByRole('alert')).textContent,
+  ).toContain(message);
 });
 
 test('SettingsScreen confirms cleanup before saving deletion-causing storage settings', async () => {
@@ -1177,6 +1280,49 @@ test('SettingsScreen saves dirty settings before leaving', async () => {
   expect(router.state.blocker.proceed).toHaveBeenCalled();
 });
 
+test('Recall generation requires its own consent and tests anonymous profiles with synthetic text', async () => {
+  render(<SettingsScreen />);
+  await openAiSettingsTab();
+  const testButton = screen.getByRole('button', {
+    name: 'Test generation provider',
+  });
+  expect(testButton).toBeDisabled();
+  expect(
+    screen.getByText(/This consent is separate from Vision and embeddings/),
+  ).toBeTruthy();
+  fireEvent.click(
+    screen.getByRole('checkbox', { name: /^Enable external generation/ }),
+  );
+  fireEvent.change(screen.getByLabelText('Generation endpoint URL'), {
+    target: { value: 'http://localhost:8000/v1' },
+  });
+  fireEvent.change(screen.getByLabelText('Generation model name'), {
+    target: { value: 'synthetic-model' },
+  });
+  fireEvent.click(screen.getByLabelText('Generation authentication'));
+  fireEvent.click(await screen.findByRole('option', { name: 'Anonymous' }));
+  expect(screen.queryByLabelText('Generation API key')).toBeNull();
+  fireEvent.click(testButton);
+  expect(
+    await screen.findByText('Synthetic test succeeded (12 ms).'),
+  ).toBeTruthy();
+  expect(recallClient.testRecallProvider).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: 'generation',
+      keyDraft: null,
+      settings: expect.objectContaining({
+        generation: expect.objectContaining({
+          enabled: true,
+          authMode: 'none',
+          model: 'synthetic-model',
+        }),
+      }),
+    }),
+  );
+  expect(screen.getByText('Unsaved changes')).toBeTruthy();
+  expect(settingsClient.saveAppSettings).not.toHaveBeenCalled();
+});
+
 test('SettingsScreen waits for cleanup confirmation before leaving after save', async () => {
   settingsClient.previewAppSettingsStorageCleanup.mockResolvedValue({
     recordingCount: 2,
@@ -1207,4 +1353,46 @@ test('SettingsScreen waits for cleanup confirmation before leaving after save', 
     expect(settingsClient.saveAppSettings).toHaveBeenCalled(),
   );
   expect(router.state.blocker.proceed).toHaveBeenCalled();
+});
+
+test('Recall provider test failure preserves draft edits and remains retryable', async () => {
+  recallClient.testRecallProvider.mockResolvedValueOnce({
+    kind: 'generation',
+    status: 'failed',
+    errorCode: 'recall_authentication_failed',
+    elapsedMs: 8,
+  });
+  render(<SettingsScreen tab="ai" />);
+  fireEvent.click(
+    await screen.findByRole('checkbox', {
+      name: /^Enable external generation/,
+    }),
+  );
+  fireEvent.change(screen.getByLabelText('Generation endpoint URL'), {
+    target: { value: 'https://synthetic.example/v1' },
+  });
+  fireEvent.change(screen.getByLabelText('Generation API key'), {
+    target: { value: 'synthetic-test-key' },
+  });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Test generation provider' }),
+  );
+  expect(
+    await screen.findByText(
+      'Synthetic test failed: recall_authentication_failed.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByLabelText('Generation API key')).toHaveValue(
+    'synthetic-test-key',
+  );
+  expect(
+    screen.getByRole('button', { name: 'Test generation provider' }),
+  ).not.toBeDisabled();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Test generation provider' }),
+  );
+  expect(
+    await screen.findByText('Synthetic test succeeded (12 ms).'),
+  ).toBeTruthy();
+  expect(settingsClient.saveAppSettings).not.toHaveBeenCalled();
 });

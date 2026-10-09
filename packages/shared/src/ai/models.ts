@@ -4,7 +4,32 @@ import type {
 } from './provider-kinds.js';
 
 export type AiModelDownloadStatus =
-  'available' | 'cancelled' | 'downloading' | 'failed' | 'missing' | 'queued';
+  | 'available'
+  | 'cancelled'
+  | 'downloading'
+  | 'failed'
+  | 'missing'
+  | 'paused'
+  | 'queued';
+
+export interface AiModelTransfer {
+  attempt: number;
+  phase:
+    | 'queued'
+    | 'connecting'
+    | 'restarting'
+    | 'transferring'
+    | 'stalled'
+    | 'pausing'
+    | 'paused'
+    | 'verifying'
+    | 'testing'
+    | 'ready'
+    | 'failed'
+    | 'cancelled';
+  bytesPerSecond: number | null;
+  etaMs: number | null;
+}
 
 export type AiOcrDataStatus = AiModelDownloadStatus | 'partial';
 
@@ -18,6 +43,7 @@ export type AiModelVerificationStatus =
   'failed' | 'passed' | 'pending' | 'unknown';
 
 export interface AiModelAsset {
+  transfer?: AiModelTransfer;
   checksum: string | null;
   checksumAlgorithm: string | null;
   createdAtMs: number;

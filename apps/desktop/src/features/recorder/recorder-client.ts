@@ -18,10 +18,36 @@ import type {
   StartRecordingInput,
   StopRecordingInput,
   WindowProtectionStatus,
+  RecordingSaved,
+  RecorderPreviewDemand,
 } from '@daydream/shared';
 
 export const recorderStatusChangedEvent = 'recorder-status-changed';
 export const recorderPreviewFrameEvent = 'recorder-preview-frame';
+export function updateRecorderPreviewDemand(
+  input: RecorderPreviewDemand,
+): Promise<void> {
+  return invoke('updateRecorderPreviewDemand', { input });
+}
+export async function listenToRecordingSaved(
+  handler: (saved: RecordingSaved) => void,
+): Promise<() => void> {
+  return listen<unknown>('recording-saved', (event) => {
+    const value = event.payload;
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'recordingId' in value &&
+      typeof value.recordingId === 'string' &&
+      value.recordingId.length > 0 &&
+      'savedAtMs' in value &&
+      typeof value.savedAtMs === 'number' &&
+      Number.isSafeInteger(value.savedAtMs) &&
+      value.savedAtMs >= 0
+    )
+      handler({ recordingId: value.recordingId, savedAtMs: value.savedAtMs });
+  });
+}
 
 export async function getRecorderStatus(): Promise<RecorderStatus> {
   return invoke<RecorderStatus>('getRecorderStatus');

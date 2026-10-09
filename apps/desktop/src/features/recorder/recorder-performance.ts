@@ -13,11 +13,7 @@ export interface RecorderPerformanceDisplay {
 
 export const RECORDER_PERFORMANCE_SMOOTHING_WINDOW_MS = 3000;
 
-const EVALUATED_RECORDING_STATES = new Set<RecorderState>([
-  'pausing',
-  'recording',
-  'stopping',
-]);
+const EVALUATED_RECORDING_STATES = new Set<RecorderState>(['recording']);
 
 export function recorderPerformancePollIntervalMs(
   state: RecorderState | null,
@@ -67,7 +63,7 @@ export function deriveRecorderPerformanceDisplay(
   }
 
   const elapsedMs = current.updatedAtMs - previous.updatedAtMs;
-  if (elapsedMs <= 0) {
+  if (elapsedMs < smoothingWindow(current.desiredFps)) {
     return idleDisplay(desiredFps);
   }
 
@@ -120,20 +116,42 @@ export function nextRecorderPerformanceStatsHistory(
   if (!canSmoothStats(current)) {
     return [];
   }
+  const last = history.at(-1);
+  if (
+    last &&
+    (last.updatedAtMs > current.updatedAtMs ||
+      (last.timing?.framesSentToWriter ?? 0) >
+        (current.timing?.framesSentToWriter ?? 0) ||
+      (last.timing?.totalComposeDurationMs ?? 0) >
+        (current.timing?.totalComposeDurationMs ?? 0))
+  )
+    return [current];
 
   const windowStartedAtMs =
-    current.updatedAtMs - RECORDER_PERFORMANCE_SMOOTHING_WINDOW_MS;
+    current.updatedAtMs - smoothingWindow(current.desiredFps);
   const retainedHistory = history.filter(
     (stats) =>
       canSmoothStats(stats) &&
-      stats.updatedAtMs >= windowStartedAtMs &&
       stats.updatedAtMs <= current.updatedAtMs &&
       stats.desiredFps === current.desiredFps &&
-      stats.segmentStartedAtMs === current.segmentStartedAtMs &&
+      (stats.timing?.framesSentToWriter ?? 0) <=
+        (current.timing?.framesSentToWriter ?? 0) &&
+      (stats.timing?.totalComposeDurationMs ?? 0) <=
+        (current.timing?.totalComposeDurationMs ?? 0) &&
       stats.state === current.state,
   );
 
-  return [...retainedHistory, current];
+  const boundary = retainedHistory.findLast(
+    (stats) => stats.updatedAtMs <= windowStartedAtMs,
+  );
+  return [
+    ...(boundary ? [boundary] : []),
+    ...retainedHistory.filter((stats) => stats.updatedAtMs > windowStartedAtMs),
+    current,
+  ];
+}
+function smoothingWindow(fps: number | null) {
+  return Math.max(RECORDER_PERFORMANCE_SMOOTHING_WINDOW_MS, 4000 / (fps ?? 1));
 }
 
 function idleDisplay(desiredFps: number | null): RecorderPerformanceDisplay {

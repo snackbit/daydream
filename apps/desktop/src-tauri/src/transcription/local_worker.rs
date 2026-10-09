@@ -20,6 +20,9 @@ use super::{
 };
 
 pub trait LocalTranscriptionRunner: Send + Sync + 'static {
+    fn shutdown(&self) -> Result<(), TranscriptionError> {
+        Ok(())
+    }
     fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
         let _input = input;
         Ok(())
@@ -38,6 +41,9 @@ pub(super) struct WhisperCppTranscriptionRunner {
 
 enum WhisperWorkerCommand {
     Stop,
+    Unload {
+        response: mpsc::Sender<Result<(), TranscriptionError>>,
+    },
     Transcribe {
         input: LocalTranscriptionInput,
         response: mpsc::Sender<Result<VerboseTranscription, TranscriptionError>>,
@@ -131,6 +137,9 @@ impl Drop for WhisperCppTranscriptionRunner {
 }
 
 impl LocalTranscriptionRunner for WhisperCppTranscriptionRunner {
+    fn shutdown(&self) -> Result<(), TranscriptionError> {
+        self.send_command(|response| WhisperWorkerCommand::Unload { response })
+    }
     fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
         self.send_command(|response| WhisperWorkerCommand::Warm { input, response })
     }
@@ -300,6 +309,39 @@ impl Drop for WhisperProcessTranscriptionRunner {
 }
 
 impl LocalTranscriptionRunner for WhisperProcessTranscriptionRunner {
+    fn shutdown(&self) -> Result<(), TranscriptionError> {
+        let mut state = self.state.lock().map_err(|_| worker_unavailable_error())?;
+        if let Some(worker) = state.as_mut() {
+            if worker
+                .child
+                .try_wait()
+                .map_err(worker_spawn_error)?
+                .is_none()
+            {
+                worker.child.kill().map_err(worker_spawn_error)?;
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if worker
+                    .child
+                    .try_wait()
+                    .map_err(worker_spawn_error)?
+                    .is_some()
+                {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(transcription_error(
+                        "ai_transcription_shutdown_timeout",
+                        "The local transcription worker did not stop. Retry maintenance.",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        state.take();
+        Ok(())
+    }
     fn warm_model(&self, input: LocalTranscriptionWarmup) -> Result<(), TranscriptionError> {
         let endpoint = self.endpoint()?;
         let result = tauri::async_runtime::block_on(warm_local_via_rest(
@@ -345,6 +387,10 @@ fn run_whisper_worker(receiver: mpsc::Receiver<WhisperWorkerCommand>) {
     while let Ok(command) = receiver.recv() {
         match command {
             WhisperWorkerCommand::Stop => break,
+            WhisperWorkerCommand::Unload { response } => {
+                cached_model = None;
+                let _ = response.send(Ok(()));
+            }
             WhisperWorkerCommand::Warm { input, response } => {
                 let result = ensure_cached_model(
                     &mut cached_model,

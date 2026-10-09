@@ -1,0 +1,102 @@
+import type {
+  RecallDay,
+  RecallEvidence,
+  RecallStatus,
+  RecallSearchResult,
+} from '@daydream/shared';
+
+/** Synthetic boundary fixtures only; product screens receive native reads. */
+export const recallEvidenceFixture: RecallEvidence = {
+  evidenceId: 'evidence-1',
+  recordingId: 'recording-1',
+  segmentId: 'segment-1',
+  sourceKind: 'ocr',
+  sourceTrackId: 'screen-1',
+  sourceId: 'source-1',
+  sourceFrameRef: 'frame-1',
+  documentId: 'document-1',
+  startOffsetMs: 60_000,
+  endOffsetMs: 62_000,
+  absoluteStartMs: 1_791_180_060_000,
+  absoluteEndMs: 1_791_180_062_000,
+  contentRevision: 'revision-1',
+  text: 'Synthetic keyboard accessibility research notes.',
+};
+export const recallDayFixture: RecallDay = {
+  recordings: [],
+  privacyRevision: 1,
+  day: {
+    privacyRevision: 1,
+    dayId: '2026-10-05',
+    startMs: 1_791_158_400_000,
+    endMs: 1_791_244_800_000,
+    timezone: 'Europe/Berlin',
+    recordingCount: 1,
+    evidenceCount: 1,
+    summary: 'Synthetic overview of keyboard accessibility research.',
+    reviewed: false,
+    status: 'ready',
+    inputFingerprint: 'fingerprint-1',
+    capturedDurationMs: 90_000,
+    thumbnailPath: null,
+    thumbnailRecordingId: null,
+    redactionCount: 0,
+    recordingActive: false,
+  },
+  sessions: [
+    {
+      id: 'session-1',
+      title: 'Accessibility research',
+      summary: 'Synthetic focus behavior notes.',
+      startMs: recallEvidenceFixture.absoluteStartMs,
+      endMs: recallEvidenceFixture.absoluteEndMs,
+      citations: [recallEvidenceFixture],
+      correction: null,
+      category: 'Research',
+      titleCorrection: null,
+      categoryCorrection: null,
+    },
+  ],
+  suggestions: [
+    {
+      id: 'suggestion-1',
+      title: 'Review focus behavior',
+      description: 'Synthetic suggestion grounded in the source notes.',
+      citations: [recallEvidenceFixture],
+      acceptedTaskId: null,
+      dismissed: false,
+    },
+  ],
+  tasks: [],
+  feedback: [],
+  coverage: [
+    {
+      recordingId: 'recording-1',
+      segmentId: 'segment-1',
+      startMs: recallEvidenceFixture.absoluteStartMs,
+      endMs: recallEvidenceFixture.absoluteEndMs,
+      kind: 'captured',
+      sourceTrackIds: [],
+    },
+  ],
+};
+export const recallStatusFixture: RecallStatus = {
+  privacyRevision: 1,
+  indexedEvidenceCount: 1,
+  pendingEvidenceCount: 0,
+  embeddingReady: true,
+  generationReady: true,
+  embeddingUnavailableReason: null,
+  generationUnavailableReason: null,
+  jobs: [],
+};
+export const recallSearchFixture: RecallSearchResult = {
+  privacyRevision: 1,
+  hits: [{ evidence: recallEvidenceFixture, score: 0.9 }],
+  complete: true,
+  unavailableReason: null,
+  nextCursor: null,
+  semanticUsed: true,
+  indexedEvidenceCount: 1,
+  eligibleEvidenceCount: 1,
+};

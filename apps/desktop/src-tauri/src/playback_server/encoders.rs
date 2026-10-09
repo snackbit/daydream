@@ -26,7 +26,20 @@ pub(super) fn append_video_encoder_args_with_fps(
     encoder: &VideoEncoder,
     fps: f64,
 ) {
-    let fps_filter = format!("fps={:.3}", playback_video_fps(fps));
+    append_video_encoder_args_with_tail(command, encoder, fps, 0);
+}
+
+pub(super) fn append_video_encoder_args_with_tail(
+    command: &mut Command,
+    encoder: &VideoEncoder,
+    fps: f64,
+    duration_ms: i64,
+) {
+    let fps_filter = format!(
+        "fps={:.3}:start_time=0,tpad=stop_mode=clone:stop_duration={:.3}",
+        playback_video_fps(fps),
+        duration_ms.max(0) as f64 / 1000.
+    );
     let scale_filter = format!(
         "scale=w='if(gte(iw,ih),min(iw,{PREVIEW_LONG_EDGE_PX}),-2)':h='if(gte(iw,ih),-2,min(ih,{PREVIEW_LONG_EDGE_PX}))'"
     );

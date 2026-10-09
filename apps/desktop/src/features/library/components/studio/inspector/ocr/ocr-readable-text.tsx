@@ -20,7 +20,7 @@ export function OcrReadableText({ document, query }: OcrReadableTextProps) {
   return (
     <TooltipProvider delayDuration={200}>
       <p
-        className="text-[11px] leading-5 break-words whitespace-pre-wrap"
+        className="text-sm leading-5 break-words whitespace-pre-wrap"
         aria-label="Recognized text"
       >
         {pieces.map((piece, index) => {

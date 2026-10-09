@@ -4,7 +4,11 @@ import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
-import { startRecordingAiProcessing } from '@/features/ai/ai-client';
+import {
+  startRecordingAiProcessing,
+  retryProcessingJob,
+  resumeProcessingJob,
+} from '@/features/ai/ai-client';
 import { visibleOcrTimelineFrames } from '@/features/ai/ocr/ocr-timeline-visibility';
 import { useOcrTimelineFrames } from '@/features/ai/ocr/use-ocr-timeline-frames';
 import {
@@ -155,6 +159,7 @@ export function useRecordingStudioController({
       await onDeleted();
     } catch (deleteError) {
       setError(errorMessage(deleteError));
+      throw deleteError;
     }
   }, [onDeleted, recordingId]);
 
@@ -252,7 +257,12 @@ export function useRecordingStudioController({
     setError(null);
     setProcessingStartBusy(true);
     try {
-      await startRecordingAiProcessing({ recordingId: detail.id });
+      const job = aiProcessing.state?.job;
+      if (job?.status === 'failed' || job?.status === 'completed-with-errors')
+        await retryProcessingJob({ jobId: job.id });
+      else if (job?.status === 'paused')
+        await resumeProcessingJob({ jobId: job.id });
+      else await startRecordingAiProcessing({ recordingId: detail.id });
       await aiProcessing.reload();
     } catch (processingError) {
       setError(errorMessage(processingError));

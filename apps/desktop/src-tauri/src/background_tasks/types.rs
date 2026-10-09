@@ -21,6 +21,8 @@ pub struct BackgroundTask {
     pub title: String,
     pub recording_id: Option<String>,
     pub model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day_id: Option<String>,
     pub status: String,
     pub phase: String,
     pub progress: Option<f64>,
@@ -57,6 +59,7 @@ pub struct BackgroundTaskCursor {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBackgroundTasksInput {
+    pub scope: Option<String>,
     pub recording_id: Option<String>,
     pub limit: Option<usize>,
     pub cursor: Option<BackgroundTaskCursor>,

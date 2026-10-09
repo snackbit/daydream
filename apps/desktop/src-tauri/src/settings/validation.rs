@@ -1,6 +1,7 @@
 use crate::whisper_backend;
 use std::collections::BTreeSet;
 
+use super::recall_validation::validate_recall_settings;
 use super::{defaults::*, types::*};
 
 pub(crate) fn validate_settings(settings: AppSettings) -> Result<AppSettings, AppSettingsError> {
@@ -131,6 +132,7 @@ fn validate_window_protection_settings(
 }
 
 fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
+    validate_recall_settings(&settings.recall)?;
     validate_one_of(
         "ai.transcription.provider",
         &settings.transcription.provider,

@@ -2,13 +2,17 @@ use rusqlite::Connection;
 use rusqlite_migration::Migrations;
 
 mod ai_outputs;
+mod capture_runs;
 mod initial;
 mod live_processing;
+mod model_transfers;
 mod ocr_assets;
 mod ocr_documents;
 mod processing_resilience;
 mod processing_units;
 mod protected_windows;
+mod recall;
+mod recovery;
 mod scene_recording;
 mod settings_processing;
 mod source_video;
@@ -39,5 +43,10 @@ pub(in crate::storage) fn migrations() -> Migrations<'static> {
     migrations.extend(processing_units::migrations());
     migrations.extend(live_processing::migrations());
     migrations.extend(source_video::migrations());
+    migrations.extend(recall::migrations());
+    migrations.extend(model_transfers::migrations());
+    migrations.extend(recovery::migrations());
+    migrations.extend(capture_runs::migrations());
+    migrations.extend(recovery::output_ownership_migrations());
     Migrations::new(migrations)
 }

@@ -28,24 +28,24 @@ export function DiagnosticsHealthSummary({
   const unavailableCount = checks.length - availableCount;
 
   return (
-    <section aria-labelledby="runtime-overview-heading" className="grid gap-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
-        <h2
-          className="text-xs font-semibold tracking-tight"
-          id="runtime-overview-heading"
-        >
+    <section
+      aria-labelledby="runtime-overview-heading"
+      className="bg-muted rounded-panel grid gap-4 p-6"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h2 className="text-sm font-medium" id="runtime-overview-heading">
           Runtime overview
         </h2>
-        <p aria-live="polite" className="text-muted-foreground text-[10px]">
+        <p aria-live="polite" className="text-muted-foreground text-xs">
           {unavailableCount === 0
             ? `${availableCount} checks available`
             : `${unavailableCount} of ${checks.length} checks unavailable`}
         </p>
       </div>
-      <ul className="grid grid-cols-2 divide-x divide-y border-y sm:grid-cols-3 xl:grid-cols-5">
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {checks.map((check) => (
           <li
-            className="flex min-w-0 items-center gap-1.5 px-2 py-2"
+            className="flex min-w-0 items-center gap-2 py-2"
             key={check.label}
           >
             {check.available ? (
@@ -59,7 +59,7 @@ export function DiagnosticsHealthSummary({
                 className="text-destructive size-3 shrink-0"
               />
             )}
-            <span className="truncate text-[10px]">{check.label}</span>
+            <span className="text-xs">{check.label}</span>
             <span className="sr-only">
               {check.available ? 'Available' : 'Unavailable'}
             </span>

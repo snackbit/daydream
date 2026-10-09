@@ -1,4 +1,8 @@
 use super::super::*;
+mod projection;
+#[cfg(test)]
+pub(in crate::ai) use projection::catalog_asset;
+pub(in crate::ai) use projection::{model_list, models_from_stored};
 
 pub(in crate::ai) struct CatalogModel {
     pub(in crate::ai) cache_dir: &'static str,
@@ -162,7 +166,8 @@ pub(in crate::ai) fn save_catalog_model(
         connection,
         &SaveAiModelAssetInput {
             checksum: catalog_checksum(catalog),
-            checksum_algorithm: catalog_checksum(catalog).map(|_checksum| "sha1".to_string()),
+            checksum_algorithm: catalog_checksum(catalog)
+                .map(|_checksum| checksum_algorithm(catalog).to_string()),
             display_label: catalog.label.to_string(),
             downloaded_bytes: patch.downloaded_bytes,
             download_status: patch.download_status.into_owned(),
@@ -181,80 +186,37 @@ pub(in crate::ai) fn save_catalog_model(
     )
 }
 
-pub(in crate::ai) fn model_list(storage: &AppStorage) -> Result<AiModelAssetList, AiError> {
-    storage
-        .with_connection(storage::list_ai_model_assets)
-        .map_err(storage_error)
-        .map(models_from_stored)
-}
-
-pub(in crate::ai) fn models_from_stored(stored: Vec<AiModelAssetRow>) -> AiModelAssetList {
-    let models = catalog_models()
-        .into_iter()
-        .map(|catalog| {
-            stored.iter().find(|row| row.id == catalog.id).map_or_else(
-                || catalog_asset(catalog),
-                |row| model_asset_from_catalog_row(catalog, row.clone()),
-            )
-        })
-        .collect();
-
-    AiModelAssetList { models }
-}
-
-pub(in crate::ai) fn catalog_asset(catalog: &CatalogModel) -> AiModelAsset {
-    AiModelAsset {
-        checksum: catalog_checksum(catalog),
-        checksum_algorithm: catalog_checksum(catalog).map(|_checksum| "sha1".to_string()),
-        created_at_ms: 0,
-        downloaded_bytes: 0,
-        download_status: "missing".to_string(),
-        etag: None,
-        error_code: None,
-        id: catalog.id.to_string(),
-        label: catalog.label.to_string(),
-        local_path: None,
-        provider: catalog.provider.to_string(),
-        self_test_status: "not-run".to_string(),
-        size_bytes: (catalog.size_bytes > 0).then_some(catalog.size_bytes),
-        source_url: model_source_url(catalog),
-        total_bytes: (catalog.size_bytes > 0).then_some(catalog.size_bytes),
-        updated_at_ms: 0,
-        verification_status: "unknown".to_string(),
-    }
-}
-
-fn model_asset_from_catalog_row(catalog: &CatalogModel, row: AiModelAssetRow) -> AiModelAsset {
-    if row.checksum != catalog_checksum(catalog) {
-        return catalog_asset(catalog);
-    }
-
-    AiModelAsset {
-        checksum: catalog_checksum(catalog),
-        checksum_algorithm: catalog_checksum(catalog).map(|_checksum| "sha1".to_string()),
-        created_at_ms: row.created_at_ms,
-        downloaded_bytes: row.downloaded_bytes,
-        download_status: row.download_status,
-        etag: row.etag,
-        error_code: row.error_code,
-        id: catalog.id.to_string(),
-        label: catalog.label.to_string(),
-        local_path: row.local_path,
-        provider: catalog.provider.to_string(),
-        self_test_status: row.self_test_status,
-        size_bytes: (catalog.size_bytes > 0).then_some(catalog.size_bytes),
-        source_url: model_source_url(catalog),
-        total_bytes: row
-            .total_bytes
-            .or((catalog.size_bytes > 0).then_some(catalog.size_bytes)),
-        updated_at_ms: row.updated_at_ms,
-        verification_status: row.verification_status,
-    }
-}
-
-fn catalog_checksum(catalog: &CatalogModel) -> Option<String> {
+pub(super) fn catalog_checksum(catalog: &CatalogModel) -> Option<String> {
     (!catalog.sha1.is_empty()).then(|| catalog.sha1.to_string())
 }
+
+// The historical field name remains private for compatibility with existing fixtures.
+pub(in crate::ai) fn checksum_algorithm(catalog: &CatalogModel) -> &'static str {
+    if catalog.provider == "local-embedding" {
+        "sha256"
+    } else {
+        "sha1"
+    }
+}
+
+pub(in crate::ai) const LOCAL_EMBEDDING_CATALOG: [CatalogModel; 2] = [
+    CatalogModel {
+        cache_dir: "embeddings", filename: "multilingual-e5-small-q8_0.gguf",
+        id: "multilingual-e5-small-q8_0", label: "Multilingual E5 Small Q8_0 (English/German)",
+        provider: "local-embedding",
+        sha1: "0a34067a40f25d3149b36885faa62bee0e5284d0f9edc102acfc00e115d953e8",
+        size_bytes: 131624960,
+        source_url: Some("https://huggingface.co/cstr/multilingual-e5-small-GGUF/resolve/274299fdb785d87e8d907a24af76016cb1a8a1d8/multilingual-e5-small-q8_0.gguf"),
+    },
+    CatalogModel {
+        cache_dir: "embeddings", filename: "bge-small-en-v1.5-q8_0.gguf",
+        id: "bge-small-en-v1.5-q8_0", label: "BGE Small English v1.5 Q8_0",
+        provider: "local-embedding",
+        sha1: "f046db1dc724cf4f6f0a0c5917e922823b73eb1d27b8f9a9c2797f7866974804",
+        size_bytes: 36685152,
+        source_url: Some("https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/97abb509f3e9e1b4ea4287427aec0c4b78a1e468/bge-small-en-v1.5-q8_0.gguf"),
+    },
+];
 
 pub(in crate::ai) fn ensure_catalog_model(
     model_id: &str,
@@ -275,6 +237,7 @@ pub(in crate::ai) fn catalog_models() -> Vec<&'static CatalogModel> {
     LOCAL_WHISPER_CATALOG
         .iter()
         .chain(LOCAL_OCR_CATALOG.iter())
+        .chain(LOCAL_EMBEDDING_CATALOG.iter())
         .collect()
 }
 
@@ -330,8 +293,45 @@ fn tesseract_runtime_source_error() -> (&'static str, &'static str) {
 }
 pub(in crate::ai) fn emit_model_list(app: &AppHandle) {
     let storage = app.state::<AppStorage>();
-    if let Ok(models) = model_list(&storage) {
+    if let Ok(mut models) = model_list(&storage) {
+        app.state::<AiModelManager>().decorate(&mut models);
         let _ = app.emit(AI_MODELS_CHANGED_EVENT, models);
         crate::background_tasks::emit_changed(app, None);
+        crate::recall::mutations::emit_changed(app, None);
+    }
+}
+
+#[cfg(test)]
+mod checksum_tests {
+    use super::*;
+    use crate::ai::models::{prepare_partial_download, PartialDownloadResume};
+
+    #[test]
+    fn embedding_resume_uses_sha256_and_discards_corrupt_complete_files() {
+        let path = std::env::temp_dir().join(format!(
+            "daydream-embedding-checksum-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let catalog = CatalogModel {
+            cache_dir: "test",
+            filename: "fixture.gguf",
+            id: "fixture",
+            label: "Synthetic fixture",
+            provider: "local-embedding",
+            sha1: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            size_bytes: 3,
+            source_url: None,
+        };
+        std::fs::write(&path, b"abc").unwrap();
+        assert_eq!(
+            prepare_partial_download(&catalog, &path).unwrap(),
+            PartialDownloadResume::Complete
+        );
+        std::fs::write(&path, b"bad").unwrap();
+        assert_eq!(
+            prepare_partial_download(&catalog, &path).unwrap(),
+            PartialDownloadResume::Resume(0)
+        );
+        assert!(!path.exists());
     }
 }

@@ -107,3 +107,9 @@ pub fn delete_ocr_documents_for_chunks(
     connection.execute("DELETE FROM ocr_document_contents WHERE NOT EXISTS(SELECT 1 FROM ocr_frame_occurrences o WHERE o.content_id=ocr_document_contents.id)",[])?;
     Ok(deleted)
 }
+
+/// Recall uses the same current-attempt, supersession and privacy rules as OCR
+/// inspection; callers must not recreate these predicates independently.
+pub fn recall_ocr_visibility_cte() -> String {
+    format!("{}{CURRENT_OCR_VISIBLE}", display_occurrence_cte())
+}

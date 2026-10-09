@@ -116,8 +116,9 @@ export function SegmentScrubber({
     <div className="relative py-1">
       {hoverPreview ? (
         <div
+          role="tooltip"
           aria-live="polite"
-          className="pointer-events-none absolute bottom-full z-10 mb-3 w-44 -translate-x-1/2 overflow-hidden rounded-md border border-white/15 bg-neutral-950 text-white shadow-xl"
+          className="bg-popover text-popover-foreground pointer-events-none absolute bottom-full z-10 mb-3 w-44 -translate-x-1/2 overflow-hidden rounded-md border shadow-xl"
           style={{ left: `${hoverPreview.leftPercent}%` }}
         >
           {hoverPreview.thumbnailUrl ? (
@@ -127,13 +128,13 @@ export function SegmentScrubber({
               src={hoverPreview.thumbnailUrl}
             />
           ) : (
-            <div className="flex aspect-video w-full items-center justify-center bg-white/10 text-xs">
+            <div className="bg-muted text-muted-foreground flex aspect-video w-full items-center justify-center text-xs">
               {hoverPreview.title}
             </div>
           )}
           <div className="px-2 py-1 text-xs">
             <div className="font-medium">{hoverPreview.title}</div>
-            <div className="text-white/70">{hoverPreview.label}</div>
+            <div className="text-muted-foreground">{hoverPreview.label}</div>
           </div>
         </div>
       ) : null}
@@ -146,7 +147,7 @@ export function SegmentScrubber({
         aria-valuetext={`${formatDuration(currentTimelineMs)} of ${formatDuration(
           totalDurationMs,
         )}`}
-        className="group relative h-7 cursor-pointer outline-none"
+        className="group focus-visible:ring-ring relative h-7 cursor-pointer rounded-md outline-none focus-visible:ring-2"
         ref={scrubberRef}
         role="slider"
         tabIndex={0}
@@ -181,15 +182,15 @@ export function SegmentScrubber({
         }}
         onPointerUp={(event) => commitTimeline(timelineMsFromPointer(event))}
       >
-        <div className="absolute top-1/2 right-0 left-0 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-white/15 transition-[height] group-hover:h-3">
+        <div className="bg-muted-foreground/20 absolute top-1/2 right-0 left-0 h-2 -translate-y-1/2 overflow-hidden rounded-full transition-[height] group-hover:h-3">
           {regions.map((region) => (
             <div
               aria-label={timelineRegionLabel(region)}
               className={cn(
                 'absolute top-0 h-full',
                 region.kind === 'segment'
-                  ? 'bg-white/30'
-                  : 'bg-white/10 bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.18)_0,rgba(255,255,255,0.18)_3px,transparent_3px,transparent_7px)]',
+                  ? 'bg-muted-foreground'
+                  : 'studio-redaction-pattern bg-muted',
               )}
               data-playback-region={region.kind}
               key={`${region.kind}-${region.segment.id}-${region.startMs}`}
@@ -203,7 +204,7 @@ export function SegmentScrubber({
             />
           ))}
           <div
-            className="absolute top-0 left-0 h-full bg-white"
+            className="bg-primary absolute top-0 left-0 h-full"
             style={{ width: `${progressPercent}%` }}
           />
           <PlayerSeekbarRedactions
@@ -225,13 +226,13 @@ export function SegmentScrubber({
             <div key={segment.id}>
               <div
                 aria-label={`Segment ${segment.segmentIndex} starts`}
-                className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-white/80"
+                className="bg-muted-foreground absolute top-1/2 h-4 w-px -translate-y-1/2"
                 data-segment-boundary="start"
                 style={{ left: `${startPercent}%` }}
               />
               <div
                 aria-label={`Segment ${segment.segmentIndex} ends`}
-                className="absolute top-1/2 h-4 w-px -translate-y-1/2 bg-white/45"
+                className="bg-muted-foreground/60 absolute top-1/2 h-4 w-px -translate-y-1/2"
                 data-segment-boundary="end"
                 style={{ left: `${endPercent}%` }}
               />
@@ -239,7 +240,7 @@ export function SegmentScrubber({
           );
         })}
         <div
-          className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-black/30 bg-white shadow transition-transform group-hover:scale-110"
+          className="border-primary bg-background absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm transition-transform group-hover:scale-110"
           style={{ left: `${progressPercent}%` }}
         />
       </div>

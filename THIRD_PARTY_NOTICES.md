@@ -23,6 +23,23 @@ Daydream's vendored VAD compute loop has one maintained correction: failed
 graph computation resets its scheduler and returns failure instead of reporting
 success with incomplete speech probabilities. The upstream API is unchanged.
 
+## Managed embeddings
+
+The isolated embedding worker vendors llama.cpp/GGML at revision
+`abeada335e2e78bd3fe63febafab7e900ce75810` under
+`apps/desktop/src-tauri/vendor/llama.cpp`. Its MIT license and upstream vendor
+notices remain beside the sources. The worker also uses nlohmann JSON 3.12.0;
+its MIT notice is preserved in `embedding-worker/JSON-LICENSE.txt`.
+
+Multilingual E5 and BGE model weights are downloaded separately with pinned
+checksums. Their upstream model licenses are MIT. The bundled E5 normalization
+table comes from the pinned upstream tokenizer and retains its notice in
+`embedding-worker/E5-LICENSE.txt`. Optional Vulkan builds preserve the
+SPIRV-Headers notices in `embedding-worker/SPIRV-LICENSE.txt`.
+
+Worker builds stage these notices beside the packaged executable. Exact source,
+model and toolchain pins are documented in [embedding runtime](docs/embedding-runtime.md).
+
 ## Silero VAD
 
 Silero v6.2.0 is bundled offline under `apps/desktop/src-tauri/resources/vad`.
@@ -93,6 +110,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ## Other dependencies
+
+The capture editor uses `jpeg-encoder` 0.7.1, copyright (c) 2020 Vincent Stroebel,
+under MIT or Apache-2.0, with the IJG notice for its quantization tables.
+The unchanged upstream license texts are included in
+`apps/desktop/src-tauri/resources/licenses/jpeg-encoder/` and packaged with the app.
+Upstream: https://github.com/vstroebel/jpeg-encoder/tree/v0.7.1.
 
 Daydream also uses third-party Rust crates, JavaScript packages, native system
 libraries, and optional user-configured model services. Their license metadata

@@ -128,6 +128,8 @@ export interface RecorderPreviewStatus {
 }
 
 export interface RecorderPreviewFrame {
+  generation?: number;
+  sequence?: number;
   sourceWidth?: number;
   sourceHeight?: number;
   dataUrl: string;
@@ -136,6 +138,12 @@ export interface RecorderPreviewFrame {
   sourceId: string;
   timestampMs: number;
   width: number;
+}
+export interface RecorderPreviewDemand {
+  sceneSourceId: string;
+  width: number;
+  height: number;
+  generation: number;
 }
 
 export type RecorderQualityPreset = 'balanced-ocr';
@@ -151,10 +159,15 @@ export interface SaveCaptureSetupInput {
 }
 
 export interface StartRecordingInput {
+  setup?: SaveCaptureSetupInput;
   desktopAudioSourceId: string | null;
   microphoneAudioSourceId: string | null;
   qualityPreset: RecorderQualityPreset;
   sceneId: string;
+}
+export interface RecordingSaved {
+  recordingId: string;
+  savedAtMs: number;
 }
 
 export interface PauseRecordingInput {
@@ -280,6 +293,9 @@ export interface RecorderBackendHealth {
 }
 
 export interface RecorderStatus {
+  /** Absent only when connected to an older native build. */
+  statusRevision?: number;
+  cleanupDisposition?: 'ready' | 'quarantined';
   activeRecordingId: string | null;
   activeSceneId: string | null;
   activeSegmentId: string | null;

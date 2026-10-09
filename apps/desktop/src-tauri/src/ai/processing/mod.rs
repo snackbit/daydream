@@ -71,3 +71,24 @@ pub(in crate::ai) use worker::{
     recover_stale_processing, retry_processing_job_for_action, run_processing_worker_tick,
     selected_transcription_model, update_processing_job_for_action, AudioChunkProcessingOutcome,
 };
+pub(crate) mod applicability;
+
+/// Shared recording actions use the same lifecycle rules as the individual IPC commands.
+pub(crate) fn control_job(
+    storage: &crate::storage::AppStorage,
+    job_id: &str,
+    action: &str,
+) -> Result<super::ProcessingJob, super::AiError> {
+    let status = match action {
+        "pause" => "paused",
+        "resume" => "queued",
+        "cancel" => "cancelled",
+        _ => {
+            return Err(super::ai_error(
+                "ai_processing_selection_invalid",
+                "Choose a supported processing action.",
+            ))
+        }
+    };
+    update_processing_job_for_action(storage, job_id, status)
+}

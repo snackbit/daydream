@@ -9,7 +9,7 @@ use std::{
 use crate::ffmpeg;
 
 use super::{
-    encoders::{append_video_encoder_args_with_fps, vaapi_device_path, VideoEncoder},
+    encoders::{vaapi_device_path, VideoEncoder},
     ffmpeg_args::input_seek_ffmpeg_args,
     thumbnails::{ThumbnailError, ThumbnailKey, ThumbnailService},
     PlaybackSegment, PlaybackSession,
@@ -37,7 +37,10 @@ pub(super) fn handle_stream(
     sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
     thumbnails: ThumbnailService,
     encoder: VideoEncoder,
+    resource: super::resources::ResourceLease,
 ) {
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
     let Ok(request) = read_request(&mut stream) else {
         write_response(&mut stream, 400, "text/plain", b"Bad request");
         return;
@@ -46,6 +49,7 @@ pub(super) fn handle_stream(
         write_response(&mut stream, 404, "text/plain", b"Not found");
         return;
     };
+    resource.set_session(&session_id);
     let Some(segment) = sessions.lock().ok().and_then(|sessions| {
         let session = sessions.get(&session_id)?;
         let segment_id = match &playback_request {
@@ -62,7 +66,7 @@ pub(super) fn handle_stream(
     match playback_request {
         PlaybackRequest::Audio {
             start_ms, track_id, ..
-        } => stream_audio(&mut stream, &segment, &track_id, start_ms),
+        } => stream_audio(&mut stream, &segment, &track_id, start_ms, &resource),
         PlaybackRequest::Thumbnail {
             stream_index,
             offset_ms,
@@ -80,7 +84,14 @@ pub(super) fn handle_stream(
             start_ms,
             stream_index,
             ..
-        } => stream_video(&mut stream, &segment, &encoder, start_ms, stream_index),
+        } => stream_video(
+            &mut stream,
+            &segment,
+            &encoder,
+            start_ms,
+            stream_index,
+            &resource,
+        ),
     }
 }
 
@@ -102,7 +113,10 @@ pub(super) fn parse_request(request: &str) -> Option<(String, String, PlaybackRe
     }
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
     let segments = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
-    if segments.len() < 6 || segments[0] != "playback" || segments[3] != "segments" {
+    if segments.len() < 6
+        || segments[0] != "playback"
+        || !matches!(segments[3], "segments" | "runs")
+    {
         return None;
     }
     let session_id = segments[1].to_string();
@@ -166,6 +180,7 @@ fn stream_video(
     encoder: &VideoEncoder,
     start_ms: i64,
     requested_stream: Option<i64>,
+    resource: &super::resources::ResourceLease,
 ) {
     let Some(video_stream_index) = selected_video_stream(segment, requested_stream) else {
         write_response(stream, 404, "text/plain", b"Segment has no video stream");
@@ -178,11 +193,27 @@ fn stream_video(
             command.args(["-vaapi_device", &device_path]);
         }
     }
+    let Ok(input) = playback_input_args(segment, start_ms, resource) else {
+        write_response(stream, 404, "text/plain", b"Playback media unavailable");
+        return;
+    };
     command
-        .args(input_seek_ffmpeg_args(start_ms, &segment.file_path))
+        .args(input)
         .args(["-map", &format!("0:{video_stream_index}")])
         .arg("-an");
-    append_video_encoder_args_with_fps(&mut command, encoder, segment.playback_fps);
+    super::encoders::append_video_encoder_args_with_tail(
+        &mut command,
+        encoder,
+        segment.playback_fps,
+        segment.duration_ms,
+    );
+    command.args([
+        "-t",
+        &format!(
+            "{:.3}",
+            segment.duration_ms.saturating_sub(start_ms).max(1) as f64 / 1000.
+        ),
+    ]);
     command
         .args([
             "-movflags",
@@ -194,10 +225,16 @@ fn stream_video(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
-    stream_ffmpeg_stdout(stream, command, "video/mp4");
+    stream_ffmpeg_stdout(stream, command, "video/mp4", resource);
 }
 
-fn stream_audio(stream: &mut TcpStream, segment: &PlaybackSegment, track_id: &str, start_ms: i64) {
+fn stream_audio(
+    stream: &mut TcpStream,
+    segment: &PlaybackSegment,
+    track_id: &str,
+    start_ms: i64,
+    resource: &super::resources::ResourceLease,
+) {
     let stream_index = if track_id.starts_with("desktop-audio-") {
         segment.desktop_audio_stream_index
     } else if track_id.starts_with("microphone-") {
@@ -215,13 +252,26 @@ fn stream_audio(stream: &mut TcpStream, segment: &PlaybackSegment, track_id: &st
         return;
     };
 
+    let Ok(input) = playback_input_args(segment, start_ms, resource) else {
+        write_response(stream, 404, "text/plain", b"Playback media unavailable");
+        return;
+    };
     let mut command = Command::new(ffmpeg::binary_path());
     command
         .args(["-hide_banner", "-v", "error"])
-        .args(input_seek_ffmpeg_args(start_ms, &segment.file_path))
+        .args(input)
         .args(["-map", &format!("0:{stream_index}")])
         .args([
+            "-t",
+            &format!(
+                "{:.3}",
+                segment.duration_ms.saturating_sub(start_ms).max(1) as f64 / 1000.
+            ),
+        ])
+        .args([
             "-vn",
+            "-af",
+            &ffmpeg::audio_timeline_filter(48_000, segment.duration_ms),
             "-c:a",
             "aac",
             "-b:a",
@@ -235,7 +285,29 @@ fn stream_audio(stream: &mut TcpStream, segment: &PlaybackSegment, track_id: &st
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
-    stream_ffmpeg_stdout(stream, command, "audio/mp4");
+    stream_ffmpeg_stdout(stream, command, "audio/mp4", resource);
+}
+pub(super) fn playback_input_args(
+    segment: &PlaybackSegment,
+    start_ms: i64,
+    resource: &super::resources::ResourceLease,
+) -> Result<Vec<String>, String> {
+    if segment.fragments.is_empty() {
+        return Ok(input_seek_ffmpeg_args(start_ms, &segment.file_path));
+    }
+    let manifest = resource
+        .manifest(&super::runs::concat_manifest(&segment.fragments)?)
+        .map_err(|_| "Playback manifest unavailable.")?;
+    Ok(vec![
+        "-f".into(),
+        "concat".into(),
+        "-safe".into(),
+        "0".into(),
+        "-i".into(),
+        manifest.to_string_lossy().into_owned(),
+        "-ss".into(),
+        format!("{:.3}", start_ms.max(0) as f64 / 1000.),
+    ])
 }
 fn stream_thumbnail(
     stream: &mut TcpStream,
@@ -286,14 +358,14 @@ fn selected_video_stream(segment: &PlaybackSegment, requested: Option<i64>) -> O
         _ => None,
     }
 }
-fn stream_ffmpeg_stdout(stream: &mut TcpStream, mut command: Command, content_type: &str) {
-    let Ok(mut child) = command.spawn() else {
+fn stream_ffmpeg_stdout(
+    stream: &mut TcpStream,
+    mut command: Command,
+    content_type: &str,
+    resource: &super::resources::ResourceLease,
+) {
+    let Ok(mut stdout) = resource.spawn(&mut command) else {
         write_response(stream, 500, "text/plain", b"Unable to start FFmpeg");
-        return;
-    };
-    let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        write_response(stream, 500, "text/plain", b"Unable to read FFmpeg output");
         return;
     };
 
@@ -301,7 +373,7 @@ fn stream_ffmpeg_stdout(stream: &mut TcpStream, mut command: Command, content_ty
         "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(header.as_bytes()).is_err() {
-        let _ = child.kill();
+        resource.kill();
         return;
     }
 
@@ -311,17 +383,17 @@ fn stream_ffmpeg_stdout(stream: &mut TcpStream, mut command: Command, content_ty
             Ok(0) => break,
             Ok(size) => {
                 if stream.write_all(&buffer[..size]).is_err() {
-                    let _ = child.kill();
+                    resource.kill();
                     break;
                 }
             }
             Err(_) => {
-                let _ = child.kill();
+                resource.kill();
                 break;
             }
         }
     }
-    let _ = child.wait();
+    let _ = resource.wait();
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) {

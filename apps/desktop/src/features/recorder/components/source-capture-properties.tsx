@@ -1,5 +1,6 @@
-import { useCallback, useState, type ChangeEvent } from 'react';
+import { useCallback, type ChangeEvent } from 'react';
 import type { RecorderSceneSource } from '@daydream/shared';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -20,15 +21,21 @@ export interface SourceCapturePropertiesProps {
   source: RecorderSceneSource;
   disabled: boolean;
   onChange: (source: RecorderSceneSource) => void;
+  regionId: string | null;
+  customId: string | null;
+  onRegionChange: (sourceId: string | null) => void;
+  onCustomChange: (sourceId: string | null) => void;
 }
 
 export function SourceCaptureProperties({
   source,
   disabled,
   onChange,
+  regionId,
+  customId,
+  onRegionChange: setRegionId,
+  onCustomChange: setCustomId,
 }: SourceCapturePropertiesProps) {
-  const [regionId, setRegionId] = useState<string | null>(null);
-  const [customId, setCustomId] = useState<string | null>(null);
   const crop = croppedDimensions(source);
   const region =
     regionId === source.id ||
@@ -99,11 +106,11 @@ export function SourceCaptureProperties({
         1,
       ),
     );
-  }, [source, onChange]);
+  }, [source, onChange, setRegionId, setCustomId]);
   return (
-    <div className="space-y-4 p-3">
+    <div className="space-y-6 p-6 text-sm">
       <div>
-        <h2 className="text-xs font-semibold">Source output</h2>
+        <h2 className="text-sm font-medium">Source output</h2>
         <p className="text-muted-foreground mt-1 text-xs">
           {source.sourceWidth} × {source.sourceHeight} pixels
         </p>
@@ -125,36 +132,38 @@ export function SourceCaptureProperties({
         </Select>
       </Field>
       {region ? (
-        <div className="grid grid-cols-2 gap-2">
-          <SourceNumberField
-            label="Crop X"
-            value={source.crop.left}
-            min={0}
-            disabled={disabled}
-            onChange={changeCropX}
-          />
-          <SourceNumberField
-            label="Crop Y"
-            value={source.crop.top}
-            min={0}
-            disabled={disabled}
-            onChange={changeCropY}
-          />
-          <SourceNumberField
-            label="Crop width"
-            value={crop.width}
-            min={2}
-            disabled={disabled}
-            onChange={changeCropWidth}
-          />
-          <SourceNumberField
-            label="Crop height"
-            value={crop.height}
-            min={2}
-            disabled={disabled}
-            onChange={changeCropHeight}
-          />
-        </div>
+        <SharedDisclosure label="Precision crop controls">
+          <div className="grid grid-cols-2 gap-2">
+            <SourceNumberField
+              label="Crop X"
+              value={source.crop.left}
+              min={0}
+              disabled={disabled}
+              onChange={changeCropX}
+            />
+            <SourceNumberField
+              label="Crop Y"
+              value={source.crop.top}
+              min={0}
+              disabled={disabled}
+              onChange={changeCropY}
+            />
+            <SourceNumberField
+              label="Crop width"
+              value={crop.width}
+              min={2}
+              disabled={disabled}
+              onChange={changeCropWidth}
+            />
+            <SourceNumberField
+              label="Crop height"
+              value={crop.height}
+              min={2}
+              disabled={disabled}
+              onChange={changeCropHeight}
+            />
+          </div>
+        </SharedDisclosure>
       ) : null}
       <Field>
         <FieldLabel htmlFor="source-scale">Output scale</FieldLabel>
@@ -185,7 +194,7 @@ export function SourceCaptureProperties({
       <p className="text-xs tabular-nums">
         Saved video: {source.rect.width} × {source.rect.height}
       </p>
-      <p className="text-muted-foreground text-[11px]">
+      <p className="text-muted-foreground text-xs leading-5">
         Crop first, then resize. Recording and AI use this output.
       </p>
       <Button disabled={disabled} size="sm" variant="outline" onClick={reset}>

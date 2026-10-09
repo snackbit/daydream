@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Link } from '@tanstack/react-router';
 import { AlertCircle, RotateCcw } from 'lucide-react';
 import { NarrowPageLayout, PageHeader } from '@/app/PageLayout';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { unknownErrorMessage } from '@/lib/async-store-action';
@@ -44,14 +45,11 @@ export function RouteErrorScreen({ error, reset }: RouteErrorScreenProps) {
         </Button>
       </div>
 
-      <details className="text-muted-foreground bg-card rounded-lg border px-4 py-3 text-xs">
-        <summary className="text-foreground cursor-pointer font-medium">
-          Technical details
-        </summary>
+      <SharedDisclosure label="Technical details">
         <pre className="bg-muted mt-3 overflow-auto rounded-md p-3 text-xs leading-5">
           {unknownErrorMessage(error)}
         </pre>
-      </details>
+      </SharedDisclosure>
     </NarrowPageLayout>
   );
 }

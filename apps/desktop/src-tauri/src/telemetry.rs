@@ -2,9 +2,9 @@ use std::{
     collections::VecDeque,
     env,
     fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -27,10 +27,50 @@ static TELEMETRY: OnceLock<TelemetryRuntime> = OnceLock::new();
 
 #[derive(Debug)]
 struct TelemetryRuntime {
+    file_sink: Arc<Mutex<Option<File>>>,
     file_path: PathBuf,
     filter: String,
     _file_guard: tracing_appender::non_blocking::WorkerGuard,
     _stdout_guard: tracing_appender::non_blocking::WorkerGuard,
+}
+
+#[derive(Clone, Debug)]
+struct ResettableLogWriter(Arc<Mutex<Option<File>>>);
+impl Write for ResettableLogWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut file = self
+            .0
+            .lock()
+            .map_err(|_| io::Error::other("Log writer unavailable"))?;
+        match file.as_mut() {
+            Some(file) => file.write(bytes),
+            None => Ok(bytes.len()),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut file = self
+            .0
+            .lock()
+            .map_err(|_| io::Error::other("Log writer unavailable"))?;
+        match file.as_mut() {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
+    }
+}
+
+pub(crate) fn close_file_for_factory_reset() -> Result<(), String> {
+    if let Some(runtime) = TELEMETRY.get() {
+        let mut sink = runtime
+            .file_sink
+            .lock()
+            .map_err(|_| "Unable to close the log file safely.")?;
+        if let Some(file) = sink.take() {
+            file.sync_all()
+                .map_err(|_| "Unable to flush the log file safely.")?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -61,7 +101,9 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let filter = configured_filter();
     let file = open_log_file(&file_path)?;
-    let (file_writer, file_guard) = tracing_appender::non_blocking(file);
+    let file_sink = Arc::new(Mutex::new(Some(file)));
+    let (file_writer, file_guard) =
+        tracing_appender::non_blocking(ResettableLogWriter(file_sink.clone()));
     let (stdout_writer, stdout_guard) = tracing_appender::non_blocking(io::stdout());
     let stdout_filter = env_filter(&filter);
     let file_filter = env_filter(&filter);
@@ -82,6 +124,7 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .try_init()?;
 
     let runtime = TelemetryRuntime {
+        file_sink,
         file_path,
         filter,
         _file_guard: file_guard,

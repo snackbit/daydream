@@ -19,6 +19,22 @@ pub trait SecretKeyProvider {
     fn get_or_create_key(&self) -> Result<[u8; KEY_BYTES], SecretCryptoError>;
 }
 
+/// Factory reset removes this app's master key only after encrypted settings
+/// have been cleared. Missing keys make retry safe.
+pub(crate) fn delete_platform_settings_key() -> Result<(), SecretCryptoError> {
+    #[cfg(target_os = "linux")]
+    {
+        match linux_settings_key_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(secret_service_error(error)),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct InMemorySecretKeyProvider {
     key: [u8; KEY_BYTES],

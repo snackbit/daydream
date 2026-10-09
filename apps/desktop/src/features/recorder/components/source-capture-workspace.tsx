@@ -1,10 +1,28 @@
-import { useCallback, useMemo, type ChangeEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react';
 import type { RecorderSceneSource } from '@daydream/shared';
 import { FullHeightLayout } from '@/app/PageLayout';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { recorderConfigurationLocked } from '../recorder-lifecycle-state';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
+import {
+  recorderConfigurationLocked,
+  recorderLifecycleLocked,
+} from '../recorder-lifecycle-state';
 import {
   croppedDimensions,
   reviewSourceSetup,
@@ -16,8 +34,53 @@ import type { CaptureWorkspaceProps } from './capture-workspace';
 import { RecorderErrorAlert } from './recorder-error-alert';
 import { RecordingInProgressPanel } from './recording-in-progress-panel';
 import { SourceCaptureProperties } from './source-capture-properties';
+import { SourceCropEditor } from './source-crop-editor';
 
 export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
+  const [compact, setCompact] = useState(() => window.innerWidth < 1200);
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
+  const [regionId, setRegionId] = useState<string | null>(null);
+  const [customId, setCustomId] = useState<string | null>(null);
+  const propertiesRef = useRef<HTMLDivElement>(null);
+  const propertiesTriggerRef = useRef<HTMLButtonElement>(null);
+  const interactedOutsideProperties = useRef(false);
+  const changePropertiesOpen = useCallback(
+    (open: boolean) => {
+      if (open === propertiesOpen) return;
+      setPropertiesOpen(open);
+      const restoreTrigger = !interactedOutsideProperties.current;
+      interactedOutsideProperties.current = false;
+      requestAnimationFrame(() => {
+        if (open) {
+          propertiesRef.current?.focus();
+          interactedOutsideProperties.current = false;
+        } else if (restoreTrigger) propertiesTriggerRef.current?.focus();
+      });
+    },
+    [propertiesOpen],
+  );
+  const handlePropertiesInteractOutside = useCallback(
+    (event: Event) => {
+      if (!propertiesOpen) event.preventDefault();
+      else interactedOutsideProperties.current = true;
+    },
+    [propertiesOpen],
+  );
+  const preventClosedAutoFocus = useCallback(
+    (event: Event) => {
+      if (!propertiesOpen) event.preventDefault();
+    },
+    [propertiesOpen],
+  );
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 1199px)');
+    function update() {
+      setCompact(query.matches);
+    }
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const setup = useSourceCaptureSetup();
   const locked =
     recorderConfigurationLocked(props.pendingLifecycleAction, props.status) ||
@@ -74,6 +137,17 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
       microphoneAudioSourceId: props.microphoneAudioSourceId,
     });
   }
+  function start() {
+    if (!review.scene || review.error || !defaults || locked) return;
+    props.onStart({
+      ...defaults,
+      scene: {
+        ...review.scene,
+        desktopAudioSourceId: props.desktopAudioSourceId,
+        microphoneAudioSourceId: props.microphoneAudioSourceId,
+      },
+    });
+  }
   const crop = source ? croppedDimensions(source) : null;
   const { setDefaults } = setup;
   const changeInterval = useCallback(
@@ -92,14 +166,40 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
     },
     [defaults, setDefaults],
   );
+  const properties = source ? (
+    <SourceCaptureProperties
+      source={source}
+      disabled={locked}
+      onChange={updateSource}
+      regionId={regionId}
+      customId={customId}
+      onRegionChange={setRegionId}
+      onCustomChange={setCustomId}
+    />
+  ) : (
+    <p className="text-muted-foreground p-6 text-sm">
+      Select a source to set its crop and output size.
+    </p>
+  );
   return (
-    <FullHeightLayout>
+    <FullHeightLayout className="bg-background text-foreground">
       <CaptureToolbar
+        setupBlocker={
+          review.error ??
+          (!defaults
+            ? 'Load recording settings before starting.'
+            : setup.busy
+              ? 'Saving source setup…'
+              : null)
+        }
         configurationLocked={
           locked || review.error !== null || defaults === null
         }
         isDirty={dirty}
-        lifecycleLocked={props.pendingLifecycleAction !== null || setup.busy}
+        lifecycleLocked={
+          recorderLifecycleLocked(props.pendingLifecycleAction, props.status) ||
+          setup.busy
+        }
         loadStatus={props.loadStatus}
         pendingLifecycleAction={props.pendingLifecycleAction}
         previewStatus={props.previewStatus}
@@ -109,7 +209,7 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
         onPause={props.onPause}
         onResume={props.onResume}
         onSave={save}
-        onStart={props.onStart}
+        onStart={start}
         onStop={props.onStop}
       />
       {props.error || setup.error ? (
@@ -147,8 +247,8 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
           {review.error}
         </p>
       ) : null}
-      <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[14rem_minmax(0,1fr)_20rem]">
-        <div className="border-b xl:border-r xl:border-b-0">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 px-5 pb-6 min-[1200px]:grid-cols-[18rem_minmax(0,1fr)_20rem] lg:px-8">
+        <div className="bg-muted rounded-panel min-w-0">
           <CaptureSourcesPanel
             audioSources={props.audioSources}
             configurationLocked={locked}
@@ -172,44 +272,62 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
         </div>
         <section
           aria-label="Selected source preview"
-          className="flex min-w-0 flex-col gap-3 p-4"
+          className="bg-muted rounded-workspace flex min-w-0 flex-col gap-6 p-6 lg:p-8"
         >
-          <div className="flex justify-between gap-2 text-xs">
-            <h2 className="font-semibold">
+          <div className="flex flex-wrap justify-between gap-2 text-sm">
+            <h2 className="font-medium">
               {source?.displayName ?? 'Select a source'}
             </h2>
-            <span className="text-muted-foreground">Separate video track</span>
+            <span className="text-muted-foreground text-xs">
+              Separate video track
+            </span>
+            {compact ? (
+              <Sheet
+                modal={false}
+                open={propertiesOpen}
+                onOpenChange={changePropertiesOpen}
+              >
+                <SheetTrigger asChild>
+                  <Button ref={propertiesTriggerRef} variant="outline">
+                    Source output
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  hidden={!propertiesOpen}
+                  ref={propertiesRef}
+                  onOpenAutoFocus={preventClosedAutoFocus}
+                  onInteractOutside={handlePropertiesInteractOutside}
+                  forceMount
+                  className="w-full max-w-[28rem] gap-0 overflow-y-auto p-0 data-[state=closed]:hidden sm:max-w-[28rem]"
+                >
+                  <SheetHeader className="p-6">
+                    <SheetTitle>Source output settings</SheetTitle>
+                    <SheetDescription>
+                      Set the capture area and output size for the selected
+                      source.
+                    </SheetDescription>
+                  </SheetHeader>
+                  {properties}
+                </SheetContent>
+              </Sheet>
+            ) : null}
           </div>
           {props.status?.state === 'recording' ? (
             <RecordingInProgressPanel
               recordingStats={props.recordingStats}
               recordingStatsError={props.recordingStatsError}
             />
-          ) : frame && source && crop ? (
-            <div
-              className="relative w-full overflow-hidden border bg-black"
-              style={{
-                aspectRatio: `${source.sourceWidth}/${source.sourceHeight}`,
-              }}
-            >
-              <img
-                alt={`${source.displayName} preview`}
-                src={frame.dataUrl}
-                className="size-full object-fill"
-              />
-              <div
-                aria-label="Capture region"
-                className="pointer-events-none absolute border-2 border-sky-400"
-                style={{
-                  left: `${(source.crop.left / (source.sourceWidth ?? 1)) * 100}%`,
-                  top: `${(source.crop.top / (source.sourceHeight ?? 1)) * 100}%`,
-                  width: `${(crop.width / (source.sourceWidth ?? 1)) * 100}%`,
-                  height: `${(crop.height / (source.sourceHeight ?? 1)) * 100}%`,
-                }}
-              />
-            </div>
+          ) : source && source.sourceWidth && source.sourceHeight ? (
+            <SourceCropEditor
+              key={source.id}
+              source={source}
+              frame={frame}
+              unavailable={props.previewStatus?.state === 'error'}
+              disabled={locked}
+              onChange={updateSource}
+            />
           ) : (
-            <p className="text-muted-foreground flex min-h-48 items-center justify-center border text-xs">
+            <p className="text-muted-foreground flex min-h-64 items-center justify-center rounded-lg border p-6 text-sm">
               {source
                 ? 'Waiting for source preview…'
                 : 'Choose monitors to record.'}
@@ -217,28 +335,18 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
           )}
           {source ? (
             <p className="text-muted-foreground text-xs">
-              Saved output: {source.rect.width} × {source.rect.height}. Each
-              source is recorded and analyzed independently.
+              Crop: {crop?.width} × {crop?.height} · Saved output:{' '}
+              {source.rect.width} × {source.rect.height}
             </p>
           ) : null}
         </section>
-        <aside className="border-t xl:border-t-0 xl:border-l">
-          {source ? (
-            <SourceCaptureProperties
-              source={source}
-              disabled={locked}
-              onChange={updateSource}
-            />
-          ) : (
-            <p className="text-muted-foreground p-3 text-xs">
-              Select a source to set its crop and output size.
-            </p>
-          )}
-        </aside>
+        {!compact ? (
+          <aside className="bg-muted rounded-panel min-w-0">{properties}</aside>
+        ) : null}
       </div>
       <section
         aria-label="Shared recording settings"
-        className="grid gap-3 border-t p-3 sm:grid-cols-2"
+        className="bg-muted rounded-panel mx-5 mb-6 grid gap-6 p-6 sm:grid-cols-2 lg:mx-8 lg:p-8"
       >
         <Field>
           <FieldLabel htmlFor="capture-interval">

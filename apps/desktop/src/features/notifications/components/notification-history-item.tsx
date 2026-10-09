@@ -33,13 +33,13 @@ export function NotificationHistoryItem({
 }: NotificationHistoryItemProps) {
   const { deleteNotifications, executeAction } = actions;
   const handleDismiss = useCallback(() => {
-    void deleteNotifications([notification.id]);
+    void deleteNotifications([notification.id]).catch(() => undefined);
   }, [deleteNotifications, notification.id]);
   const handleExecuteAction = useCallback(
     (actionId: string) => {
       void executeAction(notification.id, actionId, {
         acknowledgeResult: true,
-      });
+      }).catch(() => undefined);
     },
     [executeAction, notification.id],
   );
@@ -47,32 +47,32 @@ export function NotificationHistoryItem({
   const ongoing = isNotificationOngoing(notification, models);
 
   return (
-    <article className="grid min-w-0 gap-2 border-b px-2 py-3 last:border-b-0">
+    <article className="grid min-w-0 gap-3 p-6">
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="min-w-0 text-xs font-medium">
+            <h3 className="min-w-0 text-sm font-medium">
               {notification.title}
             </h3>
             {notification.dismissedAtMs === null ? (
-              <span className="text-primary text-[10px] font-medium">New</span>
+              <span className="text-primary text-xs font-medium">New</span>
             ) : null}
             {notification.status !== 'info' ? (
               <span
-                className={`text-[10px] font-medium ${statusTextClass(notification.status)}`}
+                className={`text-xs font-medium ${statusTextClass(notification.status)}`}
               >
                 {statusLabel(notification.status)}
               </span>
             ) : null}
           </div>
-          <p className="text-muted-foreground mt-1 text-xs leading-5">
+          <p className="text-muted-foreground mt-2 text-sm leading-6">
             {notification.message}
           </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
           <time
-            className="text-muted-foreground text-[10px] tabular-nums"
+            className="text-muted-foreground text-xs tabular-nums"
             dateTime={new Date(notification.createdAtMs).toISOString()}
           >
             {timeFormatter.format(notification.createdAtMs)}

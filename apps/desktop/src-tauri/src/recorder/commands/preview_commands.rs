@@ -16,12 +16,45 @@ pub fn get_recorder_preview_status(
     manager.preview_status()
 }
 
+pub fn update_recorder_preview_demand(
+    input: super::super::types::RecorderPreviewDemand,
+    manager: State<'_, RecorderManager>,
+) -> Result<(), RecorderError> {
+    if input.scene_source_id.is_empty()
+        || input.scene_source_id.len() > 256
+        || input.width == 0
+        || input.height == 0
+        || input.width > 3840
+        || input.height > 3840
+        || u64::from(input.width) * u64::from(input.height) > 4_000_000
+        || input.generation == 0
+    {
+        return Err(super::super::errors::invalid_scene_error(
+            "Preview size is invalid.",
+        ));
+    }
+    let mut demand = manager.preview_demand.lock().map_err(|_| {
+        super::super::errors::capture_adapter_failed_error("Preview demand is unavailable.")
+    })?;
+    if demand
+        .as_ref()
+        .is_none_or(|current| current.generation < input.generation)
+    {
+        *demand = Some(input);
+    }
+    Ok(())
+}
+
 pub async fn start_recorder_preview(
     input: StartRecorderPreviewInput,
     app: AppHandle,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderPreviewStatus, RecorderError> {
+    let _activity =
+        crate::maintenance::runtime::admit(&app, "capture-preview").map_err(|message| {
+            super::super::errors::lifecycle_error("recorder_maintenance_active", &message)
+        })?;
     let timestamp_ms = now_ms();
     info!(scene_id = %input.scene_id, "recorder_preview_start_requested");
     let (scene_id, generation) = match manager.begin_preview_start(&input.scene_id, timestamp_ms)? {

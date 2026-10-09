@@ -9,14 +9,11 @@ export function InspectorSection({ children, title }: InspectorSectionProps) {
   const headingId = useId();
 
   return (
-    <section aria-labelledby={headingId} className="border-b py-2.5">
-      <h3
-        className="px-2.5 text-[11px] font-semibold tracking-tight"
-        id={headingId}
-      >
+    <section aria-labelledby={headingId} className="border-b py-6">
+      <h3 className="px-6 text-sm font-medium" id={headingId}>
         {title}
       </h3>
-      <div className="mt-2 space-y-2 px-2.5 text-[11px]">{children}</div>
+      <div className="mt-4 space-y-3 px-6 text-sm">{children}</div>
     </section>
   );
 }

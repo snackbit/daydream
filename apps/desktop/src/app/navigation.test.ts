@@ -1,7 +1,17 @@
 import { expect, test } from 'vitest';
 import { navigationItems } from './navigation';
 
-test('desktop shell includes home and diagnostics routes', () => {
-  expect(navigationItems.map((item) => item.href)).toContain('/');
-  expect(navigationItems.map((item) => item.href)).toContain('/diagnostics');
+test('desktop navigation exposes recall workflows and diagnostics', () => {
+  const destinations = navigationItems.map((item) => item.href);
+  expect(destinations).toEqual(
+    expect.arrayContaining([
+      '/library',
+      '/capture',
+      '/search',
+      '/processing',
+      '/settings',
+      '/diagnostics',
+    ]),
+  );
+  expect(new Set(destinations).size).toBe(destinations.length);
 });

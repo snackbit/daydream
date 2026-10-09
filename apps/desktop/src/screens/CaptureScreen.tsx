@@ -1,10 +1,26 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
+import type { SaveCaptureSetupInput } from '@daydream/shared';
 import { SourceCaptureWorkspace } from '@/features/recorder/components/source-capture-workspace';
+import { isRecorderError } from '@/features/recorder/recorder-error-utils';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
 import { useAsyncErrorBoundary } from '@/lib/use-async-error-boundary';
 
 export function CaptureScreen() {
   const runAsyncAction = useAsyncErrorBoundary();
+  const runRecorderAction = useCallback(
+    (action: () => Promise<unknown>) => {
+      runAsyncAction(async () => {
+        try {
+          await action();
+        } catch (error) {
+          // Recorder actions already publish expected native failures to the
+          // workspace. Keep session controls available for recovery.
+          if (!isRecorderError(error)) throw error;
+        }
+      });
+    },
+    [runAsyncAction],
+  );
   const audioSources = useRecorderWorkspaceStore((state) => state.audioSources);
   const captureSources = useRecorderWorkspaceStore(
     (state) => state.captureSources,
@@ -77,12 +93,36 @@ export function CaptureScreen() {
   const updateCaptureSources = useRecorderWorkspaceStore(
     (state) => state.updateCaptureSources,
   );
+  const handlePause = useCallback(
+    () => runRecorderAction(pause),
+    [pause, runRecorderAction],
+  );
+  const handleResume = useCallback(
+    () => runRecorderAction(resume),
+    [resume, runRecorderAction],
+  );
+  const handleSave = useCallback(
+    () => runRecorderAction(saveScene),
+    [saveScene, runRecorderAction],
+  );
+  const handleSelectCaptureSources = useCallback(
+    () => runRecorderAction(updateCaptureSources),
+    [updateCaptureSources, runRecorderAction],
+  );
+  const handleStart = useCallback(
+    (setup?: SaveCaptureSetupInput) => runRecorderAction(() => start(setup)),
+    [start, runRecorderAction],
+  );
+  const handleStop = useCallback(
+    () => runRecorderAction(stop),
+    [stop, runRecorderAction],
+  );
 
   useEffect(() => {
     if (loadStatus === 'idle') {
-      runAsyncAction(load);
+      runRecorderAction(load);
     }
-  }, [load, loadStatus, runAsyncAction]);
+  }, [load, loadStatus, runRecorderAction]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -210,15 +250,15 @@ export function CaptureScreen() {
       status={status}
       onChangeScene={setDraftScene}
       onDeleteSceneSource={deleteSceneSource}
-      onPause={() => runAsyncAction(pause)}
-      onResume={() => runAsyncAction(resume)}
+      onPause={handlePause}
+      onResume={handleResume}
       onResolveDuplicateCaptureSource={resolveDuplicateCaptureSource}
-      onSave={() => runAsyncAction(saveScene)}
+      onSave={handleSave}
       onSelectAudioSource={selectAudioSource}
-      onSelectCaptureSources={() => runAsyncAction(updateCaptureSources)}
+      onSelectCaptureSources={handleSelectCaptureSources}
       onSelectSceneSource={selectSceneSource}
-      onStart={() => runAsyncAction(start)}
-      onStop={() => runAsyncAction(stop)}
+      onStart={handleStart}
+      onStop={handleStop}
     />
   );
 }

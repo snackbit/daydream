@@ -7,6 +7,7 @@ import {
 } from '@/features/ai/ai-client';
 import { reprocessRecordingOcr } from '@/features/ai/ocr/ocr-client';
 import { ProcessingError } from '@/features/processing/components/processing-error';
+import { processingFailureSummary } from '@/features/processing/processing-errors';
 import { OcrTextPanel } from './ocr-text-panel';
 
 export interface OcrDocumentStateProps {
@@ -47,27 +48,18 @@ export function OcrDocumentState({
       onRetryRead();
     } catch (failure) {
       setRetryStatus('error');
-      setRetryError(
-        failure instanceof Error
-          ? failure.message
-          : typeof failure === 'object' &&
-              failure !== null &&
-              'message' in failure &&
-              typeof failure.message === 'string'
-            ? failure.message
-            : 'OCR processing could not be restarted.',
-      );
+      setRetryError(processingFailureSummary(failure));
     }
   }, [job, onRetryRead, recordingId]);
   if (loading && !document && !job)
     return (
-      <p role="status" className="text-muted-foreground text-[11px]">
+      <p role="status" className="text-muted-foreground text-sm">
         Loading OCR text…
       </p>
     );
   if (error)
     return (
-      <div role="alert" className="text-destructive text-[11px]">
+      <div role="alert" className="text-destructive text-sm">
         {error}
         <Button onClick={onRetryRead} size="sm" variant="outline">
           Retry loading OCR
@@ -80,7 +72,7 @@ export function OcrDocumentState({
     return document.text.trim() ? (
       <OcrTextPanel document={document} key={document.id} />
     ) : (
-      <p className="text-muted-foreground text-[11px]">
+      <p className="text-muted-foreground text-sm">
         No text detected in this frame.
       </p>
     );
@@ -96,8 +88,8 @@ export function OcrDocumentState({
           role={failed ? 'alert' : 'status'}
           className={
             failed
-              ? 'text-destructive text-[11px]'
-              : 'text-muted-foreground text-[11px]'
+              ? 'text-destructive text-sm'
+              : 'text-muted-foreground text-sm'
           }
         >
           {failed
@@ -113,7 +105,7 @@ export function OcrDocumentState({
             }
           />
         ) : null}
-        <p className="text-muted-foreground text-[10px]">
+        <p className="text-muted-foreground text-xs">
           Retry uses the saved OCR configuration. Vision OCR may send eligible
           frames to your configured provider.
         </p>
@@ -132,7 +124,7 @@ export function OcrDocumentState({
                 : 'Retry processing'}
         </Button>
         {retryError ? (
-          <p role="alert" className="text-destructive text-[11px]">
+          <p role="alert" className="text-destructive text-sm">
             {retryError}
           </p>
         ) : null}
@@ -140,7 +132,7 @@ export function OcrDocumentState({
     );
   if (job?.status === 'queued' || job?.status === 'running')
     return (
-      <p role="status" className="text-muted-foreground text-[11px]">
+      <p role="status" className="text-muted-foreground text-sm">
         {job.status === 'queued'
           ? 'OCR processing is queued.'
           : 'OCR processing is running.'}{' '}
@@ -149,12 +141,12 @@ export function OcrDocumentState({
     );
   if (document?.status === 'gap')
     return (
-      <p className="text-muted-foreground text-[11px]">
+      <p className="text-muted-foreground text-sm">
         OCR is unavailable for this sample. Select another eligible frame.
       </p>
     );
   return (
-    <p className="text-muted-foreground text-[11px]">
+    <p className="text-muted-foreground text-sm">
       No OCR document for this frame. Processing may be pending.
     </p>
   );

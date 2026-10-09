@@ -6,17 +6,25 @@ mod compositor;
 mod errors;
 mod manager;
 #[cfg(target_os = "linux")]
+pub(crate) mod media_worker;
+#[cfg(target_os = "linux")]
 pub(crate) mod media_writer;
 #[cfg(not(target_os = "linux"))]
 #[path = "media_writer_unsupported.rs"]
 pub(crate) mod media_writer;
 mod platform;
 mod preview;
+#[cfg(target_os = "linux")]
+pub(crate) mod recovery;
+#[cfg(not(target_os = "linux"))]
+#[path = "recovery_unsupported.rs"]
+pub(crate) mod recovery;
 pub(crate) mod source_recording;
 mod storage_mapping;
 #[cfg(test)]
 mod tests;
 mod types;
+mod window_application_icons;
 mod window_protection;
 
 pub use manager::RecorderManager;
@@ -53,8 +61,18 @@ pub fn get_recorder_recording_stats(
 }
 
 #[tauri::command(rename = "listProtectableWindows")]
-pub fn list_protectable_windows() -> ProtectableWindowList {
-    commands::list_protectable_windows()
+pub async fn list_protectable_windows(
+    app: tauri::AppHandle,
+) -> window_application_icons::WindowPickerList {
+    commands::list_protectable_windows(app).await
+}
+
+#[tauri::command(rename = "getWindowApplicationIcon")]
+pub async fn get_window_application_icon(
+    app: tauri::AppHandle,
+    input: window_application_icons::GetWindowApplicationIconInput,
+) -> window_application_icons::WindowApplicationIcon {
+    window_application_icons::get_window_application_icon(app, input).await
 }
 
 #[tauri::command(rename = "getWindowProtectionStatus")]
@@ -79,9 +97,12 @@ pub fn get_recorder_scene(
 #[tauri::command(rename = "selectCaptureSources")]
 pub async fn select_capture_sources(
     input: Option<SelectCaptureSourcesInput>,
+    app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<CaptureSourceList, RecorderError> {
+    let _activity = crate::maintenance::runtime::admit(&app, "capture-selection")
+        .map_err(|message| errors::lifecycle_error("recorder_maintenance_active", &message))?;
     commands::select_capture_sources(input, storage, manager).await
 }
 
@@ -93,9 +114,12 @@ pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
 #[tauri::command(rename = "saveRecorderScene")]
 pub fn save_recorder_scene(
     input: SaveRecorderSceneInput,
+    app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderScene, RecorderError> {
+    let _activity = crate::maintenance::runtime::admit(&app, "capture-configure")
+        .map_err(|message| errors::lifecycle_error("recorder_maintenance_active", &message))?;
     commands::save_recorder_scene(input, storage, manager)
 }
 
@@ -121,6 +145,14 @@ pub fn stop_recorder_preview(
     manager: State<'_, RecorderManager>,
 ) -> Result<RecorderPreviewStatus, RecorderError> {
     commands::stop_recorder_preview(manager)
+}
+
+#[tauri::command(rename = "updateRecorderPreviewDemand")]
+pub fn update_recorder_preview_demand(
+    input: RecorderPreviewDemand,
+    manager: State<'_, RecorderManager>,
+) -> Result<(), RecorderError> {
+    commands::update_recorder_preview_demand(input, manager)
 }
 
 #[tauri::command(rename = "startRecording")]

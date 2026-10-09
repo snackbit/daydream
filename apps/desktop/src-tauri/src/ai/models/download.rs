@@ -1,14 +1,31 @@
 use super::super::*;
+use super::finalize::{finalize_complete_partial_if_valid, finalize_model_download};
+use super::transfer_state::{save_download_progress, save_stopped_download};
+use super::transport::{read_chunk, send_request, validate_content_range, StreamRead};
 use super::{
-    catalog_model, delete_file_if_exists, downloaded_bytes, emit_model_list, ensure_catalog_model,
-    is_whisper_model, model_path, partial_model_path, require_model_source_url,
-    rollback_finalized_model_file, save_catalog_model, sha1_file, CatalogModel, ModelAssetPatch,
+    catalog_model, checksum_file, delete_file_if_exists, emit_model_list, ensure_catalog_model,
+    model_path, partial_model_path, require_model_source_url, save_catalog_model, CatalogModel,
+    ModelAssetPatch,
 };
 
 pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
+    let lease = match app
+        .state::<crate::maintenance::runtime::RuntimeActivityRegistry>()
+        .begin("model-download")
+    {
+        Ok(lease) => lease,
+        Err(_) => {
+            app.state::<AiModelManager>()
+                .abort_worker_admission(&model_id);
+            return;
+        }
+    };
     tauri::async_runtime::spawn(async move {
+        let _lease = lease;
         let result = run_model_download(&app, &model_id).await;
         if let Err(error) = result {
+            app.state::<AiModelManager>()
+                .set_telemetry(&model_id, "failed", None, None);
             let storage = app.state::<AppStorage>();
             if let Some(catalog) = catalog_model(&model_id) {
                 let _ = storage.with_connection(|connection| {
@@ -28,7 +45,10 @@ pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
                         connection,
                         ModelDownloadNotificationInput {
                             actions: &[model_download_retry_action(catalog.id)],
-                            message: &format!("{} download failed: {}.", catalog.label, error.code),
+                            message: &format!(
+                                "{} could not be downloaded. Retry to resume its saved data.",
+                                catalog.label
+                            ),
                             model_id: catalog.id,
                             preferred_notification_id: None,
                             status: "failed",
@@ -38,7 +58,6 @@ pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
                     )
                     .map(|_row| ())
                 });
-                emit_model_list(&app);
             }
         }
 
@@ -46,6 +65,7 @@ pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
         if let Some(next_model_id) = manager.finish_download(&model_id) {
             spawn_model_download(app.clone(), next_model_id);
         }
+        emit_model_list(&app);
     });
 }
 
@@ -56,6 +76,17 @@ pub(in crate::ai) async fn run_model_download(
     let catalog = ensure_catalog_model(model_id)?;
     let storage = app.state::<AppStorage>();
     let manager = app.state::<AiModelManager>();
+    let attempt = storage
+        .with_connection(|connection| {
+            connection.query_row(
+                "SELECT attempt FROM ai_model_download_runtime WHERE model_id=?1",
+                [model_id],
+                |row| row.get::<_, i64>(0),
+            )
+        })
+        .map_err(storage_error)?;
+    manager.begin_attempt(model_id, attempt);
+    emit_model_list(app);
     let final_path = model_path(app, catalog)?;
     let partial_path = partial_model_path(app, catalog)?;
     let source_url = require_model_source_url(catalog)?;
@@ -84,7 +115,10 @@ pub(in crate::ai) async fn run_model_download(
                 request = request.header(IF_RANGE, etag);
             }
         }
-        let response = request.send().await.map_err(download_error)?;
+        let Some(response) = send_request(request, &manager, catalog.id).await? else {
+            save_stopped_download(app, catalog, partial_len as i64)?;
+            return Ok(());
+        };
         let status = response.status();
         if status == StatusCode::RANGE_NOT_SATISFIABLE && partial_len > 0 {
             if finalize_complete_partial_if_valid(
@@ -109,6 +143,17 @@ pub(in crate::ai) async fn run_model_download(
             return Err(http_error(status));
         }
         let append = status == StatusCode::PARTIAL_CONTENT && partial_len > 0;
+        let restarted = partial_len > 0 && status == StatusCode::OK;
+        if status == StatusCode::PARTIAL_CONTENT {
+            validate_content_range(
+                response
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|value| value.to_str().ok()),
+                partial_len,
+                catalog.size_bytes,
+            )?;
+        }
         if !append {
             partial_len = 0;
         }
@@ -122,7 +167,25 @@ pub(in crate::ai) async fn run_model_download(
             .get(CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<i64>().ok());
-        let total_bytes = response_len.map(|length| length + partial_len as i64);
+        let total_bytes = response_len
+            .map(|length| length + partial_len as i64)
+            .or(Some(catalog.size_bytes));
+        if total_bytes.is_some_and(|total| total != catalog.size_bytes) {
+            return Err(AiError {
+                code: "ai_model_download_size_mismatch".into(),
+                message: "The server returned an unexpected file size. Retry the download.".into(),
+            });
+        }
+        manager.set_telemetry(
+            catalog.id,
+            if restarted {
+                "restarting"
+            } else {
+                "transferring"
+            },
+            None,
+            None,
+        );
 
         storage
             .with_connection(|connection| {
@@ -155,17 +218,37 @@ pub(in crate::ai) async fn run_model_download(
         let mut last_progress_update = Instant::now();
         let mut last_progress_bytes = downloaded;
         let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            if manager.is_cancelled(catalog.id) {
-                save_cancelled_download(app, catalog, downloaded)?;
-                return Ok(());
-            }
+        loop {
+            let chunk = match read_chunk(&mut stream, &manager, catalog.id).await {
+                StreamRead::Chunk(chunk) => chunk,
+                StreamRead::Stopped => {
+                    file.flush().map_err(file_error)?;
+                    file.sync_data().map_err(file_error)?;
+                    drop(file);
+                    save_stopped_download(app, catalog, downloaded)?;
+                    return Ok(());
+                }
+                StreamRead::Stalled => {
+                    manager.set_telemetry(catalog.id, "stalled", None, None);
+                    emit_model_list(app);
+                    continue;
+                }
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
             let chunk = chunk.map_err(download_error)?;
             file.write_all(&chunk).map_err(file_error)?;
             downloaded += chunk.len() as i64;
             if downloaded - last_progress_bytes >= MODEL_PROGRESS_UPDATE_BYTES
                 || last_progress_update.elapsed() >= MODEL_PROGRESS_UPDATE_INTERVAL
             {
+                let elapsed = last_progress_update.elapsed().as_secs_f64();
+                let speed = ((downloaded - last_progress_bytes) as f64 / elapsed.max(0.001)) as i64;
+                let eta = total_bytes
+                    .filter(|_| speed > 0)
+                    .map(|total| (total - downloaded).max(0) * 1000 / speed);
+                manager.set_telemetry(catalog.id, "transferring", Some(speed), eta);
                 save_download_progress(app, catalog, downloaded, total_bytes)?;
                 last_progress_update = Instant::now();
                 last_progress_bytes = downloaded;
@@ -200,7 +283,7 @@ pub(in crate::ai) fn prepare_partial_download(
     }
 
     if partial_len >= catalog.size_bytes as u64 {
-        if sha1_file(partial_path)? == catalog.sha1 {
+        if checksum_file(partial_path, catalog)? == catalog.sha1 {
             return Ok(PartialDownloadResume::Complete);
         }
         delete_file_if_exists(partial_path)?;
@@ -208,280 +291,4 @@ pub(in crate::ai) fn prepare_partial_download(
     }
 
     Ok(PartialDownloadResume::Resume(partial_len))
-}
-
-pub(in crate::ai) async fn finalize_complete_partial_if_valid(
-    app: &AppHandle,
-    catalog: &CatalogModel,
-    partial_path: &Path,
-    final_path: &Path,
-    manager: &AiModelManager,
-) -> Result<bool, AiError> {
-    if !partial_path.is_file() {
-        return Ok(false);
-    }
-    if sha1_file(partial_path)? != catalog.sha1 {
-        delete_file_if_exists(partial_path)?;
-        return Ok(false);
-    }
-    finalize_model_download(app, catalog, partial_path, final_path, manager).await?;
-    Ok(true)
-}
-
-pub(in crate::ai) async fn finalize_model_download(
-    app: &AppHandle,
-    catalog: &CatalogModel,
-    partial_path: &Path,
-    final_path: &Path,
-    manager: &AiModelManager,
-) -> Result<(), AiError> {
-    let storage = app.state::<AppStorage>();
-    if manager.is_cancelled(catalog.id) {
-        save_cancelled_download(app, catalog, downloaded_bytes(partial_path, final_path))?;
-        return Ok(());
-    }
-    let actual_sha1 = sha1_file(partial_path)?;
-    if actual_sha1 != catalog.sha1 {
-        return Err(AiError {
-            code: checksum_failed_code(catalog).to_string(),
-            message: format!("Checksum verification failed for {}.", catalog.label),
-        });
-    }
-    if manager.is_cancelled(catalog.id) {
-        save_cancelled_download(app, catalog, downloaded_bytes(partial_path, final_path))?;
-        return Ok(());
-    }
-    fs::rename(partial_path, final_path).map_err(file_error)?;
-    if manager.is_cancelled(catalog.id) {
-        save_cancelled_finalized_download(app, catalog, partial_path, final_path)?;
-        return Ok(());
-    }
-    let local_path = final_path.to_string_lossy().to_string();
-    let self_test_error = if is_whisper_model(catalog) {
-        let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-        let warmup = LocalTranscriptionWarmup {
-            local_backend: app_settings.ai.transcription.local_backend,
-            model_id: catalog.id.to_string(),
-            model_path: final_path.to_path_buf(),
-        };
-        let provider = app.state::<TranscriptionProviderManager>().inner().clone();
-        match tauri::async_runtime::spawn_blocking(move || provider.warm_local_model(warmup)).await
-        {
-            Ok(Ok(())) => None,
-            Ok(Err(error)) => Some(error.code),
-            Err(_error) => Some("ai_model_self_test_failed".to_string()),
-        }
-    } else {
-        None
-    };
-    if manager.is_cancelled(catalog.id) {
-        save_cancelled_finalized_download(app, catalog, partial_path, final_path)?;
-        return Ok(());
-    }
-    storage
-        .with_connection(|connection| {
-            let timestamp_ms = now_ms();
-            let self_test_status = if !is_whisper_model(catalog) {
-                "not-run"
-            } else if self_test_error.is_some() {
-                "failed"
-            } else {
-                "passed"
-            };
-            let notification_status = if self_test_error.is_some() {
-                "warning"
-            } else {
-                "succeeded"
-            };
-            let notification_title = if !is_whisper_model(catalog) {
-                "AI asset download complete"
-            } else if self_test_error.is_some() {
-                "Model download complete; load test failed"
-            } else {
-                "Model download complete"
-            };
-            let notification_message = if !is_whisper_model(catalog) {
-                format!("{} downloaded and verified.", catalog.label)
-            } else if let Some(error_code) = self_test_error.as_deref() {
-                format!(
-                    "{} downloaded and verified, but load test failed: {}.",
-                    catalog.label, error_code
-                )
-            } else {
-                format!("{} downloaded, verified, and load-tested.", catalog.label)
-            };
-            save_catalog_model(
-                connection,
-                catalog,
-                ModelAssetPatch {
-                    download_status: "available".into(),
-                    downloaded_bytes: catalog.size_bytes,
-                    error_code: self_test_error.as_deref().map(Into::into),
-                    local_path: Some(local_path.as_str().into()),
-                    self_test_status: self_test_status.into(),
-                    total_bytes: Some(catalog.size_bytes),
-                    verification_status: "passed".into(),
-                    ..ModelAssetPatch::from_existing(connection, catalog)?
-                },
-                timestamp_ms,
-            )?;
-            save_model_download_notification(
-                connection,
-                ModelDownloadNotificationInput {
-                    actions: &[],
-                    message: &notification_message,
-                    model_id: catalog.id,
-                    preferred_notification_id: None,
-                    status: notification_status,
-                    timestamp_ms,
-                    title: notification_title,
-                },
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)?;
-    emit_model_list(app);
-
-    Ok(())
-}
-
-fn checksum_failed_code(catalog: &CatalogModel) -> &'static str {
-    if catalog.provider == "local-tesseract-ocr" {
-        "ai_ocr_tesseract_checksum_failed"
-    } else {
-        "ai_model_checksum_failed"
-    }
-}
-
-pub(in crate::ai) fn save_cancelled_finalized_download(
-    app: &AppHandle,
-    catalog: &CatalogModel,
-    partial_path: &Path,
-    final_path: &Path,
-) -> Result<(), AiError> {
-    rollback_finalized_model_file(partial_path, final_path)?;
-    save_cancelled_download(app, catalog, downloaded_bytes(partial_path, final_path))
-}
-
-pub(in crate::ai) fn save_download_progress(
-    app: &AppHandle,
-    catalog: &CatalogModel,
-    downloaded: i64,
-    total_bytes: Option<i64>,
-) -> Result<(), AiError> {
-    let storage = app.state::<AppStorage>();
-    storage
-        .with_connection(|connection| {
-            save_catalog_model(
-                connection,
-                catalog,
-                ModelAssetPatch {
-                    download_status: "downloading".into(),
-                    downloaded_bytes: downloaded,
-                    total_bytes: total_bytes.or(Some(catalog.size_bytes)),
-                    verification_status: "pending".into(),
-                    ..ModelAssetPatch::from_existing(connection, catalog)?
-                },
-                now_ms(),
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)?;
-    emit_model_list(app);
-
-    Ok(())
-}
-
-pub(in crate::ai) fn save_cancelled_download(
-    app: &AppHandle,
-    catalog: &CatalogModel,
-    downloaded: i64,
-) -> Result<(), AiError> {
-    let storage = app.state::<AppStorage>();
-    storage
-        .with_connection(|connection| {
-            let timestamp_ms = now_ms();
-            save_catalog_model(
-                connection,
-                catalog,
-                ModelAssetPatch {
-                    download_status: "cancelled".into(),
-                    downloaded_bytes: downloaded,
-                    error_code: Some("ai_model_download_cancelled".into()),
-                    verification_status: "unknown".into(),
-                    ..ModelAssetPatch::from_existing(connection, catalog)?
-                },
-                timestamp_ms,
-            )?;
-            save_model_download_notification(
-                connection,
-                ModelDownloadNotificationInput {
-                    actions: &[model_download_retry_action(catalog.id)],
-                    message: &format!("{} download was cancelled.", catalog.label),
-                    model_id: catalog.id,
-                    preferred_notification_id: None,
-                    status: "cancelled",
-                    timestamp_ms,
-                    title: "Model download cancelled",
-                },
-            )
-            .map(|_row| ())
-        })
-        .map_err(storage_error)?;
-    emit_model_list(app);
-
-    Ok(())
-}
-
-pub(in crate::ai) fn save_cancel_download_result(
-    connection: &rusqlite::Connection,
-    catalog: &CatalogModel,
-    preferred_notification_id: Option<&str>,
-    cancelled: bool,
-    downloaded: Option<i64>,
-    timestamp_ms: i64,
-) -> rusqlite::Result<NotificationRow> {
-    if cancelled {
-        let existing = ModelAssetPatch::from_existing(connection, catalog)?;
-        save_catalog_model(
-            connection,
-            catalog,
-            ModelAssetPatch {
-                download_status: "cancelled".into(),
-                downloaded_bytes: downloaded.unwrap_or(existing.downloaded_bytes),
-                error_code: Some("ai_model_download_cancelled".into()),
-                verification_status: "unknown".into(),
-                ..existing
-            },
-            timestamp_ms,
-        )?;
-        save_model_download_notification(
-            connection,
-            ModelDownloadNotificationInput {
-                actions: &[model_download_retry_action(catalog.id)],
-                message: &format!("{} download was cancelled.", catalog.label),
-                model_id: catalog.id,
-                preferred_notification_id,
-                status: "cancelled",
-                timestamp_ms,
-                title: "Model download cancelled",
-            },
-        )
-    } else {
-        save_model_download_notification(
-            connection,
-            ModelDownloadNotificationInput {
-                actions: &[model_download_retry_action(catalog.id)],
-                message: &format!(
-                    "{} has no active or queued download to cancel.",
-                    catalog.label
-                ),
-                model_id: catalog.id,
-                preferred_notification_id,
-                status: "warning",
-                timestamp_ms,
-                title: "Model download not running",
-            },
-        )
-    }
 }

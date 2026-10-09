@@ -29,10 +29,15 @@ use super::types::{
     StartRecordingInput,
 };
 
+mod capture_provenance;
+mod deadline;
+#[cfg(all(test, target_os = "linux"))]
+mod deadline_tests;
 mod finalization;
 mod fragments;
 mod paths;
 mod pause;
+mod preference_cache;
 mod recording_state;
 mod resume;
 mod runtime;
@@ -61,14 +66,22 @@ use status::{
 
 #[derive(Debug)]
 pub struct RecorderManager {
+    pub(crate) preview_demand: Arc<Mutex<Option<super::types::RecorderPreviewDemand>>>,
     app_data_dir: PathBuf,
     inner: Mutex<RecorderRuntime>,
+    forced_failure: Mutex<Option<(String, RecorderStatus)>>,
+    lifecycle_background_work: std::sync::atomic::AtomicBool,
+    lifecycle_deadline: Mutex<Option<std::time::Instant>>,
 }
 
 impl RecorderManager {
     pub fn new(app_data_dir: PathBuf) -> Self {
         Self {
+            preview_demand: Arc::new(Mutex::new(None)),
             app_data_dir,
+            forced_failure: Mutex::new(None),
+            lifecycle_background_work: std::sync::atomic::AtomicBool::new(false),
+            lifecycle_deadline: Mutex::new(None),
             inner: Mutex::new(RecorderRuntime {
                 active: None,
                 capture_sources: Vec::new(),
@@ -87,7 +100,26 @@ impl RecorderManager {
     }
 
     pub fn status(&self) -> Result<RecorderStatus, RecorderError> {
-        Ok(self.lock_runtime()?.status.clone())
+        if let Some((_, status)) = self
+            .forced_failure
+            .lock()
+            .map_err(|_| {
+                lifecycle_error(
+                    "recorder_state_unavailable",
+                    "Recorder state is unavailable.",
+                )
+            })?
+            .as_ref()
+        {
+            return Ok(status.clone());
+        }
+        let mut runtime = self.lock_runtime()?;
+        let disposition = status::cleanup_disposition();
+        if runtime.status.cleanup_disposition != disposition {
+            runtime.status.cleanup_disposition = disposition;
+            runtime.status.status_revision = status::next_status_revision();
+        }
+        Ok(runtime.status.clone())
     }
 
     pub(crate) fn performance_stats(
@@ -297,6 +329,7 @@ impl RecorderManager {
         let mut runtime = self.lock_runtime()?;
         runtime.status.backend_health = backend_health;
         runtime.status.updated_at_ms = timestamp_ms;
+        runtime.status.status_revision = status::next_status_revision();
 
         Ok(runtime.status.clone())
     }

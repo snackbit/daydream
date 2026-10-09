@@ -1,6 +1,13 @@
-import type { AiModelAsset, Notification } from '@daydream/shared';
+import type {
+  AiModelAsset,
+  Notification,
+  NotificationList,
+} from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
-import { useNotificationsStore } from './notifications-store';
+import {
+  createNotificationsStore,
+  useNotificationsStore,
+} from './notifications-store';
 
 const client = vi.hoisted(() => ({
   acknowledgeNotifications: vi.fn(),
@@ -42,6 +49,26 @@ const notification: Notification = {
   topic: 'model-download',
   updatedAtMs: 1,
 };
+
+test('library invalidation prevents delayed notification reads restoring cleared text', async () => {
+  let finish: ((list: NotificationList) => void) | undefined;
+  client.getNotifications
+    .mockReturnValueOnce(
+      new Promise<NotificationList>((resolve) => {
+        finish = resolve;
+      }),
+    )
+    .mockResolvedValueOnce({ notifications: [] });
+  const store = createNotificationsStore();
+  store.setState({ notifications: [notification] });
+  const old = store.getState().load();
+  store.getState().invalidateLibrary();
+  await store.getState().load();
+  finish?.({ notifications: [notification] });
+  await old;
+  expect(store.getState().notifications).toEqual([]);
+  expect(store.getState().status).toBe('ready');
+});
 
 const activeModel: AiModelAsset = {
   checksum: null,

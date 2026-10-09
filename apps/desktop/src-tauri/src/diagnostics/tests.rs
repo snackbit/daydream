@@ -6,6 +6,9 @@ use super::latest_recording::latest_segment_diagnostics;
 #[test]
 fn parses_latest_segment_probe_metadata() {
     let segment = RecordingSegmentRow {
+        capture_run_id: None,
+        timeline_base_ms: None,
+        timeline_basis_version: None,
         desktop_audio_stream_index: Some(1),
         duration_ms: Some(1200),
         ended_at_ms: Some(2200),

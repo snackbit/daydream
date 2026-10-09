@@ -47,14 +47,14 @@ pub(crate) fn preflight_live_capture(
     })
 }
 
-pub(crate) fn prepared_live_capture(
+pub(crate) async fn prepared_live_capture(
     live_session: LivePortalSession,
     scene: &RecorderScene,
 ) -> Result<PreparedLiveCapture, RecorderError> {
     let preflight = match preflight_live_capture(scene, &live_session.streams) {
         Ok(preflight) => preflight,
         Err(error) => {
-            let _ = live_session.close_blocking("preflight");
+            let _ = live_session.close("preflight").await;
             return Err(error);
         }
     };
@@ -69,7 +69,8 @@ pub(crate) fn start_live_segment(
     input: &MediaSegmentInput,
     prepared: PreparedLiveCapture,
 ) -> Result<RecordingSegmentRuntime, RecorderError> {
-    let (sender, receiver) = bounded_frame_channel(3);
+    let (sender, receiver) =
+        crate::recorder::capture_runtime::latest_frame_channel(input.video_sources.len().max(1));
     let timing = new_capture_timing();
     let media_writer =
         match media_writer::start_segment_from_frames(input, receiver, Some(timing.clone())) {

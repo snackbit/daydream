@@ -96,7 +96,7 @@ function VisualFrameMarker({
       aria-label={title}
       aria-pressed={selected}
       className={cn(
-        'absolute bottom-0 z-20 h-12 overflow-hidden border-r text-left text-[0.625rem] font-medium',
+        'absolute bottom-0 z-20 h-12 overflow-hidden border-r text-left text-xs font-medium',
         'focus-visible:ring-ring hover:brightness-95 focus-visible:ring-2 focus-visible:outline-none',
         visualFrameMarkerClassName(source),
         selected && 'ring-primary ring-2',
@@ -270,7 +270,7 @@ function visualFrameMarkerStyle(
 
   return {
     backgroundImage:
-      'repeating-linear-gradient(135deg, color-mix(in oklch, var(--color-primary) 12%, var(--color-card)) 0, color-mix(in oklch, var(--color-primary) 12%, var(--color-card)) 6px, color-mix(in oklch, var(--color-muted-foreground) 14%, var(--color-card)) 6px, color-mix(in oklch, var(--color-muted-foreground) 14%, var(--color-card)) 12px)',
+      'repeating-linear-gradient(135deg, color-mix(in oklch, var(--foreground) 12%, var(--card)) 0, color-mix(in oklch, var(--foreground) 12%, var(--card)) 6px, color-mix(in oklch, var(--muted-foreground) 14%, var(--card)) 6px, color-mix(in oklch, var(--muted-foreground) 14%, var(--card)) 12px)',
   };
 }
 

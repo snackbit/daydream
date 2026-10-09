@@ -35,7 +35,7 @@ export function NotificationsScreen() {
   }, [load, status]);
 
   const handleClearCompleted = useCallback(() => {
-    void deleteAll();
+    void deleteAll().catch(() => undefined);
   }, [deleteAll]);
 
   const handleRetry = useCallback(() => {

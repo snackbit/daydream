@@ -26,6 +26,12 @@ import type {
   GetRecordingTranscriptInput,
 } from '@daydream/shared';
 
+export {
+  pauseAiModelDownload,
+  resumeAiModelDownload,
+  removeAiModelPartial,
+} from './models/model-transfer-client';
+
 export const aiModelsChangedEvent = 'ai-models-changed';
 export const aiProcessingChangedEvent = 'ai-processing-changed';
 

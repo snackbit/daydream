@@ -15,7 +15,7 @@ import { formatDuration } from '../../library-format';
 import { aiProcessingErrorDetails } from './ai-processing-error-copy';
 import { type DerivedAiLane } from './derived-ai-lane-model';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
-import { TRACK_DERIVED_LANE_HEIGHT_PX } from './track-timeline-math';
+import { TRACK_TRANSCRIPTION_LANE_HEIGHT_PX } from './track-timeline-math';
 
 export { buildDerivedLane } from './derived-ai-lane-model';
 export type { DerivedAiLane } from './derived-ai-lane-model';
@@ -71,7 +71,7 @@ export function SegmentTranscriptionLayer({
     <div
       aria-label={lane.statusLabel}
       className="bg-background/80 absolute inset-x-0 bottom-0 overflow-hidden border-t"
-      style={{ height: TRACK_DERIVED_LANE_HEIGHT_PX }}
+      style={{ height: TRACK_TRANSCRIPTION_LANE_HEIGHT_PX }}
       title={lane.statusLabel}
     >
       {displayItems.map((item) => (
@@ -156,13 +156,13 @@ function SegmentTranscriptionItem({
     item.kind === 'transcript-segment' || chunk.result === 'text';
   const style = {
     backgroundColor: textItem
-      ? `color-mix(in oklch, ${color} 20%, var(--color-card))`
+      ? `color-mix(in oklch, ${color} 20%, var(--card))`
       : undefined,
     left: `${left}%`,
     width: `${width}%`,
   };
   const className = cn(
-    'absolute top-1 bottom-1 overflow-hidden rounded-sm border text-[0.625rem] font-medium',
+    'absolute top-1 bottom-1 flex h-auto min-h-0 items-center overflow-hidden rounded-sm border text-xs font-medium',
     (chunk.result === 'queued' || chunk.result === 'running') &&
       'border-primary/50 bg-primary/10 text-foreground',
     (chunk.result === 'failed' || chunk.result === 'cancelled') &&
@@ -214,7 +214,9 @@ function SegmentTranscriptionItem({
             variant="ghost"
             onClick={handleInspect}
           >
-            <span className="block w-full truncate text-left">{item.text}</span>
+            <span className="line-clamp-2 w-full text-left leading-4">
+              {item.text}
+            </span>
           </Button>
         </TooltipTrigger>
         <TooltipContent>{`${track.label} · ${formatDuration(startMs)}–${formatDuration(endMs)}`}</TooltipContent>
@@ -230,7 +232,7 @@ function SegmentTranscriptionItem({
       title={itemTitle(item)}
     >
       {textItem ? (
-        <span className="block truncate px-1">{item.text}</span>
+        <span className="line-clamp-2 px-1 leading-4">{item.text}</span>
       ) : null}
     </div>
   );

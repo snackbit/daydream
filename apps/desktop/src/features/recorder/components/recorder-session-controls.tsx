@@ -44,7 +44,7 @@ export function RecorderSessionControls({
   return (
     <div
       aria-label="Global recorder controls"
-      className="flex shrink-0 items-center gap-2"
+      className="flex min-w-0 flex-wrap items-center gap-3"
     >
       <span aria-label="Recorded duration" className="tabular-nums">
         {stats?.recordedDurationMs === undefined ? '--:--:--' : duration}
@@ -88,7 +88,7 @@ export function RecorderSessionControls({
       {error ? (
         <span
           role="alert"
-          className="text-destructive max-w-64 truncate"
+          className="text-destructive max-w-64 break-words"
           title={error}
         >
           {error}

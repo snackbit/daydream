@@ -10,6 +10,7 @@ import {
   downloadAiModel,
   cancelAiModelDownload,
 } from '@/features/ai/ai-client';
+import { controlRecallJob } from '@/features/recall/recall-client';
 import { useBackgroundTaskStore } from '../background-task-store';
 import {
   retryProcessingUnits,
@@ -34,6 +35,10 @@ export interface TaskRowProps {
 }
 export function TaskRow({ task, onInspect }: TaskRowProps) {
   const jobTask = task.kind === 'ai-processing' || task.kind === 'ocr';
+  const recallTask =
+    task.kind === 'recall-generation' ||
+    task.kind === 'recall-indexing' ||
+    task.kind === 'recall-index';
   const refresh = useBackgroundTaskStore((state) => state.refresh);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +60,15 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
       setPending(true);
       setError(null);
       try {
-        if (action === 'reprocess-audio' && task.recordingId) {
+        if (
+          recallTask &&
+          (action === 'cancel' ||
+            action === 'retry' ||
+            action === 'pause' ||
+            action === 'resume')
+        ) {
+          await controlRecallJob({ jobId: task.id, action });
+        } else if (action === 'reprocess-audio' && task.recordingId) {
           await reprocessRecordingTranscription({
             recordingId: task.recordingId,
           });
@@ -93,7 +106,7 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
         setPending(false);
       }
     },
-    [pending, refresh, task],
+    [pending, recallTask, refresh, task],
   );
   const handlePause = useCallback(() => void perform('pause'), [perform]);
   const handleReprocessAudio = useCallback(
@@ -109,11 +122,13 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
   );
 
   return (
-    <li className="border-b px-3 py-3" aria-busy={pending}>
+    <li className="p-6" aria-busy={pending}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{task.title}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium wrap-break-word">
+              {task.title}
+            </span>
             <span className="text-muted-foreground text-xs">
               {taskStatusLabel(task.status)}
             </span>
@@ -130,12 +145,12 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
           </div>
         </div>
         <div className="flex flex-wrap gap-1">
-          {task.recordingId ? (
+          {task.recordingId || recallTask ? (
             <Button onClick={handleInspect} size="sm" variant="ghost">
               Details
             </Button>
           ) : null}
-          {jobTask &&
+          {(jobTask || recallTask) &&
           (task.status === 'running' || task.status === 'queued') ? (
             <Button
               disabled={pending}
@@ -146,7 +161,7 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
               Pause
             </Button>
           ) : null}
-          {jobTask && task.status === 'paused' ? (
+          {(jobTask || recallTask) && task.status === 'paused' ? (
             <Button
               disabled={pending}
               onClick={handleResume}
@@ -156,7 +171,7 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
               Resume
             </Button>
           ) : null}
-          {(jobTask || task.modelId) &&
+          {(jobTask || recallTask || task.modelId) &&
           (task.status === 'running' ||
             task.status === 'queued' ||
             task.status === 'paused') ? (
@@ -169,7 +184,7 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
               Cancel
             </Button>
           ) : null}
-          {(jobTask || task.modelId) &&
+          {(jobTask || recallTask || task.modelId) &&
           (task.status === 'failed' ||
             task.status === 'completed-with-errors' ||
             task.status === 'cancelled') ? (
@@ -205,6 +220,13 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
               </Link>
             </Button>
           ) : null}
+          {task.dayId ? (
+            <Button asChild size="sm" variant="ghost">
+              <Link to="/day/$date" params={{ date: task.dayId }}>
+                Open day
+              </Link>
+            </Button>
+          ) : null}
           {task.kind === 'ai-processing' &&
           task.recordingId &&
           !['running', 'queued', 'paused'].includes(task.status) ? (
@@ -221,7 +243,7 @@ export function TaskRow({ task, onInspect }: TaskRowProps) {
         </div>
       </div>
       <Progress
-        className="mt-2 h-1.5 rounded-none"
+        className="mt-4 h-1.5"
         aria-label={`${task.title} progress`}
         value={task.progress === null ? null : task.progress * 100}
       />

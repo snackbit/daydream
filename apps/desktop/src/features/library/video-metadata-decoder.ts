@@ -2,6 +2,7 @@ import type {
   SegmentVideoStream,
   LibraryPlaybackVideoAsset,
   LibraryPlaybackThumbnail,
+  LibraryPlaybackRun,
 } from '@daydream/shared';
 
 function invalid(): never {
@@ -55,6 +56,37 @@ export function decodeVideoAssets(value: unknown): LibraryPlaybackVideoAsset[] {
       streamIndex: number(r.streamIndex),
       url: text(r.url),
       thumbnails: list(r.thumbnails, thumbnail),
+    };
+  });
+}
+export function decodePlaybackRuns(value: unknown): LibraryPlaybackRun[] {
+  return list(value, (value) => {
+    const r = record(value),
+      assets = record(r.assets);
+    return {
+      runId: text(r.runId),
+      segmentIds: list(r.segmentIds, text),
+      durationMs: number(r.durationMs),
+      playbackOffsetMs: number(r.playbackOffsetMs),
+      assets: {
+        segmentId: text(assets.segmentId),
+        videoUrl: text(assets.videoUrl),
+        thumbnails: list(assets.thumbnails, thumbnail),
+        ...(assets.videos === undefined
+          ? {}
+          : { videos: decodeVideoAssets(assets.videos) }),
+        audio: list(assets.audio, (value) => {
+          const audio = record(value);
+          if (audio.kind !== 'desktop-audio' && audio.kind !== 'microphone')
+            invalid();
+          return {
+            kind: audio.kind,
+            streamIndex: number(audio.streamIndex),
+            trackId: text(audio.trackId),
+            url: text(audio.url),
+          };
+        }),
+      },
     };
   });
 }

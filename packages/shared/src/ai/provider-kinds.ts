@@ -1,6 +1,7 @@
 export type AiProviderKind = 'local-whisper-cpp' | 'openai-compatible';
 
-export type AiAssetProviderKind = AiProviderKind | 'local-tesseract-ocr';
+export type AiAssetProviderKind =
+  AiProviderKind | 'local-tesseract-ocr' | 'local-embedding';
 
 export type AiVisionProviderKind = 'disabled' | 'openai-compatible';
 

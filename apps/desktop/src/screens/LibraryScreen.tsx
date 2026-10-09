@@ -1,30 +1,27 @@
 import { PageHeader, PageLayout } from '@/app/PageLayout';
-import { LibraryOverviewContent } from '@/features/library/components/overview/library-overview-content';
-import { LibraryOverviewDialogs } from '@/features/library/components/overview/library-overview-dialogs';
-import { LibraryOverviewToolbar } from '@/features/library/components/overview/library-overview-toolbar';
-import { useLibraryOverviewController } from '@/features/library/components/overview/use-library-overview-controller';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LibraryRecordingsContent } from '@/features/library/components/overview/library-recordings-content';
+import { LibraryDays } from '@/features/recall/library/library-days';
 
 export function LibraryScreen() {
-  const overview = useLibraryOverviewController();
-
   return (
     <PageLayout>
       <PageHeader
         title="Library"
-        description="Recording sessions saved on this device."
+        description="A place to return to the work you left behind."
       />
-      <LibraryOverviewToolbar
-        actions={overview.actions}
-        model={overview.model}
-      />
-      <LibraryOverviewContent
-        actions={overview.actions}
-        model={overview.model}
-      />
-      <LibraryOverviewDialogs
-        actions={overview.actions}
-        model={overview.model}
-      />
+      <Tabs defaultValue="days">
+        <TabsList>
+          <TabsTrigger value="days">Days</TabsTrigger>
+          <TabsTrigger value="recordings">Recordings</TabsTrigger>
+        </TabsList>
+        <TabsContent value="days">
+          <LibraryDays />
+        </TabsContent>
+        <TabsContent value="recordings">
+          <LibraryRecordingsContent />
+        </TabsContent>
+      </Tabs>
     </PageLayout>
   );
 }

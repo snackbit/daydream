@@ -79,12 +79,12 @@ export function OcrDocumentInspector({
           <TabsTrigger value="details">Details</TabsTrigger>
         </TabsList>
         {selected.updateError ? (
-          <p className="text-muted-foreground text-[10px]" role="status">
+          <p className="text-muted-foreground text-xs" role="status">
             {selected.updateError}
           </p>
         ) : null}
         {revision ? (
-          <div className="text-muted-foreground flex items-center justify-between gap-1 text-[10px]">
+          <div className="text-muted-foreground flex items-center justify-between gap-1 text-xs">
             <span>Revision at {formatTimelineOffset(selectedTimestamp)}</span>
             <Button onClick={jump} size="sm" variant="ghost">
               Jump to revision
@@ -121,7 +121,7 @@ export function OcrDocumentInspector({
               key={document.id}
             />
           ) : (
-            <p className="text-muted-foreground text-[11px]">
+            <p className="text-muted-foreground text-sm">
               Select a frame with available OCR text to inspect its details.
             </p>
           )}

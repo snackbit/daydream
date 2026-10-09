@@ -14,9 +14,9 @@ test('recorder performance math reports on-track recording stats', () => {
   });
   const display = deriveRecorderPerformanceDisplay(
     stats({
-      framesSentToWriter: 10,
-      totalComposeDurationMs: 200,
-      updatedAtMs: 2000,
+      framesSentToWriter: 20,
+      totalComposeDurationMs: 400,
+      updatedAtMs: 4000,
     }),
     [previous],
   );
@@ -36,10 +36,10 @@ test('recorder performance math flags slight lag from missed deadlines', () => {
   });
   const display = deriveRecorderPerformanceDisplay(
     stats({
-      framesSentToWriter: 9,
+      framesSentToWriter: 17,
       schedulerMissedDeadlines: 1,
       totalComposeDurationMs: 100,
-      updatedAtMs: 2000,
+      updatedAtMs: 4000,
     }),
     [previous],
   );
@@ -57,8 +57,8 @@ test('recorder performance math flags severe stalls', () => {
   const display = deriveRecorderPerformanceDisplay(
     stats({
       framesSentToWriter: 5,
-      totalComposeDurationMs: 2600,
-      updatedAtMs: 3000,
+      totalComposeDurationMs: 3900,
+      updatedAtMs: 4000,
     }),
     [previous],
   );
@@ -111,7 +111,7 @@ test('recorder performance math smooths alternating frame deltas over three seco
   expect(display.level).toBe('on-track');
 });
 
-test('recorder performance math ignores samples older than the smoothing window', () => {
+test('recorder performance math keeps a baseline when polling samples are sparse', () => {
   const display = deriveRecorderPerformanceDisplay(
     stats({
       framesSentToWriter: 28,
@@ -132,14 +132,14 @@ test('recorder performance math ignores samples older than the smoothing window'
     ],
   );
 
-  expect(display.actualFps).toBe(6);
+  expect(display.actualFps).toBeCloseTo(28 / 5.5);
 });
 
-test('recorder performance history resets when the active segment changes', () => {
+test('recorder performance history resets when cumulative counters decrease', () => {
   const current = stats({
-    framesSentToWriter: 12,
+    framesSentToWriter: 0,
     segmentStartedAtMs: 2500,
-    totalComposeDurationMs: 120,
+    totalComposeDurationMs: 0,
     updatedAtMs: 2500,
   });
   const history = [
@@ -166,12 +166,14 @@ test('recorder performance polling slows down outside active recording states', 
 });
 
 function stats({
+  desiredFps = 5,
   framesSentToWriter,
   schedulerMissedDeadlines = 0,
   segmentStartedAtMs = 1000,
   totalComposeDurationMs,
   updatedAtMs,
 }: {
+  desiredFps?: number;
   framesSentToWriter: number;
   schedulerMissedDeadlines?: number;
   segmentStartedAtMs?: number;
@@ -179,7 +181,7 @@ function stats({
   updatedAtMs: number;
 }): RecorderPerformanceStats {
   return {
-    desiredFps: 5,
+    desiredFps,
     segmentStartedAtMs,
     state: 'recording',
     timing: {
@@ -206,3 +208,37 @@ function stats({
     updatedAtMs,
   };
 }
+
+test('low FPS measures four frame intervals and rollover preserves cumulative history', () => {
+  const previous = stats({
+    desiredFps: 0.2,
+    framesSentToWriter: 0,
+    totalComposeDurationMs: 0,
+    updatedAtMs: 0,
+  });
+  expect(
+    deriveRecorderPerformanceDisplay(
+      stats({
+        desiredFps: 0.2,
+        framesSentToWriter: 3,
+        totalComposeDurationMs: 30,
+        updatedAtMs: 15_000,
+      }),
+      [previous],
+    ).actualFps,
+  ).toBeNull();
+  const current = stats({
+    desiredFps: 0.2,
+    framesSentToWriter: 4,
+    totalComposeDurationMs: 40,
+    updatedAtMs: 20_000,
+    segmentStartedAtMs: 10_000,
+  });
+  expect(deriveRecorderPerformanceDisplay(current, [previous]).actualFps).toBe(
+    0.2,
+  );
+  expect(nextRecorderPerformanceStatsHistory(current, [previous])).toEqual([
+    previous,
+    current,
+  ]);
+});

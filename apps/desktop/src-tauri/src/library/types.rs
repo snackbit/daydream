@@ -53,6 +53,7 @@ pub struct LibraryRecordingDetail {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryRecordingSegment {
+    pub(crate) capture_run_id: Option<String>,
     pub(crate) video_streams: Vec<crate::storage::SegmentVideoStream>,
     pub(crate) desktop_audio_stream_index: Option<i64>,
     pub(crate) duration_ms: Option<i64>,
@@ -208,10 +209,20 @@ pub struct LibraryRecordingDebugData {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackAssets {
+    pub(crate) runs: Vec<LibraryPlaybackRun>,
     pub(crate) error: Option<String>,
     pub(crate) recording_id: String,
     pub(crate) segments: Vec<LibraryPlaybackSegment>,
     pub(crate) session_id: String,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryPlaybackRun {
+    pub(crate) run_id: String,
+    pub(crate) segment_ids: Vec<String>,
+    pub(crate) duration_ms: i64,
+    pub(crate) playback_offset_ms: i64,
+    pub(crate) assets: LibraryPlaybackSegment,
 }
 
 #[derive(Clone, Debug, Serialize)]

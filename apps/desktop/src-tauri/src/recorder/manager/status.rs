@@ -6,6 +6,18 @@ use super::super::types::{
 };
 use super::{ActiveRecording, ActiveSegment};
 
+static STATUS_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+pub(super) fn next_status_revision() -> u64 {
+    STATUS_REVISION.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}
+pub(super) fn cleanup_disposition() -> super::super::types::RecorderCleanupDisposition {
+    #[cfg(target_os = "linux")]
+    if super::super::media_worker::is_quarantined() {
+        return super::super::types::RecorderCleanupDisposition::Quarantined;
+    }
+    super::super::types::RecorderCleanupDisposition::Ready
+}
+
 pub(super) fn status_from_active(
     state: RecorderState,
     active: &ActiveRecording,
@@ -14,6 +26,8 @@ pub(super) fn status_from_active(
     last_error: Option<RecorderError>,
 ) -> RecorderStatus {
     RecorderStatus {
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
         active_recording_id: Some(active.recording_id.clone()),
         active_scene_id: Some(active.scene_id.clone()),
         active_segment_id: active
@@ -47,6 +61,8 @@ pub(super) fn idle_status_with_backend_health(
     backend_health: RecorderBackendHealth,
 ) -> RecorderStatus {
     RecorderStatus {
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
         active_recording_id: None,
         active_scene_id: None,
         active_segment_id: None,
@@ -66,6 +82,8 @@ pub(super) fn selecting_status(
     active_segment_id: Option<String>,
 ) -> RecorderStatus {
     RecorderStatus {
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
         active_recording_id,
         active_scene_id,
         active_segment_id,
@@ -83,6 +101,8 @@ pub(super) fn error_status_with_backend_health(
     error: RecorderError,
 ) -> RecorderStatus {
     RecorderStatus {
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
         active_recording_id: None,
         active_scene_id: None,
         active_segment_id: None,
@@ -101,6 +121,8 @@ pub(super) fn status_for_finalizing_pause(
     backend_health: RecorderBackendHealth,
 ) -> RecorderStatus {
     RecorderStatus {
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
         active_recording_id: Some(active.recording_id.clone()),
         active_scene_id: Some(active.scene_id.clone()),
         active_segment_id: Some(segment.id.clone()),
@@ -113,7 +135,7 @@ pub(super) fn status_for_finalizing_pause(
             started_at_ms: timestamp_ms,
         }),
         last_error: None,
-        state: RecorderState::Paused,
+        state: RecorderState::Pausing,
         updated_at_ms: timestamp_ms,
     }
 }
@@ -124,8 +146,10 @@ pub(super) fn status_for_finalizing_stop(
     backend_health: RecorderBackendHealth,
 ) -> RecorderStatus {
     RecorderStatus {
-        active_recording_id: None,
-        active_scene_id: None,
+        status_revision: next_status_revision(),
+        cleanup_disposition: cleanup_disposition(),
+        active_recording_id: Some(active.recording_id.clone()),
+        active_scene_id: Some(active.scene_id.clone()),
         active_segment_id: active
             .active_segment
             .as_ref()
@@ -142,7 +166,7 @@ pub(super) fn status_for_finalizing_stop(
             started_at_ms: timestamp_ms,
         }),
         last_error: None,
-        state: RecorderState::Idle,
+        state: RecorderState::Stopping,
         updated_at_ms: timestamp_ms,
     }
 }

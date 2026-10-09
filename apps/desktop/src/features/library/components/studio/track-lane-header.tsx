@@ -32,7 +32,7 @@ export function TrackLaneHeader({
   return (
     <div
       className={cn(
-        'bg-background group-hover/lane:bg-muted/70 sticky left-0 z-10 flex min-w-0 flex-col border-r border-b transition-colors',
+        'bg-background group-hover/lane:bg-muted sticky left-0 z-50 flex min-w-0 flex-col border-r border-b transition-colors',
         selectedLane && 'bg-accent text-accent-foreground',
       )}
       data-track-id={trackId}
@@ -76,7 +76,7 @@ export function TrackLaneHeader({
         <button
           aria-label={`Select ${lane.label}`}
           aria-pressed={selectedLane}
-          className="hover:bg-muted focus-visible:ring-ring/30 min-w-0 flex-1 rounded-sm px-1 py-0.5 text-left transition-colors outline-none focus-visible:ring-2"
+          className="hover:bg-muted focus-visible:ring-ring min-w-0 flex-1 rounded-sm px-1 py-0.5 text-left transition-colors outline-none focus-visible:ring-2"
           data-library-action
           type="button"
           onClick={(event) =>
@@ -94,7 +94,7 @@ export function TrackLaneHeader({
                 compact ? 'size-2' : 'size-2.5',
               )}
               style={{
-                backgroundColor: `color-mix(in oklch, ${color.strong} 42%, var(--color-muted-foreground))`,
+                backgroundColor: `color-mix(in oklch, ${color.strong} 42%, var(--muted-foreground))`,
               }}
             />
             <span className="min-w-0">

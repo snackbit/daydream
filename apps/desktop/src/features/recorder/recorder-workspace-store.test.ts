@@ -180,6 +180,31 @@ test('load initializes status, audio defaults, and logical-dimension fallback sc
   expect(state.isDirty).toBe(true);
 });
 
+test('preference invalidation fences an old scene load and saves only the new workspace scene', async () => {
+  const deletedScene = sceneWithSources(['deleted-scene-source']);
+  let finish: ((scene: RecorderScene | null) => void) | undefined;
+  client.getRecorderScene.mockReturnValueOnce(
+    new Promise<RecorderScene | null>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const old = useRecorderWorkspaceStore.getState().load();
+  useRecorderWorkspaceStore.getState().invalidatePreferences();
+  await useRecorderWorkspaceStore.getState().reloadPreferences(null);
+  const fresh = useRecorderWorkspaceStore.getState().scene;
+  if (!fresh) throw new Error('Expected a fresh default scene');
+  finish?.(deletedScene);
+  await old;
+  expect(useRecorderWorkspaceStore.getState().scene?.id).toBe(fresh.id);
+  expect(fresh.id).not.toBe(deletedScene.id);
+  expect(client.getRecorderScene).toHaveBeenCalledOnce();
+  client.saveRecorderScene.mockResolvedValue(fresh);
+  await useRecorderWorkspaceStore.getState().saveScene();
+  expect(client.saveRecorderScene).toHaveBeenCalledExactlyOnceWith({
+    scene: fresh,
+  });
+});
+
 test('load uses the saved scene and marks it clean', async () => {
   const savedScene = sceneWithSources(['saved-main']);
   savedScene.desktopAudioSourceId = 'desktop';

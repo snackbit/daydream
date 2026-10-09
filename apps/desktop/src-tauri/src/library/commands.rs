@@ -43,6 +43,7 @@ pub async fn delete_library_recording(
     input: DeleteLibraryRecordingInput,
     storage: State<'_, AppStorage>,
 ) -> Result<(), String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-delete")?;
     let recordings_root = app
         .path()
         .app_data_dir()
@@ -56,7 +57,9 @@ pub async fn delete_library_recording(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|error| error.to_string())?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
-    delete_recording_row(&storage, &recordings_root, &recording)
+    delete_recording_row(&storage, &recordings_root, &recording)?;
+    crate::recall::mutations::emit_changed(&app, None);
+    Ok(())
 }
 
 #[tauri::command(rename = "deleteLibraryRecordings")]
@@ -65,6 +68,7 @@ pub async fn delete_library_recordings(
     input: DeleteLibraryRecordingsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<(), String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-delete")?;
     let recordings_root = app
         .path()
         .app_data_dir()
@@ -89,16 +93,19 @@ pub async fn delete_library_recordings(
             .map_err(|error| error.to_string())?;
         let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
         delete_recording_row(&storage, &recordings_root, &recording)?;
+        crate::recall::mutations::emit_changed(&app, None);
     }
 
     Ok(())
 }
 
 #[tauri::command(rename = "renameLibraryRecording")]
-pub fn rename_library_recording(
+pub fn rename_library_recording<R: tauri::Runtime>(
     input: RenameLibraryRecordingInput,
+    app: tauri::AppHandle<R>,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-rename")?;
     let title = normalize_recording_title(input.title)?;
     let recording = storage
         .with_connection(|connection| {
@@ -114,6 +121,7 @@ pub async fn create_library_redactions<R: tauri::Runtime>(
     input: CreateLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-redaction")?;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|error| error.to_string())?;
@@ -173,6 +181,7 @@ pub async fn delete_library_redaction(
     input: DeleteLibraryRedactionInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-redaction")?;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|error| error.to_string())?;
@@ -199,6 +208,7 @@ pub async fn unredact_library_redactions<R: tauri::Runtime>(
     input: UnredactLibraryRedactionsInput,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "library-redaction")?;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
         .map_err(|error| error.to_string())?;
@@ -258,6 +268,7 @@ pub async fn get_recording_waveforms(
     app: tauri::AppHandle,
 ) -> Result<LibraryWaveforms, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _activity = crate::maintenance::runtime::admit(&app, "waveform-read")?;
         let operation = crate::background_tasks::operations::Operation::start(
             &app,
             "waveforms",
@@ -293,6 +304,7 @@ pub async fn get_recording_waveform_tiles(
     app: tauri::AppHandle,
 ) -> Result<LibraryWaveformTiles, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _activity = crate::maintenance::runtime::admit(&app, "waveform-read")?;
         let operation = crate::background_tasks::operations::Operation::start(
             &app,
             "waveforms",
@@ -328,6 +340,7 @@ pub async fn create_library_playback_session(
     app: tauri::AppHandle,
 ) -> Result<LibraryPlaybackAssets, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _activity = crate::maintenance::runtime::admit(&app, "playback-prepare")?;
         let operation = crate::background_tasks::operations::Operation::start(
             &app,
             "media-preparation",
@@ -347,6 +360,7 @@ pub async fn create_library_playback_session(
         let detail = detail_from_rows(&recording, &segments, &[]);
         if detail.availability != LibraryRecordingAvailability::Available {
             return Ok(LibraryPlaybackAssets {
+                runs: vec![],
                 error: Some("Recording is not available for playback.".to_string()),
                 recording_id: recording.id,
                 segments: Vec::new(),
@@ -381,6 +395,7 @@ pub async fn prepare_library_recording_thumbnail(
     app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingThumbnail, String> {
+    let _activity = crate::maintenance::runtime::admit(&app, "thumbnail-prepare")?;
     let lease = crate::recording_privacy::processing_lease(&input.recording_id).await;
     let recording = storage
         .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
@@ -438,7 +453,9 @@ pub async fn prepare_library_recording_thumbnail(
     .map_err(|error| error.to_string())?
     {
         Ok(path) => Ok(LibraryRecordingThumbnail {
-            error: None,
+            error: path
+                .is_none()
+                .then(|| "Recording has no video preview.".to_string()),
             path,
             recording_id,
         }),

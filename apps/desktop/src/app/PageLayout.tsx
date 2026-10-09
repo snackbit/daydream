@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-interface LayoutProps {
+export interface LayoutProps {
   children: ReactNode;
   className?: string;
 }
@@ -10,7 +10,7 @@ export function PageLayout({ children, className }: LayoutProps) {
   return (
     <section
       className={cn(
-        'mx-auto flex min-h-full w-full max-w-7xl flex-col gap-5 px-4 py-4 sm:px-5 lg:px-6',
+        'mx-auto flex min-h-full w-full max-w-[1280px] flex-col gap-8 px-5 py-8 md:px-7 xl:px-10',
         className,
       )}
     >
@@ -23,7 +23,7 @@ export function NarrowPageLayout({ children, className }: LayoutProps) {
   return (
     <section
       className={cn(
-        'mx-auto flex min-h-full w-full max-w-4xl flex-col gap-4 px-4 py-4 sm:px-5',
+        'mx-auto flex min-h-full w-full max-w-[1280px] flex-col gap-8 px-5 py-8 md:px-7 xl:px-10',
         className,
       )}
     >
@@ -40,7 +40,7 @@ export function FullHeightLayout({ children, className }: LayoutProps) {
   );
 }
 
-interface PageHeaderProps {
+export interface PageHeaderProps {
   actions?: ReactNode;
   children?: ReactNode;
   className?: string;
@@ -63,11 +63,11 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+        <h1 className="text-heading-sm sm:text-heading font-light tracking-[-0.02em]">
           {title}
         </h1>
         {description ? (
-          <p className="text-muted-foreground mt-1.5 max-w-3xl text-[13px] leading-5">
+          <p className="text-muted-foreground text-body mt-3 max-w-3xl leading-relaxed">
             {description}
           </p>
         ) : null}

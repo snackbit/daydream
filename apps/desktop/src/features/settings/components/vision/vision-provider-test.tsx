@@ -3,13 +3,17 @@ import type {
   AiVisionProviderSettings,
   VisionProviderTestResult,
 } from '@daydream/shared';
+import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   processingFailureSummary,
   describeProcessingError,
 } from '@/features/processing/processing-errors';
 import { testVisionProvider } from '../../vision-provider-client';
-import { missingVisionRequirements } from './vision-settings-format';
+import {
+  joinRequirements,
+  missingVisionRequirements,
+} from './vision-settings-format';
 
 export function VisionProviderTest({
   vision,
@@ -70,18 +74,28 @@ export function VisionProviderTest({
     }
   }
   return (
-    <div className="space-y-1">
-      <Button
-        disabled={busy || missing.length > 0}
-        onClick={run}
-        size="sm"
-        variant="outline"
-      >
-        {busy ? 'Testing Vision…' : 'Test Vision'}
-      </Button>
-      <p className="text-muted-foreground text-[11px]">
-        Sends a generated test image using this form. Does not save changes.
-      </p>
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          disabled={busy || missing.length > 0}
+          onClick={run}
+          size="sm"
+          variant="outline"
+        >
+          {busy ? (
+            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+          ) : null}
+          {busy ? 'Testing Vision…' : 'Test Vision'}
+        </Button>
+        <p className="text-muted-foreground text-metadata">
+          Sends a synthetic image. Does not save changes.
+        </p>
+      </div>
+      {missing.length > 0 ? (
+        <p className="text-muted-foreground text-metadata">
+          Add {joinRequirements(missing)} to test this provider.
+        </p>
+      ) : null}
       {current?.error ? (
         <p role="alert" className="text-destructive text-xs">
           {current.error}
@@ -91,14 +105,25 @@ export function VisionProviderTest({
         <p
           key={check.kind}
           role={check.status === 'failed' ? 'alert' : 'status'}
-          className="text-xs"
+          className="text-control flex flex-wrap items-center gap-2"
         >
+          {check.status === 'succeeded' ? (
+            <CheckCircle2
+              aria-hidden="true"
+              className="text-status-success size-4"
+            />
+          ) : (
+            <XCircle aria-hidden="true" className="text-destructive size-4" />
+          )}
           {check.kind === 'ocr' ? 'Text recognition' : 'Screen observations'}:{' '}
           {check.status === 'succeeded'
-            ? `Connected (${check.elapsedMs} ms)`
+            ? 'Connected'
             : describeProcessingError(
                 check.errorCode ?? 'ai_vision_response_invalid',
               ).summary}
+          <span className="text-muted-foreground text-metadata">
+            {check.elapsedMs} ms
+          </span>
         </p>
       ))}
     </div>

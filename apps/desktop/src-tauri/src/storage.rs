@@ -10,16 +10,25 @@ use tauri::Manager;
 
 mod ai;
 mod diagnostics;
+pub(crate) mod maintenance;
 mod notifications;
 mod portal_tokens;
 mod protection_spans;
+mod recall;
+mod recall_fragments;
 mod recordings;
+pub(crate) mod recovery;
 mod redactions;
 mod scenes;
 mod schema;
 mod segments;
 mod settings;
 mod video_sources;
+pub use ai::recall_ocr_visibility_cte;
+#[cfg(test)]
+pub(crate) use recall::tests::seed_recall_fixture;
+pub use recall::*;
+pub use segments::{backfill_segment_timeline_bases, segment_playback_bases};
 pub use video_sources::*;
 
 pub use ai::get_ocr_timeline_frames;
@@ -164,6 +173,18 @@ pub fn test_storage(path: PathBuf) -> AppStorage {
     schema::enable_connection_pragmas(&connection).expect("enable sqlite pragmas");
     schema::apply_migrations(&mut connection).expect("apply migrations");
 
+    AppStorage {
+        connection: Mutex::new(connection),
+        path,
+    }
+}
+
+/// File-backed fixture for retrieval benchmarks, using production SQLite pragmas
+/// and migrations. Callers own the temporary directory and cleanup.
+#[cfg(test)]
+pub fn test_file_storage(path: PathBuf) -> AppStorage {
+    let mut connection = schema::open_connection(&path).expect("open fixture sqlite database");
+    schema::apply_migrations(&mut connection).expect("apply fixture migrations");
     AppStorage {
         connection: Mutex::new(connection),
         path,

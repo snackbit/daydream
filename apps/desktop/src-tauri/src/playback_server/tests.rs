@@ -184,12 +184,16 @@ fn video_encoder_args_force_clamped_output_fps() {
         .collect::<Vec<_>>();
 
     assert!(args.contains(&"-vf".to_string()));
-    assert!(args.iter().any(|arg| arg.starts_with("fps=60.000,scale=")));
+    assert!(args
+        .iter()
+        .any(|arg| arg.starts_with("fps=60.000:start_time=0,tpad=")));
 }
 
 #[test]
-fn thumbnail_args_seek_after_input_and_write_jpeg_pipe() {
+fn thumbnail_args_select_visible_frame_and_write_one_bounded_jpeg() {
     let segment = PlaybackSegment {
+        fragments: vec![],
+        duration_ms: 10_000,
         video_streams: Vec::new(),
         desktop_audio_stream_index: None,
         file_path: "/tmp/daydream/segment.mkv".to_string(),
@@ -199,12 +203,13 @@ fn thumbnail_args_seek_after_input_and_write_jpeg_pipe() {
     };
     let args = thumbnail_ffmpeg_args(&segment, 0, 3_000);
 
-    let input_position = args.iter().position(|arg| arg == "-i").expect("input flag");
-    let seek_position = args.iter().position(|arg| arg == "-ss").expect("seek flag");
-
-    assert!(input_position < seek_position);
-    assert_eq!(args[seek_position + 1], "3.000");
-    assert!(args.contains(&"scale=320:-1,format=yuvj420p".to_string()));
+    assert!(!args.iter().any(|arg| arg == "-ss"));
+    assert!(args
+        .iter()
+        .any(|arg| arg.contains("fps=1000:start_time=3.000:round=up")));
+    assert!(args
+        .iter()
+        .any(|arg| arg.contains("tpad=stop_mode=clone:stop_duration=4.000")));
     assert!(args.contains(&"image2pipe".to_string()));
     assert_eq!(args.last(), Some(&"pipe:1".to_string()));
 }
@@ -236,6 +241,8 @@ fn thumbnail_job(key: ThumbnailKey) -> ThumbnailJob {
     ThumbnailJob {
         offset_ms: key.offset_ms,
         segment: PlaybackSegment {
+            fragments: vec![],
+            duration_ms: 10_000,
             video_streams: Vec::new(),
             desktop_audio_stream_index: None,
             file_path: "/tmp/daydream/segment.mkv".to_string(),

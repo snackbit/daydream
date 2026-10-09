@@ -1,8 +1,13 @@
-import type { AnchorHTMLAttributes, ReactNode } from 'react';
-import type { BackgroundTask } from '@daydream/shared';
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  createMemoryHistory,
+  RouterProvider,
+} from '@tanstack/react-router';
+import type { AiModelAsset } from '@daydream/shared';
 import {
   cleanup,
-  fireEvent,
   render,
   screen,
   within,
@@ -10,287 +15,308 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as AiClient from '@/features/ai/ai-client';
 import { useBackgroundTaskStore } from '@/features/processing/background-task-store';
+import { useRecordingProcessingStore } from '@/features/processing/recording-processing-store';
+import {
+  group,
+  groupPage,
+  lane,
+  task,
+} from '@/features/processing/testing/processing-browser-fixtures';
+import { useSettingsStore } from '@/features/settings/settings-store';
 import '@/index.css';
 import { ProcessingScreen } from './ProcessingScreen';
 
 const client = vi.hoisted(() => ({
+  listRecordingProcessingGroups: vi.fn(),
+  getRecordingProcessingLane: vi.fn(),
+  controlRecordingProcessingGroups: vi.fn(),
   listBackgroundTasks: vi.fn(),
   getBackgroundTask: vi.fn(),
   retryProcessingUnits: vi.fn(),
   reprocessRecordingTranscription: vi.fn(),
   listenToBackgroundTasksChanged: vi.fn(),
 }));
-const ai = vi.hoisted(() => ({
-  pauseProcessingJob: vi.fn(),
-  resumeProcessingJob: vi.fn(),
-  cancelProcessingJob: vi.fn(),
-  downloadAiModel: vi.fn(),
+const recall = vi.hoisted(() => ({ controlRecallJob: vi.fn() }));
+const models = vi.hoisted(() => ({
+  listAiModels: vi.fn(),
+  listenToAiModelsChanged: vi.fn(),
   cancelAiModelDownload: vi.fn(),
 }));
 vi.mock('@/features/processing/processing-client', () => client);
-vi.mock('@/features/ai/ai-client', () => ai);
-vi.mock('@tanstack/react-router', () => ({
-  Link: ({
-    to,
-    search,
-    params,
-    children,
-    ...props
-  }: AnchorHTMLAttributes<HTMLAnchorElement> & {
-    to: string;
-    search?: { tab: string; focus: string | null };
-    params?: { recordingId: string };
-    children: ReactNode;
-  }) => (
-    <a
-      {...props}
-      href={
-        search
-          ? `${to}?tab=${search.tab}&focus=${search.focus ?? ''}`
-          : params
-            ? `/library/${params.recordingId}`
-            : to
-      }
-    >
-      {children}
-    </a>
-  ),
+vi.mock('@/features/recall/recall-client', () => recall);
+vi.mock('@/features/ai/ai-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof AiClient>()),
+  ...models,
 }));
-
-function task(patch: Partial<BackgroundTask> = {}): BackgroundTask {
-  return {
-    id: 'synthetic-job',
-    kind: 'ai-processing',
-    title: 'Synthetic recording',
-    recordingId: 'synthetic-recording',
-    modelId: null,
-    status: 'running',
-    phase: 'recognizing-text',
-    progress: 0.45,
-    elapsedMs: 3_000,
-    etaMs: 5_000,
-    nextRetryAtMs: null,
-    inputOpen: false,
-    errorCode: null,
-    updatedAtMs: 3_000,
-    stages: [
-      {
-        kind: 'ocr',
-        total: 10,
-        completed: 4,
-        failed: 0,
-        skipped: 0,
-        running: 1,
-        queued: 5,
-        progress: 0.45,
-      },
-    ],
-    ...patch,
-  };
+function mount() {
+  const root = createRootRoute();
+  const processing = createRoute({
+    getParentRoute: () => root,
+    path: '/',
+    component: ProcessingScreen,
+  });
+  const library = createRoute({
+    getParentRoute: () => root,
+    path: '/library/$recordingId',
+  });
+  const settings = createRoute({
+    getParentRoute: () => root,
+    path: '/settings',
+  });
+  return render(
+    <RouterProvider
+      router={createRouter({
+        routeTree: root.addChildren([processing, library, settings]),
+        history: createMemoryHistory({ initialEntries: ['/'] }),
+      })}
+    />,
+  );
 }
 beforeEach(() => {
-  vi.clearAllMocks();
-  useBackgroundTaskStore.setState({
-    tasks: [],
-    nextCursor: null,
-    status: 'idle',
-    error: null,
-    loading: false,
-    refreshQueued: false,
+  vi.resetAllMocks();
+  useRecordingProcessingStore.setState(
+    useRecordingProcessingStore.getInitialState(),
+    true,
+  );
+  useBackgroundTaskStore.setState(
+    useBackgroundTaskStore.getInitialState(),
+    true,
+  );
+  useSettingsStore.setState({
+    loadStatus: 'ready',
+    draft: null,
+    settingsState: null,
   });
-  client.listBackgroundTasks.mockResolvedValue({
-    tasks: [task()],
-    nextCursor: null,
+  client.listRecordingProcessingGroups.mockResolvedValue(groupPage());
+  client.listBackgroundTasks.mockResolvedValue({ tasks: [], nextCursor: null });
+  client.listenToBackgroundTasksChanged.mockResolvedValue(() => undefined);
+  client.controlRecordingProcessingGroups.mockResolvedValue({
+    results: [{ jobId: 'synthetic-job', succeeded: true, errorCode: null }],
   });
-  client.retryProcessingUnits.mockResolvedValue({
-    id: 'synthetic-job',
-    status: 'queued',
-  });
+  models.listenToAiModelsChanged.mockResolvedValue(() => undefined);
 });
 afterEach(() => {
   cleanup();
   delete document.documentElement.dataset.theme;
 });
 
-test('shows measured progress and allows pausing an active job', async () => {
-  render(<ProcessingScreen />);
-  const progress = await screen.findByRole('progressbar', {
-    name: 'Synthetic recording progress',
-  });
-  expect(progress.getAttribute('aria-valuenow')).toBe('45');
-  await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
-  await waitFor(() =>
-    expect(ai.pauseProcessingJob).toHaveBeenCalledWith({
-      jobId: 'synthetic-job',
-    }),
-  );
-});
-
-test('failed work links to its configuration and retries with current settings', async () => {
-  client.listBackgroundTasks
-    .mockResolvedValueOnce({
-      tasks: [
-        task({
-          status: 'completed-with-errors',
-          errorCode: 'ai_ocr_vision_response_invalid',
-        }),
-      ],
-      nextCursor: null,
-    })
-    .mockResolvedValue({
-      tasks: [
-        task({
-          status: 'queued',
-          phase: 'queued',
-          progress: 0,
-          errorCode: null,
-        }),
-      ],
-      nextCursor: null,
-    });
-  render(<ProcessingScreen />);
-  const link = await screen.findByRole('link', {
-    name: 'Review vision settings',
-  });
-  expect(link.getAttribute('href')).toBe('/settings?tab=ai&focus=vision');
-  await fireEvent.click(
-    screen.getByRole('button', { name: 'Retry with current settings' }),
-  );
-  await waitFor(() =>
-    expect(client.retryProcessingUnits).toHaveBeenCalledWith({
-      jobId: 'synthetic-job',
-      useCurrentSettings: true,
-    }),
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByRole('button', { name: 'Retry with current settings' }),
-    ).toBeNull(),
-  );
-});
-
-test('loading failures remain recoverable through refresh', async () => {
-  client.listBackgroundTasks.mockRejectedValueOnce(
-    new Error('Synthetic IPC disconnected'),
-  );
-  render(<ProcessingScreen />);
-  await screen.findByRole('alert');
-  await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-  await screen.findByRole('progressbar', {
-    name: 'Synthetic recording progress',
-  });
-});
-
-test('older recordings use the new speech detector only through explicit audio reprocessing', async () => {
-  client.listBackgroundTasks.mockResolvedValue({
-    tasks: [task({ status: 'succeeded', progress: 1 })],
-    nextCursor: null,
-  });
-  render(<ProcessingScreen />);
-  await fireEvent.click(
-    await screen.findByRole('button', { name: 'Reprocess audio tracks' }),
-  );
-  await waitFor(() =>
-    expect(client.reprocessRecordingTranscription).toHaveBeenCalledWith({
-      recordingId: 'synthetic-recording',
-    }),
-  );
-});
-
-test('task details retry only the selected failed frame while completed sections stay available', async () => {
-  const current = task({
+test('one recording owns all lanes and lane retry preserves sibling work and configuration choice', async () => {
+  const failed = group({
     status: 'completed-with-errors',
-    errorCode: 'ai_ocr_vision_response_invalid',
-  });
-  client.listBackgroundTasks.mockResolvedValue({
-    tasks: [current],
-    nextCursor: null,
-  });
-  client.getBackgroundTask.mockResolvedValue({
-    task: current,
-    units: [
-      {
-        id: 'failed-frame',
-        chunkId: 'ocr-chunk',
-        sourceKind: 'ocr',
-        startOffsetMs: 1_000,
-        endOffsetMs: null,
-        status: 'failed',
+    etaMs: null,
+    lanes: [
+      lane('audio', {
+        status: 'succeeded',
+        completed: 10,
+        running: 0,
+        queued: 0,
+        progress: 1,
+      }),
+      lane('ocr', {
+        status: 'completed-with-errors',
+        completed: 9,
+        failed: 1,
+        running: 0,
+        queued: 0,
         progress: 1,
         errorCode: 'ai_ocr_vision_response_invalid',
-        attemptCount: 2,
-      },
-      {
-        id: 'completed-frame',
-        chunkId: 'ocr-chunk',
-        sourceKind: 'ocr',
-        startOffsetMs: 2_000,
-        endOffsetMs: null,
-        status: 'succeeded',
-        progress: 1,
-        errorCode: null,
-        attemptCount: 1,
-      },
+      }),
+      lane('vlm'),
+      lane('activity'),
     ],
   });
-  render(<ProcessingScreen />);
-  await fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
-  const sections = await screen.findByRole('list', {
-    name: 'Processing sections',
+  client.listRecordingProcessingGroups.mockResolvedValue(groupPage([failed]));
+  mount();
+  const list = await screen.findByRole('list', {
+    name: 'Recording processing',
   });
-  expect(within(sections).getAllByRole('listitem')).toHaveLength(2);
-  expect(
-    within(sections).getAllByRole('button', { name: 'Retry section' }),
-  ).toHaveLength(1);
-  await fireEvent.click(
-    within(sections).getByRole('button', { name: 'Retry section' }),
-  );
+  expect(within(list).getAllByRole('heading')).toHaveLength(1);
+  const ocr = within(list).getByRole('listitem', { name: 'OCR' });
+  await page
+    .getByRole('listitem', { name: 'OCR', exact: true })
+    .getByRole('button', { name: 'Retry failed', exact: true })
+    .click();
   await waitFor(() =>
-    expect(client.retryProcessingUnits).toHaveBeenCalledWith({
-      jobId: 'synthetic-job',
-      chunkId: 'ocr-chunk',
-      unitId: 'failed-frame',
+    expect(client.controlRecordingProcessingGroups).toHaveBeenCalledWith({
+      recordingId: 'synthetic-recording',
+      action: 'retry',
+      sourceKind: 'ocr',
       useCurrentSettings: false,
     }),
   );
+  await page
+    .getByRole('listitem', { name: 'OCR', exact: true })
+    .getByRole('button', { name: 'Use current settings' })
+    .click();
+  await waitFor(() =>
+    expect(client.controlRecordingProcessingGroups).toHaveBeenLastCalledWith({
+      recordingId: 'synthetic-recording',
+      action: 'retry',
+      sourceKind: 'ocr',
+      useCurrentSettings: true,
+    }),
+  );
+  expect(
+    within(ocr)
+      .getByRole('link', { name: 'Review vision settings' })
+      .getAttribute('href'),
+  ).toContain('/settings');
+  expect(screen.queryByText('ai_ocr_vision_response_invalid')).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Technical details' }),
+  ).toBeNull();
+});
+
+test('live input reports caught-up work without a fixed completion estimate', async () => {
+  client.listRecordingProcessingGroups.mockResolvedValue(
+    groupPage([
+      group({
+        inputOpen: true,
+        etaMs: null,
+        lanes: ['audio', 'ocr', 'vlm', 'activity'].map((kind) =>
+          lane(
+            kind === 'audio' || kind === 'ocr' || kind === 'vlm'
+              ? kind
+              : 'activity',
+            {
+              inputOpen: true,
+              status: 'succeeded',
+              total: 1,
+              completed: 1,
+              running: 0,
+              queued: 0,
+              progress: 1,
+            },
+          ),
+        ),
+      }),
+    ]),
+  );
+  mount();
+  expect(
+    await screen.findByText('Live recording · no fixed finish time'),
+  ).toBeTruthy();
+  expect(screen.getAllByText('Caught up · live recording')).toHaveLength(4);
+  expect(screen.queryByText(/About .* remaining/)).toBeNull();
+});
+
+test('actual recall-index work stays in the collapsed shared section and uses shared controls', async () => {
+  client.listBackgroundTasks.mockResolvedValue({
+    tasks: [task()],
+    nextCursor: null,
+  });
+  recall.controlRecallJob.mockResolvedValue({});
+  mount();
+  const disclosure = await screen.findByRole('button', { name: /Shared work/ });
+  expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+  await page.getByRole('button', { name: /Shared work/ }).click();
+  await page
+    .getByRole('list', { name: 'Shared background tasks' })
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await waitFor(() =>
+    expect(recall.controlRecallJob).toHaveBeenCalledWith({
+      jobId: 'shared-recall',
+      action: 'cancel',
+    }),
+  );
+  expect(client.controlRecordingProcessingGroups).not.toHaveBeenCalled();
+});
+
+test('a shared model cancellation targets the model without changing recording jobs', async () => {
+  const model: AiModelAsset = {
+    id: 'synthetic-model',
+    label: 'Whisper model',
+    provider: 'local-whisper-cpp',
+    checksum: null,
+    checksumAlgorithm: null,
+    createdAtMs: 0,
+    downloadedBytes: 25,
+    downloadStatus: 'downloading',
+    etag: null,
+    errorCode: null,
+    localPath: null,
+    selfTestStatus: 'not-run',
+    sizeBytes: 100,
+    sourceUrl: 'https://example.test/synthetic.bin',
+    totalBytes: 100,
+    updatedAtMs: 1,
+    verificationStatus: 'pending',
+  };
+  models.listAiModels.mockResolvedValue({ models: [model] });
+  models.cancelAiModelDownload.mockResolvedValue(undefined);
+  client.listBackgroundTasks.mockResolvedValue({
+    tasks: [
+      task({
+        id: 'model-download:synthetic-model',
+        modelId: 'synthetic-model',
+        kind: 'model-download',
+        title: 'Whisper model',
+      }),
+    ],
+    nextCursor: null,
+  });
+  mount();
+  await page.getByRole('button', { name: /Shared work/ }).click();
+  await screen.findByText('Whisper model');
+  await page
+    .getByRole('list', { name: 'Shared background tasks' })
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click();
+  await waitFor(() =>
+    expect(models.cancelAiModelDownload).toHaveBeenCalledWith({
+      modelId: 'synthetic-model',
+    }),
+  );
+  expect(client.controlRecordingProcessingGroups).not.toHaveBeenCalled();
+  expect(client.retryProcessingUnits).not.toHaveBeenCalled();
 });
 
 test.each([
   ['light', 1440],
   ['dark', 1440],
-  ['light', 420],
-  ['dark', 420],
+  ['light', 390],
+  ['dark', 390],
+  ['light', 320],
+  ['dark', 320],
 ] as const)(
-  'processing recovery controls fit %s at %i pixels',
+  'lane recovery and shared disclosure work in %s at %i pixels',
   async (theme, width) => {
     await page.viewport(width, 900);
     document.documentElement.dataset.theme = theme;
-    client.listBackgroundTasks.mockResolvedValue({
-      tasks: [
-        task({
-          status: 'completed-with-errors',
-          errorCode: 'ai_ocr_vision_response_invalid',
-          phase: 'completed-with-errors',
-          etaMs: null,
-          progress: 1,
+    client.listRecordingProcessingGroups.mockResolvedValue(
+      groupPage([
+        group({
+          lanes: [
+            lane('audio'),
+            lane('ocr', {
+              failed: 1,
+              completed: 3,
+              errorCode: 'ai_ocr_vision_auth_failed',
+            }),
+            lane('vlm'),
+            lane('activity'),
+          ],
         }),
-      ],
-      nextCursor: null,
-    });
-    render(<ProcessingScreen />);
-    const retry = await screen.findByRole('button', {
-      name: 'Retry with current settings',
-    });
-    const settings = screen.getByRole('link', {
-      name: 'Review vision settings',
-    });
-    for (const control of [retry, settings]) {
-      const bounds = control.getBoundingClientRect();
-      expect(bounds.width).toBeGreaterThan(0);
-      expect(bounds.right).toBeLessThanOrEqual(width);
-    }
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+      ]),
+    );
+    mount();
+    await screen.findByRole('listitem', { name: 'OCR' });
+    await page
+      .getByRole('listitem', { name: 'OCR', exact: true })
+      .getByRole('button', { name: 'Use current settings' })
+      .click();
+    await waitFor(() =>
+      expect(client.controlRecordingProcessingGroups).toHaveBeenCalled(),
+    );
+    await page.getByRole('button', { name: /Shared work/ }).click();
+    expect(
+      screen
+        .getByRole('button', { name: /Shared work/ })
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
     await page.screenshot();
   },
 );

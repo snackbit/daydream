@@ -98,7 +98,7 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
     );
     let mut description = if input.video_sources.is_empty() {
         format!(
-            "appsrc name=video_src is-live=true format=time do-timestamp=false block=true \
+            "appsrc name=video_src is-live=true format=time do-timestamp=false block=true max-buffers=1 max-bytes=16777216 \
          ! {queue} \
          ! videoconvert ! video/x-raw,format=I420 \
          ! x264enc bitrate={bitrate} key-int-max={key_int_max} speed-preset=medium \
@@ -109,7 +109,7 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
         )
     } else {
         input.video_sources.iter().enumerate().map(|(index,_)|format!(
-        "appsrc name=video_src{suffix} is-live=true format=time do-timestamp=false block=true max-buffers=2 max-bytes=16777216 ! {LOW_LATENCY_QUEUE} ! videoconvert ! video/x-raw,format=I420 ! x264enc bitrate={} key-int-max={key_int_max} speed-preset=medium tune=zerolatency rc-lookahead=0 bframes=0 sync-lookahead=0 ! h264parse ! {LOW_LATENCY_QUEUE} ! mux.{pad} ",input.video_bitrate_kbps,
+        "appsrc name=video_src{suffix} is-live=true format=time do-timestamp=false block=true max-buffers=1 max-bytes=16777216 ! {LOW_LATENCY_QUEUE} ! videoconvert ! video/x-raw,format=I420 ! x264enc bitrate={} key-int-max={key_int_max} speed-preset=medium tune=zerolatency rc-lookahead=0 bframes=0 sync-lookahead=0 ! h264parse ! {LOW_LATENCY_QUEUE} ! mux.{pad} ",input.video_bitrate_kbps,
         suffix=if index==0{String::new()}else{format!("_{index}")},pad=if index==0{"video".into()}else{format!("video_aux_{}",index-1)}
     )).collect::<String>()
     };
@@ -119,6 +119,7 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
             DESKTOP_AUDIO_BITRATE_BPS,
             "desktop_audio_src",
             0,
+            input.fps,
         ));
     }
     if let Some(source_id) = &input.microphone_audio_source_id {
@@ -127,6 +128,7 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
             MICROPHONE_AUDIO_BITRATE_BPS,
             "microphone_audio_src",
             usize::from(input.desktop_audio_source_id.is_some()),
+            input.fps,
         ));
     }
     let mut pad_map = vec!["video=video_0".to_string()];
@@ -146,23 +148,33 @@ pub(super) fn build_pipeline_description(input: &MediaSegmentInput) -> String {
     description
 }
 
-fn audio_branch(source_id: &str, bitrate: u32, name: &str, index: usize) -> String {
+fn audio_branch(source_id: &str, bitrate: u32, name: &str, index: usize, fps: f64) -> String {
     let cutoff_queue_name = match name {
         "desktop_audio_src" => "desktop_audio_cutoff_queue",
         "microphone_audio_src" => "microphone_audio_cutoff_queue",
         _ => "audio_cutoff_queue",
     };
+    #[cfg(test)]
+    let source = if source_id == "__synthetic_audio__" {
+        format!("audiotestsrc name={name} is-live=true")
+    } else {
+        format!("pulsesrc name={name} device={}", launch_value(source_id))
+    };
+    #[cfg(not(test))]
+    let source = format!("pulsesrc name={name} device={}", launch_value(source_id));
     format!(
-        "pulsesrc name={name} device={device} ! {queue} ! audioconvert ! audioresample \
+        "{source} ! {queue} ! audioconvert ! audioresample \
          ! audio/x-raw,rate=48000 ! opusenc bitrate={bitrate} ! {cutoff_queue} ! mux.audio_{index} ",
-        name = name,
-        device = launch_value(source_id),
         bitrate = bitrate,
         queue = LOW_LATENCY_QUEUE,
-        cutoff_queue = low_latency_queue_with_name(cutoff_queue_name),
+        cutoff_queue = encoded_audio_queue(cutoff_queue_name, fps),
     )
 }
 
-fn low_latency_queue_with_name(name: &str) -> String {
-    format!("queue name={name} max-size-time=2000000000 max-size-bytes=16777216 max-size-buffers=0")
+fn encoded_audio_queue(name: &str, fps: f64) -> String {
+    // splitmux waits for reference video before draining audio. Buffer two
+    // frame intervals after compression so sparse video cannot block devices.
+    // The byte cap remains independent of cadence; raw/video queues stay small.
+    let time_ns = (2_000_000_000. / fps).ceil().max(2_000_000_000.) as u64;
+    format!("queue name={name} max-size-time={time_ns} max-size-bytes=16777216 max-size-buffers=0")
 }

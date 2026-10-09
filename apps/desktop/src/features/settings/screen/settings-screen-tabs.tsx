@@ -10,8 +10,10 @@ import type {
 import { BrainCircuit, HardDrive, Settings2, Video } from 'lucide-react';
 import { FieldGroup, FieldSet } from '@/components/ui/field';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { ModelTransferRowProps } from '@/features/ai/models/model-transfer-row';
 import { AiSettingsTab } from '@/features/settings/components/ai-settings-tab';
 import { GeneralSettingsTab } from '@/features/settings/components/general-settings-tab';
+import { RecallSettingsCard } from '@/features/settings/components/recall-settings-card';
 import {
   cadenceModeForFps,
   RecordSettingsTab,
@@ -27,6 +29,7 @@ import { settingsTab, type SettingsTab } from '../settings-location';
 
 export interface SettingsScreenTabsModel {
   aiModels: AiModelAsset[];
+  modelActionErrors?: Readonly<Record<string, string>> | undefined;
   aiProviderStatus: AiProviderStatus | null;
   cadenceMode: CadenceMode | null;
   draft: AppSettings;
@@ -37,13 +40,18 @@ export interface SettingsScreenTabsModel {
   savedScene: RecorderScene | null;
   transcriptionKeyDraft: string;
   visionKeyDraft: string;
+  recallEmbeddingKeyDraft: string;
+  recallGenerationKeyDraft: string;
 }
 
 export interface SettingsScreenTabsActions {
+  transferAiModel?: ModelTransferRowProps['onTransferAction'];
   cancelAiModelDownload: (modelId: string) => void;
   changeCadenceMode: (mode: CadenceMode) => void;
   changeTranscriptionKey: (value: string) => void;
   changeVisionKey: (value: string) => void;
+  changeRecallEmbeddingKey: (value: string) => void;
+  changeRecallGenerationKey: (value: string) => void;
   deleteAiModel: (modelId: string) => void;
   downloadAiModel: (modelId: string) => void;
   refreshInputActivityStatus: () => void;
@@ -89,16 +97,15 @@ export function SettingsScreenTabs({
 
   return (
     <FieldSet aria-busy={busy} className="min-w-0" disabled={busy}>
-      <FieldGroup className="gap-3">
+      <FieldGroup className="gap-6">
         <Tabs
-          className="gap-3"
+          className="gap-6"
           value={tab ?? localTab}
           onValueChange={handleTabChange}
         >
           <TabsList
-            variant="underline"
             aria-label="Settings sections"
-            className="max-w-full gap-0.5 overflow-x-auto"
+            className="h-auto max-w-full justify-start gap-1 overflow-x-auto"
           >
             <TabsTrigger
               className="shrink-0 px-2.5 text-xs sm:px-3"
@@ -159,7 +166,25 @@ export function SettingsScreenTabs({
           </TabsContent>
 
           <TabsContent className="min-w-0" value="ai">
+            <section id="ai-recall" tabIndex={-1} className="mb-6">
+              <RecallSettingsCard
+                draft={model.draft}
+                models={model.aiModels}
+                modelActionErrors={model.modelActionErrors}
+                onTransferAction={actions.transferAiModel}
+                embeddingKeyDraft={model.recallEmbeddingKeyDraft}
+                generationKeyDraft={model.recallGenerationKeyDraft}
+                onEmbeddingKeyChange={actions.changeRecallEmbeddingKey}
+                onGenerationKeyChange={actions.changeRecallGenerationKey}
+                onUpdateDraft={actions.updateDraft}
+                onCancelModelDownload={actions.cancelAiModelDownload}
+                onDeleteModel={actions.deleteAiModel}
+                onDownloadModel={actions.downloadAiModel}
+              />
+            </section>
             <AiSettingsTab
+              modelActionErrors={model.modelActionErrors}
+              onTransferAction={actions.transferAiModel}
               draft={model.draft}
               limits={model.limits}
               models={model.aiModels}

@@ -14,7 +14,7 @@ pub(crate) fn reprocess_recording_audio(
     let job=storage.with_connection_mut(|connection|{
         let transaction=connection.transaction()?;
         let recording=storage::get_recording(&transaction,recording_id)?;
-        if !matches!(recording.status.as_str(),"completed"|"failed")||!crate::recording_privacy::protection_ready(&transaction,recording_id)?{return Err(rusqlite::Error::InvalidQuery);}
+        if !matches!(recording.status.as_str(),"completed"|"failed"|"recovered-partial")||!crate::recording_privacy::protection_ready(&transaction,recording_id)?{return Err(rusqlite::Error::InvalidQuery);}
         let existing=storage::get_latest_processing_job_for_recording(&transaction,recording_id,AI_PROCESSING_JOB_KIND)?;
         if existing.as_ref().is_some_and(|job|matches!(job.status.as_str(),"running"|"queued"|"paused")){return Err(rusqlite::Error::InvalidQuery);}
         let segments=storage::list_recording_segments(&transaction,recording_id)?;

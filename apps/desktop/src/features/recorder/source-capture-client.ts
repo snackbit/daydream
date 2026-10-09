@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   CaptureSetup,
   RecorderScene,
@@ -101,6 +102,13 @@ function setup(value: unknown): CaptureSetup {
 }
 export async function getCaptureSetup(): Promise<CaptureSetup> {
   return setup(await invoke<unknown>('getCaptureSetup'));
+}
+export function listenToCaptureSetupSaved(
+  onSaved: (saved: CaptureSetup) => void,
+) {
+  return listen<unknown>('capture-setup-saved', (event) => {
+    onSaved(setup(event.payload));
+  });
 }
 export async function saveCaptureSetup(
   input: SaveCaptureSetupInput,

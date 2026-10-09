@@ -27,6 +27,7 @@ tauri-build = { version = "2.7.1", features = [] }
 default = []
 whisper-cuda = []
 whisper-vulkan = []
+embedding-vulkan = []
 
 [dependencies]
 tauri = { version = "2.12.1", features = ["protocol-asset"] }
@@ -39,13 +40,16 @@ uuid = { version = "1.27.0", features = ["rng", "v7"] }
 base64 = "0.22.1"
 aes-gcm = "0.10.3"
 png = "0.18.1"
+jpeg-encoder = "=0.7.1"
 futures-util = "0.3.31"
 hex = "0.4.3"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 regex = "1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
-tokio = { version = "1", features = ["sync", "time"] }
+chrono = "0.4.45"
+chrono-tz = "0.10.4"
+tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-log = "0.2"
@@ -55,6 +59,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tauri = { version = "2.12.1", features = ["test"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+gtk = "=0.18.2"
+gio = "=0.18.4"
 ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "screencast"] }
 enumflags2 = "0.7.12"
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }

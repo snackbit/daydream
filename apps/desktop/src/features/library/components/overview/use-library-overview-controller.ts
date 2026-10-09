@@ -57,7 +57,7 @@ export interface LibraryOverviewModel {
   sortKey: LibraryRecordingSortKey;
   sortedRecordings: LibraryRecordingSummary[];
   status: 'error' | 'idle' | 'loading' | 'ready';
-  thumbnailPaths: Record<string, string>;
+  thumbnailPaths: Record<string, string | null>;
   viewMode: LibraryRecordingViewMode;
 }
 
@@ -108,9 +108,9 @@ export function useLibraryOverviewController(): LibraryOverviewController {
   const [status, setStatus] = useState<'error' | 'idle' | 'loading' | 'ready'>(
     'idle',
   );
-  const [thumbnailPaths, setThumbnailPaths] = useState<Record<string, string>>(
-    {},
-  );
+  const [thumbnailPaths, setThumbnailPaths] = useState<
+    Record<string, string | null>
+  >({});
   const [viewMode, setViewMode] = useState<LibraryRecordingViewMode>('list');
 
   const sortedRecordings = useMemo(
@@ -163,7 +163,11 @@ export function useLibraryOverviewController(): LibraryOverviewController {
             ...current,
             [thumbnail.recordingId]: thumbnailPath,
           }));
-        }
+        } else
+          setThumbnailPaths((current) => ({
+            ...current,
+            [recording.id]: thumbnail?.error === null ? null : '',
+          }));
       }
     },
     [],

@@ -5,6 +5,7 @@ import type {
   AppSettingsLimits,
   InputActivityStatus,
 } from '@daydream/shared';
+import type { ModelTransferRowProps } from '@/features/ai/models/model-transfer-row';
 import { AiActivityProcessingCard } from './ai-activity-processing-card';
 import { AiModelCacheCard } from './ai-model-cache-card';
 import { AiTranscriptionCard } from './ai-transcription-card';
@@ -14,6 +15,8 @@ interface AiSettingsTabProps {
   draft: AppSettings;
   limits: AppSettingsLimits;
   models: AiModelAsset[];
+  modelActionErrors?: Readonly<Record<string, string>> | undefined;
+  onTransferAction?: ModelTransferRowProps['onTransferAction'];
   sourceCount: number;
   onCancelModelDownload: (modelId: string) => void;
   onChangeTranscriptionKey: (value: string) => void;
@@ -35,6 +38,8 @@ export function AiSettingsTab({
   draft,
   limits,
   models,
+  modelActionErrors,
+  onTransferAction,
   sourceCount,
   onCancelModelDownload,
   onChangeTranscriptionKey,
@@ -74,6 +79,8 @@ export function AiSettingsTab({
 
       <section id="ai-models" tabIndex={-1}>
         <AiModelCacheCard
+          modelActionErrors={modelActionErrors}
+          onTransferAction={onTransferAction}
           models={whisperModels}
           onCancelModelDownload={onCancelModelDownload}
           onDeleteModel={onDeleteModel}

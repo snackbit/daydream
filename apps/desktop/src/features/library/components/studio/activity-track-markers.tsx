@@ -57,7 +57,7 @@ export function ActivityIntervalSpan({
           size="icon-xs"
           style={{
             backgroundColor: `color-mix(in oklch, ${color.strong} 38%, transparent)`,
-            borderColor: `color-mix(in oklch, ${color.border} 48%, var(--color-border))`,
+            borderColor: `color-mix(in oklch, ${color.border} 48%, var(--border))`,
             left,
             width,
           }}
@@ -114,8 +114,8 @@ export function FocusActivityMarker({
           className="bg-muted focus-visible:ring-ring absolute top-1/2 z-20 h-4 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border px-0 outline-none focus-visible:ring-2"
           data-library-action
           style={{
-            backgroundColor: `color-mix(in oklch, ${color.strong} 38%, var(--color-card))`,
-            borderColor: `color-mix(in oklch, ${color.border} 48%, var(--color-border))`,
+            backgroundColor: `color-mix(in oklch, ${color.strong} 38%, var(--card))`,
+            borderColor: `color-mix(in oklch, ${color.border} 48%, var(--border))`,
             left,
           }}
           title={title}

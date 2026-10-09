@@ -7,7 +7,9 @@ use super::{
     types::{CropRect, RecorderError},
 };
 
-pub(crate) const PREVIEW_MAX_EDGE: u32 = 640;
+pub(crate) const PREVIEW_MAX_EDGE: u32 = 3840;
+pub(crate) const PREVIEW_MAX_PIXELS: u64 = 4_000_000;
+pub(crate) const PREVIEW_MAX_ENCODED_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EncodedPreviewFrame {
@@ -20,14 +22,49 @@ pub(crate) fn encode_cropped_preview_frame(
     frame: &CapturedFrame,
     crop: &CropRect,
 ) -> Result<EncodedPreviewFrame, RecorderError> {
+    encode_preview_frame(frame, crop, 1280, 720, false)
+}
+
+pub(crate) fn encode_preview_frame(
+    frame: &CapturedFrame,
+    crop: &CropRect,
+    requested_width: u32,
+    requested_height: u32,
+    jpeg: bool,
+) -> Result<EncodedPreviewFrame, RecorderError> {
     frame.validate()?;
     let crop_area = crop_area(frame, crop)?;
-    let (width, height) = preview_size(crop_area.width, crop_area.height);
+    let (width, height) = preview_size(
+        crop_area.width,
+        crop_area.height,
+        requested_width,
+        requested_height,
+    );
     let rgba = preview_rgba(frame, crop_area, width, height)?;
-    let png = encode_png_rgba(width, height, &rgba)?;
+    let (bytes, mime) = if jpeg {
+        let mut bytes = Vec::new();
+        let mut encoder = jpeg_encoder::Encoder::new(&mut bytes, 90);
+        encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
+        encoder
+            .encode(
+                &rgba,
+                width as u16,
+                height as u16,
+                jpeg_encoder::ColorType::Rgba,
+            )
+            .map_err(|_| capture_adapter_failed_error("Preview image could not be encoded."))?;
+        (bytes, "jpeg")
+    } else {
+        (encode_png_rgba(width, height, &rgba)?, "png")
+    };
+    if bytes.len() > PREVIEW_MAX_ENCODED_BYTES {
+        return Err(capture_adapter_failed_error(
+            "Preview image exceeds its memory limit.",
+        ));
+    }
 
     Ok(EncodedPreviewFrame {
-        data_url: format!("data:image/png;base64,{}", STANDARD.encode(png)),
+        data_url: format!("data:image/{mime};base64,{}", STANDARD.encode(bytes)),
         height,
         width,
     })
@@ -64,13 +101,17 @@ fn crop_area(frame: &CapturedFrame, crop: &CropRect) -> Result<CropArea, Recorde
     })
 }
 
-fn preview_size(crop_width: f64, crop_height: f64) -> (u32, u32) {
-    let scale = (PREVIEW_MAX_EDGE as f64 / crop_width.max(crop_height)).min(1.0);
+fn preview_size(crop_width: f64, crop_height: f64, width: u32, height: u32) -> (u32, u32) {
+    let scale = (PREVIEW_MAX_EDGE as f64 / crop_width.max(crop_height))
+        .min(1.0)
+        .min(f64::from(width.max(1)) / crop_width)
+        .min(f64::from(height.max(1)) / crop_height)
+        .min((PREVIEW_MAX_PIXELS as f64 / (crop_width * crop_height)).sqrt());
     let width = (crop_width * scale)
-        .round()
+        .floor()
         .clamp(1.0, PREVIEW_MAX_EDGE as f64) as u32;
     let height = (crop_height * scale)
-        .round()
+        .floor()
         .clamp(1.0, PREVIEW_MAX_EDGE as f64) as u32;
 
     (width, height)
@@ -123,6 +164,7 @@ mod tests {
         capture_runtime::{CapturedFrame, CapturedFrameFormat},
         types::CropRect,
     };
+    use base64::Engine as _;
 
     #[test]
     fn preview_encoder_crops_and_bounds_png_data_url() {
@@ -159,6 +201,43 @@ mod tests {
 
         assert_eq!(error.code, "recorder_capture_format_unsupported");
         assert!(!format!("{error:?}").contains("[255"));
+    }
+    #[test]
+    fn jpeg_preview_uses_full_chroma_and_respects_source_and_memory_limits() {
+        let encoded = super::encode_preview_frame(
+            &rgba_frame(800, 400),
+            &CropRect {
+                left: 0.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+            },
+            3840,
+            3840,
+            true,
+        )
+        .unwrap();
+        assert_eq!((encoded.width, encoded.height), (800, 400));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(
+                encoded
+                    .data_url
+                    .strip_prefix("data:image/jpeg;base64,")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(bytes.len() <= super::PREVIEW_MAX_ENCODED_BYTES);
+        let sof = bytes
+            .windows(2)
+            .position(|pair| pair == [0xff, 0xc0])
+            .unwrap();
+        assert_eq!(
+            [bytes[sof + 11], bytes[sof + 14], bytes[sof + 17]],
+            [0x11; 3]
+        );
+        let (width, height) = super::preview_size(5120.0, 1440.0, 5120, 1440);
+        assert!(width.max(height) <= super::PREVIEW_MAX_EDGE);
+        assert!(u64::from(width) * u64::from(height) <= super::PREVIEW_MAX_PIXELS);
     }
 
     fn rgba_frame(width: u32, height: u32) -> CapturedFrame {

@@ -1,5 +1,6 @@
 import type { RecorderMediaWriterCapabilities } from '@daydream/shared';
 import { CheckCircle2, XCircle } from 'lucide-react';
+import { SharedDisclosure } from '@/components/shared-disclosure';
 import { Badge } from '@/components/ui/badge';
 
 interface MediaWriterCapabilityListProps {
@@ -103,13 +104,15 @@ function CapabilityGroupDetails({
   ).length;
 
   return (
-    <details className="bg-muted/40 rounded-lg border px-3 py-2">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-medium marker:hidden">
-        <span>{group.label}</span>
+    <SharedDisclosure
+      label={group.label}
+      className="bg-muted/40"
+      status={
         <Badge variant={missingCount === 0 ? 'secondary' : 'outline'}>
           {missingCount === 0 ? 'Ready' : `${missingCount} unavailable`}
         </Badge>
-      </summary>
+      }
+    >
       <div className="mt-2 grid gap-1.5 border-t pt-2 sm:grid-cols-2">
         {group.rows.map((row) => (
           <CapabilityRowItem
@@ -120,7 +123,7 @@ function CapabilityGroupDetails({
           />
         ))}
       </div>
-    </details>
+    </SharedDisclosure>
   );
 }
 

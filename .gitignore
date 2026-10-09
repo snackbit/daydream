@@ -22,3 +22,5 @@ apps/desktop/src-tauri/target/
 *.tsbuildinfo
 **/.vitest-attachments
 **/__screenshots__
+apps/desktop/src-tauri/resources/embedding/daydream-embedding-worker*
+apps/desktop/src-tauri/resources/embedding/*-LICENSE.txt

@@ -1,5 +1,6 @@
 import { useMemo, type SyntheticEvent } from 'react';
 import type {
+  SaveCaptureSetupInput,
   AudioSource,
   AudioSourceRole,
   CaptureSource,
@@ -45,7 +46,7 @@ export interface CaptureWorkspaceProps {
   onSelectAudioSource: (role: AudioSourceRole, sourceId: string | null) => void;
   onSelectCaptureSources: () => void;
   onSelectSceneSource: (sourceId: string | null) => void;
-  onStart: () => void;
+  onStart: (setup?: SaveCaptureSetupInput) => void;
   onStop: () => void;
   pendingLifecycleAction: RecorderLifecycleAction | null;
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;

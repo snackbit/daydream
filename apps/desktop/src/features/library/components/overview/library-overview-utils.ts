@@ -94,13 +94,21 @@ export function isRecordingSelectable(
 export function isRecordingDeletable(
   recording: LibraryRecordingSummary,
 ): boolean {
-  return recording.status === 'completed' || recording.status === 'failed';
+  return (
+    recording.status === 'completed' ||
+    recording.status === 'failed' ||
+    recording.status === 'recovered-partial'
+  );
 }
 
 export function isRecordingRenameable(
   recording: LibraryRecordingSummary,
 ): boolean {
-  return recording.status === 'completed' || recording.status === 'failed';
+  return (
+    recording.status === 'completed' ||
+    recording.status === 'failed' ||
+    recording.status === 'recovered-partial'
+  );
 }
 
 export function recordingTitle(recording: LibraryRecordingSummary): string {
@@ -111,10 +119,10 @@ export function uniqueIds(ids: string[]): string[] {
   return [...new Set(ids)];
 }
 
-export function keepThumbnailPaths(
-  thumbnailPaths: Record<string, string>,
+export function keepThumbnailPaths<T extends string | null>(
+  thumbnailPaths: Record<string, T>,
   recordings: LibraryRecordingSummary[],
-): Record<string, string> {
+): Record<string, T> {
   const recordingIds = new Set(recordings.map((recording) => recording.id));
 
   return Object.fromEntries(

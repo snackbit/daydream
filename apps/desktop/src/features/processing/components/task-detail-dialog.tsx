@@ -11,6 +11,8 @@ import {
 import { useBackgroundTaskStore } from '../background-task-store';
 import { getBackgroundTask } from '../processing-client';
 import { processingFailureSummary } from '../processing-errors';
+import { taskPhaseLabel } from '../task-format';
+import { ProcessingError } from './processing-error';
 import { TaskUnitRow } from './task-unit-row';
 
 export interface TaskDetailDialogProps {
@@ -49,7 +51,7 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   );
   return (
     <Dialog open={task !== null} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[80dvh] overflow-y-auto rounded-none sm:max-w-3xl">
+      <DialogContent className="max-h-[80dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{task?.title ?? 'Processing details'}</DialogTitle>
           <DialogDescription>
@@ -77,6 +79,17 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
               />
             ))}
           </ul>
+        ) : null}
+        {detail && !detail.units.length ? (
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-sm">
+              {taskPhaseLabel(detail.task)} · Shared work has no recording
+              sections.
+            </p>
+            {detail.task.errorCode ? (
+              <ProcessingError errorCode={detail.task.errorCode} />
+            ) : null}
+          </div>
         ) : null}
         <Button onClick={onClose} variant="outline">
           Close

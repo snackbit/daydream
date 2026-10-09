@@ -2,6 +2,7 @@ import type { LibraryRecordingDetail } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
 import {
   createLibraryRedactions,
+  createLibraryPlaybackSession,
   deleteLibraryRedaction,
   renameLibraryRecording,
   unredactLibraryRedactions,
@@ -20,6 +21,39 @@ vi.mock('@tauri-apps/api/core', () => ({
 beforeEach(() => {
   convertFileSrcMock.mockReset();
   invokeMock.mockReset();
+});
+test('playback run assets reject invalid source metadata before reaching the player', async () => {
+  invokeMock.mockResolvedValue({
+    recordingId: 'synthetic',
+    sessionId: 'session',
+    error: null,
+    segments: [],
+    runs: [
+      {
+        runId: 'run',
+        segmentIds: ['fragment'],
+        durationMs: 30_000,
+        playbackOffsetMs: 0,
+        assets: {
+          segmentId: 'run',
+          videoUrl: 'http://127.0.0.1/video',
+          thumbnails: [],
+          audio: [],
+          videos: [
+            {
+              trackId: 'source',
+              streamIndex: -1,
+              url: 'http://127.0.0.1/video',
+              thumbnails: [],
+            },
+          ],
+        },
+      },
+    ],
+  });
+  await expect(
+    createLibraryPlaybackSession({ recordingId: 'synthetic' }),
+  ).rejects.toThrow('invalid response');
 });
 
 test('createLibraryRedactions uses locked camelCase command name', async () => {

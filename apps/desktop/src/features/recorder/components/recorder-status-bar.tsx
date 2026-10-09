@@ -23,9 +23,9 @@ const levelLabels = {
 
 const levelClasses = {
   idle: 'bg-muted-foreground/60',
-  lagging: 'bg-amber-500',
-  'on-track': 'bg-emerald-500',
-  stalled: 'bg-red-500',
+  lagging: 'bg-status-warning',
+  'on-track': 'bg-status-success',
+  stalled: 'bg-status-recording',
 } satisfies Record<RecorderPerformanceLevel, string>;
 
 export interface RecorderStatusBarProps {
@@ -92,9 +92,9 @@ export function RecorderStatusBar({ session }: RecorderStatusBarProps = {}) {
   return (
     <div
       aria-label="Recorder status"
-      className="flex w-full min-w-0 items-center justify-between gap-4"
+      className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-3 text-xs"
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         <span
           aria-label={`Recorder performance: ${levelLabels[display.level]}`}
           className={cn(
@@ -103,16 +103,16 @@ export function RecorderStatusBar({ session }: RecorderStatusBarProps = {}) {
           )}
           title={levelLabels[display.level]}
         />
-        <span className="truncate">
-          {formatRecorderState(session?.status?.state ?? state)}
-        </span>
+        <span>{formatRecorderState(session?.status?.state ?? state)}</span>
         {session ? <RecorderSessionControls {...session} /> : null}
       </div>
 
-      <div className="flex shrink-0 items-center gap-4 tabular-nums">
-        <span>{formatFps(display)}</span>
-        <span>{formatCaptureCost(display.captureCostPercent, error)}</span>
-      </div>
+      {(session?.status?.state ?? state) === 'recording' ? (
+        <div className="flex shrink-0 items-center gap-4 tabular-nums">
+          <span>{formatFps(display)}</span>
+          <span>{formatCaptureCost(display.captureCostPercent, error)}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -143,7 +143,7 @@ function formatFps(display: RecorderPerformanceDisplay): string {
     return 'FPS --';
   }
   if (display.actualFps === null) {
-    return `FPS -- / ${formatNumber(display.desiredFps)}`;
+    return 'Measuring…';
   }
 
   return `FPS ${formatNumber(display.actualFps)} / ${formatNumber(

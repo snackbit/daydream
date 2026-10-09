@@ -61,6 +61,7 @@ impl Operation {
                     title: title.into(),
                     recording_id: Some(recording_id.into()),
                     model_id: None,
+                    day_id: None,
                     status: "running".into(),
                     phase: kind.into(),
                     progress: None,

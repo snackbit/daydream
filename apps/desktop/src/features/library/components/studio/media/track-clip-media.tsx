@@ -3,6 +3,7 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTileTrack,
 } from '@daydream/shared';
+import { VideoTimelineThumbnail } from './video-timeline-thumbnail';
 
 export interface TrackClipMediaProps {
   segment: LibraryRecordingSegment;
@@ -55,7 +56,9 @@ function WaveformTileLayer({
 }) {
   const segmentDurationMs = Math.max(1, segment.durationMs ?? 0);
   const tiles = waveformTrack.tiles.filter(
-    (tile) => tile.segmentId === segment.id,
+    (tile) =>
+      tile.segmentId === segment.id ||
+      segment.fragmentIds?.includes(tile.segmentId),
   );
   if (tiles.length === 0) {
     return <WaveformSilenceLine />;
@@ -104,7 +107,7 @@ function VideoThumbnailStrip({
 }) {
   if (thumbnails.length === 0) {
     return (
-      <div className="text-muted-foreground flex h-full items-center justify-center px-2 text-[0.625rem]">
+      <div className="text-muted-foreground flex h-full items-center justify-center px-2 text-xs">
         {isLoading ? 'Thumbnails loading...' : 'Thumbnails unavailable'}
       </div>
     );
@@ -113,13 +116,9 @@ function VideoThumbnailStrip({
   return (
     <div className="flex h-full w-full">
       {thumbnails.map((thumbnail) => (
-        <img
-          alt=""
-          aria-label="Video timeline thumbnail"
-          className="h-full min-w-0 flex-1 border-r object-cover last:border-r-0"
-          draggable={false}
+        <VideoTimelineThumbnail
           key={`${thumbnail.url}-${thumbnail.offsetMs}`}
-          src={thumbnail.url}
+          url={thumbnail.url}
         />
       ))}
     </div>
@@ -134,7 +133,9 @@ function WaveformShape({ samples }: { samples: number[] }) {
     const x = samples.length === 1 ? 0 : (index / (samples.length - 1)) * 100;
     const y = 50 - Math.max(0, Math.min(1, sample)) * 48;
 
-    return `${x.toFixed(3)},${y.toFixed(3)}`;
+    return samples.length === 1
+      ? `0,${y.toFixed(3)} 100,${y.toFixed(3)}`
+      : `${x.toFixed(3)},${y.toFixed(3)}`;
   });
   const reflected = [...samples].reverse().map((sample, index) => {
     const x =
@@ -143,7 +144,9 @@ function WaveformShape({ samples }: { samples: number[] }) {
         : ((samples.length - 1 - index) / (samples.length - 1)) * 100;
     const y = 50 + Math.max(0, Math.min(1, sample)) * 48;
 
-    return `${x.toFixed(3)},${y.toFixed(3)}`;
+    return samples.length === 1
+      ? `100,${y.toFixed(3)} 0,${y.toFixed(3)}`
+      : `${x.toFixed(3)},${y.toFixed(3)}`;
   });
 
   return (

@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 const ACTIVE_RECORDING_STATUSES: &[&str] = &["planned", "recording", "paused"];
-const DELETABLE_RECORDING_STATUSES: &[&str] = &["completed", "failed"];
+const DELETABLE_RECORDING_STATUSES: &[&str] = &["completed", "failed", "recovered-partial"];
 const INTERRUPTED_RECORDING_ERROR_CODE: &str = "recording_interrupted_by_shutdown";
 
 #[derive(Clone, Debug, PartialEq)]

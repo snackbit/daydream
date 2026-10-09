@@ -98,7 +98,9 @@ pub async fn prepare_live_capture(
     }
 
     let live_session = portal::open_live_capture_session(storage).await?;
-    capture::prepared_live_capture(live_session, scene).map(PreparedLiveCapture::Portal)
+    capture::prepared_live_capture(live_session, scene)
+        .await
+        .map(PreparedLiveCapture::Portal)
 }
 
 pub async fn start_preview_session(
@@ -111,9 +113,9 @@ pub async fn start_preview_session(
     }
 
     let live_session = portal::open_live_capture_session(storage).await?;
-    let prepared = capture::prepared_live_capture(live_session, scene)?;
+    let prepared = capture::prepared_live_capture(live_session, scene).await?;
 
-    capture::start_preview_session(app, prepared)
+    super::run_capture_setup(move || capture::start_preview_session(app, prepared)).await
 }
 
 pub fn start_live_segment(

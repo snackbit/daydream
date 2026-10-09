@@ -7,6 +7,8 @@ export type NotificationStatus =
 export type NotificationActionStyle = 'default' | 'destructive' | 'secondary';
 
 export type NotificationActionHandler =
+  | 'model-download-pause'
+  | 'model-download-resume'
   | 'model-download-cancel'
   | 'model-download-retry'
   | 'processing-job-cancel'

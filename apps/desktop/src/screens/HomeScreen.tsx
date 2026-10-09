@@ -9,7 +9,7 @@ export function HomeScreen() {
   const recordings = useHomeRecordingsController();
 
   return (
-    <PageLayout className="gap-5">
+    <PageLayout>
       <PageHeader
         title="Home"
         description="Start a visible capture when you need one. Review finished sessions in your local Library."
@@ -29,12 +29,12 @@ export function HomeScreen() {
           model={recordings.model}
         />
 
-        <aside className="border-t pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
-          <h2 className="flex items-center gap-2 text-[13px] font-semibold tracking-tight">
+        <aside className="bg-muted rounded-panel h-fit p-6">
+          <h2 className="flex items-center gap-2 text-sm font-medium">
             <LockKeyhole aria-hidden="true" className="size-3.5" />
             Data stays local
           </h2>
-          <p className="text-muted-foreground mt-1.5 text-xs leading-5">
+          <p className="text-muted-foreground mt-3 text-sm leading-6">
             Recording files stay on this device. Settings identifies optional
             remote AI providers and the data they can receive.
           </p>

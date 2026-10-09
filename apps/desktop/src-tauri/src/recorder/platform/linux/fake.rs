@@ -233,15 +233,26 @@ fn start_fake_capture_session(
         .first()
         .cloned()
         .unwrap_or_else(|| FAKE_MONITOR_ID.to_string());
-    let canvas_width = input.canvas_width;
-    let canvas_height = input.canvas_height;
+    // Independent output reaches the writer after source transforms, with each
+    // scene-source ID and its reviewed output dimensions rather than portal IDs.
+    let sources = if input.video_sources.is_empty() {
+        vec![(source_id, input.canvas_width, input.canvas_height)]
+    } else {
+        input
+            .video_sources
+            .iter()
+            .map(|source| (source.source_id.clone(), source.width, source.height))
+            .collect()
+    };
     let frame_interval = fake_frame_interval(input.fps);
     let (shutdown, receiver) = mpsc::channel();
     let worker = thread::spawn(move || {
         let mut frame_index = 0_u64;
         loop {
-            let frame = fake_frame(&source_id, canvas_width, canvas_height, frame_index)?;
-            frames.send(frame)?;
+            for (source_id, width, height) in &sources {
+                let frame = fake_frame(source_id, *width, *height, frame_index)?;
+                frames.send(frame)?;
+            }
             frame_index += 1;
 
             match receiver.recv_timeout(frame_interval) {
@@ -299,7 +310,7 @@ fn fake_frame(
 
 fn fake_frame_interval(fps: f64) -> Duration {
     if fps.is_finite() && fps > 0.0 {
-        Duration::from_secs_f64(1.0 / fps).min(Duration::from_millis(100))
+        Duration::try_from_secs_f64(1.0 / fps).unwrap_or(Duration::from_millis(100))
     } else {
         Duration::from_millis(100)
     }
@@ -342,10 +353,12 @@ mod tests {
     use super::{fake_frame_interval, fake_token_mode_from_value, FakeTokenMode};
 
     #[test]
-    fn fake_frame_interval_is_capped_for_fast_tests() {
+    fn fake_frame_interval_preserves_sparse_and_dense_writer_cadence() {
+        assert_eq!(fake_frame_interval(0.2), std::time::Duration::from_secs(5));
+        assert_eq!(fake_frame_interval(1.0), std::time::Duration::from_secs(1));
         assert_eq!(
-            fake_frame_interval(1.0),
-            std::time::Duration::from_millis(100)
+            fake_frame_interval(32.0),
+            std::time::Duration::from_micros(31_250)
         );
     }
 

@@ -79,11 +79,11 @@ export function AudioSourceList({
         const handleRemove = () => onSelectAudioSource(role, null);
 
         return (
-          <div className="flex items-center gap-2 px-2 py-1.5" key={role}>
+          <div className="flex items-center gap-3 px-3 py-3" key={role}>
             <AudioRoleIcon role={role} />
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-medium">{audioRoleLabels[role]}</div>
-              <div className="text-muted-foreground truncate text-[10px]">
+              <div className="text-sm font-medium">{audioRoleLabels[role]}</div>
+              <div className="text-muted-foreground text-xs break-words">
                 {source.displayName}
               </div>
             </div>
@@ -91,7 +91,7 @@ export function AudioSourceList({
               aria-label={`Delete ${audioRoleLabels[role]} audio`}
               disabled={disabled}
               onClick={handleRemove}
-              size="icon-xs"
+              size="icon"
               type="button"
               variant="ghost"
             >

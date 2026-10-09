@@ -16,6 +16,13 @@ import {
   listAiModels,
 } from '@/features/ai/ai-client';
 import {
+  pauseAiModelDownload,
+  resumeAiModelDownload,
+  removeAiModelPartial,
+} from '@/features/ai/models/model-transfer-client';
+import type { ModelTransferAction } from '@/features/ai/models/model-transfer-client';
+import { modelTransferError } from '@/features/ai/models/model-transfer-format';
+import {
   getInputActivityStatus,
   repairInputActivityPermissions,
 } from '@/features/settings/settings-client';
@@ -36,7 +43,14 @@ export function useSettingsAiController({
   selectedAiModelId,
 }: UseSettingsAiControllerInput) {
   const [aiActionError, setAiActionError] = useState<string | null>(null);
+  const [scaffoldError, setScaffoldError] = useState<string | null>(null);
   const [aiModels, setAiModels] = useState<AiModelAsset[]>([]);
+  const [modelActionErrors, setModelActionErrors] = useState<
+    Record<string, string>
+  >({});
+  const pendingModels = useRef(new Set<string>());
+  const refreshOwnership = useRef(0);
+  const alive = useRef(true);
   const [aiProviderStatus, setAiProviderStatus] =
     useState<AiProviderStatus | null>(null);
   const [inputActivityRepairMessage, setInputActivityRepairMessage] = useState<
@@ -47,23 +61,44 @@ export function useSettingsAiController({
     useState<InputActivityStatus | null>(null);
   const [transcriptionKeyDraft, setTranscriptionKeyDraft] = useState('');
   const [visionKeyDraft, setVisionKeyDraft] = useState('');
+  const [recallEmbeddingKeyDraft, setRecallEmbeddingKeyDraft] = useState('');
+  const [recallGenerationKeyDraft, setRecallGenerationKeyDraft] = useState('');
   const pendingSecretRefsForDeletion = useRef<string[]>([]);
 
   const refreshAiScaffolds = useCallback(async () => {
+    const request = ++refreshOwnership.current;
     try {
       const [modelList, providerStatus, nextInputActivityStatus] =
-        await Promise.all([
+        await Promise.allSettled([
           listAiModels(),
           getAiProviderStatus(),
           getInputActivityStatus(),
         ]);
-      setAiActionError(null);
-      setAiModels(modelList.models);
-      setAiProviderStatus(providerStatus);
-      setInputActivityStatus(nextInputActivityStatus);
+      if (!alive.current || request !== refreshOwnership.current) return;
+      if (modelList.status === 'fulfilled') setAiModels(modelList.value.models);
+      if (providerStatus.status === 'fulfilled')
+        setAiProviderStatus(providerStatus.value);
+      if (nextInputActivityStatus.status === 'fulfilled')
+        setInputActivityStatus(nextInputActivityStatus.value);
+      setScaffoldError(
+        [modelList, providerStatus, nextInputActivityStatus].some(
+          (result) => result.status === 'rejected',
+        )
+          ? 'Some AI status could not be refreshed. Refocus this window to retry.'
+          : null,
+      );
     } catch (error) {
-      setAiActionError(screenErrorMessage(error));
+      if (alive.current && request === refreshOwnership.current)
+        setScaffoldError(screenErrorMessage(error));
     }
+  }, []);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      refreshOwnership.current += 1;
+    };
   }, []);
 
   useEffect(() => {
@@ -79,12 +114,40 @@ export function useSettingsAiController({
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
+    let selectedStatus: string | null = null;
+    let providerRequest = 0;
 
     void listenToAiModelsChanged((modelList) => {
+      if (disposed) return;
+      refreshOwnership.current += 1;
       setAiModels(modelList.models);
-      void getAiProviderStatus()
-        .then(setAiProviderStatus)
-        .catch((error) => setAiActionError(screenErrorMessage(error)));
+      const selected = modelList.models.find(
+        (model) => model.id === selectedAiModelId,
+      );
+      const nextStatus = selected
+        ? `${selected.downloadStatus}:${selected.selfTestStatus}`
+        : null;
+      if (
+        selected &&
+        selectedStatus !== nextStatus &&
+        ['available', 'failed', 'cancelled', 'paused'].includes(
+          selected.downloadStatus,
+        )
+      ) {
+        const request = ++providerRequest;
+        void getAiProviderStatus()
+          .then((status) => {
+            if (!disposed && request === providerRequest)
+              setAiProviderStatus(status);
+          })
+          .catch(() => {
+            if (!disposed)
+              setScaffoldError(
+                'AI readiness could not be refreshed. Refocus this window to retry.',
+              );
+          });
+      }
+      selectedStatus = nextStatus;
     }).then((nextUnlisten) => {
       if (disposed) {
         nextUnlisten();
@@ -97,7 +160,7 @@ export function useSettingsAiController({
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [selectedAiModelId]);
 
   useEffect(() => {
     function handleFocus() {
@@ -120,17 +183,51 @@ export function useSettingsAiController({
           ? { transcriptionKey: transcriptionKeyDraft }
           : {}),
         ...(visionKeyDraft.trim() ? { visionKey: visionKeyDraft } : {}),
+        ...(recallEmbeddingKeyDraft.trim()
+          ? { recallEmbeddingKey: recallEmbeddingKeyDraft }
+          : {}),
+        ...(recallGenerationKeyDraft.trim()
+          ? { recallGenerationKey: recallGenerationKeyDraft }
+          : {}),
       },
     };
   }
 
-  async function runAiModelAction(action: () => Promise<unknown>) {
+  async function runAiModelAction(
+    action: () => Promise<unknown>,
+    modelId?: string,
+  ) {
+    const key = modelId ?? 'model-action';
+    if (pendingModels.current.has(key)) return;
+    pendingModels.current.add(key);
     try {
-      setAiActionError(null);
+      if (modelId)
+        setModelActionErrors((current) => {
+          const next = { ...current };
+          delete next[modelId];
+          return next;
+        });
+      else setAiActionError(null);
       await action();
-      await Promise.all([refreshAiScaffolds(), loadNotifications()]);
+      await Promise.all([
+        refreshAiScaffolds(),
+        loadNotifications().catch(() => {
+          if (alive.current)
+            setScaffoldError(
+              'Notifications could not be refreshed. Your model action was saved.',
+            );
+        }),
+      ]);
     } catch (error) {
-      setAiActionError(screenErrorMessage(error));
+      if (!alive.current) return;
+      if (modelId)
+        setModelActionErrors((current) => ({
+          ...current,
+          [modelId]: modelTransferError(error),
+        }));
+      else setAiActionError(modelTransferError(error));
+    } finally {
+      pendingModels.current.delete(key);
     }
   }
 
@@ -141,6 +238,21 @@ export function useSettingsAiController({
     } catch (error) {
       setAiActionError(screenErrorMessage(error));
     }
+  }
+
+  async function runModelTransferAction(
+    modelId: string,
+    action: ModelTransferAction,
+  ) {
+    const commands = {
+      download: downloadAiModel,
+      cancel: cancelAiModelDownload,
+      delete: deleteAiModel,
+      pause: pauseAiModelDownload,
+      resume: resumeAiModelDownload,
+      remove: removeAiModelPartial,
+    };
+    return runAiModelAction(() => commands[action]({ modelId }), modelId);
   }
 
   async function repairInputActivity() {
@@ -168,37 +280,63 @@ export function useSettingsAiController({
     await deleteAiSecrets(secretRefs);
   }
 
-  function clearSecretDrafts() {
+  const clearSecretDrafts = useCallback(() => {
     setTranscriptionKeyDraft('');
     setVisionKeyDraft('');
+    setRecallEmbeddingKeyDraft('');
+    setRecallGenerationKeyDraft('');
+  }, []);
+  function clearSavedSecretDrafts(credentials: SettingsCredentialDrafts) {
+    setTranscriptionKeyDraft((current) =>
+      current === credentials.transcriptionKey ? '' : current,
+    );
+    setVisionKeyDraft((current) =>
+      current === credentials.visionKey ? '' : current,
+    );
+    setRecallEmbeddingKeyDraft((current) =>
+      current === credentials.recallEmbeddingKey ? '' : current,
+    );
+    setRecallGenerationKeyDraft((current) =>
+      current === credentials.recallGenerationKey ? '' : current,
+    );
   }
 
-  function clearPendingSecretRefsForDeletion() {
+  const clearPendingSecretRefsForDeletion = useCallback(() => {
     pendingSecretRefsForDeletion.current = [];
-  }
+  }, []);
 
   function setPendingSecretRefsForDeletion(secretRefs: string[]) {
     pendingSecretRefsForDeletion.current = secretRefs;
   }
 
   return {
-    aiActionError,
+    aiActionError: aiActionError ?? scaffoldError,
     aiModels,
+    modelActionErrors,
     aiProviderStatus,
     clearPendingSecretRefsForDeletion,
     clearSecretDrafts,
+    clearSavedSecretDrafts,
     deletePendingAiSecrets,
     hasAiSecretDraft: Boolean(
-      transcriptionKeyDraft.trim() || visionKeyDraft.trim(),
+      transcriptionKeyDraft.trim() ||
+      visionKeyDraft.trim() ||
+      recallEmbeddingKeyDraft.trim() ||
+      recallGenerationKeyDraft.trim(),
     ),
     prepareAiSettingsForSave,
     refreshAiScaffolds,
     refreshInputActivityStatus,
     repairInputActivity,
     runAiModelAction,
+    runModelTransferAction,
     setPendingSecretRefsForDeletion,
     setTranscriptionKeyDraft,
     setVisionKeyDraft,
+    setRecallEmbeddingKeyDraft,
+    setRecallGenerationKeyDraft,
+    recallEmbeddingKeyDraft,
+    recallGenerationKeyDraft,
     inputActivityRepairMessage,
     inputActivityRepairing,
     inputActivityStatus,

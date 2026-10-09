@@ -1,8 +1,18 @@
 use super::super::*;
 
+#[path = "model_commands/admission.rs"]
+mod admission;
+pub(super) use admission::admit_model_action;
+use admission::with_model_admission;
+
 #[tauri::command(rename = "listAiModels")]
-pub fn list_ai_models(storage: State<'_, AppStorage>) -> Result<AiModelAssetList, AiError> {
-    model_list(&storage)
+pub fn list_ai_models(
+    storage: State<'_, AppStorage>,
+    manager: State<'_, AiModelManager>,
+) -> Result<AiModelAssetList, AiError> {
+    let mut models = model_list(&storage)?;
+    manager.decorate(&mut models);
+    Ok(models)
 }
 
 #[tauri::command(rename = "downloadAiModel")]
@@ -12,12 +22,34 @@ pub fn download_ai_model(
     manager: State<'_, AiModelManager>,
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
+    let action_app = app.clone();
+    with_model_admission(&app, "model-download-command", || {
+        download_model(action_app, input, manager, storage)
+    })
+}
+
+fn download_model(
+    app: AppHandle,
+    input: DownloadAiModelInput,
+    manager: State<'_, AiModelManager>,
+    storage: State<'_, AppStorage>,
+) -> Result<Notification, AiError> {
+    let _command = manager.command_guard();
     let catalog = ensure_catalog_model(&input.model_id)?;
-    let source_url = require_model_source_url(catalog)?;
+    require_model_source_url(catalog)?;
     let existing_model_path = model_path(&app, catalog)?;
     if existing_model_path.is_file() && is_verified_model_file(&existing_model_path, catalog)? {
+        if manager.is_active_or_queued(catalog.id) {
+            return Err(AiError {
+                code: "ai_model_download_busy".into(),
+                message: "The model is still being verified or tested. Wait for it to finish."
+                    .into(),
+            });
+        }
         let notification = storage
             .with_connection(|connection| {
+                let transaction = connection.unchecked_transaction()?;
+                let connection = &transaction;
                 let timestamp_ms = now_ms();
                 save_catalog_model(
                     connection,
@@ -33,7 +65,7 @@ pub fn download_ai_model(
                     },
                     timestamp_ms,
                 )?;
-                save_model_download_notification(
+                let notification = save_model_download_notification(
                     connection,
                     ModelDownloadNotificationInput {
                         actions: &[],
@@ -44,7 +76,9 @@ pub fn download_ai_model(
                         timestamp_ms,
                         title: "Model already downloaded",
                     },
-                )
+                )?;
+                transaction.commit()?;
+                Ok(notification)
             })
             .map_err(storage_error)?;
         emit_model_list(&app);
@@ -55,26 +89,26 @@ pub fn download_ai_model(
         delete_file_if_exists(&existing_model_path)?;
     }
 
-    let state = manager.request_download(catalog.id);
-    let notification = storage
+    let (state, notification) = manager.admit(catalog.id, |state| storage
         .with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            let connection = &transaction;
             let timestamp_ms = now_ms();
-            let status = if state == DownloadRequestState::Queued {
+            let previous=ModelAssetPatch::from_existing(connection,catalog)?;
+            let duplicate = *state == DownloadRequestState::AlreadyRunning || (*state == DownloadRequestState::Queued && previous.download_status == "queued");
+            let status = if *state == DownloadRequestState::Queued {
                 "queued"
             } else {
                 "downloading"
             };
-            let patch = if state == DownloadRequestState::AlreadyRunning {
-                ModelAssetPatch {
-                    download_status: "downloading".into(),
-                    ..ModelAssetPatch::from_existing(connection, catalog)?
-                }
+            let patch = if *state == DownloadRequestState::AlreadyRunning {
+                previous
             } else {
                 ModelAssetPatch {
                     download_status: status.into(),
-                    downloaded_bytes: 0,
+                    downloaded_bytes: std::fs::metadata(partial_model_path(&app, catalog).map_err(|_| rusqlite::Error::InvalidQuery)?).map(|metadata| metadata.len() as i64).unwrap_or(0),
                     error_code: None,
-                    etag: None,
+                    etag: ModelAssetPatch::from_existing(connection, catalog)?.etag,
                     local_path: None,
                     self_test_status: "not-run".into(),
                     total_bytes: Some(catalog.size_bytes),
@@ -82,26 +116,29 @@ pub fn download_ai_model(
                 }
             };
             save_catalog_model(connection, catalog, patch, timestamp_ms)?;
-            save_model_download_notification(
+            let notification = save_model_download_notification(
                 connection,
                 ModelDownloadNotificationInput {
-                    actions: &[model_download_cancel_action(catalog.id)],
-                    message: &format!("{} will download from {}.", catalog.label, source_url),
+                    actions: &[model_transfer_action(catalog.id,false),model_download_cancel_action(catalog.id)],
+                    message: &format!("{} download requested.", catalog.label),
                     model_id: catalog.id,
                     preferred_notification_id: input.notification_id.as_deref(),
                     status: status_to_notification_status(status),
                     timestamp_ms,
-                    title: if state == DownloadRequestState::Queued {
+                    title: if *state == DownloadRequestState::Queued {
                         "Model download queued"
-                    } else if state == DownloadRequestState::AlreadyRunning {
+                    } else if *state == DownloadRequestState::AlreadyRunning {
                         "Model download already running"
                     } else {
                         "Model download started"
                     },
                 },
-            )
+            )?;
+            if !duplicate { connection.execute("INSERT INTO ai_model_download_runtime(model_id,phase,queue_order) VALUES (?1,?2,?3) ON CONFLICT(model_id) DO UPDATE SET attempt=attempt+1, phase=excluded.phase, control='run',queue_order=excluded.queue_order", rusqlite::params![catalog.id, if status=="queued" {"queued"} else {"connecting"}, timestamp_ms])?; }
+            transaction.commit()?;
+            Ok(notification)
         })
-        .map_err(storage_error)?;
+        .map_err(storage_error))?;
     emit_model_list(&app);
 
     if state == DownloadRequestState::Started {
@@ -111,13 +148,96 @@ pub fn download_ai_model(
     notification_from_row(notification)
 }
 
+#[tauri::command(rename = "pauseAiModelDownload")]
+pub async fn pause_ai_model_download(
+    app: AppHandle,
+    input: CancelAiModelDownloadInput,
+    manager: State<'_, AiModelManager>,
+    storage: State<'_, AppStorage>,
+) -> Result<AiModelAssetList, AiError> {
+    let _activity = admit_model_action(&app, "model-pause-command")?;
+    let catalog = ensure_catalog_model(&input.model_id)?;
+    let status = storage
+        .with_connection(|connection| storage::get_ai_model_asset(connection, catalog.id))
+        .map_err(storage_error)?;
+    if !status.is_some_and(|row| {
+        matches!(
+            row.download_status.as_str(),
+            "downloading" | "queued" | "paused"
+        )
+    }) {
+        return Err(AiError {
+            code: "ai_model_download_not_running".into(),
+            message: "This model has no download to pause.".into(),
+        });
+    }
+    storage.with_connection(|connection| {
+        connection.execute("UPDATE ai_model_download_runtime SET control='pause',phase='pausing' WHERE model_id=?1", [catalog.id])?;
+        save_catalog_model(connection, catalog, ModelAssetPatch { download_status: "paused".into(), error_code: None, ..ModelAssetPatch::from_existing(connection,catalog)? }, now_ms()).map(|_| ())
+    }).map_err(storage_error)?;
+    manager.pause_download(catalog.id);
+    manager.wait_for_model(catalog.id).await;
+    save_stopped_download(
+        &app,
+        catalog,
+        downloaded_bytes(
+            &partial_model_path(&app, catalog)?,
+            &model_path(&app, catalog)?,
+        ),
+    )?;
+    model_list(&storage)
+}
+
+#[tauri::command(rename = "resumeAiModelDownload")]
+pub fn resume_ai_model_download(
+    app: AppHandle,
+    input: DownloadAiModelInput,
+    manager: State<'_, AiModelManager>,
+    storage: State<'_, AppStorage>,
+) -> Result<Notification, AiError> {
+    let _activity = admit_model_action(&app, "model-resume-command")?;
+    download_model(app, input, manager, storage)
+}
+
+#[tauri::command(rename = "removeAiModelPartial")]
+pub fn remove_ai_model_partial(
+    app: AppHandle,
+    input: DeleteAiModelInput,
+    manager: State<'_, AiModelManager>,
+    storage: State<'_, AppStorage>,
+) -> Result<AiModelAssetList, AiError> {
+    let _activity = admit_model_action(&app, "model-remove-partial-command")?;
+    let _command = manager.command_guard();
+    let catalog = ensure_catalog_model(&input.model_id)?;
+    if manager.is_active_or_queued(catalog.id) {
+        return Err(AiError {
+            code: "ai_model_download_busy".into(),
+            message: "Pause the download before removing its partial data.".into(),
+        });
+    }
+    delete_file_if_exists(&partial_model_path(&app, catalog)?)?;
+    storage
+        .with_connection(|connection| {
+            save_catalog_model(connection, catalog, ModelAssetPatch::missing(), now_ms())?;
+            connection.execute(
+                "DELETE FROM ai_model_download_runtime WHERE model_id=?1",
+                [catalog.id],
+            )?;
+            Ok(())
+        })
+        .map_err(storage_error)?;
+    emit_model_list(&app);
+    model_list(&storage)
+}
+
 #[tauri::command(rename = "cancelAiModelDownload")]
-pub fn cancel_ai_model_download(
+pub async fn cancel_ai_model_download(
     app: AppHandle,
     input: CancelAiModelDownloadInput,
     manager: State<'_, AiModelManager>,
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
+    let _activity = admit_model_action(&app, "model-cancel-command")?;
     let catalog = ensure_catalog_model(&input.model_id)?;
     let active_or_queued_cancelled = manager.cancel_download(catalog.id);
     let persisted_cancelled = if active_or_queued_cancelled {
@@ -126,7 +246,12 @@ pub fn cancel_ai_model_download(
         storage
             .with_connection(|connection| storage::get_ai_model_asset(connection, catalog.id))
             .map_err(storage_error)?
-            .is_some_and(|model| matches!(model.download_status.as_str(), "downloading" | "queued"))
+            .is_some_and(|model| {
+                matches!(
+                    model.download_status.as_str(),
+                    "downloading" | "queued" | "paused"
+                )
+            })
     };
     let cancelled = active_or_queued_cancelled || persisted_cancelled;
     let downloaded = if cancelled {
@@ -139,17 +264,21 @@ pub fn cancel_ai_model_download(
     let notification = storage
         .with_connection(|connection| {
             let timestamp_ms = now_ms();
-            save_cancel_download_result(
+            let result=save_cancel_download_result(
                 connection,
                 catalog,
                 input.notification_id.as_deref(),
                 cancelled,
                 downloaded,
                 timestamp_ms,
-            )
+            )?;
+            if cancelled { connection.execute("UPDATE ai_model_download_runtime SET control='cancel',phase='cancelled' WHERE model_id=?1",[catalog.id])?; }
+            Ok(result)
         })
         .map_err(storage_error)?;
     if cancelled {
+        manager.wait_for_model(catalog.id).await;
+        manager.set_telemetry(catalog.id, "cancelled", None, None);
         emit_model_list(&app);
     }
 
@@ -163,6 +292,8 @@ pub fn delete_ai_model(
     manager: State<'_, AiModelManager>,
     storage: State<'_, AppStorage>,
 ) -> Result<AiModelAssetList, AiError> {
+    let _activity = admit_model_action(&app, "model-delete-command")?;
+    let _command = manager.command_guard();
     let catalog = ensure_catalog_model(&input.model_id)?;
     if manager.is_active_or_queued(catalog.id) {
         return Err(AiError {
@@ -193,7 +324,10 @@ pub async fn self_test_ai_model(
     provider: State<'_, TranscriptionProviderManager>,
     storage: State<'_, AppStorage>,
 ) -> Result<Notification, AiError> {
+    let activity = Arc::new(admit_model_action(&app, "model-self-test-command")?);
     let catalog = ensure_catalog_model(&input.model_id)?;
+    let manager = app.state::<AiModelManager>();
+    let _model_use = manager.use_model(catalog.id)?;
     if !is_whisper_model(catalog) {
         return Err(AiError {
             code: "ai_model_self_test_unsupported".to_string(),
@@ -231,7 +365,9 @@ pub async fn self_test_ai_model(
         model_path: path.clone(),
     };
     let provider = provider.inner().clone();
+    let worker_activity = activity.clone();
     let load_result = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = worker_activity;
         provider
             .warm_local_model(warmup)
             .map_err(|error| whisper_backend::WhisperBackendError {

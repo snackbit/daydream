@@ -77,7 +77,7 @@ function ColorPalettePopover({
               aria-label={color.label}
               aria-pressed={color.id === selectedColorId}
               className={cn(
-                'focus-visible:ring-ring/40 size-7 rounded-md border transition-transform outline-none focus-visible:ring-2',
+                'focus-visible:ring-ring size-7 rounded-md border transition-transform outline-none focus-visible:ring-2',
                 color.id === selectedColorId && 'ring-ring ring-2',
               )}
               key={color.id}

@@ -22,7 +22,7 @@ use tiles::{waveform_tile_for_segment, WaveformTileContext};
 #[cfg(test)]
 pub(super) use ffmpeg_source::parse_volumedetect_max_amplitude;
 #[cfg(test)]
-pub(super) use math::{waveform_bins, waveform_peak_rms_bins, waveform_tile_sample_count};
+pub(super) use math::{waveform_bins, waveform_peak_rms_time_bins};
 #[cfg(test)]
 pub(super) use tiles::{waveform_tile_bin_ms, waveform_tile_ranges_for_segment};
 

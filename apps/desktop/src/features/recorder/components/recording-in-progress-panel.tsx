@@ -21,7 +21,7 @@ export function RecordingInProgressPanel({
         />
         <div className="min-w-0">
           <h2 className="text-xs font-semibold">Recording in progress</h2>
-          <p className="text-muted-foreground text-[10px]">
+          <p className="text-muted-foreground text-xs">
             Preview pauses while local segments are written.
           </p>
         </div>
@@ -69,8 +69,8 @@ function RecordingStat({
 }) {
   return (
     <div className={`flex min-w-0 items-baseline gap-1.5 ${className ?? ''}`}>
-      <dt className="text-muted-foreground shrink-0 text-[10px]">{label}</dt>
-      <dd className="min-w-0 text-[11px] font-medium tabular-nums">{value}</dd>
+      <dt className="text-muted-foreground shrink-0 text-xs">{label}</dt>
+      <dd className="min-w-0 text-sm font-medium tabular-nums">{value}</dd>
     </div>
   );
 }

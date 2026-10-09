@@ -1,6 +1,15 @@
+mod group_actions;
+mod group_candidates;
+pub(crate) mod group_commands;
+mod group_details;
+#[cfg(test)]
+mod group_test_fixtures;
+mod group_types;
+mod groups;
 pub(crate) mod operations;
 mod projection;
 mod types;
+pub(crate) use group_types::*;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 pub(crate) use types::*;
 

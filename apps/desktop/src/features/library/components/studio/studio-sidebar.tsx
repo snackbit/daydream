@@ -3,12 +3,14 @@ import type {
   LibraryRecordingDetail,
   LibraryRecordingRedaction,
   RecordingAiProcessingState,
+  RecallEvidence,
 } from '@daydream/shared';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ocrFrameProcessingRevision } from '@/features/ai/ocr/ocr-processing-revision';
 import { OcrDocumentInspector } from './inspector/ocr/ocr-document-inspector';
+import { RecallEvidenceInspector } from './inspector/recall-evidence-inspector';
 import { RecordingInspectorSummary } from './inspector/recording-inspector-summary';
 import { SelectedSourceInspector } from './inspector/selected-source-inspector';
 import { VisualSourceInspector } from './inspector/visual-source-inspector';
@@ -46,6 +48,7 @@ export interface StudioSidebarModel {
   visualFrames: StudioVisualFrame[];
   debugEnabled?: boolean;
   timelineOffsetMs?: number;
+  recallEvidence?: RecallEvidence | null;
 }
 
 export interface StudioSidebarProps {
@@ -101,12 +104,37 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
   });
 
   return (
-    <aside className="bg-sidebar text-sidebar-foreground flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 border-b px-2.5 py-2">
-        <h2 className="text-xs font-semibold tracking-tight">Inspector</h2>
+    <aside className="bg-muted text-foreground rounded-panel flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 border-b px-6 py-5">
+        <h2 className="text-sm font-medium">Inspector</h2>
       </div>
       <ScrollArea className="min-h-0 flex-1 overflow-hidden">
-        <div className="text-xs">
+        <div className="text-sm">
+          {model.recallEvidence ? (
+            <>
+              <RecallEvidenceInspector
+                evidence={model.recallEvidence}
+                onSeek={actions.onSeek}
+                onClear={actions.onClearActivitySelection}
+                onCreateRedactions={actions.onCreateRedactions}
+              />
+              {model.recallEvidence.sourceKind === 'ocr' ? (
+                <OcrDocumentInspector
+                  context={{
+                    recordingId: model.detail.id,
+                    sourceTrackId: model.recallEvidence.sourceTrackId,
+                    privacyRevision: JSON.stringify(model.detail.redactions),
+                    processingRevision: model.recallEvidence.contentRevision,
+                    debugEnabled: model.debugEnabled === true,
+                  }}
+                  timestampMs={model.recallEvidence.startOffsetMs}
+                  documentId={model.recallEvidence.documentId}
+                  onSeek={actions.onSeek}
+                  key={model.recallEvidence.evidenceId}
+                />
+              ) : null}
+            </>
+          ) : null}
           {model.detail.availability !== 'available' ? (
             <Alert
               className="m-2"
@@ -133,7 +161,7 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
             </Alert>
           ) : null}
 
-          {model.selection ? (
+          {model.recallEvidence ? null : model.selection ? (
             <SelectedSourceInspector
               onClearSelection={actions.onClearActivitySelection}
               onSeek={actions.onSeek}
@@ -193,7 +221,9 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
             </>
           )}
 
-          {model.selection === null && !hasTimelineSelection ? (
+          {!model.recallEvidence &&
+          model.selection === null &&
+          !hasTimelineSelection ? (
             <RecordingInspectorSummary
               aiProcessingState={model.aiProcessingState}
               detail={model.detail}

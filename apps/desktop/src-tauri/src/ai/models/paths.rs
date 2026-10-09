@@ -85,7 +85,25 @@ pub(in crate::ai) fn is_verified_model_file(
     path: &Path,
     catalog: &CatalogModel,
 ) -> Result<bool, AiError> {
-    Ok(path.is_file() && sha1_file(path)? == catalog.sha1)
+    Ok(path.is_file() && checksum_file(path, catalog)? == catalog.sha1)
+}
+
+pub(in crate::ai) fn checksum_file(path: &Path, catalog: &CatalogModel) -> Result<String, AiError> {
+    if catalog.provider != "local-embedding" {
+        return sha1_file(path);
+    }
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path).map_err(file_error)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(file_error)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(hex::encode(hash.finalize()))
 }
 
 pub(in crate::ai) fn sha1_file(path: &Path) -> Result<String, AiError> {

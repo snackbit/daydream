@@ -134,7 +134,7 @@ export function ActivityTrackLane({
       />
       <div
         className={cn(
-          'bg-muted/30 group-hover/lane:bg-muted/50 relative cursor-pointer overflow-hidden border-b transition-colors',
+          'bg-muted/30 group-hover/lane:bg-muted/50 relative isolate z-0 cursor-pointer overflow-hidden border-b transition-colors',
           selectedLane && 'bg-accent/20',
         )}
         data-lane-content
@@ -303,7 +303,7 @@ function InputActivityUnavailableMarker({
   return (
     <div
       aria-label={`${lane.label} activity unavailable`}
-      className="text-muted-foreground absolute inset-x-2 top-1/2 -translate-y-1/2 truncate text-[11px]"
+      className="text-muted-foreground absolute inset-x-2 top-1/2 -translate-y-1/2 truncate text-[13px]"
       title={`${lane.label} activity unavailable: ${captureState.reason ?? 'unknown'}`}
     >
       Unavailable

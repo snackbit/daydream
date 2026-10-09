@@ -112,6 +112,7 @@ fn review_screen_redaction_mutation_accepts_durable_source_ids() {
                 recording_id: fixture.recording.clone(),
                 title: Some("Synthetic renamed recording".into()),
             },
+            app.handle().clone(),
             app.state::<AppStorage>(),
         )
         .unwrap();

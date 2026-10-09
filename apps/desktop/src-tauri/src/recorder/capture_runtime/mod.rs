@@ -12,7 +12,9 @@ mod tests;
 mod timing;
 mod worker;
 
-pub(crate) use channel::{bounded_frame_channel, FrameReceiver, FrameSender, FrameTrySendError};
+pub(crate) use channel::{
+    bounded_frame_channel, latest_frame_channel, FrameReceiver, FrameSender, FrameTrySendError,
+};
 pub(crate) use cpu_frame::CapturedFrame;
 pub(crate) use dmabuf_frame::{CapturedDmaBufFrame, CapturedDmaBufFrameInput};
 pub(crate) use formats::{CapturedFrameFormat, CapturedFrameStorage, WriterFrameHandoffPlan};

@@ -2,13 +2,52 @@ export interface ProcessingErrorDescription {
   summary: string;
   settingsTab: 'ai' | 'record' | 'storage' | null;
   settingsSection:
-    'transcription' | 'vision' | 'ocr' | 'models' | 'processing' | null;
+    | 'transcription'
+    | 'vision'
+    | 'ocr'
+    | 'models'
+    | 'processing'
+    | 'recall'
+    | null;
   settingsLabel: string | null;
 }
 
 export function describeProcessingError(
   code: string,
 ): ProcessingErrorDescription {
+  if (code === 'ai_maintenance_active')
+    return {
+      summary:
+        'Maintenance is in progress. Retry this action after it finishes.',
+      settingsTab: null,
+      settingsSection: null,
+      settingsLabel: null,
+    };
+  if (
+    code === 'ai_processing_retry_unavailable' ||
+    code === 'ai_processing_selection_invalid'
+  )
+    return {
+      summary:
+        'This section is not available to retry. Refresh its activity and choose a failed section whose current attempt has stopped.',
+      settingsTab: null,
+      settingsSection: null,
+      settingsLabel: null,
+    };
+  if (code.startsWith('recall_'))
+    return {
+      summary:
+        code.includes('privacy') || code.includes('stale')
+          ? 'Recall inputs changed. Hidden sources remain excluded; retry to use current eligible evidence.'
+          : code.includes('auth') || code.includes('credential')
+            ? 'The Recall provider could not authenticate. Review its separate credentials before retrying.'
+            : code.includes('model') || code.includes('backend')
+              ? 'The Recall embedding model or backend is unavailable. Review the model cache and selected backend.'
+              : 'Recall could not finish. Review its provider configuration or retry; completed results remain available.',
+      settingsTab: 'ai',
+      settingsSection: 'recall',
+      settingsLabel: 'Review Recall settings',
+    };
   if (code.includes('_vad_model_'))
     return {
       summary:
@@ -69,9 +108,11 @@ export function describeProcessingError(
   const vision = code.includes('vision') || code.includes('vlm');
   const target = vision
     ? 'vision'
-    : code.includes('_ocr_')
-      ? 'ocr'
-      : 'transcription';
+    : code.includes('_activity_')
+      ? 'processing'
+      : code.includes('_ocr_')
+        ? 'ocr'
+        : 'transcription';
   let summary: string;
   if (code.includes('credential'))
     summary =
@@ -124,14 +165,19 @@ export function describeProcessingError(
       'An active operation is still stopping. Wait for it to finish, then retry the action.';
   else
     summary =
-      'This section could not be processed. Retry it or review the technical details.';
+      'This section could not be processed. Retry it or review its processing settings.';
   return {
     summary,
     settingsTab: 'ai',
     settingsSection: target,
-    settingsLabel: vision
-      ? 'Review vision settings'
-      : 'Review transcription settings',
+    settingsLabel:
+      target === 'vision'
+        ? 'Review vision settings'
+        : target === 'ocr'
+          ? 'Review OCR settings'
+          : target === 'processing'
+            ? 'Review processing settings'
+            : 'Review transcription settings',
   };
 }
 
@@ -143,7 +189,5 @@ export function processingFailureSummary(error: unknown): string {
     typeof error.code === 'string'
   )
     return describeProcessingError(error.code).summary;
-  return error instanceof Error
-    ? error.message
-    : 'Processing could not complete this action. Retry to reconnect.';
+  return 'Processing could not complete this action. Retry to reconnect.';
 }

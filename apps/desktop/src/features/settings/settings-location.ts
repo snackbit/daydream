@@ -2,7 +2,14 @@ import type { SearchSchemaInput } from '@tanstack/react-router';
 
 export type SettingsTab = 'general' | 'record' | 'storage' | 'ai';
 export type SettingsFocus =
-  'transcription' | 'vision' | 'ocr' | 'models' | 'processing';
+  | 'transcription'
+  | 'vision'
+  | 'ocr'
+  | 'models'
+  | 'processing'
+  | 'recall'
+  | 'recall-generation'
+  | 'recall-embedding';
 export interface SettingsLocation {
   tab: SettingsTab;
   focus: SettingsFocus | null;
@@ -33,6 +40,9 @@ export function parseSettingsLocation(value: unknown): SettingsLocation {
       focus === 'vision' ||
       focus === 'ocr' ||
       focus === 'models' ||
+      focus === 'recall' ||
+      focus === 'recall-generation' ||
+      focus === 'recall-embedding' ||
       focus === 'processing'
         ? focus
         : null,

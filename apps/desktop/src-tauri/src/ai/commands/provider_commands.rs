@@ -1,4 +1,5 @@
 use super::super::*;
+use super::model_commands::admit_model_action;
 
 #[tauri::command(rename = "getAiProviderStatus")]
 pub fn get_ai_provider_status(
@@ -191,8 +192,10 @@ fn ocr_data_status(models: &[&AiModelAsset]) -> String {
 #[tauri::command(rename = "saveAiProviderSecret")]
 pub fn save_ai_provider_secret(
     input: SaveAiProviderSecretInput,
+    app: AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<SaveAiProviderSecretResult, AiError> {
+    let _activity = admit_model_action(&app, "model-provider-secret-save")?;
     if input.role != "transcription" && input.role != "vision" {
         return Err(AiError {
             code: "ai_secret_role_invalid".to_string(),
@@ -231,8 +234,10 @@ pub fn save_ai_provider_secret(
 #[tauri::command(rename = "deleteAiProviderSecret")]
 pub fn delete_ai_provider_secret(
     input: DeleteAiProviderSecretInput,
+    app: AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<(), AiError> {
+    let _activity = admit_model_action(&app, "model-provider-secret-delete")?;
     if !input.secret_ref.starts_with("ai.secret.") {
         return Err(AiError {
             code: "ai_secret_ref_invalid".to_string(),
@@ -241,6 +246,8 @@ pub fn delete_ai_provider_secret(
     }
 
     storage
-        .with_connection(|connection| storage::delete_app_setting(connection, &input.secret_ref))
+        .with_connection(|connection| {
+            settings::prune_unreferenced_secrets(connection, Some(&input.secret_ref)).map(|_| ())
+        })
         .map_err(storage_error)
 }

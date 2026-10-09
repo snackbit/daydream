@@ -40,7 +40,9 @@ export function buildTimelineDrafts(
         segmentId: segment.id,
         title:
           current?.clipsById[clipId]?.title ??
-          `Segment ${segment.segmentIndex}`,
+          (segment.fragmentIds
+            ? `Clip ${segment.segmentIndex}`
+            : `Segment ${segment.segmentIndex}`),
         trackId: track.id,
       };
     }

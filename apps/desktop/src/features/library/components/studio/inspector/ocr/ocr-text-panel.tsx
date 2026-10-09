@@ -57,7 +57,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
     <TooltipProvider delayDuration={200}>
       <div className="space-y-2">
         {document.provenance === 'reconstructed' ? (
-          <p className="text-muted-foreground text-[10px]">
+          <p className="text-muted-foreground text-xs">
             Reconstructed from legacy OCR regions. Reading order is approximate.
           </p>
         ) : null}
@@ -105,7 +105,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
                 </Button>
                 {query.trim() ? (
                   <span
-                    className="text-muted-foreground shrink-0 text-[10px]"
+                    className="text-muted-foreground shrink-0 text-xs"
                     role="status"
                   >
                     {matches} {matches === 1 ? 'match' : 'matches'}
@@ -114,7 +114,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
               </div>
               {copyStatus !== 'idle' ? (
                 <p
-                  className="text-muted-foreground shrink-0 text-[10px]"
+                  className="text-muted-foreground shrink-0 text-xs"
                   role="status"
                 >
                   {copyStatus === 'copied' ? 'Text copied' : 'Copy failed'}
@@ -144,7 +144,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
           </Button>
         </div>
         <div
-          className="text-muted-foreground flex flex-wrap gap-x-3 text-[10px]"
+          className="text-muted-foreground flex flex-wrap gap-x-3 text-xs"
           aria-live="polite"
         >
           <span>
@@ -155,7 +155,7 @@ export function OcrTextPanel({ document }: OcrTextPanelProps) {
               <TooltipTrigger asChild>
                 <Button
                   aria-label="Uncertain OCR words"
-                  className="h-auto px-0 py-0 text-[10px]"
+                  className="h-auto px-0 py-0 text-xs"
                   size="sm"
                   variant="ghost"
                 >

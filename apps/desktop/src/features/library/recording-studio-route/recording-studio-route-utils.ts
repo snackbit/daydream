@@ -8,17 +8,28 @@ export function errorMessage(error: unknown): string {
 }
 
 export function isRecordingDeletable(detail: LibraryRecordingDetail): boolean {
-  return detail.status === 'completed' || detail.status === 'failed';
+  return (
+    detail.status === 'completed' ||
+    detail.status === 'failed' ||
+    detail.status === 'recovered-partial'
+  );
 }
 
 export function isRecordingRenameable(detail: LibraryRecordingDetail): boolean {
-  return detail.status === 'completed' || detail.status === 'failed';
+  return (
+    detail.status === 'completed' ||
+    detail.status === 'failed' ||
+    detail.status === 'recovered-partial'
+  );
 }
 
 export function isAiProcessingStartable(
   detail: LibraryRecordingDetail,
 ): boolean {
-  return detail.status === 'completed' && detail.availability === 'available';
+  return (
+    (detail.status === 'completed' || detail.status === 'recovered-partial') &&
+    detail.availability === 'available'
+  );
 }
 
 export function recordingTitle(detail: LibraryRecordingDetail): string {

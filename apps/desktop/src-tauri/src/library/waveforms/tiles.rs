@@ -7,7 +7,7 @@ use super::{
         write_cached_waveform_tile, CachedWaveformTile,
     },
     ffmpeg_source::waveform_tile_samples_from_ffmpeg,
-    math::{waveform_peak_rms_bins, waveform_tile_sample_count},
+    math::waveform_peak_rms_time_bins,
 };
 use crate::storage::{RecordingRow, RecordingSegmentRow};
 
@@ -143,8 +143,8 @@ fn generate_waveform_tile(
         tile_start_ms,
         duration_ms,
     )?;
-    let sample_count = waveform_tile_sample_count(duration_ms, bin_ms, source_samples.is_empty());
-    let (peak_samples, rms_samples) = waveform_peak_rms_bins(&source_samples, sample_count);
+    let (peak_samples, rms_samples) =
+        waveform_peak_rms_time_bins(&source_samples, duration_ms, bin_ms);
     let scale = scale_amplitude.max(f64::EPSILON);
     let peak_samples = peak_samples
         .into_iter()

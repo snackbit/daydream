@@ -9,6 +9,7 @@ import type {
   OcrDocument,
   ProcessingJob,
   OcrTimelineFramePage,
+  RecallEvidence,
 } from '@daydream/shared';
 import {
   act,
@@ -21,6 +22,11 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import {
+  controlContrast,
+  settleVisualTransitions,
+  textContrast,
+} from '@/app/design-accessibility-audit';
 import { useStudioTimelineStore } from '@/features/library/components/studio/studio-timeline-store';
 import {
   TRACK_LABEL_WIDTH_PX,
@@ -67,7 +73,17 @@ const router = vi.hoisted(() => ({
 
 const routeState = vi.hoisted(() => ({
   recordingId: 'recording-1',
+  search: {
+    evidenceId: null as string | null,
+    source: null as 'ocr' | 'desktop-audio' | 'microphone' | null,
+    seek: null as number | null,
+  },
 }));
+const recallClient = vi.hoisted(() => ({
+  resolveRecallEvidence: vi.fn(),
+  listenToRecallStateChanged: vi.fn(),
+}));
+vi.mock('@/features/recall/recall-client', () => recallClient);
 
 let originalViewport: { height: number; width: number } | null = null;
 let layoutStylesheet: HTMLLinkElement | null = null;
@@ -97,6 +113,7 @@ vi.mock('@tanstack/react-router', () => ({
   ),
   useNavigate: () => router.navigate,
   useParams: () => ({ recordingId: routeState.recordingId }),
+  useSearch: () => routeState.search,
 }));
 
 const detail = {
@@ -327,6 +344,16 @@ const waveformTiles = {
   ],
 } satisfies LibraryWaveformTiles;
 
+function syntheticThumbnail(color: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 180;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('A synthetic thumbnail requires Canvas2D');
+  context.fillStyle = color;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
+}
 const playbackAssets = {
   error: null,
   recordingId: 'recording-1',
@@ -344,11 +371,11 @@ const playbackAssets = {
       thumbnails: [
         {
           offsetMs: 0,
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-1/thumbnail/0.jpg',
+          url: syntheticThumbnail('#5287f9'),
         },
         {
           offsetMs: 1_000,
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-1/thumbnail/1000.jpg',
+          url: syntheticThumbnail('#268958'),
         },
       ],
       videoUrl:
@@ -367,7 +394,7 @@ const playbackAssets = {
       thumbnails: [
         {
           offsetMs: 0,
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-2/thumbnail/0.jpg',
+          url: syntheticThumbnail('#b87826'),
         },
       ],
       videoUrl:
@@ -402,7 +429,7 @@ const longPlaybackAssets = {
       thumbnails: [
         {
           offsetMs: 0,
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-long/thumbnail/0.jpg',
+          url: syntheticThumbnail('#5287f9'),
         },
       ],
       videoUrl:
@@ -410,6 +437,66 @@ const longPlaybackAssets = {
     },
   ],
 } satisfies LibraryPlaybackAssets;
+
+test.each(['light', 'dark'] as const)(
+  'Studio seekbar and redaction presentation stay readable in %s',
+  async (theme) => {
+    await loadStudioStyles();
+    document.documentElement.dataset.theme = theme;
+    client.getLibraryRecording.mockResolvedValue({
+      ...longDetail,
+      redactions: [
+        {
+          id: 'visual-mask',
+          recordingId: detail.id,
+          startOffsetMs: 50000,
+          endOffsetMs: 100000,
+          createdAtMs: 1,
+          reason: null,
+          trackIds: ['video-0', 'desktop-audio-1'],
+        },
+      ],
+    });
+    client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+    render(<RecordingStudioScreen />);
+    const seekbar = await screen.findByRole('slider', {
+      name: 'Playback position',
+    });
+    await settleVisualTransitions();
+    const region = seekbar.querySelector('[data-playback-region="segment"]');
+    if (!region) throw new Error('Missing visible seekbar region');
+    // Intentional visual regression: the reported white-on-beige seek track must
+    // have non-text control contrast in both appearances.
+    expect(controlContrast(region, 'backgroundColor')).toBeGreaterThanOrEqual(
+      3,
+    );
+    const video = screen
+      .getByRole('region', { name: 'Recording player' })
+      .querySelector('video');
+    if (!video) throw new Error('Missing player video');
+    fireEvent.error(video);
+    const failure = await screen.findByText('Playback failed', { exact: true });
+    expect(textContrast(failure)).toBeGreaterThanOrEqual(4.5);
+    const mask = screen.getByRole('button', { name: /Video redacted range/i });
+    await userEvent.click(mask);
+    expect(mask.getAttribute('aria-pressed')).toBe('true');
+    await page.screenshot({
+      path: `__screenshots__/studio-redaction-${theme}.png`,
+    });
+    seekbar.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole('slider', { name: 'Playback position' })
+          .getAttribute('aria-valuenow'),
+      ).toBe('5000'),
+    );
+    expect(
+      screen.getByRole('region', { name: 'Recording player' }),
+    ).toBeTruthy();
+  },
+);
 
 beforeEach(async () => {
   await page.viewport(1440, 960);
@@ -438,7 +525,16 @@ beforeEach(async () => {
   vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(
     () => undefined,
   );
+  // IPC media URLs are synthetic; model the decoded media boundary explicitly.
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
   routeState.recordingId = 'recording-1';
+  routeState.search = { evidenceId: null, source: null, seek: null };
+  recallClient.resolveRecallEvidence.mockResolvedValue(null);
+  recallClient.listenToRecallStateChanged.mockResolvedValue(() => undefined);
   client.deleteLibraryRecording.mockResolvedValue(undefined);
   client.createLibraryRedactions.mockResolvedValue(detail);
   client.deleteLibraryRedaction.mockResolvedValue(detail);
@@ -503,19 +599,12 @@ afterEach(async () => {
   layoutStylesheet = null;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  delete document.documentElement.dataset.theme;
 });
 
 async function setTestViewport(width: number, height: number) {
   originalViewport ??= { height: window.innerHeight, width: window.innerWidth };
   await page.viewport(width, height);
-}
-
-async function selectStudioPanel(name: 'Inspector' | 'Timeline') {
-  const tab = screen.getByRole('tab', { name });
-  fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
-  fireEvent.mouseUp(tab);
-  fireEvent.click(tab);
-  await waitFor(() => expect(tab.getAttribute('aria-selected')).toBe('true'));
 }
 
 function deferred<T>() {
@@ -779,7 +868,9 @@ test('RecordingStudioScreen refresh reconciles new tracks and clips', async () =
   expect(
     screen.getByRole('button', { name: /^Microphone Segment 3$/i }),
   ).toBeTruthy();
-  expect(screen.getByText('3 segments')).toBeTruthy();
+  expect(
+    screen.getAllByRole('button', { name: /Video segment/i }),
+  ).toHaveLength(3);
 });
 
 test('RecordingStudioScreen starts AI processing from the detail header', async () => {
@@ -787,7 +878,7 @@ test('RecordingStudioScreen starts AI processing from the detail header', async 
 
   expect(await screen.findByText('Tracks')).toBeTruthy();
 
-  fireEvent.click(screen.getByRole('button', { name: /process ai/i }));
+  fireEvent.click(screen.getByRole('button', { name: /process recording/i }));
 
   await waitFor(() =>
     expect(aiClient.startRecordingAiProcessing).toHaveBeenCalledWith({
@@ -900,7 +991,9 @@ test('RecordingStudioScreen clears stale AI state after route changes', async ()
     expect(screen.getAllByText('recording-2').length).toBeGreaterThan(0),
   );
 
-  const processButton = screen.getByRole('button', { name: /process ai/i });
+  const processButton = screen.getByRole('button', {
+    name: /process recording/i,
+  });
   expect((processButton as HTMLButtonElement).disabled).toBe(false);
   expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
 });
@@ -1088,8 +1181,11 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   expect(screen.queryByText('Transcription failed')).toBeNull();
   expect(screen.getByLabelText('AI processing failed')).toBeTruthy();
   expect(
-    (screen.getByRole('button', { name: /retry ai/i }) as HTMLButtonElement)
-      .disabled,
+    (
+      screen.getByRole('button', {
+        name: /retry failed sections/i,
+      }) as HTMLButtonElement
+    ).disabled,
   ).toBe(false);
 });
 
@@ -1164,12 +1260,24 @@ test('RecordingStudioScreen explains a legacy transcription failure and links to
   );
 
   expect(
-    await screen.findByText(/provider could not process this section/i),
+    (await screen.findAllByText(/provider could not process this section/i))[0],
   ).toBeTruthy();
   expect(
-    screen.getByRole('link', { name: 'Review transcription settings' }),
+    screen.getAllByRole('link', { name: 'Review transcription settings' })[0],
   ).toBeTruthy();
-  expect(screen.getByText('ai_transcription_provider_failed')).toBeTruthy();
+  expect(screen.queryByText('ai_transcription_provider_failed')).toBeNull();
+  expect(
+    screen
+      .getAllByRole('link', { name: 'Review transcription settings' })[0]!
+      .getAttribute('href'),
+  ).toBe('/settings?tab=ai&focus=transcription');
+  await page.getByRole('button', { name: /retry failed sections/i }).click();
+  await waitFor(() =>
+    expect(aiClient.retryProcessingJob).toHaveBeenCalledWith({
+      jobId: 'job-1',
+    }),
+  );
+  expect(aiClient.startRecordingAiProcessing).not.toHaveBeenCalled();
 });
 
 test('RecordingStudioScreen shows visual frame details from video AI markers', async () => {
@@ -1939,7 +2047,7 @@ test('RecordingStudioScreen disables vertical wheel defaults while track zooming
   ).toBe(true);
 
   await waitFor(() => expect(screen.getByText('208%')).toBeTruthy());
-  expect(viewport.scrollLeft).toBe(0);
+  expect(viewport.scrollTop).toBe(0);
 
   expect(
     dispatchTrackWheel(timeline, {
@@ -3115,7 +3223,9 @@ test('RecordingStudioScreen shows scrubber thumbnail previews and paused gaps', 
   fireEvent.pointerMove(slider, { clientX: 100, pointerId: 1 });
 
   expect(await screen.findByText('Segment 1 - 0:01')).toBeTruthy();
-  expect(document.querySelector('img[src*="thumbnail/1000.jpg"]')).toBeTruthy();
+  expect(
+    screen.getByRole('tooltip').querySelector('img')?.getAttribute('src'),
+  ).toBe(playbackAssets.segments[0]!.thumbnails[1]!.url);
 
   fireEvent.pointerMove(slider, { clientX: 300, pointerId: 1 });
 
@@ -3317,7 +3427,7 @@ test('RecordingStudioScreen deletes a broken recording from the detail view', as
   expect(router.navigate).toHaveBeenCalledWith({ to: '/library' });
 });
 
-test('RecordingStudioScreen keeps the desktop track workspace tall enough to edit', async () => {
+async function loadStudioStyles() {
   layoutStylesheet = document.createElement('link');
   layoutStylesheet.rel = 'stylesheet';
   layoutStylesheet.href = '/src/index.css';
@@ -3335,6 +3445,10 @@ test('RecordingStudioScreen keeps the desktop track workspace tall enough to edi
   });
   document.head.append(layoutStylesheet);
   await stylesheetLoaded;
+}
+
+test('RecordingStudioScreen keeps the desktop track workspace tall enough to edit', async () => {
+  await loadStudioStyles();
   await setTestViewport(1440, 960);
   const { container } = render(
     <div className="h-dvh w-full">
@@ -3356,7 +3470,7 @@ test('RecordingStudioScreen keeps the desktop track workspace tall enough to edi
   expect(timeline.getBoundingClientRect().height).toBeGreaterThan(200);
 });
 
-test('RecordingStudioScreen retains playback time while switching compact panels', async () => {
+test('RecordingStudioScreen retains playback time and track edits while opening and closing its inspector', async () => {
   await setTestViewport(620, 960);
   const { container } = render(
     <div className="h-dvh w-full">
@@ -3364,7 +3478,7 @@ test('RecordingStudioScreen retains playback time while switching compact panels
     </div>,
   );
 
-  await screen.findByRole('tablist', { name: 'Recording studio panels' });
+  await screen.findByRole('button', { name: 'Inspector' });
   const video = container.querySelector('video');
   if (!video) {
     throw new Error('Expected the recording player to mount.');
@@ -3375,23 +3489,325 @@ test('RecordingStudioScreen retains playback time while switching compact panels
     value: 1.25,
   });
   fireEvent.timeUpdate(video);
-  await selectStudioPanel('Inspector');
+  act(() => useStudioTimelineStore.getState().selectLane('video-0'));
+  await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+  const inspector = await screen.findByRole('dialog', {
+    name: 'Recording inspector',
+  });
+  const trackName = within(inspector).getByRole('textbox', {
+    name: 'Track name',
+  });
+  await userEvent.fill(trackName, 'Edited video');
 
   expect(container.querySelector('video')).toBe(video);
   expect(video.currentTime).toBe(1.25);
+  await userEvent.keyboard('{Escape}');
   expect(
-    screen
-      .getByRole('tab', { name: 'Inspector' })
-      .getAttribute('aria-selected'),
-  ).toBe('true');
-
-  await selectStudioPanel('Timeline');
+    screen.queryByRole('dialog', { name: 'Recording inspector' }),
+  ).toBeNull();
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Inspector' }),
+    ),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+  expect(
+    screen.getByRole<HTMLInputElement>('textbox', { name: 'Track name' }).value,
+  ).toBe('Edited video');
 
   expect(container.querySelector('video')).toBe(video);
   expect(video.currentTime).toBe(1.25);
   expect(
     await screen.findByRole('group', { name: 'Track timeline' }),
   ).toBeTruthy();
+});
+
+test.each([
+  ['light', 1440],
+  ['dark', 1440],
+  ['light', 1024],
+  ['dark', 1024],
+  ['light', 768],
+  ['dark', 768],
+  ['light', 390],
+  ['dark', 390],
+  ['light', 320],
+  ['dark', 320],
+] as const)(
+  'Studio playback, zoom and inspector editing remain reachable in %s at %i pixels',
+  async (theme, width) => {
+    client.getLibraryRecording.mockResolvedValue(longDetail);
+    client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+    await loadStudioStyles();
+    await setTestViewport(width, 960);
+    document.documentElement.dataset.theme = theme;
+    const view = render(<RecordingStudioScreen />);
+    const play = await screen.findByRole('button', { name: 'Play' });
+    expect(
+      screen.getByRole('slider', { name: 'Playback position' }),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Zoom in tracks' }),
+    );
+    expect(
+      screen
+        .getByRole('button', { name: 'Zoom out tracks' })
+        .hasAttribute('disabled'),
+    ).toBe(false);
+    act(() => useStudioTimelineStore.getState().selectLane('video-0'));
+    if (width < 1200)
+      await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+    const name = await screen.findByRole('textbox', { name: 'Track name' });
+    await userEvent.fill(name, 'Synthetic edited screen');
+    await page.screenshot({
+      element:
+        width < 1200
+          ? screen.getByRole('dialog', { name: 'Recording inspector' })
+          : view.container,
+    });
+    if (width < 1200)
+      await userEvent.click(
+        within(
+          screen.getByRole('dialog', { name: 'Recording inspector' }),
+        ).getByRole('button', { name: 'Close' }),
+      );
+    await userEvent.click(play);
+    expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();
+    await page.screenshot({ element: view.container });
+  },
+);
+
+test('recall links resolve the exact source and seek once without autoplay, then withhold invalidated evidence', async () => {
+  const evidence: RecallEvidence = {
+    evidenceId: 'synthetic-evidence',
+    recordingId: detail.id,
+    segmentId: 'segment-1',
+    sourceKind: 'ocr',
+    sourceTrackId: 'screen-b',
+    sourceId: 'ocr-source',
+    sourceFrameRef: 'synthetic-frame',
+    documentId: 'document',
+    startOffsetMs: 1000,
+    endOffsetMs: 1500,
+    absoluteStartMs: 2000,
+    absoluteEndMs: 2500,
+    contentRevision: 'revision-1',
+    text: 'Synthetic recall source text',
+  };
+  routeState.search = {
+    evidenceId: evidence.evidenceId,
+    source: 'ocr',
+    seek: 1000,
+  };
+  const secondary = {
+    ...detail.tracks[0]!,
+    id: 'screen-b',
+    label: 'Screen B',
+    streamIndex: 3,
+  };
+  client.getLibraryRecording.mockResolvedValue({
+    ...detail,
+    tracks: [...detail.tracks, secondary],
+    segments: detail.segments.map((segment) => ({
+      ...segment,
+      videoStreams: [
+        {
+          trackId: 'video-0',
+          sourceId: 'screen-a',
+          label: 'Screen A',
+          streamIndex: 0,
+          width: 1280,
+          height: 720,
+          fps: 2,
+        },
+        {
+          trackId: 'screen-b',
+          sourceId: 'screen-b',
+          label: 'Screen B',
+          streamIndex: 3,
+          width: 1280,
+          height: 720,
+          fps: 2,
+        },
+      ],
+    })),
+  });
+  client.createLibraryPlaybackSession.mockResolvedValue({
+    ...playbackAssets,
+    segments: playbackAssets.segments.map((segment) => ({
+      ...segment,
+      videos: [
+        {
+          trackId: 'video-0',
+          label: 'Screen A',
+          url: segment.videoUrl,
+          thumbnails: segment.thumbnails,
+        },
+        {
+          trackId: 'screen-b',
+          label: 'Screen B',
+          url: `${segment.videoUrl}?source=screen-b`,
+          thumbnails: [],
+        },
+      ],
+    })),
+  });
+  recallClient.resolveRecallEvidence.mockResolvedValue(evidence);
+  let invalidate: (() => void) | undefined;
+  recallClient.listenToRecallStateChanged.mockImplementation(
+    async (handler: () => void) => {
+      invalidate = handler;
+      return () => undefined;
+    },
+  );
+  const view = render(<RecordingStudioScreen />);
+  expect(await screen.findByText(evidence.text)).toBeTruthy();
+  expect(
+    screen.getByRole('combobox', { name: 'Video source' }).textContent,
+  ).toContain('Screen B');
+  expect(screen.getByText('screen-b')).toBeTruthy();
+  await waitFor(() =>
+    expect(ocrClient.getOcrDocument).toHaveBeenCalledWith({
+      recordingId: detail.id,
+      sourceTrackId: 'screen-b',
+      timestampMs: 1000,
+      documentId: 'document',
+    }),
+  );
+  expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+  expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Skip forward' }));
+  const position = screen
+    .getByRole('slider', { name: 'Playback position' })
+    .getAttribute('aria-valuenow');
+  view.rerender(<RecordingStudioScreen />);
+  expect(
+    screen
+      .getByRole('slider', { name: 'Playback position' })
+      .getAttribute('aria-valuenow'),
+  ).toBe(position);
+  recallClient.resolveRecallEvidence.mockResolvedValue(null);
+  act(() => invalidate?.());
+  await screen.findByText(/This recall source is unavailable/);
+  expect(screen.queryByText(evidence.text)).toBeNull();
+});
+
+test.each([
+  'missing',
+  'wrong-recording',
+  'wrong-source',
+  'wrong-seek',
+] as const)(
+  'recall link %s remains unavailable without exposing or seeking evidence',
+  async (scenario) => {
+    routeState.search = {
+      evidenceId: 'synthetic-evidence',
+      source: 'ocr',
+      seek: 1000,
+    };
+    const evidence: RecallEvidence = {
+      evidenceId: 'synthetic-evidence',
+      recordingId: scenario === 'wrong-recording' ? 'other' : detail.id,
+      segmentId: 'segment-1',
+      sourceKind: scenario === 'wrong-source' ? 'desktop-audio' : 'ocr',
+      sourceTrackId: 'video-0',
+      sourceId: 'ocr-source',
+      sourceFrameRef: 'synthetic-frame',
+      documentId: 'document',
+      startOffsetMs: scenario === 'wrong-seek' ? 500 : 1000,
+      endOffsetMs: 1500,
+      absoluteStartMs: 2000,
+      absoluteEndMs: 2500,
+      contentRevision: 'revision-1',
+      text: 'Withheld synthetic evidence',
+    };
+    recallClient.resolveRecallEvidence.mockResolvedValue(
+      scenario === 'missing' ? null : evidence,
+    );
+    render(<RecordingStudioScreen />);
+    await screen.findByText(/This recall source is unavailable/);
+    expect(screen.queryByText(evidence.text)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+    expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  },
+);
+
+test('hiding a recall source reports a failed write and retries its exact interval', async () => {
+  const evidence: RecallEvidence = {
+    evidenceId: 'synthetic-evidence',
+    recordingId: detail.id,
+    segmentId: 'segment-1',
+    sourceKind: 'ocr',
+    sourceTrackId: 'video-0',
+    sourceId: 'ocr-source',
+    sourceFrameRef: 'synthetic-frame',
+    documentId: 'document',
+    startOffsetMs: 1000,
+    endOffsetMs: 1500,
+    absoluteStartMs: 2000,
+    absoluteEndMs: 2500,
+    contentRevision: 'revision',
+    text: 'Synthetic hideable source',
+  };
+  routeState.search = {
+    evidenceId: evidence.evidenceId,
+    source: 'ocr',
+    seek: 1000,
+  };
+  recallClient.resolveRecallEvidence.mockResolvedValue(evidence);
+  client.createLibraryRedactions.mockRejectedValueOnce(
+    new Error('Synthetic write failure'),
+  );
+  render(<RecordingStudioScreen />);
+  await screen.findByText(evidence.text);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Hide source interval' }),
+  );
+  await screen.findByText('This source could not be hidden. Try again.');
+  expect(screen.getByText(evidence.text)).toBeTruthy();
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Hide source interval' }),
+  );
+  await waitFor(() =>
+    expect(client.createLibraryRedactions).toHaveBeenCalledTimes(2),
+  );
+  expect(client.createLibraryRedactions).toHaveBeenLastCalledWith({
+    recordingId: detail.id,
+    ranges: [{ startOffsetMs: 1000, endOffsetMs: 1500, trackIds: ['video-0'] }],
+  });
+});
+
+test('a late recall read cannot expose an earlier source after navigation', async () => {
+  const late = deferred<RecallEvidence | null>();
+  routeState.search = { evidenceId: 'earlier', source: 'ocr', seek: 1000 };
+  recallClient.resolveRecallEvidence
+    .mockReturnValueOnce(late.promise)
+    .mockResolvedValue(null);
+  const view = render(<RecordingStudioScreen />);
+  await screen.findByText('Checking recall source…');
+  routeState.search = { evidenceId: 'newer', source: 'ocr', seek: 1000 };
+  view.rerender(<RecordingStudioScreen />);
+  await screen.findByText(/This recall source is unavailable/);
+  await act(async () =>
+    late.resolve({
+      evidenceId: 'earlier',
+      recordingId: detail.id,
+      segmentId: 'segment-1',
+      sourceKind: 'ocr',
+      sourceTrackId: 'video-0',
+      sourceId: 'ocr-source',
+      sourceFrameRef: 'synthetic-frame',
+      documentId: 'document',
+      startOffsetMs: 1000,
+      endOffsetMs: 1500,
+      absoluteStartMs: 2000,
+      absoluteEndMs: 2500,
+      contentRevision: 'revision',
+      text: 'Earlier withheld synthetic source',
+    }),
+  );
+  expect(screen.queryByText('Earlier withheld synthetic source')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
 });
 
 test('RecordingStudioScreen commits a lower mouse-lane seek before playback', async () => {
@@ -3439,6 +3855,8 @@ test('RecordingStudioScreen commits a lower mouse-lane seek before playback', as
     throw new Error('Expected the playback video element.');
   }
   video.currentTime = 0.4;
+  for (const audio of container.querySelectorAll('audio'))
+    audio.currentTime = 0.4;
   fireEvent.timeUpdate(video);
 
   await waitFor(() =>
@@ -3555,6 +3973,8 @@ test('RecordingStudioScreen shows scoped redactions on the player seekbar and sk
   const video = container.querySelector('video');
   if (!video) throw new Error('Playback video missing');
   video.currentTime = 6.2;
+  for (const audio of container.querySelectorAll('audio'))
+    audio.currentTime = 6.2;
   fireEvent.timeUpdate(video);
   expect(
     await screen.findByRole('group', { name: 'Redacted video' }),

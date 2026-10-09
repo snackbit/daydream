@@ -8,11 +8,9 @@ export function StudioSidebarSection({
   title: ReactNode;
 }) {
   return (
-    <section className="space-y-1.5 border-b pb-2">
-      <div className="text-foreground/90 border-b px-2.5 py-1.5 text-[11px] font-semibold">
-        {title}
-      </div>
-      <div className="space-y-1.5 px-2.5 text-[11px]">{children}</div>
+    <section className="space-y-4 border-b py-6">
+      <div className="text-foreground px-6 text-sm font-medium">{title}</div>
+      <div className="space-y-3 px-6 text-sm">{children}</div>
     </section>
   );
 }
@@ -25,9 +23,9 @@ export function MetadataRow({
   value: string;
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] gap-1.5">
-      <div className="text-muted-foreground truncate">{label}</div>
-      <div className="truncate">{value}</div>
+    <div className="grid min-w-0 grid-cols-[5.25rem_minmax(0,1fr)] gap-3 text-xs">
+      <div className="text-muted-foreground">{label}</div>
+      <div className="min-w-0 break-words">{value}</div>
     </div>
   );
 }

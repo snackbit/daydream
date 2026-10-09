@@ -87,6 +87,7 @@ pub(crate) use processing::cancel_job_if_inactive;
 pub(crate) use processing::{retry_processing_units_for_action, RetryProcessingUnitsInput};
 mod results;
 mod types;
+pub(crate) use models::cancel_transfers_for_maintenance;
 pub(super) use models::*;
 pub use models::{recover_model_downloads, AiModelManager};
 pub(crate) use ocr_runtime::*;
@@ -105,13 +106,13 @@ pub(crate) use results::{
 };
 pub use types::{
     ActivityEvent, ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus,
-    AiModelAsset, AiModelAssetList, AiOcrStatus, AiProviderStatus, AiTranscriptionLanguageStatus,
-    CancelAiModelDownloadInput, DeleteAiModelInput, DeleteAiProviderSecretInput,
-    DownloadAiModelInput, GetRecordingTranscriptInput, ListProcessingJobsInput, OcrRegion,
-    ProcessingChunk, ProcessingJob, ProcessingJobActionInput, ProcessingJobList, RecordingActivity,
-    RecordingAiProcessingState, RecordingAiResultInput, RecordingTranscript,
-    RecordingTranscriptSegment, RecordingTranscriptTrack, RecordingTranscriptWord,
-    RecordingTranscriptionChunkState, RecordingTranscriptionTrackState,
+    AiModelAsset, AiModelAssetList, AiModelTransfer, AiOcrStatus, AiProviderStatus,
+    AiTranscriptionLanguageStatus, CancelAiModelDownloadInput, DeleteAiModelInput,
+    DeleteAiProviderSecretInput, DownloadAiModelInput, GetRecordingTranscriptInput,
+    ListProcessingJobsInput, OcrRegion, ProcessingChunk, ProcessingJob, ProcessingJobActionInput,
+    ProcessingJobList, RecordingActivity, RecordingAiProcessingState, RecordingAiResultInput,
+    RecordingTranscript, RecordingTranscriptSegment, RecordingTranscriptTrack,
+    RecordingTranscriptWord, RecordingTranscriptionChunkState, RecordingTranscriptionTrackState,
     RecordingVisualObservations, SaveAiProviderSecretInput, SaveAiProviderSecretResult,
     SelfTestAiModelInput, StartRecordingAiProcessingInput, VisualFrameProcessingState,
     VisualRegion, VlmObservation, VlmState,

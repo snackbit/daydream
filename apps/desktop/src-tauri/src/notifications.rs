@@ -59,7 +59,15 @@ pub fn delete_all_notifications(
 #[tauri::command(rename = "executeNotificationAction")]
 pub fn execute_notification_action(
     input: ExecuteNotificationActionInput,
+    app: tauri::AppHandle,
     storage: State<'_, AppStorage>,
 ) -> Result<NotificationList, NotificationError> {
+    let _activity =
+        crate::maintenance::runtime::admit(&app, "notification-action").map_err(|message| {
+            NotificationError {
+                code: "notification_maintenance_active".into(),
+                message,
+            }
+        })?;
     commands::execute_notification_action(input, storage)
 }

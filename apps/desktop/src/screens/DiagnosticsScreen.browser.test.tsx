@@ -11,7 +11,11 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { page, userEvent } from 'vitest/browser';
 import { useDiagnosticsStore } from '@/features/diagnostics/diagnostics-store';
+import { useSettingsStore } from '@/features/settings/settings-store';
+import { defaultSettingsState } from '@/features/settings/testing/settings-browser-fixtures';
+import '@/index.css';
 import { DiagnosticsScreen } from './DiagnosticsScreen';
 
 const client = vi.hoisted(() => ({
@@ -20,9 +24,6 @@ const client = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/diagnostics/diagnostics-client', () => client);
-vi.mock('@/features/settings/use-debug-enabled', () => ({
-  useDebugEnabled: () => true,
-}));
 
 const mediaWriterCapabilities = {
   appsrc: true,
@@ -186,6 +187,14 @@ const diagnostics = {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  useSettingsStore.setState(
+    {
+      ...useSettingsStore.getInitialState(),
+      draft: { ...defaultSettingsState.settings, debug: { enabled: true } },
+      loadStatus: 'ready',
+    },
+    true,
+  );
   useDiagnosticsStore.setState(useDiagnosticsStore.getInitialState(), true);
   client.getDiagnostics.mockResolvedValue(diagnostics);
   Object.defineProperty(navigator, 'clipboard', {
@@ -212,6 +221,15 @@ test('DiagnosticsScreen shows required media writer capability support', async (
   if (!mediaWriterCard) {
     throw new Error('Expected media writer diagnostics card to render.');
   }
+
+  await userEvent.click(
+    within(mediaWriterCard).getByRole('button', { name: /^Video output/ }),
+  );
+  await userEvent.click(
+    within(mediaWriterCard).getByRole('button', {
+      name: /^Audio input and encoding/,
+    }),
+  );
 
   expect(within(mediaWriterCard).getByText('appsrc')).toBeTruthy();
   expect(within(mediaWriterCard).getByText('Matroska muxer')).toBeTruthy();
@@ -292,6 +310,63 @@ test('DiagnosticsScreen keeps its shell and retries after the initial device pro
   await waitFor(() => expect(client.getDiagnostics).toHaveBeenCalledTimes(2));
 });
 
+test('DIAG-01 clipboard rejection is visible and copying can recover with loaded facts intact', async () => {
+  const writeText = vi.mocked(navigator.clipboard.writeText);
+  writeText.mockRejectedValueOnce(new Error('Clipboard access denied.'));
+  render(<DiagnosticsScreen />);
+  await screen.findByRole('heading', { name: 'Runtime overview' });
+  await page.getByRole('button', { name: 'Copy JSON', exact: true }).click();
+  expect(
+    await screen.findByText('Unable to copy diagnostics JSON.'),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('heading', { name: 'Runtime overview' }),
+  ).toBeTruthy();
+  await page.getByRole('button', { name: 'Copy JSON', exact: true }).click();
+  expect(await screen.findByText('Diagnostics JSON copied.')).toBeTruthy();
+  expect(writeText).toHaveBeenLastCalledWith(
+    JSON.stringify(diagnostics, null, 2),
+  );
+});
+
+test('DIAG-02 a failed bundle request does not copy partial data and can be retried', async () => {
+  client.getDebugLogBundle
+    .mockRejectedValueOnce(new Error('Log file is busy.'))
+    .mockResolvedValueOnce({
+      diagnostics,
+      logTailLines: ['{"event":"synthetic_probe"}'],
+    });
+  render(<DiagnosticsScreen />);
+  await screen.findByRole('heading', { name: 'Runtime overview' });
+  await page.getByRole('button', { name: 'Copy bundle', exact: true }).click();
+  expect(await screen.findByText('Unable to copy debug bundle.')).toBeTruthy();
+  expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+  await page.getByRole('button', { name: 'Copy bundle', exact: true }).click();
+  expect(await screen.findByText('Debug bundle copied.')).toBeTruthy();
+  expect(navigator.clipboard.writeText).toHaveBeenCalledOnce();
+  expect(client.getDebugLogBundle).toHaveBeenCalledTimes(2);
+});
+
+test('DIAG-03 raw diagnostics disclosure can be opened and closed without a new device probe', async () => {
+  render(<DiagnosticsScreen />);
+  await screen.findByText('Raw diagnostics JSON');
+  const trigger = screen.getByRole('button', { name: 'Raw diagnostics JSON' });
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  await userEvent.click(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('true');
+  expect(
+    await screen.findByText(/"identifier": "com.snackbit.daydream"/),
+  ).toBeTruthy();
+  await userEvent.click(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  await waitFor(() =>
+    expect(
+      screen.queryByText(/"identifier": "com.snackbit.daydream"/),
+    ).toBeNull(),
+  );
+  expect(client.getDiagnostics).toHaveBeenCalledOnce();
+});
+
 test('DiagnosticsScreen preserves loaded facts and exposes retry after refresh fails', async () => {
   useDiagnosticsStore.setState({
     diagnostics,
@@ -318,3 +393,26 @@ test('DiagnosticsScreen preserves loaded facts and exposes retry after refresh f
   ).toBeTruthy();
   await waitFor(() => expect(client.getDiagnostics).toHaveBeenCalledTimes(2));
 });
+
+test.each(['light', 'dark'])(
+  'diagnostic actions fit %s across desktop and narrow widths',
+  async (theme) => {
+    document.documentElement.dataset.theme = theme;
+    render(<DiagnosticsScreen />);
+    await screen.findByRole('heading', { name: 'Runtime overview' });
+    for (const width of [1440, 1024, 768, 390, 320]) {
+      await page.viewport(width, 900);
+      for (const name of ['Copy bundle', 'Copy JSON', 'Refresh']) {
+        const bounds = screen
+          .getByRole('button', { name })
+          .getBoundingClientRect();
+        expect(bounds.left).toBeGreaterThanOrEqual(0);
+        expect(bounds.right).toBeLessThanOrEqual(width);
+      }
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+      await page.screenshot();
+    }
+    delete document.documentElement.dataset.theme;
+    await page.viewport(1440, 960);
+  },
+);

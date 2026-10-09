@@ -26,10 +26,18 @@ pub enum RecorderQualityPreset {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartRecordingInput {
+    #[serde(default)]
+    pub(crate) setup: Option<crate::recorder::source_recording::SaveCaptureSetupInput>,
     pub(crate) desktop_audio_source_id: Option<String>,
     pub(crate) microphone_audio_source_id: Option<String>,
     pub(crate) quality_preset: RecorderQualityPreset,
     pub(crate) scene_id: String,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingSaved {
+    pub recording_id: String,
+    pub saved_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,6 +138,10 @@ pub struct CaptureTimingDiagnostics {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderStatus {
+    #[serde(default)]
+    pub(crate) status_revision: u64,
+    #[serde(default)]
+    pub(crate) cleanup_disposition: RecorderCleanupDisposition,
     pub(crate) active_recording_id: Option<String>,
     pub(crate) active_scene_id: Option<String>,
     pub(crate) active_segment_id: Option<String>,
@@ -138,6 +150,14 @@ pub struct RecorderStatus {
     pub(crate) last_error: Option<RecorderError>,
     pub(crate) state: RecorderState,
     pub(crate) updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecorderCleanupDisposition {
+    #[default]
+    Ready,
+    Quarantined,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

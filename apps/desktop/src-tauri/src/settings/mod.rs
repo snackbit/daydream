@@ -3,11 +3,14 @@ mod credentials;
 mod defaults;
 pub(crate) mod input_activity;
 mod persistence;
+mod recall_types;
+mod recall_validation;
 mod service;
 mod types;
 mod validation;
 mod vision_readiness;
 
+pub(crate) use credentials::prune_unreferenced_secrets;
 pub use defaults::*;
 pub use service::load_app_settings;
 pub use types::*;

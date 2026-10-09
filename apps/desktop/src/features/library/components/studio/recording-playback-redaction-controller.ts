@@ -18,6 +18,8 @@ import {
 
 interface PlaybackRedactionControllerInput {
   applyRedactedAudioSettings: (activeRedactedTrackIds: Set<string>) => void;
+  clockTime: () => number;
+  audioRefs: RefObject<Map<string, HTMLAudioElement>>;
   currentSegment: { playbackOffsetMs: number } | null;
   currentTimelineMs: number;
   detail: LibraryRecordingDetail;
@@ -30,6 +32,8 @@ interface PlaybackRedactionControllerInput {
 
 export function usePlaybackRedactionController({
   applyRedactedAudioSettings,
+  clockTime,
+  audioRefs,
   currentSegment,
   currentTimelineMs,
   detail,
@@ -82,6 +86,31 @@ export function usePlaybackRedactionController({
         timelineMs,
         REDACTION_START_GUARD_MS,
       );
+      // A follower can be ahead of the shared clock while its rate converges.
+      // Protect its actual media position as well as the target position.
+      if (isPlaying && currentSegment) {
+        const origin = currentSegment.playbackOffsetMs + streamStartMs;
+        for (const [trackId, audio] of audioRefs.current) {
+          if (
+            redactedTracksAtTimelineMs(
+              detail,
+              origin + audio.currentTime * 1000,
+              REDACTION_START_GUARD_MS,
+            ).has(trackId)
+          )
+            nextRedactedTrackIds.add(trackId);
+        }
+        const video = videoRef.current;
+        if (video) {
+          const actual = redactedTracksAtTimelineMs(
+            detail,
+            origin + video.currentTime * 1000,
+            REDACTION_START_GUARD_MS,
+          );
+          for (const id of videoTrackIds)
+            if (actual.has(id)) nextRedactedTrackIds.add(id);
+        }
+      }
       if (!setsEqual(redactedTrackIdsRef.current, nextRedactedTrackIds)) {
         redactedTrackIdsRef.current = nextRedactedTrackIds;
         setRedactedTrackIds(nextRedactedTrackIds);
@@ -114,6 +143,11 @@ export function usePlaybackRedactionController({
     },
     [
       applyRedactedAudioSettings,
+      audioRefs,
+      currentSegment,
+      isPlaying,
+      streamStartMs,
+      videoRef,
       detail,
       redactedTrackIdsRef,
       totalDurationMs,
@@ -122,13 +156,11 @@ export function usePlaybackRedactionController({
   );
 
   const videoTimelineMs = useCallback(
-    (video: HTMLVideoElement) =>
+    (_video: HTMLVideoElement) =>
       currentSegment
-        ? currentSegment.playbackOffsetMs +
-          streamStartMs +
-          video.currentTime * 1000
+        ? currentSegment.playbackOffsetMs + streamStartMs + clockTime() * 1000
         : 0,
-    [currentSegment, streamStartMs],
+    [clockTime, currentSegment, streamStartMs],
   );
 
   const updateRedactionStateFromVideo = useCallback(() => {
