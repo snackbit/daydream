@@ -25,6 +25,7 @@ mod segments;
 mod settings;
 mod video_sources;
 pub use ai::recall_ocr_visibility_cte;
+pub use ai::{publish_ready_replacement, publish_replacement_frame, replacement_pending};
 #[cfg(test)]
 pub(crate) use recall::tests::seed_recall_fixture;
 pub use recall::*;

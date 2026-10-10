@@ -119,6 +119,7 @@ pub(super) fn transcription_tracks_for_recording(
                 .filter(|track| track.source_role == source_role)
                 .flat_map(|track| track.segments.clone())
                 .collect::<Vec<_>>();
+            let mut assigned_segments = BTreeSet::new();
             let track_chunks = chunks
                 .iter()
                 .filter(|chunk| {
@@ -129,7 +130,22 @@ pub(super) fn transcription_tracks_for_recording(
                                 .is_some_and(|role| role == &source_role)
                         })
                 })
-                .map(|chunk| transcription_chunk_state(chunk, &transcript_segments))
+                .map(|chunk| {
+                    // Partially covered historical chunks retain their identity
+                    // and status. Each canonical utterance belongs to the first
+                    // matching (newest) chunk so overlapping history adds no
+                    // duplicate transcript buttons to the timeline.
+                    let owned = transcript_segments
+                        .iter()
+                        .filter(|segment| {
+                            segment.start_offset_ms < chunk.end_offset_ms.unwrap_or(0)
+                                && segment.end_offset_ms > chunk.start_offset_ms.unwrap_or(0)
+                                && assigned_segments.insert(segment.id.clone())
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    transcription_chunk_state(chunk, &owned)
+                })
                 .collect::<Vec<_>>();
             let (status, status_label) =
                 transcription_track_status(&track_chunks, library_track_id.is_none());

@@ -34,6 +34,9 @@ mod deadline;
 #[cfg(all(test, target_os = "linux"))]
 mod deadline_tests;
 mod finalization;
+#[cfg(test)]
+#[path = "tests/fragments.rs"]
+mod fragment_tests;
 mod fragments;
 mod paths;
 mod pause;

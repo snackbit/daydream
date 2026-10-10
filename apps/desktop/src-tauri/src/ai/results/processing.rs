@@ -38,15 +38,22 @@ pub(crate) fn processing_state_for_recording(
         .cloned()
         .map(processing_chunk_from_row)
         .collect::<Vec<_>>();
+    let transcription_chunks =
+        super::transcription_history::transcription_history(storage, recording_id, &chunks)?;
     let transcription_tracks = transcription_tracks_for_recording(
         recording_id,
         &recording_segments,
         &recording_tracks,
-        &chunks,
+        &transcription_chunks,
         &transcript,
     );
+    let (reprocessing_scopes, results_revision) = storage
+        .with_connection(|connection| processing::reprocessing::progress(connection, recording_id))
+        .map_err(storage_error)?;
 
     Ok(RecordingAiProcessingState {
+        reprocessing_scopes,
+        results_revision,
         chunks,
         job: job_row.map(|job| processing_job_from_row_with_storage(storage, job)),
         recording_id: recording_id.to_string(),

@@ -165,6 +165,24 @@ fn recording_stats_include_active_segment_and_total_file_sizes() {
     assert_eq!(stats.segment_count, 2);
     assert_eq!(stats.updated_at_ms, 300);
 
+    // A rollover can open before its predecessor's close is persisted. Count
+    // disjoint intervals instead of counting both pending fragments through now.
+    storage.with_connection(|connection| {
+        let next = storage::create_recording_segment(connection, &storage::CreateRecordingSegmentInput {
+            id: Uuid::now_v7().to_string(), recording_id: recording_id.clone(),
+            segment_index: 3, started_at_ms: 275,
+            file_path: format!("{}/0003.mkv", app_data_dir.display()),
+        })?;
+        connection.execute("UPDATE recording_segments SET capture_run_id='synthetic-rollover' WHERE id IN (?1,?2)", rusqlite::params![active_segment.id, next.id])
+    }).unwrap();
+    assert_eq!(
+        collect_recorder_recording_stats(&storage, &manager, 300)
+            .unwrap()
+            .unwrap()
+            .recorded_duration_ms,
+        150
+    );
+
     let _ = fs::remove_dir_all(app_data_dir);
 }
 

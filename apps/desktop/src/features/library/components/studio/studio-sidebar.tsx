@@ -1,14 +1,18 @@
+import { useMemo } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryRecordingDetail,
   LibraryRecordingRedaction,
   RecordingAiProcessingState,
   RecallEvidence,
+  RecordingActivity,
 } from '@daydream/shared';
 import { AlertTriangle, Lock } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ocrFrameProcessingRevision } from '@/features/ai/ocr/ocr-processing-revision';
+import { buildInspectorContent } from './inspector/content/inspector-content';
+import { PlaybackInspectorFeed } from './inspector/content/playback-inspector-feed';
 import { OcrDocumentInspector } from './inspector/ocr/ocr-document-inspector';
 import { RecallEvidenceInspector } from './inspector/recall-evidence-inspector';
 import { RecordingInspectorSummary } from './inspector/recording-inspector-summary';
@@ -49,6 +53,8 @@ export interface StudioSidebarModel {
   debugEnabled?: boolean;
   timelineOffsetMs?: number;
   recallEvidence?: RecallEvidence | null;
+  activity?: RecordingActivity | null;
+  isPlaying?: boolean;
 }
 
 export interface StudioSidebarProps {
@@ -57,6 +63,16 @@ export interface StudioSidebarProps {
 }
 
 export function StudioSidebar({ actions, model }: StudioSidebarProps) {
+  const content = useMemo(
+    () =>
+      buildInspectorContent({
+        detail: model.detail,
+        state: model.aiProcessingState,
+        activity: model.activity ?? null,
+        visualFrames: model.visualFrames,
+      }),
+    [model.detail, model.aiProcessingState, model.activity, model.visualFrames],
+  );
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const timelineSelection = useStudioTimelineStore((state) => state.selection);
@@ -101,10 +117,15 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
     selectedLanes,
     selectedRedactions,
     selectedSegments,
+    debugEnabled: model.debugEnabled === true,
+    content,
   });
 
   return (
-    <aside className="bg-muted text-foreground rounded-panel flex h-full min-h-0 flex-col overflow-hidden">
+    <aside
+      data-studio-preserve-selection
+      className="bg-muted text-foreground rounded-panel flex h-full min-h-0 flex-col overflow-hidden"
+    >
       <div className="shrink-0 border-b px-6 py-5">
         <h2 className="text-sm font-medium">Inspector</h2>
       </div>
@@ -117,6 +138,7 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                 onSeek={actions.onSeek}
                 onClear={actions.onClearActivitySelection}
                 onCreateRedactions={actions.onCreateRedactions}
+                debugEnabled={model.debugEnabled === true}
               />
               {model.recallEvidence.sourceKind === 'ocr' ? (
                 <OcrDocumentInspector
@@ -166,6 +188,7 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
               onClearSelection={actions.onClearActivitySelection}
               onSeek={actions.onSeek}
               selection={model.selection}
+              debugEnabled={model.debugEnabled === true}
             />
           ) : selectedVisualFrames.length > 0 ? (
             selectedVisualFrames.map((frame) => (
@@ -186,6 +209,11 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                   debugEnabled: model.debugEnabled === true,
                 }}
                 frame={frame}
+                sourceLabel={
+                  model.detail.tracks.find(
+                    (track) => track.id === frame.sourceTrackId,
+                  )?.label ?? 'Screen'
+                }
                 key={frame.id}
                 onClear={clearSelection}
                 onSeek={actions.onSeek}
@@ -224,10 +252,19 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
           {!model.recallEvidence &&
           model.selection === null &&
           !hasTimelineSelection ? (
-            <RecordingInspectorSummary
-              aiProcessingState={model.aiProcessingState}
-              detail={model.detail}
-            />
+            model.debugEnabled ? (
+              <RecordingInspectorSummary
+                aiProcessingState={model.aiProcessingState}
+                detail={model.detail}
+              />
+            ) : (
+              <PlaybackInspectorFeed
+                index={content}
+                time={model.timelineOffsetMs ?? 0}
+                isPlaying={model.isPlaying === true}
+                onSeek={actions.onSeek}
+              />
+            )
           ) : null}
         </div>
       </ScrollArea>
@@ -244,6 +281,8 @@ function renderTimelineSelection({
   selectedLanes,
   selectedRedactions,
   selectedSegments,
+  debugEnabled,
+  content,
 }: {
   actions: StudioSidebarActions;
   aiProcessingState: RecordingAiProcessingState | null;
@@ -253,6 +292,8 @@ function renderTimelineSelection({
   selectedLanes: StudioLaneDraft[];
   selectedRedactions: LibraryRecordingRedaction[];
   selectedSegments: StudioSidebarSegmentSelection[];
+  debugEnabled: boolean;
+  content: ReturnType<typeof buildInspectorContent>;
 }) {
   if (ranges.length > 0) {
     return (
@@ -263,6 +304,7 @@ function renderTimelineSelection({
         onCreateRedactions={actions.onCreateRedactions}
         onUnredactRanges={actions.onUnredactRanges}
         selections={ranges}
+        content={content}
       />
     );
   }
@@ -284,6 +326,7 @@ function renderTimelineSelection({
         aiProcessingState={aiProcessingState}
         key={segment.clipId}
         segment={segment}
+        debugEnabled={debugEnabled ?? false}
       />
     ));
   }
@@ -294,6 +337,7 @@ function renderTimelineSelection({
         aiProcessingState={aiProcessingState}
         key={lane.trackId}
         lane={lane}
+        debugEnabled={debugEnabled ?? false}
       />
     ));
   }

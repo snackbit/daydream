@@ -40,6 +40,7 @@ test('microphone transcript Inspector keeps source status and provenance with it
 
   render(
     <SelectedSourceInspector
+      debugEnabled
       onClearSelection={onClearSelection}
       onSeek={onSeek}
       selection={selection}

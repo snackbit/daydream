@@ -237,6 +237,10 @@ pub struct RecordingAiResultInput {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiProcessingState {
+    #[serde(default)]
+    pub reprocessing_scopes: Vec<super::processing::reprocessing::RecordingReprocessingProgress>,
+    #[serde(default)]
+    pub results_revision: String,
     pub chunks: Vec<ProcessingChunk>,
     pub job: Option<ProcessingJob>,
     pub recording_id: String,

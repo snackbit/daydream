@@ -16,12 +16,14 @@ export interface SelectedSourceInspectorProps {
   onClearSelection: () => void;
   onSeek: (timelineOffsetMs: number) => void;
   selection: StudioInspectorSelection;
+  debugEnabled?: boolean;
 }
 
 export function SelectedSourceInspector({
   onClearSelection,
   onSeek,
   selection,
+  debugEnabled = false,
 }: SelectedSourceInspectorProps) {
   const handleSeek = useCallback(() => {
     onSeek(selection.timelineOffsetMs);
@@ -30,7 +32,9 @@ export function SelectedSourceInspector({
 
   return (
     <InspectorSection title={title}>
-      {selection.kind === 'activity-interval' ? (
+      {!debugEnabled ? (
+        <ReadableSelectedSource selection={selection} />
+      ) : selection.kind === 'activity-interval' ? (
         <ActivityIntervalFields selection={selection} />
       ) : selection.kind === 'activity-event' ? (
         <ActivityEventFields selection={selection} />
@@ -59,6 +63,53 @@ export function SelectedSourceInspector({
         </Button>
       </div>
     </InspectorSection>
+  );
+}
+
+function ReadableSelectedSource({
+  selection,
+}: {
+  selection: StudioInspectorSelection;
+}) {
+  if (selection.kind === 'transcript-segment')
+    return (
+      <>
+        <p className="text-muted-foreground text-xs">
+          {transcriptionSourceLabel(selection.sourceRole)} ·{' '}
+          {formatTimelineOffset(selection.startOffsetMs)}–
+          {formatTimelineOffset(selection.endOffsetMs)}
+        </p>
+        <p className="text-sm leading-6 break-words whitespace-pre-wrap">
+          {selection.text}
+        </p>
+      </>
+    );
+  if (selection.kind === 'activity-event')
+    return (
+      <>
+        <p className="font-medium">
+          {selection.applicationName ?? 'Window focus changed'}
+        </p>
+        {selection.title ? (
+          <p className="leading-6 break-words">{selection.title}</p>
+        ) : null}
+        <p className="text-muted-foreground text-xs">
+          {formatTimelineOffset(selection.offsetMs)}
+        </p>
+      </>
+    );
+  return (
+    <>
+      <p>
+        {activitySourceLabel(selection.sourceKind)} ·{' '}
+        {selection.state === 'active' ? 'Active' : 'Idle'}
+      </p>
+      <p className="text-muted-foreground text-xs">
+        {formatTimelineOffset(selection.startOffsetMs)}–
+        {formatTimelineOffset(selection.endOffsetMs)} ·{' '}
+        {formatDuration(selection.endOffsetMs - selection.startOffsetMs)}
+      </p>
+    </>
   );
 }
 

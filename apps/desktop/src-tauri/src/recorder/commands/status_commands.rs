@@ -9,8 +9,8 @@ use super::super::{
     manager::{now_ms, RecorderManager},
     platform,
     types::{
-        RecorderError, RecorderPerformanceStats, RecorderRecordingStats, RecorderStatus,
-        WindowProtectionStatus,
+        RecorderError, RecorderPerformanceStats, RecorderRecordingStats, RecorderState,
+        RecorderStatus, WindowProtectionStatus,
     },
 };
 
@@ -68,11 +68,31 @@ pub(crate) fn collect_recorder_recording_stats(
     Ok(Some(RecorderRecordingStats {
         recorded_duration_ms: segments
             .iter()
-            .map(|segment| {
+            .enumerate()
+            .map(|(index, segment)| {
                 if let Some(duration) = segment.duration_ms {
                     duration.max(0) as u64
                 } else if segment.state == "recording" {
-                    timestamp_ms.saturating_sub(segment.started_at_ms.max(0) as u64)
+                    // Pending closure must not count through a successor that
+                    // already owns the live interval. Different runs can have
+                    // real pauses; only known continuity supplies this bound.
+                    let end = segments
+                        .get(index + 1)
+                        .filter(|next| {
+                            segment
+                                .capture_run_id
+                                .as_ref()
+                                .is_some_and(|run| next.capture_run_id.as_ref() == Some(run))
+                        })
+                        .map(|next| next.started_at_ms.max(0) as u64)
+                        .or_else(|| {
+                            (index + 1 == segments.len()
+                                && status.state == RecorderState::Recording)
+                                .then_some(timestamp_ms)
+                        });
+                    end.map_or(0, |end| {
+                        end.saturating_sub(segment.started_at_ms.max(0) as u64)
+                    })
                 } else {
                     0
                 }

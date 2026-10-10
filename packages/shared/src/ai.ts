@@ -4,6 +4,7 @@ export * from './ai/models.js';
 export * from './ai/notifications.js';
 export * from './ai/ocr.js';
 export * from './ai/processing.js';
+export * from './ai/reprocessing.js';
 export * from './ai/provider-kinds.js';
 export * from './ai/results.js';
 export * from './ai/settings.js';

@@ -38,7 +38,8 @@ function visualProcessingSignature(
   aiProcessingState: RecordingAiProcessingState | null,
 ): string {
   return (
-    aiProcessingState?.chunks
+    `${aiProcessingState?.resultsRevision ?? ''}|` +
+    (aiProcessingState?.chunks
       .filter(
         (chunk) => chunk.sourceKind === 'ocr' || chunk.sourceKind === 'vlm',
       )
@@ -46,6 +47,6 @@ function visualProcessingSignature(
         (chunk) =>
           `${chunk.id}:${chunk.sourceKind}:${chunk.status}:${chunk.updatedAtMs}:${chunk.errorCode ?? ''}`,
       )
-      .join('|') ?? ''
+      .join('|') ?? '')
   );
 }

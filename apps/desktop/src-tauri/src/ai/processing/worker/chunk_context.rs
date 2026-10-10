@@ -31,7 +31,9 @@ impl<'a> ProcessingChunkContext<'a> {
     pub(super) fn mark_succeeded(&self, result_code: Option<&str>) -> Result<(), AiError> {
         let updated = self
             .storage
-            .with_connection(|connection| {
+            .with_connection_mut(|connection| {
+                let transaction = connection.transaction()?;
+                let connection = &transaction;
                 let current = storage::get_processing_chunk(connection, &self.chunk.id)?
                     .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
                 if current.attempt_count != self.chunk.attempt_count {
@@ -63,6 +65,8 @@ impl<'a> ProcessingChunkContext<'a> {
                         )?;
                     }
                 }
+                storage::publish_ready_replacement(connection, &self.chunk.id)?;
+                transaction.commit()?;
                 Ok(updated)
             })
             .map_err(storage_error)?;

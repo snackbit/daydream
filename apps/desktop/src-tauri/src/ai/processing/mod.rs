@@ -2,6 +2,7 @@ mod activity;
 mod audio;
 mod ocr_documents;
 mod planning;
+pub(crate) mod reprocessing;
 mod source_planning;
 pub(in crate::ai) use source_planning::{source_segment, visual_source_chunk_plans};
 pub(crate) mod provider_test;

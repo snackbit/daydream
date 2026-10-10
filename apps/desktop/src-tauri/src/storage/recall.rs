@@ -338,7 +338,7 @@ const OCR_RUNS: &str = r#"
  lag(segment_id) OVER w previous_segment,lag(config_fingerprint) OVER w previous_config,
  lag(provenance) OVER w previous_provenance
  FROM current_visible WHERE status='succeeded' AND normalized_text!=''
- AND EXISTS(SELECT 1 FROM processing_jobs j WHERE j.id=current_visible.job_id AND j.status!='cancelled')
+ AND (EXISTS(SELECT 1 FROM processing_jobs j WHERE j.id=current_visible.job_id AND j.status!='cancelled') OR EXISTS(SELECT 1 FROM processing_replacement_frames rf WHERE rf.chunk_id=current_visible.chunk_id AND rf.frame_ms=current_visible.frame_timestamp_ms))
  WINDOW w AS(PARTITION BY source_track_id ORDER BY frame_timestamp_ms,id)
 ), runs AS (
  SELECT *,sum(CASE WHEN normalized_text=previous_text AND frame_timestamp_ms=previous_end
@@ -356,12 +356,13 @@ const TRANSCRIPTS: &str = r#"
 SELECT t.id,t.segment_id,CASE WHEN t.source_role='microphone' THEN 'microphone-'||s.microphone_audio_stream_index ELSE 'desktop-audio-'||s.desktop_audio_stream_index END,t.start_offset_ms,t.end_offset_ms,t.text,
  json_object('jobId',t.job_id,'chunkId',t.chunk_id,'processingTrackId',t.track_id,'createdAt',t.created_at_ms,'provider',t.provider,'model',t.model),t.source_role
 FROM transcript_segments t JOIN processing_chunks p ON p.id=t.chunk_id JOIN processing_jobs j ON j.id=t.job_id JOIN recording_segments s ON s.id=t.segment_id
-WHERE t.recording_id=?1 AND trim(t.text)!='' AND j.status!='cancelled' AND p.status IN('running','succeeded','completed-with-errors')
+WHERE t.recording_id=?1 AND trim(t.text)!='' AND (j.status!='cancelled' OR EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=t.chunk_id AND rg.committed=1)) AND p.status IN('running','succeeded','completed-with-errors')
+AND NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=t.chunk_id AND rg.committed=0)
 AND (CASE WHEN t.source_role='microphone' THEN s.microphone_audio_stream_index ELSE s.desktop_audio_stream_index END) IS NOT NULL
 AND NOT EXISTS(SELECT 1 FROM recording_protection_spans ps WHERE ps.recording_id=t.recording_id AND ps.status!='materialized')
 AND NOT EXISTS(SELECT 1 FROM redactions r WHERE r.recording_id=t.recording_id AND r.start_offset_ms<t.end_offset_ms AND r.end_offset_ms>t.start_offset_ms AND
  (json_type(r.track_ids_json)!='array' OR json_array_length(r.track_ids_json)=0 OR EXISTS(SELECT 1 FROM json_each(r.track_ids_json) x WHERE x.type!='text') OR EXISTS(SELECT 1 FROM json_each(r.track_ids_json) x WHERE x.value=t.track_id OR x.value=p.track_id OR x.value=(CASE WHEN t.source_role='microphone' THEN 'microphone-'||s.microphone_audio_stream_index ELSE 'desktop-audio-'||s.desktop_audio_stream_index END))))
-AND NOT EXISTS(SELECT 1 FROM processing_chunks newer JOIN processing_jobs nj ON nj.id=newer.job_id WHERE newer.recording_id=t.recording_id AND newer.segment_id=t.segment_id AND newer.source_kind='audio' AND newer.track_id=t.track_id AND newer.start_offset_ms<t.end_offset_ms AND newer.end_offset_ms>t.start_offset_ms AND nj.status!='cancelled' AND (nj.created_at_ms>j.created_at_ms OR (nj.created_at_ms=j.created_at_ms AND nj.id>j.id)))
+AND NOT EXISTS(SELECT 1 FROM processing_chunks newer JOIN processing_jobs nj ON nj.id=newer.job_id WHERE newer.recording_id=t.recording_id AND newer.segment_id=t.segment_id AND newer.source_kind='audio' AND newer.track_id=t.track_id AND newer.start_offset_ms<t.end_offset_ms AND newer.end_offset_ms>t.start_offset_ms AND nj.status!='cancelled' AND NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc WHERE rc.chunk_id=newer.id) AND (nj.created_at_ms>j.created_at_ms OR (nj.created_at_ms=j.created_at_ms AND nj.id>j.id)))
 "#;
 
 #[cfg(test)]

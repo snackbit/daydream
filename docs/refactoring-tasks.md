@@ -1,5 +1,129 @@
 # Refactoring Tasks
 
+## Completed: reprocessing publication review fixes
+
+Review found last-reference OCR cache pruning, loss of unreplaced sampling
+intervals, track-wide audio history supersession and cancelled unpublished
+passes blocking retries. OCR publication now establishes the replacement's
+cache reference before pruning and retains eligible interval tails with their
+original frame references, raw links and publication ownership. Audio history
+merges covered ranges and assigns each canonical utterance once. Cancelled
+unpublished passes no longer supersede older retries; published replacements
+remain protected. Retained historical status paints behind current transcript
+actions. No additional migration or IPC contract changes were needed.
+
+Focused regressions reproduced the findings before their fixes. All 12 targeted
+native tests and 11 timeline/privacy browser scenarios passed, alongside the
+98-scenario Studio workflow check. Final `yarn check` passed (594 JavaScript
+tests); native formatting, Clippy and the full native suite passed (587 unit
+tests plus 3 resource tests; 4 hardware tests ignored). Logs are
+`/tmp/daydream-review-green.log`, `/tmp/daydream-review-ui-green.log`,
+`/tmp/daydream-review-js-final.log` and
+`/tmp/daydream-review-native-gate.log`. All new fixtures use synthetic content;
+live capture and real model/provider reruns were not exercised.
+
+Source ownership stays focused: the transcript read-model owner is 342 lines,
+the timeline transcription surface is 300 lines and OCR interval retention has
+a 54-line storage owner. The existing Studio root has 63 direct TypeScript
+files; its flat navigation remains follow-up debt. No source-size budget was
+introduced or exceeded by these fixes.
+
+## Completed: Studio selection, playback context and scoped reprocessing
+
+Studio layout, mixed inspector content, selection dismissal and reprocessing
+now have focused owners under `layout/`, `inspector/content/`, `interactions/`
+and `reprocessing/`. Timeline lane composition moved under `timeline/`;
+`track-timeline.tsx` remains the 444-line orchestration owner. The native planner,
+utterance expansion and admission live under `ai/processing/reprocessing/`,
+with transactional publication under `storage/ai/reprocessing.rs`.
+
+Track and range menus preview current settings and effective audio utterance
+boundaries. A new additive migration records replacement groups and published
+frames. Prior audio remains visible and searchable until every child succeeds;
+video publishes each successful sampling window and retains failed windows.
+Source redactions, stale previews, partial failures and cancellation retain
+their eligibility and publication ownership. Existing audio/OCR commands use
+the same planner while preserving their command and response contracts.
+
+Normal inspectors show chronological source text and playback context;
+technical provenance remains available in debug mode. Manual horizontal
+browsing detaches playback follow, with an explicit resume action. Frozen
+inspector browsing is invalidated when its content index changes.
+
+Verification: immutable install and `yarn check` passed (593
+JavaScript tests). Focused inspector, right-click and dropdown menus, selection
+dismissal, playback follow and privacy invalidation checks passed. Synthetic
+screenshots were reviewed in light/dark modes, including 390-pixel reprocessing
+and Studio layouts. Native scoped admission, settings pinning, stale previews,
+redactions, cross-chunk publication and frame failure/cancellation checks passed
+in the first full run. Schema-version assertions and the legacy OCR fixture's
+active-job setup were updated after that run. Final formatting, Clippy and the
+full native suite passed (581 unit tests plus 3 resource tests; 4 hardware tests
+ignored). The final Studio browser run passed all 95 scenarios, including
+menu/dialog selection preservation and dismissal outside the workspace.
+Gate logs are `/tmp/daydream-studio-js-final.log`,
+`/tmp/daydream-studio-native-clippy.log`,
+`/tmp/daydream-studio-native-final.log` and
+`/tmp/daydream-studio-dismissal-browser.log`. Tests and screenshots use synthetic
+content. Live device capture and real model/provider reruns were not exercised
+for this change.
+
+## Completed: full playback duration and waveform timing
+
+Playback-run construction used a fragment's nullable persisted base directly,
+so a four-fragment recording with only its first base persisted collapsed to the
+final fragment's duration. Both ends now use the existing playback timeline
+resolver. Rollover openings happen before predecessor finalization; their bases
+are persisted from the capture run's durable origin in the same transaction.
+Coverage includes missing/mixed bases, real pause/resume offsets, duplicate
+events, ambiguous origins and rollback on conflicting durable provenance.
+
+Waveform clipping reduced the SVG width without removing the out-of-range
+samples, moving audio peaks earlier. Full-duration tile placement and interval
+bin geometry preserve time through clipping, zoom and partial final bins. The
+Chromium regressions reproduced both clipped-beep displacement and the partial
+bin error, then passed at desktop/narrow widths in light/dark themes.
+
+The full HTTP regression also found corrupt AAC packets when a long audio-only
+run accumulated one large MP4 fragment on a non-seekable pipe. Audio now uses
+one-second MP4 fragments. Exact served bytes decode without errors; both tracks
+keep beeps at 4, 34.279, 64.279 and 94.279 seconds, with correct total duration
+and late audio/video seeking.
+
+The long Tauri journey also exposed a separate close/open ordering fault:
+a fragment close polled before its successor open was discarded. That fragment
+remained unfinished after Pause, and live counters double-counted its interval.
+The capture runtime now retains closures until their successor boundary is
+known and drains them on successful Stop/Pause. Live counters bound pending
+fragments by known successor starts within the same run. The counter regression
+reproduced the overcount. Updated lifecycle checks, formatting, Clippy and the
+full native suite (576 unit tests plus 3 resource tests; 4 hardware tests ignored)
+passed. The fresh 103-second Tauri journey then passed all default phases,
+including actual rollovers, full visible player duration, all fragments finalized
+and playable, and native seek/play after 30, 60 and 90 seconds. The final screenshot
+shows playback at 1:31 of 1:44, including the resumed capture.
+
+Verification: immutable install and `yarn check` passed (586 JavaScript tests).
+Targeted waveform checks passed after adding light/dark coverage, followed by
+desktop typecheck. Native format, Clippy and full tests passed after the lifecycle
+fixes. The fresh native journey used `DAYDREAM_E2E_LONG_PLAYBACK=1`; artifacts are
+under `/tmp/daydream-native-e2e.L7Qrfn`. Gate logs are
+`/tmp/daydream-full-playback-js-gate.log`,
+`/tmp/daydream-full-playback-native-gate.log` and
+`/tmp/daydream-full-playback-native-journeys.log`.
+
+No media, authored data, dependencies, IPC fields or schema migration changes
+are needed. Only synthetic recordings are used for automated verification.
+Live portal/audio devices were not retested. Existing recordings with finalized
+fragments use the corrected resolver when reopened; this does not repair missing
+captured samples or automatically finalize historical incomplete fragments.
+
+Source structure: existing playback `http.rs` (418 lines) remains the HTTP
+streaming owner; this changes only its audio mux options. Existing manager
+`mod.rs` (404 lines) gains test-module wiring only. New native tests are grouped
+under `tests/`; the long native UI scenario has its own helper. Dense playback
+and manager directories retain existing navigation debt.
+
 ## Completed: review privacy ownership, recovery outputs and timeline consumers
 
 Recall indexing now acquires a source recording's processing lease before

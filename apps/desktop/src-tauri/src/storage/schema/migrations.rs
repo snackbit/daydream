@@ -13,6 +13,7 @@ mod processing_units;
 mod protected_windows;
 mod recall;
 mod recovery;
+mod reprocessing;
 mod scene_recording;
 mod settings_processing;
 mod source_video;
@@ -48,5 +49,6 @@ pub(in crate::storage) fn migrations() -> Migrations<'static> {
     migrations.extend(recovery::migrations());
     migrations.extend(capture_runs::migrations());
     migrations.extend(recovery::output_ownership_migrations());
+    migrations.extend(reprocessing::migrations());
     Migrations::new(migrations)
 }

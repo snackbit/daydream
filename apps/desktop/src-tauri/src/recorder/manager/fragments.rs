@@ -1,6 +1,49 @@
 use super::super::media_writer::FragmentEvent;
 use super::*;
 
+/// A close can arrive in a poll before the following open, whose timestamp is
+/// the authoritative cut boundary. Keep that close owned by this capture until
+/// the boundary is known, or until pause/stop drains the writer.
+#[derive(Debug, Default)]
+pub(super) struct FragmentPersistenceQueue {
+    latest_open: Option<FragmentEvent>,
+    pending_closes: Vec<FragmentEvent>,
+}
+
+impl FragmentPersistenceQueue {
+    pub(super) fn ready(&mut self, events: Vec<FragmentEvent>) -> Vec<FragmentEvent> {
+        if let Some(open) = events
+            .iter()
+            .filter(|event| event.opened)
+            .max_by_key(|event| event.timestamp_ms)
+        {
+            if self
+                .latest_open
+                .as_ref()
+                .is_none_or(|latest| open.timestamp_ms >= latest.timestamp_ms)
+            {
+                self.latest_open = Some(open.clone());
+            }
+        }
+        let events = std::mem::take(&mut self.pending_closes)
+            .into_iter()
+            .chain(events);
+        let (ready, pending) = events.partition(|event| {
+            event.opened
+                || self
+                    .latest_open
+                    .as_ref()
+                    .is_some_and(|latest| latest.path != event.path)
+        });
+        self.pending_closes = pending;
+        ready
+    }
+
+    pub(super) fn finish(&mut self) -> Vec<FragmentEvent> {
+        std::mem::take(&mut self.pending_closes)
+    }
+}
+
 impl RecorderManager {
     pub(crate) fn persist_capture_fragments(
         &self,
@@ -85,9 +128,9 @@ impl RecorderManager {
                     let path = path_to_string(&event.path);
                     let rows =
                         storage::list_recording_segments(&transaction, &active.recording_id)?;
-                    let row = if let Some(row) = rows.into_iter().find(|row| row.file_path == path)
+                    let row = if let Some(row) = rows.iter().find(|row| row.file_path == path)
                     {
-                        row
+                        row.clone()
                     } else {
                         let index = event
                             .path
@@ -112,9 +155,28 @@ impl RecorderManager {
                         &active.video_sources,
                         active.fps,
                     )?;
+                    // An opening rollover precedes its predecessor's finalization.
+                    // Use this run's durable origin, never a speculative duration
+                    // from an unfinished predecessor or a legacy display fallback.
+                    let base = rows
+                        .iter()
+                        .find(|row| row.capture_run_id.as_deref() == Some(&active.capture_run_id))
+                        .filter(|origin| origin.timeline_basis_version == Some(1))
+                        .and_then(|origin| {
+                            let delta = row.started_at_ms.checked_sub(origin.started_at_ms)?;
+                            (delta >= 0).then_some(delta).and_then(|delta| {
+                                origin.timeline_base_ms?.checked_add(delta)
+                            })
+                        });
+                    if base.is_some() && row.timeline_base_ms.is_some() && base != row.timeline_base_ms {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
                     transaction.execute(
-                        "UPDATE recording_segments SET capture_run_id=?2 WHERE id=?1",
-                        rusqlite::params![row.id, active.capture_run_id],
+                        "UPDATE recording_segments SET capture_run_id=?2,
+                         timeline_base_ms=COALESCE(timeline_base_ms,?3),
+                         timeline_basis_version=CASE WHEN ?3 IS NOT NULL THEN 1 ELSE timeline_basis_version END
+                         WHERE id=?1",
+                        rusqlite::params![row.id, active.capture_run_id, base],
                     )?;
                     super::capture_provenance::persist_segment_provenance(
                         &transaction,

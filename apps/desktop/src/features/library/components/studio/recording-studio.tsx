@@ -9,22 +9,13 @@ import type {
   OcrTimelineFrame,
   RecallEvidence,
 } from '@daydream/shared';
-import { Button } from '@/components/ui/button';
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from '@/components/ui/resizable';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { useStudioSelectionDismissal } from './interactions/use-studio-selection-dismissal';
+import { RecordingStudioLayout } from './layout/recording-studio-layout';
 import { playbackRunView } from './playback-run-view';
+import { ReprocessingDialog } from './reprocessing/reprocessing-dialog';
+import { ReprocessingStatus } from './reprocessing/reprocessing-status';
+import { useStudioReprocessing } from './reprocessing/use-studio-reprocessing';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { studioRecallEvidenceAvailable } from './studio-recall-navigation';
 import { StudioSidebar } from './studio-sidebar';
@@ -75,45 +66,7 @@ export function RecordingStudio({
   initialEvidence = null,
   initialSeek = null,
 }: RecordingStudioProps) {
-  const [compact, setCompact] = useState(() => window.innerWidth < 1200);
-  const [inspectorOpenPreference, setInspectorOpen] = useState<boolean | null>(
-    null,
-  );
-  const inspectorOpen =
-    inspectorOpenPreference ??
-    (initialEvidence !== null &&
-      studioRecallEvidenceAvailable(initialEvidence, detail));
-  const inspectorRef = useRef<HTMLDivElement>(null);
-  const inspectorTriggerRef = useRef<HTMLButtonElement>(null);
-  const interactedOutsideInspector = useRef(false);
-  const handleInspectorOpen = useCallback(
-    (open: boolean) => {
-      if (open === inspectorOpen) return;
-      setInspectorOpen(open);
-      const restoreTrigger = !interactedOutsideInspector.current;
-      interactedOutsideInspector.current = false;
-      requestAnimationFrame(() => {
-        if (open) {
-          inspectorRef.current?.focus();
-          interactedOutsideInspector.current = false;
-        } else if (restoreTrigger) inspectorTriggerRef.current?.focus();
-      });
-    },
-    [inspectorOpen],
-  );
-  const handleInspectorInteractOutside = useCallback(
-    (event: Event) => {
-      if (!inspectorOpen) event.preventDefault();
-      else interactedOutsideInspector.current = true;
-    },
-    [inspectorOpen],
-  );
-  const preventClosedAutoFocus = useCallback(
-    (event: Event) => {
-      if (!inspectorOpen) event.preventDefault();
-    },
-    [inspectorOpen],
-  );
+  const reprocessing = useStudioReprocessing(detail.id);
   const [dismissedEvidenceId, setDismissedEvidenceId] = useState<string | null>(
     null,
   );
@@ -188,6 +141,7 @@ export function RecordingStudio({
     setInspectorSelectionState(null);
     setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
   }, [initialEvidence?.evidenceId]);
+  useStudioSelectionDismissal(handleClearInspectorSelection);
   const handleInspectActivity = useCallback(
     (selection: StudioInspectorSelection) => {
       setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
@@ -239,15 +193,6 @@ export function RecordingStudio({
     visualFrames,
   });
 
-  useEffect(() => {
-    const query = window.matchMedia('(max-width: 1199px)');
-    function updateLayout() {
-      setCompact(query.matches);
-    }
-    query.addEventListener('change', updateLayout);
-    return () => query.removeEventListener('change', updateLayout);
-  }, []);
-
   function toggleTrackMuted(trackId: string) {
     setMutedTrackIds((current) => {
       const next = new Set(current);
@@ -273,6 +218,8 @@ export function RecordingStudio({
   const timeline = (
     <TrackTimeline
       onRefreshRedactions={onRefreshPlayback}
+      onReprocess={reprocessing.open}
+      suspendFollow={reprocessing.request !== null}
       activity={activity}
       aiProcessingState={aiProcessingState}
       detail={runView.detail}
@@ -300,6 +247,8 @@ export function RecordingStudio({
       }}
       model={{
         aiProcessingState,
+        activity,
+        isPlaying: playback.state.snapshot.isPlaying,
         debugEnabled,
         timelineOffsetMs: playback.state.displayedTimelineMs,
         detail,
@@ -312,7 +261,15 @@ export function RecordingStudio({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex min-h-[40rem] w-full flex-1 flex-col gap-6 px-5 pb-6 lg:px-8">
+      <div
+        data-studio-root
+        className="flex min-h-[40rem] w-full flex-1 flex-col gap-6 px-5 pb-6 lg:px-8"
+      >
+        <ReprocessingDialog controller={reprocessing} />
+        <ReprocessingStatus
+          state={aiProcessingState}
+          queued={reprocessing.queued}
+        />
         {initialEvidence &&
         !studioRecallEvidenceAvailable(initialEvidence, detail) ? (
           <p role="status" className="bg-muted rounded-panel p-6 text-sm">
@@ -328,76 +285,12 @@ export function RecordingStudio({
             {frameNavigation.error}
           </div>
         ) : null}
-        {compact ? (
-          <>
-            <div className="flex justify-end">
-              <Sheet
-                modal={false}
-                open={inspectorOpen}
-                onOpenChange={handleInspectorOpen}
-              >
-                <SheetTrigger asChild>
-                  <Button ref={inspectorTriggerRef} variant="outline">
-                    Inspector
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  hidden={!inspectorOpen}
-                  ref={inspectorRef}
-                  onOpenAutoFocus={preventClosedAutoFocus}
-                  onInteractOutside={handleInspectorInteractOutside}
-                  forceMount
-                  className="w-full max-w-[28rem] gap-0 p-0 data-[state=closed]:hidden sm:max-w-[28rem]"
-                >
-                  <SheetHeader className="p-6">
-                    <SheetTitle>Recording inspector</SheetTitle>
-                    <SheetDescription>
-                      Inspect sources, edit annotations and manage redactions.
-                    </SheetDescription>
-                  </SheetHeader>
-                  <div className="min-h-0 flex-1">{inspector}</div>
-                </SheetContent>
-              </Sheet>
-            </div>
-            <div className="rounded-workspace min-h-[24rem] overflow-hidden">
-              {player}
-            </div>
-            <div className="rounded-panel min-h-[20rem] flex-1 overflow-hidden border">
-              {timeline}
-            </div>
-          </>
-        ) : (
-          <ResizablePanelGroup
-            className="min-h-0 flex-1"
-            orientation="horizontal"
-          >
-            <ResizablePanel defaultSize="68%" minSize="45%">
-              <ResizablePanelGroup orientation="vertical">
-                <ResizablePanel defaultSize="60%" minSize={260}>
-                  <div className="rounded-workspace h-full overflow-hidden">
-                    {player}
-                  </div>
-                </ResizablePanel>
-                <ResizableHandle
-                  className="w-6 bg-transparent aria-[orientation=horizontal]:h-6"
-                  withHandle
-                />
-                <ResizablePanel defaultSize="40%" minSize={240}>
-                  <div className="rounded-panel h-full overflow-hidden border">
-                    {timeline}
-                  </div>
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            </ResizablePanel>
-            <ResizableHandle
-              className="w-6 bg-transparent aria-[orientation=horizontal]:h-6"
-              withHandle
-            />
-            <ResizablePanel defaultSize="32%" minSize={320}>
-              {inspector}
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        )}
+        <RecordingStudioLayout
+          player={player}
+          timeline={timeline}
+          inspector={inspector}
+          initiallyOpen={recallEvidence !== null}
+        />
       </div>
     </TooltipProvider>
   );

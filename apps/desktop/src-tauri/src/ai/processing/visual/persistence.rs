@@ -240,11 +240,19 @@ pub(super) fn persist_vlm_frame(
     observations: Vec<CreateVisualRegionInput>,
 ) -> Result<(), AiError> {
     let count = observations.len() as i64;
+    let settings = super::super::worker::load_chunk_settings(storage, chunk)?;
     let committed = storage
         .with_connection_mut(|connection| {
             let transaction = connection.transaction()?;
             if !crate::recording_privacy::chunk_active(&transaction, chunk)? {
                 return Ok(false);
+            }
+            if storage::replacement_pending(&transaction, &chunk.id)? {
+                let source:String=transaction.query_row("SELECT rg.source_track_id FROM processing_replacement_groups rg JOIN processing_replacement_chunks rc ON rc.group_id=rg.id WHERE rc.chunk_id=?1",[&chunk.id],|r|r.get(0))?;
+                let recording=storage::get_recording(&transaction,&chunk.recording_id)?;
+                let interval=super::extraction::frame_sample_interval_ms(super::extraction::effective_frame_recognition_fps(&settings,recording.default_fps));
+                let end=frame.frame_timestamp_ms.saturating_add(interval).min(chunk.end_offset_ms.unwrap_or(i64::MAX));
+                storage::publish_replacement_frame(&transaction,chunk,&source,frame.frame_timestamp_ms,end)?;
             }
             transaction.execute(
                 "DELETE FROM vlm_observations WHERE chunk_id=?1 AND frame_timestamp_ms=?2",

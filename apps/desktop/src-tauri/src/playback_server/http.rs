@@ -277,7 +277,11 @@ fn stream_audio(
             "-b:a",
             "128k",
             "-movflags",
-            "empty_moov+frag_keyframe+default_base_moof",
+            "empty_moov+default_base_moof",
+            // Audio has no video keyframes. Bound fragments so streaming does
+            // not accumulate a run-sized index on the non-seekable stdout pipe.
+            "-frag_duration",
+            "1000000",
             "-f",
             "mp4",
             "pipe:1",

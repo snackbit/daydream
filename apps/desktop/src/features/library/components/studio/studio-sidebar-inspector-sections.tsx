@@ -19,6 +19,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatDuration } from '../../library-format';
+import {
+  selectInspectorEntries,
+  type InspectorContentIndex,
+} from './inspector/content/inspector-content';
+import { InspectorContentEntryCard } from './inspector/content/inspector-content-entry';
 import { useSelectionRedactionMutation } from './redactions/use-redaction-mutation';
 import { redactionsIntersectingRanges } from './studio-redactions';
 import { EditableLaneFields, trackKindLabel } from './studio-sidebar-editing';
@@ -180,9 +185,11 @@ function compareOcrRegionReadingOrder(
 export function StudioSidebarSectionLane({
   aiProcessingState,
   lane,
+  debugEnabled = false,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   lane: StudioLaneDraft;
+  debugEnabled?: boolean;
 }) {
   const renameLane = useStudioTimelineStore((state) => state.renameLane);
   const setLaneColor = useStudioTimelineStore((state) => state.setLaneColor);
@@ -196,10 +203,29 @@ export function StudioSidebarSectionLane({
         onRename={(label) => renameLane(lane.trackId, label)}
       />
       <MetadataRow label="Type" value={trackKindLabel(lane.kind)} />
-      <MetadataRow label="Source" value={lane.description} />
-      {transcriptionTrack ? (
-        <TranscriptionTrackDetails track={transcriptionTrack} />
+      {debugEnabled ? (
+        <MetadataRow label="Source" value={lane.description} />
       ) : null}
+      {transcriptionTrack && !debugEnabled ? (
+        <p className="text-muted-foreground text-xs">
+          {transcriptionTrack.statusLabel}
+        </p>
+      ) : null}
+      {transcriptionTrack && debugEnabled ? (
+        <TranscriptionTrackDetails track={transcriptionTrack} />
+      ) : (
+        <TranscriptionSelectionDetails
+          aiProcessingState={aiProcessingState}
+          selections={[
+            {
+              id: 'lane',
+              laneIds: [lane.trackId],
+              startMs: 0,
+              endMs: Number.MAX_SAFE_INTEGER,
+            },
+          ]}
+        />
+      )}
     </StudioSidebarSection>
   );
 }
@@ -207,9 +233,11 @@ export function StudioSidebarSectionLane({
 export function StudioSidebarSectionSegment({
   aiProcessingState,
   segment,
+  debugEnabled = false,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   segment: StudioSidebarSegmentSelection;
+  debugEnabled?: boolean;
 }) {
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const renameClip = useStudioTimelineStore((state) => state.renameClip);
@@ -234,8 +262,27 @@ export function StudioSidebarSectionSegment({
         />
       </label>
       <MetadataRow label="Track" value={lane?.label ?? ''} />
-      <MetadataRow label="Segment" value={segment.segmentId} />
-      {chunks.length > 0 ? <TranscriptionChunkDetails chunks={chunks} /> : null}
+      {debugEnabled ? (
+        <>
+          <MetadataRow label="Segment" value={segment.segmentId} />
+          {chunks.length > 0 ? (
+            <TranscriptionChunkDetails chunks={chunks} />
+          ) : null}
+        </>
+      ) : (
+        <TranscriptionSelectionDetails
+          aiProcessingState={aiProcessingState}
+          segmentId={segment.segmentId}
+          selections={[
+            {
+              id: segment.clipId,
+              laneIds: [segment.trackId],
+              startMs: 0,
+              endMs: Number.MAX_SAFE_INTEGER,
+            },
+          ]}
+        />
+      )}
     </StudioSidebarSection>
   );
 }
@@ -247,6 +294,7 @@ export function StudioSidebarComponentSelection({
   onCreateRedactions,
   onUnredactRanges,
   selections,
+  content,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   clearSelection: () => void;
@@ -258,6 +306,7 @@ export function StudioSidebarComponentSelection({
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
   selections: StudioTimeRangeSelection[];
+  content?: InspectorContentIndex;
 }) {
   const mutation = useSelectionRedactionMutation({
     ranges: selections,
@@ -269,9 +318,6 @@ export function StudioSidebarComponentSelection({
     detail.redactions,
     selections,
   );
-  const selectedLaneCount = new Set(
-    selections.flatMap((selection) => selection.laneIds),
-  ).size;
   const totalDurationMs = selections.reduce(
     (durationMs, selection) =>
       durationMs + Math.max(0, selection.endMs - selection.startMs),
@@ -280,12 +326,11 @@ export function StudioSidebarComponentSelection({
 
   return (
     <StudioSidebarSection title="Selection">
-      <MetadataRow label="Ranges" value={String(selections.length)} />
+      <MetadataRow label="Duration" value={formatDuration(totalDurationMs)} />
       <MetadataRow
         label="Targets"
-        value={`${selectedLaneCount} ${selectedLaneCount === 1 ? 'lane' : 'lanes'}`}
+        value={`${new Set(selections.flatMap((range) => range.laneIds)).size} ${new Set(selections.flatMap((range) => range.laneIds)).size === 1 ? 'lane' : 'lanes'}`}
       />
-      <MetadataRow label="Duration" value={formatDuration(totalDurationMs)} />
       <div className="space-y-1">
         {selections.map((selection, index) => (
           <MetadataRow
@@ -297,10 +342,18 @@ export function StudioSidebarComponentSelection({
           />
         ))}
       </div>
-      <TranscriptionSelectionDetails
-        aiProcessingState={aiProcessingState}
-        selections={selections}
-      />
+      {content ? (
+        <ol className="space-y-2">
+          {selectInspectorEntries(content.entries, selections).map((entry) => (
+            <InspectorContentEntryCard key={entry.id} entry={entry} />
+          ))}
+        </ol>
+      ) : (
+        <TranscriptionSelectionDetails
+          aiProcessingState={aiProcessingState}
+          selections={selections}
+        />
+      )}
       <div className="grid gap-2">
         {mutation.pending ? (
           <p role="status" className="text-muted-foreground text-xs">

@@ -14,6 +14,7 @@ export interface RecallEvidenceInspectorProps {
   onCreateRedactions: (
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
+  debugEnabled?: boolean;
 }
 
 export function RecallEvidenceInspector({
@@ -21,6 +22,7 @@ export function RecallEvidenceInspector({
   onSeek,
   onClear,
   onCreateRedactions,
+  debugEnabled = false,
 }: RecallEvidenceInspectorProps) {
   const [masking, setMasking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,9 +76,13 @@ export function RecallEvidenceInspector({
           label="Range"
           value={`${formatDuration(evidence.startOffsetMs)} – ${formatDuration(evidence.endOffsetMs)}`}
         />
-        <InspectorField label="Segment" value={evidence.segmentId} />
-        <InspectorField label="Track" value={evidence.sourceTrackId} />
-        <InspectorField label="Evidence" value={evidence.sourceId} />
+        {debugEnabled ? (
+          <>
+            <InspectorField label="Segment" value={evidence.segmentId} />
+            <InspectorField label="Track" value={evidence.sourceTrackId} />
+            <InspectorField label="Evidence" value={evidence.sourceId} />
+          </>
+        ) : null}
       </dl>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={jump}>

@@ -1,6 +1,7 @@
 mod activity;
 mod processing;
 mod transcript;
+mod transcription_history;
 mod visual;
 mod vlm;
 

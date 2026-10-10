@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 // Observe real native events before releasing input. Chromium's event delivery
 // to Broadway and GTK's delivery to WebKit are separate asynchronous boundaries.
 export function createNativePointer({ native, viewer, origin }) {
-  return async function click(selector) {
+  return async function click(
+    selector,
+    { fractionX = 0.5, fractionY = 0.5 } = {},
+  ) {
+    assert.ok(
+      fractionX >= 0 && fractionX <= 1 && fractionY >= 0 && fractionY <= 1,
+    );
     const query = JSON.stringify(selector);
     await native.wait(
       `(() => { const element = document.querySelector(${query}); if (!element || element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false; const rect = element.getBoundingClientRect(); const style = getComputedStyle(element); return rect.width > 0 && rect.height > 0 && style.visibility === 'visible' && style.display !== 'none' && style.pointerEvents !== 'none'; })()`,
@@ -25,7 +31,7 @@ export function createNativePointer({ native, viewer, origin }) {
         const target = event.target.closest('button,a,input');
         window.__nativeE2ePointer.events.push({type:event.type,expectedHit:element.contains(event.target),trusted:event.isTrusted,target:target?.getAttribute('aria-label') ?? target?.textContent,disabled:target?.disabled,pathname:location.pathname,x:event.clientX,y:event.clientY});
       }, {once:true,capture:true});
-      return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+      return {x:rect.x+rect.width*${fractionX},y:rect.y+rect.height*${fractionY}};
     })())`),
     );
     const surface = await viewer

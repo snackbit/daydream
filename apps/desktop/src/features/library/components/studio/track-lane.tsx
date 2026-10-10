@@ -10,6 +10,7 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTiles,
   RecordingAiProcessingState,
+  ReprocessingTarget,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
 import { buildDerivedLane } from './derived-ai-lane-strip';
@@ -33,6 +34,7 @@ import {
 } from './track-timeline-math';
 
 export interface TrackLaneProps {
+  onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
   visibleRange: { startTimelineMs: number; endTimelineMs: number };
   aiProcessingState: RecordingAiProcessingState | null;
   clipDrafts: Record<string, StudioClipDraft>;
@@ -86,6 +88,7 @@ export function TrackLane({
   visualFrames,
   waveformTiles,
   onSelectVisualFrame,
+  onReprocess,
 }: TrackLaneProps) {
   const waveformTrack = waveformTiles?.tracks.find(
     (waveform) =>
@@ -166,6 +169,7 @@ export function TrackLane({
         trackId={track.id}
         onSelectLane={onSelectLane}
         onToggleTrackMuted={onToggleTrackMuted}
+        onReprocess={onReprocess}
       />
       <div
         className={cn(

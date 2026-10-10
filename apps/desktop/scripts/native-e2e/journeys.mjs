@@ -3,6 +3,7 @@ import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { connectInspector } from './inspector.mjs';
+import { checkLongPlayback, longPlayback } from './long-playback.mjs';
 import { createNativePointer } from './pointer.mjs';
 import { connectNativeKeyboard } from './webdriver.mjs';
 
@@ -459,14 +460,19 @@ try {
         'recording',
       );
       let elapsed = 0;
-      for (let attempt = 0; attempt < 40 && elapsed < 1500; attempt += 1) {
+      const captureDurationMs = longPlayback ? 103_000 : 1500;
+      for (
+        let attempt = 0;
+        attempt < (longPlayback ? 1200 : 40) && elapsed < captureDurationMs;
+        attempt += 1
+      ) {
         elapsed =
           (await native.invoke('getRecorderRecordingStats'))
             .recordedDurationMs ?? 0;
         await delay(100);
       }
       assert.ok(
-        elapsed >= 1500,
+        elapsed >= captureDurationMs,
         'native writer must capture a playable segment',
       );
       await button('Pause');
@@ -540,6 +546,10 @@ try {
         'native video paused',
       );
       stories.push('NATIVE-STUDIO-PLAY-TIME-ADVANCE-PAUSE');
+      if (longPlayback) {
+        await checkLongPlayback({ native, click, detail });
+        stories.push('NATIVE-STUDIO-MULTI-FRAGMENT-FULL-PLAYBACK');
+      }
     }
   }
   await viewer.screenshot({ path: `${artifacts}/${phase}.png` });

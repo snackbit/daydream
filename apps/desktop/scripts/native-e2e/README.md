@@ -40,6 +40,12 @@ The default phase order is `initial restart keyboard`. For targeted diagnosis,
 `DAYDREAM_E2E_PHASES='initial restart'` selects capture/persistence. These are
 partial runs; the final gate uses all default phases and reports each separately.
 
+`DAYDREAM_E2E_LONG_PLAYBACK=1` extends the initial capture to 103 seconds. It
+checks actual storage rollovers, full player duration and native seek/play after
+30, 60 and 90 seconds. The regular journey keeps its short capture. Audio remains
+off here; native synthetic-beep tests verify both audio streams, and browser
+regressions verify waveform timing.
+
 For a driver outside `PATH`, pass its executable explicitly:
 
 ```sh

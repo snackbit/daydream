@@ -65,7 +65,7 @@ function WaveformTileLayer({
   }
 
   return (
-    <div className="absolute inset-0">
+    <div className="absolute inset-0 overflow-hidden">
       <WaveformSilenceLine />
       {tiles.map((tile) => {
         const tileStartInSegmentMs =
@@ -84,13 +84,15 @@ function WaveformTileLayer({
             className="absolute inset-y-0"
             key={`${tile.segmentId}-${tile.streamIndex}-${tile.binMs}-${tile.timelineStartMs}`}
             style={{
-              left: `${(clippedStartMs / segmentDurationMs) * 100}%`,
-              width: `${
-                ((clippedEndMs - clippedStartMs) / segmentDurationMs) * 100
-              }%`,
+              left: `${(tileStartInSegmentMs / segmentDurationMs) * 100}%`,
+              width: `${(tile.durationMs / segmentDurationMs) * 100}%`,
             }}
           >
-            <WaveformShape samples={tile.peakSamples} />
+            <WaveformShape
+              samples={tile.peakSamples}
+              binMs={tile.binMs}
+              durationMs={tile.durationMs}
+            />
           </div>
         );
       })}
@@ -125,29 +127,35 @@ function VideoThumbnailStrip({
   );
 }
 
-function WaveformShape({ samples }: { samples: number[] }) {
+function WaveformShape({
+  samples,
+  binMs,
+  durationMs,
+}: {
+  samples: number[];
+  binMs: number;
+  durationMs: number;
+}) {
   if (samples.length === 0) {
     return null;
   }
-  const points = samples.map((sample, index) => {
-    const x = samples.length === 1 ? 0 : (index / (samples.length - 1)) * 100;
-    const y = 50 - Math.max(0, Math.min(1, sample)) * 48;
-
-    return samples.length === 1
-      ? `0,${y.toFixed(3)} 100,${y.toFixed(3)}`
-      : `${x.toFixed(3)},${y.toFixed(3)}`;
-  });
-  const reflected = [...samples].reverse().map((sample, index) => {
-    const x =
-      samples.length === 1
-        ? 0
-        : ((samples.length - 1 - index) / (samples.length - 1)) * 100;
-    const y = 50 + Math.max(0, Math.min(1, sample)) * 48;
-
-    return samples.length === 1
-      ? `100,${y.toFixed(3)} 0,${y.toFixed(3)}`
-      : `${x.toFixed(3)},${y.toFixed(3)}`;
-  });
+  const points: string[] = [],
+    reflected: string[] = [];
+  for (const [index, sample] of samples.entries()) {
+    const start = (Math.min(durationMs, index * binMs) / durationMs) * 100;
+    const end = (Math.min(durationMs, (index + 1) * binMs) / durationMs) * 100;
+    const amplitude = Math.max(0, Math.min(1, sample)) * 48;
+    // Each peak describes an interval, including a shorter final bin. Drawing
+    // at interval boundaries keeps cropping and zoom independent of timing.
+    points.push(
+      `${start},${(50 - amplitude).toFixed(3)}`,
+      `${end},${(50 - amplitude).toFixed(3)}`,
+    );
+    reflected.push(
+      `${start},${(50 + amplitude).toFixed(3)}`,
+      `${end},${(50 + amplitude).toFixed(3)}`,
+    );
+  }
 
   return (
     <svg
@@ -159,7 +167,7 @@ function WaveformShape({ samples }: { samples: number[] }) {
       <polygon
         fill="currentColor"
         opacity="0.72"
-        points={`${points.join(' ')} ${reflected.join(' ')}`}
+        points={`${points.join(' ')} ${reflected.reverse().join(' ')}`}
       />
     </svg>
   );

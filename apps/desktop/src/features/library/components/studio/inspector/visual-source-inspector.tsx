@@ -13,6 +13,7 @@ export interface VisualSourceInspectorProps {
   frame: StudioVisualFrame;
   onClear: () => void;
   onSeek: (timelineOffsetMs: number) => void;
+  sourceLabel?: string;
 }
 
 export function VisualSourceInspector({
@@ -20,6 +21,7 @@ export function VisualSourceInspector({
   frame,
   onClear,
   onSeek,
+  sourceLabel = 'Screen',
 }: VisualSourceInspectorProps) {
   const handleSeek = useCallback(() => {
     onSeek(frame.frameTimestampMs);
@@ -32,7 +34,10 @@ export function VisualSourceInspector({
             label="Time"
             value={formatTimelineOffset(frame.frameTimestampMs)}
           />
-          <InspectorField label="Source" value={context.sourceTrackId} />
+          <InspectorField
+            label="Source"
+            value={context.debugEnabled ? context.sourceTrackId : sourceLabel}
+          />
         </dl>
         <div className="flex gap-1 border-t pt-2">
           <Button
@@ -79,7 +84,9 @@ export function VisualSourceInspector({
                   {observation.observationKind === 'corrected-ocr'
                     ? 'Visual-model OCR correction observation'
                     : 'Visual-model screen observation'}{' '}
-                  · {observation.model ?? observation.provider}
+                  {context.debugEnabled
+                    ? ` · ${observation.model ?? observation.provider}`
+                    : null}
                 </p>
               </div>
             ))}

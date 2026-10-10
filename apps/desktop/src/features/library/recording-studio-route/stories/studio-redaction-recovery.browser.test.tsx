@@ -117,8 +117,11 @@ function selectLaterRange() {
 function ToolbarPrivacyStudio() {
   return (
     <>
-      <button onClick={selectRange}>Select source range</button>
-      <button onClick={selectLaterRange}>Select later range</button>
+      {/* These fixture controls replace timeline selections atomically. */}
+      <div data-studio-preserve-selection>
+        <button onClick={selectRange}>Select source range</button>
+        <button onClick={selectLaterRange}>Select later range</button>
+      </div>
       <RecordingStudio
         detail={detail}
         playbackAssets={null}

@@ -4,7 +4,6 @@ import {
   clampVisibleWindowMs,
   DEFAULT_TRACK_VIEWPORT_WIDTH_PX,
   INITIAL_TRACK_WINDOW_MS,
-  TRACK_FOLLOW_EDGE_PX,
   TRACK_LABEL_WIDTH_PX,
 } from './track-timeline-math';
 
@@ -33,12 +32,7 @@ export function useTrackTimelineViewport({
   );
 
   const markProgrammaticScroll = useCallback(() => {
-    if (programmaticScrollRef.current !== null) {
-      window.clearTimeout(programmaticScrollRef.current);
-    }
-    programmaticScrollRef.current = window.setTimeout(() => {
-      programmaticScrollRef.current = null;
-    }, 80);
+    programmaticScrollRef.current = viewportRef.current?.scrollLeft ?? null;
   }, []);
 
   const keepPlayheadVisible = useCallback(
@@ -50,19 +44,21 @@ export function useTrackTimelineViewport({
 
       const visibleStartPx = viewport.scrollLeft + TRACK_LABEL_WIDTH_PX;
       const visibleEndPx = viewport.scrollLeft + viewport.clientWidth;
+      const aheadPx = Math.max(
+        1,
+        (viewport.clientWidth - TRACK_LABEL_WIDTH_PX) * 0.1,
+      );
       let nextScrollLeft = viewport.scrollLeft;
-      if (nextPlayheadLeftPx > visibleEndPx - TRACK_FOLLOW_EDGE_PX) {
-        nextScrollLeft =
-          nextPlayheadLeftPx - viewport.clientWidth + TRACK_FOLLOW_EDGE_PX;
-      } else if (nextPlayheadLeftPx < visibleStartPx + TRACK_FOLLOW_EDGE_PX) {
-        nextScrollLeft =
-          nextPlayheadLeftPx - TRACK_LABEL_WIDTH_PX - TRACK_FOLLOW_EDGE_PX;
+      if (nextPlayheadLeftPx > visibleEndPx - aheadPx) {
+        nextScrollLeft = nextPlayheadLeftPx - viewport.clientWidth + aheadPx;
+      } else if (nextPlayheadLeftPx < visibleStartPx) {
+        nextScrollLeft = nextPlayheadLeftPx - TRACK_LABEL_WIDTH_PX - aheadPx;
       } else {
         return;
       }
 
-      markProgrammaticScroll();
       viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
+      markProgrammaticScroll();
       setScrollLeft(viewport.scrollLeft);
     },
     [markProgrammaticScroll],
@@ -131,15 +127,15 @@ export function useTrackTimelineViewport({
     }
 
     const scrollViewport = viewport;
+    let previousHorizontal = scrollViewport.scrollLeft;
     function handleScroll() {
+      if (scrollViewport.scrollLeft === previousHorizontal) return;
+      previousHorizontal = scrollViewport.scrollLeft;
       setScrollLeft(scrollViewport.scrollLeft);
-      if (programmaticScrollRef.current !== null) {
-        window.clearTimeout(programmaticScrollRef.current);
-        programmaticScrollRef.current = window.setTimeout(() => {
-          programmaticScrollRef.current = null;
-        }, 80);
+      if (programmaticScrollRef.current === scrollViewport.scrollLeft) {
         return;
       }
+      programmaticScrollRef.current = null;
       if (isPlaying) {
         setFollowPlayhead(false);
       }
@@ -171,6 +167,7 @@ export function useTrackTimelinePlayheadFollow({
   playheadLeftPx,
   seekRevision,
   setFollowPlayhead,
+  suspended = false,
 }: {
   followPlayhead: boolean;
   isPlaying: boolean;
@@ -178,17 +175,45 @@ export function useTrackTimelinePlayheadFollow({
   playheadLeftPx: number;
   seekRevision: number;
   setFollowPlayhead: (follow: boolean) => void;
+  suspended?: boolean;
 }) {
   useEffect(() => {
-    if (!followPlayhead || !isPlaying) {
+    if (!followPlayhead || !isPlaying || suspended) {
       return;
     }
     keepPlayheadVisible(playheadLeftPx);
-  }, [followPlayhead, keepPlayheadVisible, isPlaying, playheadLeftPx]);
+  }, [
+    followPlayhead,
+    keepPlayheadVisible,
+    isPlaying,
+    playheadLeftPx,
+    suspended,
+  ]);
 
+  const previousPlaying = useRef(isPlaying);
+  const lastSeek = useRef(seekRevision);
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setFollowPlayhead(true));
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [seekRevision, setFollowPlayhead]);
+    if (suspended) return undefined;
+    if (
+      lastSeek.current !== seekRevision ||
+      (!previousPlaying.current && isPlaying)
+    ) {
+      const frame = window.requestAnimationFrame(() => {
+        setFollowPlayhead(true);
+        keepPlayheadVisible(playheadLeftPx);
+      });
+      lastSeek.current = seekRevision;
+      previousPlaying.current = isPlaying;
+      return () => window.cancelAnimationFrame(frame);
+    }
+    previousPlaying.current = isPlaying;
+    return undefined;
+  }, [
+    seekRevision,
+    isPlaying,
+    keepPlayheadVisible,
+    playheadLeftPx,
+    setFollowPlayhead,
+    suspended,
+  ]);
 }

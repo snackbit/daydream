@@ -59,9 +59,13 @@ export function SegmentTranscriptionLayer({
       (chunk.startOffsetMs ?? 0) < segmentEndMs &&
       (chunk.endOffsetMs ?? chunk.startOffsetMs ?? 0) > segmentStartMs,
   );
-  const displayItems = chunks.flatMap((chunk) =>
-    transcriptionDisplayItems(chunk, segmentStartMs, segmentEndMs),
-  );
+  // Current scopes precede retained history. Paint historical status behind
+  // current transcript actions when their processing windows overlap.
+  const displayItems = chunks
+    .toReversed()
+    .flatMap((chunk) =>
+      transcriptionDisplayItems(chunk, segmentStartMs, segmentEndMs),
+    );
 
   if (displayItems.length === 0) {
     return null;

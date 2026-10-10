@@ -10,6 +10,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
 import { studioStoryRecording } from '../../../recording-studio-route/stories/studio-route-fixture';
 import { ActivityTrackLane } from '../activity-track-lane';
+import { SegmentTranscriptionLayer } from '../derived-ai-lane-strip';
 import { TrackLane } from '../track-lane';
 import { trackLaneHeightPxForKind } from '../track-timeline-math';
 
@@ -96,6 +97,58 @@ const processing: RecordingAiProcessingState = {
     },
   ],
 };
+
+test('scoped transcript actions remain reachable above retained historical chunk status', async () => {
+  const chunk = processing.transcriptionTracks?.[0]?.chunks[0];
+  const track = tracks[1];
+  if (!chunk || !track)
+    throw new Error('Synthetic transcript fixture is missing');
+  const inspect = vi.fn();
+  render(
+    <TooltipProvider>
+      <div style={{ position: 'relative', width: 800, height: 100 }}>
+        <SegmentTranscriptionLayer
+          color="var(--foreground)"
+          track={track}
+          segment={segment}
+          onInspectTranscript={inspect}
+          lane={{
+            description: 'Synthetic transcript',
+            label: 'Microphone',
+            status: 'complete',
+            statusLabel: 'Complete',
+            trackState: null,
+            chunks: [
+              {
+                ...chunk,
+                id: 'current-scope',
+                startOffsetMs: 2000,
+                endOffsetMs: 8000,
+              },
+              {
+                ...chunk,
+                id: 'historical-chunk',
+                result: 'no-speech',
+                text: null,
+                transcriptSegments: [],
+              },
+            ],
+          }}
+        />
+      </div>
+    </TooltipProvider>,
+  );
+  await userEvent.click(
+    screen.getByRole('button', { name: /Inspect Microphone transcript/ }),
+    { timeout: 1000 },
+  );
+  expect(inspect).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: transcript.text,
+      kind: 'transcript-segment',
+    }),
+  );
+});
 
 test.each(
   ['light', 'dark'].flatMap((theme) =>

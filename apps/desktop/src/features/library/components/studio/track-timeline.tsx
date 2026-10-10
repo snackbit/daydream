@@ -1,10 +1,15 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useCallback,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
   RecordingActivity,
   RecordingAiProcessingState,
+  ReprocessingTarget,
 } from '@daydream/shared';
 import {
   DndContext,
@@ -21,14 +26,18 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { timelineDurationMs } from '../../library-timeline';
 import { GroupedRedactions } from './redactions/grouped-redactions';
 import { useSelectionRedactionMutation } from './redactions/use-redaction-mutation';
-import { isStudioActivityLaneKind } from './studio-activity-lanes';
+import { ReprocessingDropdown } from './reprocessing/reprocessing-menu';
+import { reprocessingTargets } from './reprocessing/reprocessing-targets';
+import { TimelineReprocessingContextMenu } from './reprocessing/timeline-reprocessing-context-menu';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
+import { TrackTimelineLanes } from './timeline/track-timeline-lanes';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
@@ -36,8 +45,6 @@ import {
   TRACK_ZOOM_STEP,
 } from './track-timeline-math';
 import {
-  SortableTrackLane,
-  SortableActivityTrackLane,
   TimelineRangeLabels,
   TimeRuler,
   TrackTimelineToolbar,
@@ -68,6 +75,8 @@ export function TrackTimeline({
   thumbnailStatus,
   visualFrames,
   onRefreshRedactions,
+  onReprocess,
+  suspendFollow = false,
 }: {
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
@@ -88,6 +97,8 @@ export function TrackTimeline({
   thumbnailStatus: 'error' | 'idle' | 'loading' | 'ready';
   visualFrames: StudioVisualFrame[];
   onRefreshRedactions: () => void;
+  onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
+  suspendFollow?: boolean;
 }) {
   const { actions, state } = playback;
   const clipsById = useStudioTimelineStore((store) => store.clipsById);
@@ -142,6 +153,15 @@ export function TrackTimeline({
     visibleWindowMs,
   });
   const hasTimeRangeSelection = selection.ranges.length > 0;
+  const targets = reprocessingTargets(
+    selection.ranges,
+    new Set(detail.tracks.map((track) => track.id)),
+  );
+  const follow = useCallback(
+    () => setFollowPlayhead(true),
+    [setFollowPlayhead],
+  );
+  const [menuIsOpen, menuOpen] = useState(false);
   const { waveformStatus, waveformTiles } = useWaveformTileQueue({
     detail,
     requestRange: viewModel.waveformRequestRange,
@@ -161,6 +181,7 @@ export function TrackTimeline({
     handleTimelinePointerEnd: handleSelectionPointerEnd,
     handleTimelinePointerMove,
     timelineMsFromClientX,
+    handleTimelineClickCapture,
   } = useTrackTimelineSelection({
     actions,
     activeLaneIds: viewModel.activeLaneIds,
@@ -174,6 +195,7 @@ export function TrackTimeline({
     totalDurationMs: viewModel.totalDurationMs,
   });
   useTrackTimelinePlayheadFollow({
+    suspended: suspendFollow || menuIsOpen,
     followPlayhead,
     isPlaying: state.snapshot.isPlaying,
     keepPlayheadVisible,
@@ -205,6 +227,7 @@ export function TrackTimeline({
   }
 
   function handleTimelinePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
     if (
       !(event.target instanceof Element) ||
       !event.target.closest('[data-library-action]')
@@ -258,6 +281,23 @@ export function TrackTimeline({
   return (
     <div className="bg-background flex h-full flex-col">
       <TrackTimelineToolbar
+        followAction={
+          !followPlayhead ? (
+            <Button size="sm" variant="outline" onClick={follow}>
+              Follow playback
+            </Button>
+          ) : null
+        }
+        selectionActions={
+          hasTimeRangeSelection && onReprocess ? (
+            <ReprocessingDropdown
+              label="Selection"
+              targets={targets}
+              onReprocess={onReprocess}
+              onOpenChange={menuOpen}
+            />
+          ) : null
+        }
         canZoomIn={viewModel.canZoomIn}
         canZoomOut={viewModel.canZoomOut}
         hasTimeRangeSelection={hasTimeRangeSelection}
@@ -290,134 +330,114 @@ export function TrackTimeline({
         scrollbars="both"
         viewportRef={viewportRef}
       >
-        <div
-          ref={contentRef}
-          aria-label="Track timeline"
-          className="relative isolate cursor-crosshair"
-          role="group"
-          style={{
-            width: TRACK_LABEL_WIDTH_PX + viewModel.timelineWidthPx,
-          }}
-          onPointerCancel={handleTimelinePointerEnd}
-          onPointerDown={handleTimelinePointerDown}
-          onPointerMove={handleTimelinePointerMove}
-          onPointerUp={handleTimelinePointerEnd}
+        <TimelineReprocessingContextMenu
+          contentRef={contentRef}
+          ranges={selection.ranges}
+          tracks={detail.tracks}
+          timelineWidthPx={viewModel.timelineWidthPx}
+          totalDurationMs={viewModel.totalDurationMs}
+          onReprocess={onReprocess}
+          onOpenChange={menuOpen}
         >
           <div
-            aria-hidden="true"
-            className="bg-primary pointer-events-none absolute top-0 bottom-0 z-30 w-px"
-            style={{ left: viewModel.playheadLeftPx }}
-          />
-          <TimelineRangeLabels
-            ranges={selection.ranges}
-            timelineWidthPx={viewModel.timelineWidthPx}
-            totalDurationMs={viewModel.totalDurationMs}
-          />
-          <GroupedRedactions
-            redactions={detail.redactions}
-            lanes={viewModel.activeLaneLayouts}
-            selectedIds={viewModel.selectedRedactionIds}
-            timelineWidthPx={viewModel.timelineWidthPx}
-            totalDurationMs={totalDurationMs}
-            onSelect={handleSelectRedaction}
-            onSaved={onRefreshRedactions}
-          />
-          <div
-            className="grid"
+            ref={contentRef}
+            aria-label="Track timeline"
+            className="relative isolate cursor-crosshair"
+            role="group"
             style={{
-              gridTemplateColumns: `${TRACK_LABEL_WIDTH_PX}px ${viewModel.timelineWidthPx}px`,
+              width: TRACK_LABEL_WIDTH_PX + viewModel.timelineWidthPx,
             }}
+            onPointerCancel={handleTimelinePointerEnd}
+            onClickCapture={handleTimelineClickCapture}
+            onPointerDown={handleTimelinePointerDown}
+            onPointerMove={handleTimelinePointerMove}
+            onPointerUp={handleTimelinePointerEnd}
           >
             <div
-              className="bg-background sticky left-0 z-60 border-r border-b px-3"
-              style={{ height: TRACK_RULER_HEIGHT_PX }}
+              aria-hidden="true"
+              className="bg-primary pointer-events-none absolute top-0 bottom-0 z-30 w-px"
+              style={{ left: viewModel.playheadLeftPx }}
             />
-            <TimeRuler
-              ticks={viewModel.rulerTicks}
+            <TimelineRangeLabels
+              ranges={selection.ranges}
               timelineWidthPx={viewModel.timelineWidthPx}
+              totalDurationMs={viewModel.totalDurationMs}
             />
-          </div>
-          <DndContext
-            collisionDetection={closestCenter}
-            sensors={sensors}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={viewModel.activeLaneIds}
-              strategy={verticalListSortingStrategy}
+            <GroupedRedactions
+              redactions={detail.redactions}
+              lanes={viewModel.activeLaneLayouts}
+              selectedIds={viewModel.selectedRedactionIds}
+              timelineWidthPx={viewModel.timelineWidthPx}
+              totalDurationMs={totalDurationMs}
+              onSelect={handleSelectRedaction}
+              onSaved={onRefreshRedactions}
+            />
+            <div
+              className="grid"
+              style={{
+                gridTemplateColumns: `${TRACK_LABEL_WIDTH_PX}px ${viewModel.timelineWidthPx}px`,
+              }}
             >
-              {viewModel.orderedLaneIds.map((laneId) => {
-                const lane = lanesById[laneId];
-                if (!lane) {
-                  return null;
-                }
-                if (isStudioActivityLaneKind(lane.kind)) {
-                  return (
-                    <SortableActivityTrackLane
-                      activity={activity}
-                      segments={detail.segments}
-                      key={lane.trackId}
-                      lane={lane}
-                      redactions={detail.redactions}
-                      selectedLane={viewModel.selectedLaneIds.has(lane.trackId)}
-                      selectedRedactionIds={viewModel.selectedRedactionIds}
-                      timelineWidthPx={viewModel.timelineWidthPx}
-                      timeRanges={
-                        viewModel.rangesByLaneId.get(lane.trackId) ?? []
-                      }
-                      totalDurationMs={viewModel.totalDurationMs}
-                      onInspectActivity={handleInspectActivity}
-                      onSelectLane={handleSelectLane}
-                      onSelectRedaction={handleSelectRedaction}
-                    />
-                  );
-                }
-                const track = detail.tracks.find(
-                  (candidate) => candidate.id === lane.trackId,
-                );
-                if (!track) {
-                  return null;
-                }
-
-                function handleSelectTranscript(
-                  transcript: StudioInspectorSelection,
-                ) {
-                  selectTranscriptForInspection(transcript);
-                }
-
-                return (
-                  <SortableTrackLane
-                    visibleRange={viewModel.waveformRequestRange}
-                    aiProcessingState={aiProcessingState}
-                    clipDrafts={clipsById}
-                    detail={detail}
-                    key={track.id}
-                    lane={lane}
-                    mutedTrackIds={mutedTrackIds}
-                    playbackAssets={playbackAssets}
-                    selectedClipIds={viewModel.selectedClipIds}
-                    selectedLane={viewModel.selectedLaneIds.has(track.id)}
-                    selectedRedactionIds={viewModel.selectedRedactionIds}
-                    selectedVisualFrameIds={viewModel.selectedVisualFrameIds}
-                    thumbnailStatus={thumbnailStatus}
-                    timelineWidthPx={viewModel.timelineWidthPx}
-                    timeRanges={viewModel.rangesByLaneId.get(track.id) ?? []}
-                    totalDurationMs={viewModel.totalDurationMs}
-                    track={track}
-                    waveformTiles={waveformTiles}
-                    visualFrames={visualFrames}
-                    onInspectTranscript={handleSelectTranscript}
-                    onSelectClip={handleSelectClip}
-                    onSelectLane={handleSelectLane}
-                    onSelectRedaction={handleSelectRedaction}
-                    onSelectVisualFrame={selectVisualFrameForInspection}
-                    onToggleTrackMuted={onToggleTrackMuted}
-                  />
-                );
-              })}
-            </SortableContext>
-          </DndContext>
-        </div>
+              <div
+                className="bg-background sticky left-0 z-60 border-r border-b px-3"
+                style={{ height: TRACK_RULER_HEIGHT_PX }}
+              />
+              <TimeRuler
+                ticks={viewModel.rulerTicks}
+                timelineWidthPx={viewModel.timelineWidthPx}
+              />
+            </div>
+            <DndContext
+              collisionDetection={closestCenter}
+              sensors={sensors}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={viewModel.activeLaneIds}
+                strategy={verticalListSortingStrategy}
+              >
+                <TrackTimelineLanes
+                  view={viewModel}
+                  lanesById={lanesById}
+                  media={{
+                    visibleRange: viewModel.waveformRequestRange,
+                    aiProcessingState,
+                    clipDrafts: clipsById,
+                    detail,
+                    mutedTrackIds,
+                    playbackAssets,
+                    selectedClipIds: viewModel.selectedClipIds,
+                    selectedRedactionIds: viewModel.selectedRedactionIds,
+                    selectedVisualFrameIds: viewModel.selectedVisualFrameIds,
+                    thumbnailStatus,
+                    timelineWidthPx: viewModel.timelineWidthPx,
+                    totalDurationMs: viewModel.totalDurationMs,
+                    waveformTiles,
+                    visualFrames,
+                    onInspectTranscript: selectTranscriptForInspection,
+                    onSelectClip: handleSelectClip,
+                    onSelectLane: handleSelectLane,
+                    onSelectRedaction: handleSelectRedaction,
+                    onSelectVisualFrame: selectVisualFrameForInspection,
+                    onToggleTrackMuted,
+                    onReprocess,
+                  }}
+                  activity={{
+                    activity,
+                    segments: detail.segments,
+                    redactions: detail.redactions,
+                    selectedRedactionIds: viewModel.selectedRedactionIds,
+                    timelineWidthPx: viewModel.timelineWidthPx,
+                    totalDurationMs: viewModel.totalDurationMs,
+                    onInspectActivity: handleInspectActivity,
+                    onSelectLane: handleSelectLane,
+                    onSelectRedaction: handleSelectRedaction,
+                  }}
+                />
+              </SortableContext>
+            </DndContext>
+          </div>
+        </TimelineReprocessingContextMenu>
       </ScrollArea>
     </div>
   );

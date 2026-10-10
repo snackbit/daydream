@@ -134,6 +134,8 @@ pub fn run() {
             background_tasks::group_commands::control_recording_processing_groups,
             ai::commands::processing_commands::retry_processing_units,
             ai::commands::processing_commands::reprocess_recording_transcription,
+            ai::commands::reprocessing_commands::preview_recording_reprocessing,
+            ai::commands::reprocessing_commands::start_recording_reprocessing,
             startup::get_app_startup_status,
             startup::retry_app_startup,
             library::commands::close_library_playback_session,

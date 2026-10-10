@@ -1,4 +1,9 @@
-import { useRef, type PointerEvent, type RefObject } from 'react';
+import {
+  useRef,
+  type MouseEvent,
+  type PointerEvent,
+  type RefObject,
+} from 'react';
 import {
   normalizeTimeRangeSelection,
   subtractTimeRangeSelection,
@@ -25,7 +30,6 @@ interface TimelineDragState {
   source: DragSource;
   startClientX: number;
   startClientY: number;
-  startedInLaneContent: boolean;
 }
 
 export function useTrackTimelineSelection({
@@ -42,7 +46,10 @@ export function useTrackTimelineSelection({
 }: {
   activeLaneIds: string[];
   activeLaneLayouts: TimelineLaneLayout[];
-  actions: RecordingPlaybackController['actions'];
+  actions: Pick<
+    RecordingPlaybackController['actions'],
+    'handleTimelineInput' | 'commitTimelineInput' | 'cancelTimelineInput'
+  >;
   clearSelection: () => void;
   contentRef: RefObject<HTMLDivElement | null>;
   selection: StudioSelection;
@@ -52,6 +59,14 @@ export function useTrackTimelineSelection({
   totalDurationMs: number;
 }) {
   const dragStateRef = useRef<TimelineDragState | null>(null);
+  const suppressClickRef = useRef(false);
+  function handleTimelineClickCapture(event: MouseEvent<HTMLDivElement>) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
   function timelineMsFromClientX(clientX: number): number | null {
     const content = contentRef.current;
     if (!content) {
@@ -104,7 +119,6 @@ export function useTrackTimelineSelection({
           : 'lanes',
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startedInLaneContent: isLaneContentTarget(event.target),
     };
     actions.handleTimelineInput(nextTimelineMs);
     setFollowPlayhead(true);
@@ -151,6 +165,7 @@ export function useTrackTimelineSelection({
       return;
     }
     if (drag.selecting) {
+      suppressClickRef.current = true;
       applyPointerRangeSelection(event, drag);
       actions.cancelTimelineInput();
       return;
@@ -158,9 +173,27 @@ export function useTrackTimelineSelection({
 
     const nextTimelineMs = timelineMsFromClientX(event.clientX);
     if (nextTimelineMs !== null) {
-      if (!drag.startedInLaneContent) {
+      const local = clientPointToLocal(event.clientX, event.clientY);
+      // Pointer capture retargets pointerup to the timeline; resolve its lane
+      // from coordinates rather than the captured event target.
+      const laneAtPoint = local
+        ? intersectTimelineLaneIds({
+            startY: local.y,
+            endY: local.y + 1,
+            lanes: activeLaneLayouts,
+          })[0]
+        : undefined;
+      const inside = drag.baseSelection.ranges.some(
+        (range) =>
+          nextTimelineMs >= range.startMs &&
+          nextTimelineMs <= range.endMs &&
+          (drag.source === 'ruler' ||
+            (laneAtPoint !== undefined && range.laneIds.includes(laneAtPoint))),
+      );
+      if (drag.mode === 'replace' && !inside) {
         clearSelection();
       }
+      suppressClickRef.current = drag.baseSelection.ranges.length > 0;
       actions.commitTimelineInput(nextTimelineMs);
       setFollowPlayhead(true);
       return;
@@ -246,6 +279,7 @@ export function useTrackTimelineSelection({
   }
 
   return {
+    handleTimelineClickCapture,
     handleTimelinePointerDown,
     handleTimelinePointerEnd,
     handleTimelinePointerMove,
@@ -279,10 +313,4 @@ function cloneSelection(selection: StudioSelection): StudioSelection {
     })),
     visualFrameIds: [...selection.visualFrameIds],
   };
-}
-
-function isLaneContentTarget(target: EventTarget): boolean {
-  return (
-    target instanceof Element && target.closest('[data-lane-content]') !== null
-  );
 }

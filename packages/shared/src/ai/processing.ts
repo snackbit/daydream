@@ -1,3 +1,4 @@
+import type { RecordingReprocessingProgress } from './reprocessing.js';
 import type {
   RecordingTranscript,
   RecordingTranscriptionTrackState,
@@ -107,6 +108,8 @@ export interface GetRecordingAiProcessingStateInput {
 }
 
 export interface RecordingAiProcessingState {
+  reprocessingScopes?: RecordingReprocessingProgress[];
+  resultsRevision?: string;
   chunks: ProcessingChunk[];
   job: ProcessingJob | null;
   recordingId: string;

@@ -3,6 +3,7 @@ use super::*;
 mod live_processing;
 mod ocr_documents;
 mod privacy_regressions;
+mod reprocessing;
 use std::path::{Path, PathBuf};
 
 #[test]

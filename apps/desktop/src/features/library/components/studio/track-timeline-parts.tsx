@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { LibraryRecordingTrack } from '@daydream/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -29,6 +30,8 @@ export function TrackTimelineToolbar({
   selectedRangeRedactionCount,
   statusText,
   zoomPercent,
+  selectionActions,
+  followAction,
 }: {
   canZoomIn: boolean;
   canZoomOut: boolean;
@@ -41,11 +44,18 @@ export function TrackTimelineToolbar({
   selectedRangeRedactionCount: number;
   statusText: string;
   zoomPercent: number;
+  selectionActions?: ReactNode;
+  followAction?: ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-6 py-4">
+    <div
+      data-studio-timeline-toolbar
+      className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-6 py-4"
+    >
       <div className="text-sm font-medium">Tracks</div>
       <div className="flex min-w-0 flex-wrap items-center gap-3">
+        {followAction}
+        {selectionActions}
         {hasTimeRangeSelection ? (
           <div className="flex shrink-0 items-center gap-1">
             <Button
@@ -134,6 +144,7 @@ export function SortableTrackLane({
   track,
   waveformTiles,
   visualFrames,
+  onReprocess,
 }: Omit<TrackLaneProps, 'dragHandleProps'>) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: track.id });
@@ -181,6 +192,7 @@ export function SortableTrackLane({
         onSelectRedaction={onSelectRedaction}
         onSelectVisualFrame={onSelectVisualFrame}
         onToggleTrackMuted={onToggleTrackMuted}
+        onReprocess={onReprocess}
       />
     </div>
   );
@@ -292,11 +304,12 @@ export function TimelineRangeLabels({
         return (
           <div
             aria-label="Selected time range"
-            className="bg-destructive/80 text-destructive-foreground pointer-events-none absolute top-0 z-40 rounded-b-sm px-1 py-px text-xs font-medium"
+            title={`${formatDuration(range.startMs)} – ${formatDuration(range.endMs)}`}
+            className="bg-destructive/80 text-destructive-foreground pointer-events-none absolute top-0 z-40 overflow-hidden rounded-b-sm px-1 py-px text-xs font-medium whitespace-nowrap"
             key={range.id}
             style={{
-              left: TRACK_LABEL_WIDTH_PX + left + 4,
-              maxWidth: Math.max(1, width - 8),
+              left: TRACK_LABEL_WIDTH_PX + left,
+              width: Math.max(1, width),
             }}
           >
             {formatDuration(range.startMs)} - {formatDuration(range.endMs)}

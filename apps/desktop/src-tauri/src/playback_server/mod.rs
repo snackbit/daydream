@@ -23,6 +23,9 @@ mod http;
 mod resource_tests;
 mod resources;
 #[cfg(test)]
+#[path = "tests/run_duration.rs"]
+mod run_duration_tests;
+#[cfg(test)]
 mod run_tests;
 mod runs;
 #[cfg(test)]
@@ -197,17 +200,16 @@ impl PlaybackServer {
         }
 
         let mut response_runs = Vec::new();
-        let bases = crate::storage::segment_playback_bases(segments);
+        let bases = segments
+            .iter()
+            .zip(crate::storage::segment_playback_bases(segments))
+            .map(|(segment, base)| (segment.id.as_str(), base))
+            .collect::<HashMap<_, _>>();
         for group in runs::groups(segments, sources) {
             let first = group[0];
             let last = group.last().expect("run fragment");
-            let offset = segments
-                .iter()
-                .position(|segment| segment.id == first.id)
-                .map_or(0, |index| bases[index]);
-            let duration = last
-                .timeline_base_ms
-                .unwrap_or(offset)
+            let offset = bases[first.id.as_str()];
+            let duration = bases[last.id.as_str()]
                 .saturating_add(last.duration_ms.unwrap_or(0))
                 .saturating_sub(offset);
             let Some(mut data) = session_segments.get(&first.id).cloned() else {

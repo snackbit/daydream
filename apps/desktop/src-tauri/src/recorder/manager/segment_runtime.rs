@@ -12,6 +12,7 @@ pub(crate) struct RecordingSegmentRuntime {
     activity_monitor: Option<ActivityMonitorHandle>,
     capture: Option<Box<dyn CaptureSession>>,
     media_writer: MediaWriterSegment,
+    fragments: super::fragments::FragmentPersistenceQueue,
     timing: Option<SharedCaptureTiming>,
 }
 
@@ -25,6 +26,7 @@ impl RecordingSegmentRuntime {
             activity_monitor: None,
             capture,
             media_writer,
+            fragments: Default::default(),
             timing,
         }
     }
@@ -50,7 +52,7 @@ impl RecordingSegmentRuntime {
     }
 
     pub(crate) fn drain_fragments(&mut self) -> Vec<super::super::media_writer::FragmentEvent> {
-        self.media_writer.drain_fragments()
+        self.fragments.ready(self.media_writer.drain_fragments())
     }
 
     pub(super) fn stop(
@@ -96,7 +98,10 @@ impl RecordingSegmentRuntime {
             return Err(error);
         }
 
-        media_writer_result
+        media_writer_result.map(|mut media| {
+            media.events.extend(self.fragments.finish());
+            media
+        })
     }
 
     fn stop_capture(&mut self, timestamp_ms: u64) -> Result<(), RecorderError> {

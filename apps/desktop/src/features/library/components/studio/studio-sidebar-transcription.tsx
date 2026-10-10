@@ -5,6 +5,8 @@ import type {
 } from '@daydream/shared';
 import { ProcessingError } from '@/features/processing/components/processing-error';
 import { aiProcessingErrorSummary } from './ai-processing-error-copy';
+import { transcriptSelectionEntries } from './inspector/content/inspector-content';
+import { InspectorContentEntryCard } from './inspector/content/inspector-content-entry';
 import { MetadataRow } from './studio-sidebar-section';
 import type {
   StudioLaneDraft,
@@ -85,27 +87,28 @@ function chunkErrorCodeSummary(
 export function TranscriptionSelectionDetails({
   aiProcessingState,
   selections,
+  segmentId,
 }: {
   aiProcessingState: RecordingAiProcessingState | null;
   selections: StudioTimeRangeSelection[];
+  segmentId?: string;
 }) {
-  const chunks =
-    aiProcessingState?.transcriptionTracks?.flatMap((track) =>
-      track.chunks.filter((chunk) =>
-        selections.some(
-          (selection) =>
-            selection.laneIds.includes(track.libraryTrackId ?? '') &&
-            (chunk.startOffsetMs ?? 0) < selection.endMs &&
-            (chunk.endOffsetMs ?? chunk.startOffsetMs ?? 0) > selection.startMs,
-        ),
-      ),
-    ) ?? [];
-
-  if (chunks.length === 0) {
+  const entries = transcriptSelectionEntries(
+    aiProcessingState,
+    selections,
+    segmentId,
+  );
+  if (entries.length === 0) {
     return null;
   }
 
-  return <TranscriptionChunkDetails chunks={chunks} />;
+  return (
+    <ol className="space-y-2">
+      {entries.map((entry) => (
+        <InspectorContentEntryCard entry={entry} key={entry.id} />
+      ))}
+    </ol>
+  );
 }
 
 export function transcriptionTrackForLane(

@@ -1,7 +1,12 @@
-import type { ButtonHTMLAttributes } from 'react';
+import { useMemo, type ButtonHTMLAttributes } from 'react';
+import type { ReprocessingTarget } from '@daydream/shared';
 import { GripVertical, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import {
+  ReprocessingContextMenu,
+  ReprocessingDropdown,
+} from './reprocessing/reprocessing-menu';
 import { studioColorById, type StudioLaneDraft } from './studio-timeline-store';
 import { TRACK_LANE_HEIGHT_PX } from './track-timeline-math';
 
@@ -15,6 +20,7 @@ export function TrackLaneHeader({
   onToggleTrackMuted,
   selectedLane,
   trackId,
+  onReprocess,
 }: {
   audioTrack: boolean;
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
@@ -25,11 +31,13 @@ export function TrackLaneHeader({
   onToggleTrackMuted: (trackId: string) => void;
   selectedLane: boolean;
   trackId: string;
+  onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
 }) {
   const color = studioColorById(lane.colorId);
   const compact = heightPx < TRACK_LANE_HEIGHT_PX;
 
-  return (
+  const targets = useMemo(() => [{ trackId, ranges: null }], [trackId]);
+  const header = (
     <div
       className={cn(
         'bg-background group-hover/lane:bg-muted sticky left-0 z-50 flex min-w-0 flex-col border-r border-b transition-colors',
@@ -114,7 +122,25 @@ export function TrackLaneHeader({
             </span>
           </span>
         </button>
+        {onReprocess ? (
+          <ReprocessingDropdown
+            targets={targets}
+            label={lane.label}
+            onReprocess={onReprocess}
+          />
+        ) : null}
       </div>
     </div>
+  );
+  return onReprocess ? (
+    <ReprocessingContextMenu
+      targets={targets}
+      label={lane.label}
+      onReprocess={onReprocess}
+    >
+      {header}
+    </ReprocessingContextMenu>
+  ) : (
+    header
   );
 }

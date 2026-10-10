@@ -73,8 +73,8 @@ export function useTrackTimelineZoomScroll({
           TRACK_LABEL_WIDTH_PX +
           (anchorTimelineMs / totalDurationMs) * nextTimelineWidthPx -
           anchorX;
-        markProgrammaticScroll();
         viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
+        markProgrammaticScroll();
         setScrollLeft(viewport.scrollLeft);
       });
     },

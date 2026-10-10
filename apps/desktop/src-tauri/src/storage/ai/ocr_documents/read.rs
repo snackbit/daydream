@@ -2,24 +2,22 @@ use super::types::*;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub(super) fn display_occurrence_cte() -> String {
-    eligible_occurrence_cte(
-        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed','completed-with-errors')",
-        true,
-    )
+    eligible_occurrence_cte(CURRENT_ATTEMPT_OR_PUBLISHED_FRAME, true)
 }
 
 pub(super) fn timeline_occurrence_cte() -> String {
-    eligible_occurrence_cte(
-        "AND p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed','completed-with-errors')",
-        false,
-    )
+    eligible_occurrence_cte(CURRENT_ATTEMPT_OR_PUBLISHED_FRAME, false)
 }
+
+const CURRENT_ATTEMPT_OR_PUBLISHED_FRAME: &str = "AND ((p.attempt_count=o.attempt_count AND p.status IN ('running','succeeded','failed','completed-with-errors')) OR EXISTS(SELECT 1 FROM processing_replacement_frames rf WHERE rf.chunk_id=o.chunk_id AND rf.frame_ms=o.frame_timestamp_ms))";
 
 pub(super) const CURRENT_OCR_VISIBLE: &str = r#"
 , current_visible AS (
  SELECT v.* FROM visible v JOIN processing_jobs current_job ON current_job.id=v.job_id
  WHERE NOT EXISTS(SELECT 1 FROM processing_chunks newer_chunk JOIN processing_jobs newer_job ON newer_job.id=newer_chunk.job_id
  WHERE newer_chunk.recording_id=v.recording_id AND newer_chunk.source_kind='ocr' AND newer_chunk.segment_id=v.segment_id
+ AND (newer_chunk.track_id=v.source_track_id OR (newer_chunk.track_id IS NULL AND v.source_track_id LIKE 'video-%'))
+ AND NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc WHERE rc.chunk_id=newer_chunk.id)
  AND newer_chunk.start_offset_ms<=v.frame_timestamp_ms AND newer_chunk.end_offset_ms>v.frame_timestamp_ms
  AND newer_job.status!='cancelled' AND (newer_job.created_at_ms>current_job.created_at_ms OR (newer_job.created_at_ms=current_job.created_at_ms AND newer_job.id>current_job.id)))
 )

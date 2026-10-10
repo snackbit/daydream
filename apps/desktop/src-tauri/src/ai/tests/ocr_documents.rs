@@ -1,5 +1,6 @@
 use super::*;
 use crate::storage::{OcrContentInput, OcrFrameInput};
+mod reprocessing_regressions;
 
 fn occurrence(chunk: &ProcessingChunkRow, index: i64, pixels: &str) -> OcrFrameInput {
     OcrFrameInput {
@@ -54,6 +55,73 @@ fn seed(storage: &AppStorage) -> ProcessingChunkRow {
             )
         })
         .unwrap()
+}
+
+#[test]
+fn reprocessing_failed_frames_keep_prior_text_and_published_frames_survive_cancellation() {
+    let storage = storage::test_storage(PathBuf::new());
+    let old = seed(&storage);
+    for index in 0..2 {
+        let mut frame = occurrence(&old, index, "old pixels");
+        frame.content = Some(OcrContentInput {
+            text: format!("prior frame {index}"),
+            blocks: vec![],
+        });
+        assert!(storage
+            .with_connection_mut(|c| storage::save_ocr_frame_result(c, &old, &frame))
+            .unwrap());
+    }
+    let child=storage.with_connection(|c|{
+        let job=storage::create_processing_job(c,&CreateProcessingJobInput{id:Uuid::now_v7().to_string(),recording_id:old.recording_id.clone(),kind:"ai-processing".into(),status:"running".into(),created_at_ms:30000,updated_at_ms:30000,error:None})?;
+        let child=storage::create_processing_chunk(c,&CreateProcessingChunkInput{id:Uuid::now_v7().to_string(),job_id:job.id,recording_id:old.recording_id.clone(),source_kind:"ocr".into(),segment_id:old.segment_id.clone(),track_id:None,start_offset_ms:Some(0),end_offset_ms:Some(2000),attempt_count:0,created_at_ms:30000,updated_at_ms:30000,status:"running".into(),progress:0.0,error_code:None,result_code:None})?;
+        let group=Uuid::now_v7().to_string();
+        c.execute("INSERT INTO processing_replacement_groups(id,recording_id,job_id,source_track_id,source_kind,start_ms,end_ms) VALUES(?1,?2,?3,'video-0','ocr',0,2000)",rusqlite::params![group,child.recording_id,child.job_id])?;
+        c.execute("INSERT INTO processing_replacement_chunks(chunk_id,group_id) VALUES(?1,?2)",rusqlite::params![child.id,group])?;
+        Ok(child)
+    }).unwrap();
+    let read = |timestamp_ms| {
+        storage
+            .with_connection(|c| {
+                storage::get_ocr_document(
+                    c,
+                    &GetOcrDocumentInput {
+                        recording_id: old.recording_id.clone(),
+                        source_track_id: "video-0".into(),
+                        timestamp_ms,
+                        document_id: None,
+                    },
+                )
+            })
+            .unwrap()
+            .document
+            .unwrap()
+    };
+    assert_eq!(read(0).entry.text, "prior frame 0");
+    let mut failure = occurrence(&child, 0, "changed pixels");
+    failure.status = "failed".into();
+    failure.error_code = Some("synthetic_failure".into());
+    assert!(storage
+        .with_connection_mut(|c| storage::save_ocr_frame_result(c, &child, &failure))
+        .unwrap());
+    assert_eq!(read(0).entry.text, "prior frame 0");
+    let mut success = occurrence(&child, 1, "changed pixels");
+    success.content = Some(OcrContentInput {
+        text: "replacement frame 1".into(),
+        blocks: vec![],
+    });
+    assert!(storage
+        .with_connection_mut(|c| storage::save_ocr_frame_result(c, &child, &success))
+        .unwrap());
+    assert_eq!(read(1000).entry.text, "replacement frame 1");
+    storage
+        .with_connection(|c| {
+            storage::update_processing_chunk_status(c, &child.id, "cancelled", 0.5, None, 31000)?;
+            storage::update_processing_job_status(c, &child.job_id, "cancelled", None, 31000)?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(read(0).entry.text, "prior frame 0");
+    assert_eq!(read(1000).entry.text, "replacement frame 1");
 }
 
 #[test]
@@ -246,6 +314,26 @@ fn review_explicit_reprocess_pins_current_engine_and_safe_source_and_queues_only
             .unwrap();
         app.manage(storage);
         let storage = app.state::<AppStorage>();
+        assert!(
+            reprocess_recording_ocr(app.handle(), &storage, &recording_id)
+                .await
+                .is_err(),
+            "Active processing must finish before admitting a replacement pass"
+        );
+        storage
+            .with_connection(|connection| {
+                for job in storage::list_processing_jobs(connection, Some(&recording_id))? {
+                    storage::update_processing_job_status(
+                        connection,
+                        &job.id,
+                        "succeeded",
+                        None,
+                        20000,
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
         let job = reprocess_recording_ocr(app.handle(), &storage, &recording_id)
             .await
             .unwrap();

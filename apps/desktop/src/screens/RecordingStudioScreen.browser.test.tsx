@@ -83,6 +83,7 @@ const recallClient = vi.hoisted(() => ({
   resolveRecallEvidence: vi.fn(),
   listenToRecallStateChanged: vi.fn(),
 }));
+const debugState = vi.hoisted(() => ({ enabled: false }));
 vi.mock('@/features/recall/recall-client', () => recallClient);
 
 let originalViewport: { height: number; width: number } | null = null;
@@ -92,7 +93,7 @@ vi.mock('@/features/library/library-client', () => client);
 vi.mock('@/features/ai/ai-client', () => aiClient);
 vi.mock('@/features/ai/ocr/ocr-client', () => ocrClient);
 vi.mock('@/features/settings/use-debug-enabled', () => ({
-  useDebugEnabled: () => false,
+  useDebugEnabled: () => debugState.enabled,
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -501,6 +502,7 @@ test.each(['light', 'dark'] as const)(
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
+  debugState.enabled = false;
   ocrClient.getOcrDocument.mockResolvedValue({
     document: null,
     recordingId: detail.id,
@@ -786,6 +788,7 @@ function dragTimelineRange({
 }
 
 test('RecordingStudioScreen renders player controls, metadata sidebar, and tracks', async () => {
+  debugState.enabled = true;
   render(<RecordingStudioScreen />);
 
   expect(await screen.findByText('Tracks')).toBeTruthy();
@@ -937,6 +940,7 @@ test('RecordingStudioScreen shows processed AI state without a spinner', async (
 });
 
 test('RecordingStudioScreen clears stale AI state after route changes', async () => {
+  debugState.enabled = true;
   const nextDetail = {
     ...detail,
     id: 'recording-2',
@@ -1177,7 +1181,9 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
     },
   });
 
-  expect(await screen.findByText('Standup notes')).toBeTruthy();
+  expect((await screen.findAllByText('Standup notes')).length).toBeGreaterThan(
+    0,
+  );
   expect(screen.queryByText('Transcription failed')).toBeNull();
   expect(screen.getByLabelText('AI processing failed')).toBeTruthy();
   expect(
@@ -1652,7 +1658,9 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
       name: /Focus changed at 0:02 - Editor - Notes\.md/i,
     }),
   ).toBeTruthy();
-  expect(await screen.findByText('private spoken secret')).toBeTruthy();
+  expect(
+    (await screen.findAllByText('private spoken secret')).length,
+  ).toBeGreaterThan(0);
   fireEvent.click(
     await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
   );
@@ -1806,6 +1814,7 @@ test('RecordingStudioScreen marks mouse and keyboard lanes when input capture wa
 });
 
 test('RecordingStudioScreen renders transcript text by transcript segment offsets', async () => {
+  debugState.enabled = true;
   aiClient.getRecordingAiProcessingState.mockResolvedValue({
     chunks: [],
     job: {
@@ -3578,6 +3587,7 @@ test.each([
 );
 
 test('recall links resolve the exact source and seek once without autoplay, then withhold invalidated evidence', async () => {
+  debugState.enabled = true;
   const evidence: RecallEvidence = {
     evidenceId: 'synthetic-evidence',
     recordingId: detail.id,
@@ -3867,6 +3877,7 @@ test('RecordingStudioScreen commits a lower mouse-lane seek before playback', as
 });
 
 test('RecordingStudioScreen inspects accessible activity spans without exposing input contents', async () => {
+  debugState.enabled = true;
   aiClient.getRecordingActivity.mockResolvedValue({
     captureStates: [],
     events: [],
@@ -4006,6 +4017,7 @@ test('RecordingStudioScreen shows scoped redactions on the player seekbar and sk
 });
 
 test('RecordingStudioScreen exposes activity intervals by source and inspects their provenance', async () => {
+  debugState.enabled = true;
   aiClient.getRecordingActivity.mockResolvedValue({
     captureStates: [],
     events: [],
@@ -4105,6 +4117,7 @@ test('RecordingStudioScreen steps to actual saved frames with punctuation keys a
 });
 
 test('RecordingStudioScreen distinguishes desktop no-speech from microphone text and clears a cut selected transcript', async () => {
+  debugState.enabled = true;
   const microphoneDetail = {
     ...detail,
     tracks: [
