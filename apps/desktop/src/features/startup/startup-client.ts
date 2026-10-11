@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type { AppStartupStatus } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 
 export const appStartupStatusChangedEvent = 'app-startup-status-changed';
 

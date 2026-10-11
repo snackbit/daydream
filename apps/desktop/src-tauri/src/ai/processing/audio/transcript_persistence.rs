@@ -13,9 +13,16 @@ pub(in crate::ai) struct PersistedTranscriptionStats {
 }
 
 pub(super) struct SpeechRangeResult {
+    pub(super) language_context: Option<storage::TranscriptLanguageContext>,
     pub(super) range: whisper_backend::SpeechRange,
     pub(super) fingerprint: String,
     pub(super) pending: PendingTranscription,
+}
+
+struct TranscriptionBatch<'a> {
+    transcriptions: Vec<PendingTranscription>,
+    language: Option<&'a storage::TranscriptLanguageContext>,
+    unit_id: Option<&'a str>,
 }
 
 pub(super) fn persist_speech_range(
@@ -52,7 +59,11 @@ pub(super) fn persist_speech_range(
                 provider,
                 model,
                 segment_id,
-                vec![result.pending],
+                TranscriptionBatch {
+                    transcriptions: vec![result.pending],
+                    language: result.language_context.as_ref(),
+                    unit_id: None,
+                },
             )?;
             storage::save_audio_range_checkpoint(
                 &transaction,
@@ -96,10 +107,62 @@ pub(in crate::ai) fn persist_transcriptions_for_chunk(
         provider,
         model,
         segment_id,
-        transcriptions,
+        TranscriptionBatch {
+            transcriptions,
+            language: None,
+            unit_id: None,
+        },
     )?;
     transaction.commit()?;
     Ok(stats)
+}
+
+pub(super) fn write_speech_unit(
+    connection: &rusqlite::Connection,
+    chunk: &ProcessingChunkRow,
+    track: &RecordingTrackRow,
+    settings: &settings::AppSettings,
+    model: &str,
+    unit: &storage::SpeechUnit,
+    value: transcription::VerboseTranscription,
+) -> rusqlite::Result<()> {
+    let segment_id = chunk
+        .segment_id
+        .as_deref()
+        .ok_or(rusqlite::Error::InvalidQuery)?;
+    let language = language_context::result_context(
+        &settings.ai.transcription.language,
+        storage::preceding_transcript_language(
+            connection,
+            chunk,
+            &track.id,
+            unit.start_ms,
+            &unit.fingerprint,
+            &settings.ai.transcription.provider,
+            model,
+        )?,
+        &value,
+        &unit.fingerprint,
+        unit.submitted_start_ms,
+        unit.submitted_end_ms,
+    );
+    write_transcriptions(
+        connection,
+        chunk,
+        track,
+        &settings.ai.transcription.provider,
+        model,
+        segment_id,
+        TranscriptionBatch {
+            transcriptions: vec![PendingTranscription {
+                base_offset_ms: unit.submitted_start_ms,
+                transcription: value,
+            }],
+            language: language.as_ref(),
+            unit_id: Some(&unit.id),
+        },
+    )?;
+    Ok(())
 }
 
 fn write_transcriptions(
@@ -109,16 +172,17 @@ fn write_transcriptions(
     provider: &str,
     model: &str,
     segment_id: &str,
-    transcriptions: Vec<PendingTranscription>,
+    batch: TranscriptionBatch<'_>,
 ) -> rusqlite::Result<PersistedTranscriptionStats> {
+    let TranscriptionBatch {
+        transcriptions,
+        language,
+        unit_id,
+    } = batch;
     let mut stats = PersistedTranscriptionStats::default();
     let sources = storage::list_recording_segments(connection, &chunk.recording_id)?;
-    let current_start = playback_offset_for_segment(&sources, segment_id).unwrap_or(0);
-    let previous = sources
-        .iter()
-        .position(|source| source.id == segment_id)
-        .and_then(|index| index.checked_sub(1))
-        .and_then(|index| sources.get(index));
+    let bases = storage::segment_playback_bases(&sources);
+    let mut detection_id = language.and_then(|context| context.detection_segment_id.clone());
     for pending in transcriptions {
         for segment in pending.transcription.segments {
             let text = segment.text.trim().to_string();
@@ -142,20 +206,34 @@ fn write_transcriptions(
                     model: Some(model.to_string()),
                     provider: provider.to_string(),
                     recording_id: chunk.recording_id.clone(),
-                    segment_id: if start_offset_ms < current_start {
-                        previous
-                            .map(|source| source.id.as_str())
-                            .unwrap_or(segment_id)
-                    } else {
-                        segment_id
-                    }
-                    .to_string(),
+                    segment_id: sources
+                        .iter()
+                        .zip(&bases)
+                        .find(|(source, base)| {
+                            start_offset_ms >= **base
+                                && start_offset_ms < **base + source.duration_ms.unwrap_or(0)
+                        })
+                        .map(|(source, _)| source.id.as_str())
+                        .unwrap_or(segment_id)
+                        .to_string(),
                     source_role: track.kind.clone(),
                     start_offset_ms,
                     text: text.clone(),
                     track_id: track.id.clone(),
                 },
             )?;
+            if let Some(unit_id) = unit_id {
+                connection.execute("INSERT INTO processing_speech_unit_transcripts(unit_id,transcript_id) VALUES(?1,?2)",rusqlite::params![unit_id,transcript_segment_id])?;
+            }
+            if let Some(context) = language {
+                let id = detection_id.get_or_insert_with(|| transcript_segment_id.clone());
+                storage::save_transcript_language_context(
+                    connection,
+                    &transcript_segment_id,
+                    id,
+                    context,
+                )?;
+            }
             stats.segment_count += 1;
             stats.text_char_count += text.chars().count();
             for word in segment_words {
@@ -242,6 +320,7 @@ mod checkpoint_tests {
             })
             .unwrap();
         let result = || SpeechRangeResult {
+            language_context: None,
             range: whisper_backend::SpeechRange {
                 start_ms: 100,
                 end_ms: 600,

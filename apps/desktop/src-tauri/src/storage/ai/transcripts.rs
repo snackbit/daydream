@@ -101,9 +101,8 @@ pub fn list_transcript_segments(
             job_id,
             chunk_id,
             created_at_ms
-        FROM transcript_segments
+        FROM published_transcript_segments
         WHERE recording_id = ?1
-        AND NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=transcript_segments.chunk_id AND rg.committed=0)
         ORDER BY track_id ASC, start_offset_ms ASC, end_offset_ms ASC, id ASC
         "#,
     )?;

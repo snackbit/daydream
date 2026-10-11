@@ -193,6 +193,61 @@
   animation: ai-processing-construction-scroll 900ms linear infinite;
 }
 
+.timeline-processing-progress {
+  background: transparent;
+  border-color: color-mix(in oklch, var(--status-warning), transparent 35%);
+}
+
+.timeline-transcription-curtain {
+  background-color: var(--background);
+  background-image: repeating-linear-gradient(135deg,
+    color-mix(in oklch, var(--status-warning), transparent 78%) 0 8px,
+    transparent 8px 16px);
+  background-size: 24px 24px;
+  border-color: color-mix(in oklch, var(--status-warning), transparent 45%);
+}
+.timeline-transcription-curtain:is([data-processing-status="planned"], [data-processing-status="queued"], [data-processing-status="running"]) {
+  animation: ai-processing-construction-scroll 900ms linear infinite;
+}
+.timeline-transcription-curtain:is([data-processing-status="paused"], [data-processing-status="cancelled"]) { background-image: none; border-color: var(--muted-foreground); }
+.timeline-transcription-curtain[data-processing-status="failed"] { background-image: none; border-color: var(--destructive); }
+.timeline-transcription-curtain[data-complete="true"] { opacity: 0; transition: opacity 150ms 500ms; }
+
+.timeline-processing-progress > [data-slot="progress-indicator"] {
+  position: absolute;
+  left: var(--timeline-processing-complete, 0%);
+  width: calc(100% - var(--timeline-processing-complete, 0%));
+  transform: none !important;
+  background-image: repeating-linear-gradient(135deg,
+    color-mix(in oklch, var(--status-warning), transparent 55%) 0 8px,
+    color-mix(in oklch, var(--status-warning), transparent 85%) 8px 16px);
+  background-color: transparent;
+  background-size: 24px 24px;
+  animation: none;
+}
+
+.timeline-processing-progress:is([data-processing-status="planned"], [data-processing-status="queued"], [data-processing-status="running"]) > [data-slot="progress-indicator"] {
+  animation: ai-processing-construction-scroll 900ms linear infinite;
+}
+
+.timeline-processing-progress:is([data-processing-status="paused"], [data-processing-status="cancelled"]) {
+  border-color: var(--muted-foreground);
+}
+
+.timeline-processing-progress:is([data-processing-status="paused"], [data-processing-status="cancelled"]) > [data-slot="progress-indicator"] {
+  background-image: none;
+  background-color: color-mix(in oklch, var(--muted-foreground), transparent 85%);
+}
+
+.timeline-processing-progress[data-processing-status="failed"] {
+  border-color: var(--destructive);
+}
+
+.timeline-processing-progress[data-processing-status="failed"] > [data-slot="progress-indicator"] {
+  background-image: none;
+  background-color: color-mix(in oklch, var(--destructive), transparent 85%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

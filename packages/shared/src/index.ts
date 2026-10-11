@@ -176,6 +176,7 @@ export * from './window-protection.js';
 export * from './recall.js';
 export * from './maintenance.js';
 export * from './recovery.js';
+export * from './diagnostics/failures.js';
 
 export interface DebugLoggingDiagnostics {
   enabled: boolean;

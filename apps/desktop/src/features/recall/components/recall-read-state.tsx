@@ -16,7 +16,7 @@ export function RecallReadState({ status, onRetry }: RecallReadStateProps) {
           ? 'Recall could not be loaded.'
           : status === 'invalidated'
             ? 'Source eligibility changed. Private results have been cleared.'
-            : 'Loading eligible local evidence…'}
+            : 'Loading local text and transcripts…'}
       </p>
       {status === 'error' || status === 'invalidated' ? (
         <Button className="mt-4" onClick={onRetry} variant="outline">

@@ -26,6 +26,9 @@ export function TrackClip({
   title,
   totalDurationMs,
   track,
+  hiddenTranscriptRanges = [],
+  publishedTranscriptRanges = [],
+  transcriptRevealOffsetMs = null,
 }: {
   children: ReactNode;
   clipId: string;
@@ -39,6 +42,15 @@ export function TrackClip({
   title: string;
   totalDurationMs: number;
   track: LibraryRecordingTrack;
+  hiddenTranscriptRanges?: readonly {
+    startOffsetMs: number;
+    endOffsetMs: number;
+  }[];
+  publishedTranscriptRanges?: readonly {
+    startOffsetMs: number;
+    endOffsetMs: number;
+  }[];
+  transcriptRevealOffsetMs?: number | null;
 }) {
   const finalized = segment.fileExists && segment.state === 'finalized';
   const hasTranscriptionLayer = track.kind !== 'video';
@@ -106,6 +118,9 @@ export function TrackClip({
           segment={segment}
           track={track}
           onInspectTranscript={onInspectTranscript}
+          hiddenRanges={hiddenTranscriptRanges}
+          publishedRanges={publishedTranscriptRanges}
+          revealOffsetMs={transcriptRevealOffsetMs}
         />
       ) : null}
     </div>

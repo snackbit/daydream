@@ -110,51 +110,88 @@ pub(super) async fn run_vision_document(
     frame: &FullFrame,
     cancel: Arc<AtomicBool>,
 ) -> Result<OcrContentInput, AiError> {
-    check_processing_cancel(&cancel)?;
-    let body = request_body(config, frame)?;
-    let endpoint = super::super::visual::vision_chat_completions_url_for_ocr(&config.base_url);
-    let builder = crate::provider_http::client()
-        .post(endpoint)
-        .timeout(VLM_TIMEOUT)
-        .json(&body);
-    let builder = if config.api_key.is_empty() {
-        builder
-    } else {
-        builder.bearer_auth(&config.api_key)
-    };
-    let request = builder.send();
-    let response = await_cancelled(request, cancel.clone())
-        .await?
-        .map_err(|error| {
-            ai_error(
-                if error.is_timeout() {
-                    "ai_ocr_vision_timeout"
-                } else {
-                    "ai_ocr_vision_request_failed"
-                },
-                "Vision OCR request failed.",
+    let mut http_diagnostics = crate::provider_http::HttpDiagnostics::new("vision_ocr");
+    let result: Result<_, AiError> = async {
+        check_processing_cancel(&cancel)?;
+        let body = request_body(config, frame)?;
+        if config.route.is_some() {
+            let response = crate::model_registry::transport::authenticated_completion(
+                config.storage.as_ref(),
+                &config.base_url,
+                (!config.api_key.is_empty()).then_some(config.api_key.as_str()),
+                config.route.as_ref(),
+                body,
+                1_000_000,
+                &cancel,
             )
-        })?;
-    if !response.status().is_success() {
-        return Err(ai_error(
-            &format!(
-                "ai_ocr_vision_{}",
-                crate::provider_http::status_code(response.status())
-            ),
-            "Vision OCR provider rejected the request.",
-        ));
-    }
-    let mut stream = response.bytes_stream();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = await_cancelled(stream.next(), cancel.clone()).await? {
-        let chunk = chunk.map_err(|_| invalid_response())?;
-        if bytes.len() + chunk.len() > 1_000_000 {
-            return Err(invalid_response());
+            .await
+            .map_err(|code| {
+                ai_error(
+                    &crate::model_registry::transport::feature_error(&code, "ai_ocr_vision"),
+                    crate::model_registry::commands::friendly(&code),
+                )
+            })?;
+            http_diagnostics.stage("output_validation");
+            return validate_response(&response.to_string(), frame.width, frame.height);
         }
-        bytes.extend_from_slice(&chunk);
+        let endpoint = super::super::visual::vision_chat_completions_url_for_ocr(&config.base_url);
+        let builder = crate::provider_http::client()
+            .post(endpoint)
+            .timeout(VLM_TIMEOUT)
+            .json(&body);
+        let builder = if config.api_key.is_empty() {
+            builder
+        } else {
+            builder.bearer_auth(&config.api_key)
+        };
+        http_diagnostics.stage("http_request");
+        let request = builder.send();
+        let response = await_cancelled(request, cancel.clone())
+            .await?
+            .map_err(|error| {
+                ai_error(
+                    if error.is_timeout() {
+                        "ai_ocr_vision_timeout"
+                    } else {
+                        "ai_ocr_vision_request_failed"
+                    },
+                    "Vision OCR request failed.",
+                )
+            })?;
+        http_diagnostics.response(
+            response.status().as_u16(),
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+        );
+        if !response.status().is_success() {
+            return Err(ai_error(
+                &format!(
+                    "ai_ocr_vision_{}",
+                    crate::provider_http::status_code(response.status())
+                ),
+                "Vision OCR provider rejected the request.",
+            ));
+        }
+        http_diagnostics.stage("body_read");
+        let mut stream = response.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = await_cancelled(stream.next(), cancel.clone()).await? {
+            let chunk = chunk.map_err(|_| invalid_response())?;
+            if bytes.len() + chunk.len() > 1_000_000 {
+                return Err(invalid_response());
+            }
+            bytes.extend_from_slice(&chunk);
+            http_diagnostics.bytes(bytes.len());
+        }
+        http_diagnostics.stage("output_validation");
+        let body = std::str::from_utf8(&bytes).map_err(|_| invalid_response())?;
+        validate_response(body, frame.width, frame.height)
     }
-    let body = std::str::from_utf8(&bytes).map_err(|_| invalid_response())?;
-    validate_response(body, frame.width, frame.height)
+    .await;
+    http_diagnostics.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
 }
 pub(in crate::ai) async fn await_cancelled<F: std::future::Future>(
     future: F,
@@ -229,6 +266,8 @@ mod tests {
             source_ref: "source".into(),
         };
         let config = VisionRequestConfig {
+            route: None,
+            storage: None,
             api_key: "synthetic-key".into(),
             base_url: "http://127.0.0.1".into(),
             model: "synthetic-model".into(),
@@ -268,6 +307,8 @@ mod tests {
                 source_ref: "source".into(),
             };
             let config = VisionRequestConfig {
+                route: None,
+                storage: None,
                 api_key: "synthetic-key".into(),
                 base_url: "http://127.0.0.1:9".into(),
                 model: "synthetic-model".into(),
@@ -294,6 +335,8 @@ mod tests {
                 source_ref: "source".into(),
             };
             let config = VisionRequestConfig {
+                route: None,
+                storage: None,
                 api_key: "synthetic-key".into(),
                 base_url: "http://127.0.0.1:9".into(),
                 model: "synthetic-model".into(),

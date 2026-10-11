@@ -20,7 +20,7 @@ export function recallTime(timestamp: number): string {
 }
 
 export const recallDayStatusLabel: Record<RecallDayCard['status'], string> = {
-  empty: 'No evidence yet',
+  empty: 'No text or transcripts yet',
   pending: 'Processing',
   ready: 'Ready to review',
   stale: 'Update needed',
@@ -29,7 +29,7 @@ export const recallDayStatusLabel: Record<RecallDayCard['status'], string> = {
   generating: 'Generating overview',
   partial: 'Partially processed',
   invalidated: 'Privacy update needed',
-  insufficient: 'Not enough evidence',
+  insufficient: 'Not enough recorded content',
 };
 
 export function recordedDuration(durationMs: number | null): string {

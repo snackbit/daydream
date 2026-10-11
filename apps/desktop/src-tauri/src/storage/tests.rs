@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -44,7 +47,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 30);
+    assert_eq!(schema_version, 34);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -1523,7 +1526,7 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 30);
+    assert_eq!(schema_version, 34);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
@@ -1955,7 +1958,7 @@ fn app_storage_exposes_mutable_connection_for_scene_transactions() {
     let connection = migrated_memory_connection();
     let scene_id = Uuid::now_v7().to_string();
     let storage = AppStorage {
-        connection: Mutex::new(connection),
+        connection: Arc::new(Mutex::new(connection)),
         path: PathBuf::from("/tmp/daydream.sqlite3"),
     };
 

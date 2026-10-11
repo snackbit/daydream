@@ -1,5 +1,5 @@
 use std::{
-    ffi::CStr,
+    ffi::{CStr, CString},
     os::raw::c_void,
     path::Path,
     sync::{
@@ -44,13 +44,64 @@ pub(super) fn run_whisper_full(
     word_timestamps: bool,
     cancel: &Arc<AtomicBool>,
 ) -> Result<VerboseTranscription, WhisperBackendError> {
-    let language = whisper_language_cstring(language)?;
-    let params = whisper_full_params(
+    let mut language = whisper_language_cstring(language)?;
+    let mut params = whisper_full_params(
         language.as_c_str(),
         max_initial_timestamp_seconds,
         word_timestamps,
         cancel,
     );
+
+    // Detect once and retain its probability. Decode in that explicit language.
+    let mut language_confidence = None;
+    if language.as_bytes() == b"auto" {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
+        }
+        let status = unsafe {
+            bindings::whisper_pcm_to_mel(
+                context,
+                samples.as_ptr(),
+                samples.len() as i32,
+                params.n_threads,
+            )
+        };
+        let mut probabilities =
+            vec![0.0; (unsafe { bindings::whisper_lang_max_id() } + 1) as usize];
+        let id = if status == 0 {
+            unsafe {
+                bindings::whisper_lang_auto_detect(
+                    context,
+                    0,
+                    params.n_threads,
+                    probabilities.as_mut_ptr(),
+                )
+            }
+        } else {
+            -1
+        };
+        if cancel.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
+        }
+        if id < 0 || id as usize >= probabilities.len() {
+            return Err(WhisperBackendError {
+                code: "ai_transcription_provider_failed".into(),
+                message: "Whisper language detection failed.".into(),
+            });
+        }
+        let code = unsafe { bindings::whisper_lang_str(id) };
+        if code.is_null() {
+            return Err(WhisperBackendError {
+                code: "ai_transcription_provider_failed".into(),
+                message: "Whisper language detection failed.".into(),
+            });
+        }
+        language = CString::from(unsafe { CStr::from_ptr(code) });
+        params.language = language.as_ptr();
+        let probability = probabilities[id as usize] as f64;
+        language_confidence =
+            (probability.is_finite() && (0.0..=1.0).contains(&probability)).then_some(probability);
+    }
 
     let status =
         unsafe { bindings::whisper_full(context, params, samples.as_ptr(), samples.len() as i32) };
@@ -97,7 +148,8 @@ pub(super) fn run_whisper_full(
 
     Ok(VerboseTranscription {
         duration: None,
-        language: None,
+        language: Some(language.to_string_lossy().into_owned()),
+        language_confidence,
         segments,
         task: Some("transcribe".to_string()),
         text,
@@ -185,6 +237,7 @@ pub(super) fn empty_transcription(duration: Option<f64>) -> VerboseTranscription
     VerboseTranscription {
         duration,
         language: None,
+        language_confidence: None,
         segments: Vec::new(),
         task: Some("transcribe".to_string()),
         text: String::new(),

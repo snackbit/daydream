@@ -176,6 +176,8 @@ fn privacy_remote_vlm_request_body_excludes_redacted_prior_text() {
         width: 10,
     };
     let config = VisionRequestConfig {
+        route: None,
+        storage: None,
         api_key: "test".to_string(),
         base_url: "http://localhost".to_string(),
         model: "test".to_string(),

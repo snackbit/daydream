@@ -51,6 +51,7 @@ impl LocalTranscriptionRunner for MockRunner {
         Ok(VerboseTranscription {
             duration: Some(1.0),
             language: Some("en".to_string()),
+            language_confidence: None,
             segments: vec![VerboseTranscriptionSegment {
                 end: 1.0,
                 id: 0,

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { driftCorrection } from './playback-clock';
+import type { PlaybackSpeed } from './playback/playback-speed';
 
 interface PlaybackMediaElementsInput {
   isMuted: boolean;
   mutedTrackIds: Set<string>;
   redactedTrackIdsRef: RefObject<Set<string>>;
   volume: number;
+  playbackRate?: PlaybackSpeed;
 }
 
 export function usePlaybackMediaElements({
@@ -13,6 +15,7 @@ export function usePlaybackMediaElements({
   mutedTrackIds,
   redactedTrackIdsRef,
   volume,
+  playbackRate = 1,
 }: PlaybackMediaElementsInput) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const fullscreenElementRef = useRef<HTMLElement | null>(null);
@@ -81,10 +84,10 @@ export function usePlaybackMediaElements({
       ]) {
         if (force) {
           setMediaCurrentTime(element, time);
-          element.playbackRate = 1;
+          element.playbackRate = playbackRate;
           majorDrift.current.delete(element);
         } else if (element === master) {
-          element.playbackRate = 1;
+          element.playbackRate = playbackRate;
           majorDrift.current.delete(element);
         } else if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
           const correction = driftCorrection(
@@ -93,12 +96,12 @@ export function usePlaybackMediaElements({
             majorDrift.current.get(element) ?? null,
           );
           majorDrift.current.set(element, correction.majorSinceMs);
-          element.playbackRate = correction.rate;
+          element.playbackRate = playbackRate * correction.rate;
           if (correction.seek) setMediaCurrentTime(element, time);
         }
       }
     },
-    [clockElement, updateMediaSettings],
+    [clockElement, updateMediaSettings, playbackRate],
   );
 
   const pauseMediaElements = useCallback(() => {
@@ -112,6 +115,8 @@ export function usePlaybackMediaElements({
     (trackId: string, element: HTMLAudioElement | null) => {
       if (element) {
         audioRefs.current.set(trackId, element);
+        element.playbackRate = playbackRate;
+        element.preservesPitch = true;
         applyMediaSettings(element, trackId, redactedTrackIdsRef.current);
       } else {
         const previous = audioRefs.current.get(trackId);
@@ -119,16 +124,35 @@ export function usePlaybackMediaElements({
         audioRefs.current.delete(trackId);
       }
     },
-    [applyMediaSettings, redactedTrackIdsRef],
+    [applyMediaSettings, redactedTrackIdsRef, playbackRate],
   );
 
   function setFullscreenElement(element: HTMLElement | null) {
     fullscreenElementRef.current = element;
   }
 
-  function setVideoElement(element: HTMLVideoElement | null) {
-    videoRef.current = element;
-  }
+  const setVideoElement = useCallback(
+    (element: HTMLVideoElement | null) => {
+      videoRef.current = element;
+      if (element) {
+        updateMediaSettings(element);
+        element.playbackRate = playbackRate;
+        element.preservesPitch = true;
+      }
+    },
+    [updateMediaSettings, playbackRate],
+  );
+
+  useEffect(() => {
+    for (const element of [
+      ...audioRefs.current.values(),
+      ...(videoRef.current ? [videoRef.current] : []),
+    ]) {
+      element.playbackRate = playbackRate;
+      element.preservesPitch = true;
+    }
+    majorDrift.current.clear();
+  }, [playbackRate]);
 
   function requestFullscreen() {
     return fullscreenElementRef.current?.requestFullscreen?.();
@@ -167,7 +191,10 @@ export function usePlaybackMediaElements({
 }
 
 function setMediaCurrentTime(media: HTMLMediaElement, seconds: number) {
-  if (media.readyState === HTMLMediaElement.HAVE_NOTHING) {
+  if (
+    media.readyState === HTMLMediaElement.HAVE_NOTHING ||
+    media.currentTime === seconds
+  ) {
     return;
   }
   try {

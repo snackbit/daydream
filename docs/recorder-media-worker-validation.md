@@ -4,7 +4,10 @@ The media process owns GStreamer pipelines and Pulse streams. The application
 owns capture, crop/protection decisions and SQLite. The private control socket
 carries configuration and small lifecycle messages; a separate socket carries
 validated binary frame headers and owned pixel buffers. A configuration must fit
-the 256 MiB transport allowance and cannot exceed 5 fps. Pending capture frames
+the 512 MiB transport allowance and cannot exceed 5 fps. This admits dual 4K and
+dual 5120×1440 outputs at native resolution with the existing conservative
+seven-frame estimate and socket reserve. The allowance bounds the transport
+estimate, not total application memory. Pending capture frames
 replace the unsent frame for their source, and appsrc has one queued buffer.
 
 Stop and pause use one monotonic 20-second deadline from the user request. The

@@ -1,11 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type {
   CaptureSetup,
   RecorderScene,
   RecorderSceneSource,
   SaveCaptureSetupInput,
 } from '@daydream/shared';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 
 function invalid(): never {
   throw new Error(
@@ -101,7 +101,11 @@ function setup(value: unknown): CaptureSetup {
   };
 }
 export async function getCaptureSetup(): Promise<CaptureSetup> {
-  return setup(await invoke<unknown>('getCaptureSetup'));
+  return decodeResponse(
+    'getCaptureSetup',
+    await invoke<unknown>('getCaptureSetup'),
+    setup,
+  );
 }
 export function listenToCaptureSetupSaved(
   onSaved: (saved: CaptureSetup) => void,
@@ -113,5 +117,9 @@ export function listenToCaptureSetupSaved(
 export async function saveCaptureSetup(
   input: SaveCaptureSetupInput,
 ): Promise<CaptureSetup> {
-  return setup(await invoke<unknown>('saveCaptureSetup', { input }));
+  return decodeResponse(
+    'saveCaptureSetup',
+    await invoke<unknown>('saveCaptureSetup', { input }),
+    setup,
+  );
 }

@@ -100,8 +100,8 @@ export function RecallReadiness({
                 )}
           </p>
           <p className="text-muted-foreground text-xs">
-            {state.data.indexedEvidenceCount} evidence items indexed ·{' '}
-            {state.data.pendingEvidenceCount} pending
+            {state.data.indexedEvidenceCount} text and transcript entries
+            indexed · {state.data.pendingEvidenceCount} pending
           </p>
           {state.data.jobs.some(
             (job) => job.kind === 'index' && job.status === 'failed',
@@ -145,6 +145,8 @@ function readinessReason(
   kind: 'embedding' | 'generation',
   provider?: 'local' | 'openai-compatible',
 ): string {
+  if (reason?.includes('subscription'))
+    return 'Sign in with ChatGPT again in Models';
   if (reason === 'recall_generation_disabled')
     return 'Optional generation is turned off';
   if (reason === 'recall_embedding_remote_disabled')

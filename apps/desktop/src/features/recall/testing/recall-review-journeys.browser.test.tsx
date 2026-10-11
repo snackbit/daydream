@@ -329,11 +329,11 @@ test('NAV-02 disabled debug routes to General Settings without reading diagnosti
   expect(screen.queryByRole('link', { name: 'Diagnostics' })).toBeNull();
   await userEvent.click(screen.getByRole('link', { name: 'Open Settings' }));
   await expect
-    .element(page.getByRole('tab', { name: 'General' }))
+    .element(page.getByRole('button', { name: 'General', exact: true }))
     .toBeVisible();
-  expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
-    'aria-selected',
-    'true',
+  expect(screen.getByRole('button', { name: 'General' })).toHaveAttribute(
+    'aria-current',
+    'page',
   );
   expect(router.state.location.pathname).toBe('/settings');
   expect(

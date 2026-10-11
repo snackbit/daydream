@@ -58,45 +58,59 @@ pub(super) async fn warm_local_via_rest(
     input: &LocalTranscriptionWarmup,
     timeout: Duration,
 ) -> Result<(), TranscriptionError> {
-    let request = LocalWarmupRequest {
-        local_backend: input.local_backend.clone(),
-        model: input.model_id.clone(),
-    };
-    let body = serde_json::to_vec(&request).map_err(request_build_error)?;
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(request_build_error)?;
-    let response = client
-        .post(endpoint)
-        .bearer_auth(bearer_token)
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .map_err(network_error)?;
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(transcription_error(
-            "ai_transcription_remote_auth_failed",
-            &format!("Transcription provider rejected authentication with status {status}."),
-        ));
-    }
-    if !status.is_success() {
-        let body = response.text().await.map_err(network_error)?;
-        if let Some(error) = parse_typed_transcription_error(&body) {
-            return Err(error);
+    let mut http_diagnostics = crate::provider_http::HttpDiagnostics::new("transcription_warmup");
+    let result: Result<_, TranscriptionError> = async {
+        let request = LocalWarmupRequest {
+            local_backend: input.local_backend.clone(),
+            model: input.model_id.clone(),
+        };
+        let body = serde_json::to_vec(&request).map_err(request_build_error)?;
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(request_build_error)?;
+        http_diagnostics.stage("http_request");
+        let response = client
+            .post(endpoint)
+            .bearer_auth(bearer_token)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(network_error)?;
+        let status = response.status();
+        http_diagnostics.response(
+            status.as_u16(),
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+        );
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(transcription_error(
+                "ai_transcription_remote_auth_failed",
+                &format!("Transcription provider rejected authentication with status {status}."),
+            ));
         }
-        return Err(transcription_error(
-            &format!(
-                "ai_transcription_remote_{}",
-                crate::provider_http::status_code(status)
-            ),
-            &format!("Transcription provider failed with status {status}."),
-        ));
-    }
+        if !status.is_success() {
+            let body = response.text().await.map_err(network_error)?;
+            if let Some(error) = parse_typed_transcription_error(&body) {
+                return Err(error);
+            }
+            return Err(transcription_error(
+                &format!(
+                    "ai_transcription_remote_{}",
+                    crate::provider_http::status_code(status)
+                ),
+                &format!("Transcription provider failed with status {status}."),
+            ));
+        }
 
-    Ok(())
+        Ok(())
+    }
+    .await;
+    http_diagnostics.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
 }
 
 pub(super) struct RestTranscriptionRequest<'a> {
@@ -117,100 +131,116 @@ pub(super) struct RestTranscriptionRequest<'a> {
 pub(super) async fn transcribe_via_rest(
     request: RestTranscriptionRequest<'_>,
 ) -> Result<VerboseTranscription, TranscriptionError> {
-    let RestTranscriptionRequest {
-        local_request_id,
-        local_scratch_owner,
-        audio_path,
-        bearer_token,
-        cancel,
-        endpoint,
-        language,
-        local_backend,
-        max_initial_timestamp_seconds,
-        model,
-        timeout,
-        word_timestamps,
-    } = request;
-    check_cancelled(cancel.as_deref())?;
-    let bytes = fs::read(audio_path).map_err(file_error)?;
-    check_cancelled(cancel.as_deref())?;
-    if bytes.len() as u64 > MAX_TRANSCRIPTION_UPLOAD_BYTES {
-        return Err(transcription_error(
-            "ai_transcription_input_too_large",
-            "Transcription input exceeds the upload limit.",
-        ));
-    }
-    let mut form = Form::new()
-        .part(
-            "file",
-            Part::bytes(bytes)
-                .file_name("audio.wav")
-                .mime_str("audio/wav")
-                .map_err(request_build_error)?,
-        )
-        .text("model", model.to_string())
-        .text("response_format", "verbose_json")
-        .text("timestamp_granularities[]", "segment");
-    if let Some(id) = local_request_id {
-        form = form.text("daydream_request_id", id.to_string());
-    }
-    if let Some(owner) = local_scratch_owner {
-        form = form.text("daydream_scratch_request_id", owner.request_id.clone());
-        if let Some(job_id) = &owner.job_id {
-            form = form.text("daydream_scratch_job_id", job_id.clone());
+    let mut http_diagnostics = crate::provider_http::HttpDiagnostics::new("transcription");
+    let result: Result<_, TranscriptionError> = async {
+        let RestTranscriptionRequest {
+            local_request_id,
+            local_scratch_owner,
+            audio_path,
+            bearer_token,
+            cancel,
+            endpoint,
+            language,
+            local_backend,
+            max_initial_timestamp_seconds,
+            model,
+            timeout,
+            word_timestamps,
+        } = request;
+        check_cancelled(cancel.as_deref())?;
+        let bytes = fs::read(audio_path).map_err(file_error)?;
+        check_cancelled(cancel.as_deref())?;
+        if bytes.len() as u64 > MAX_TRANSCRIPTION_UPLOAD_BYTES {
+            return Err(transcription_error(
+                "ai_transcription_input_too_large",
+                "Transcription input exceeds the upload limit.",
+            ));
         }
-    }
-    if word_timestamps {
-        form = form.text("timestamp_granularities[]", "word");
-    }
-    if language != settings::DEFAULT_AI_TRANSCRIPTION_LANGUAGE {
-        form = form.text("language", language.to_string());
-    }
-    if let Some(local_backend) = local_backend {
-        form = form.text(LOCAL_BACKEND_FORM_FIELD, local_backend.to_string());
-    }
-    if let Some(max_initial_timestamp_seconds) = max_initial_timestamp_seconds {
-        form = form.text(
-            "max_initial_timestamp_seconds",
-            max_initial_timestamp_seconds.to_string(),
-        );
-    }
-    let mut request = crate::provider_http::client()
-        .post(endpoint)
-        .timeout(timeout)
-        .multipart(form);
-    if let Some(token) = bearer_token {
-        request = request.bearer_auth(token);
-    }
-    let response = await_cancellable(request.send(), cancel.clone())
-        .await?
-        .map_err(network_error)?;
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(transcription_error(
-            "ai_transcription_remote_auth_failed",
-            &format!("Transcription provider rejected authentication with status {status}."),
-        ));
-    }
-    if !status.is_success() {
-        let body = await_cancellable(response.text(), cancel.clone())
+        let mut form = Form::new()
+            .part(
+                "file",
+                Part::bytes(bytes)
+                    .file_name("audio.wav")
+                    .mime_str("audio/wav")
+                    .map_err(request_build_error)?,
+            )
+            .text("model", model.to_string())
+            .text("response_format", "verbose_json")
+            .text("timestamp_granularities[]", "segment");
+        if let Some(id) = local_request_id {
+            form = form.text("daydream_request_id", id.to_string());
+        }
+        if let Some(owner) = local_scratch_owner {
+            form = form.text("daydream_scratch_request_id", owner.request_id.clone());
+            if let Some(job_id) = &owner.job_id {
+                form = form.text("daydream_scratch_job_id", job_id.clone());
+            }
+        }
+        if word_timestamps {
+            form = form.text("timestamp_granularities[]", "word");
+        }
+        if language != settings::DEFAULT_AI_TRANSCRIPTION_LANGUAGE {
+            form = form.text("language", language.to_string());
+        }
+        if let Some(local_backend) = local_backend {
+            form = form.text(LOCAL_BACKEND_FORM_FIELD, local_backend.to_string());
+        }
+        if let Some(max_initial_timestamp_seconds) = max_initial_timestamp_seconds {
+            form = form.text(
+                "max_initial_timestamp_seconds",
+                max_initial_timestamp_seconds.to_string(),
+            );
+        }
+        let mut request = crate::provider_http::client()
+            .post(endpoint)
+            .timeout(timeout)
+            .multipart(form);
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        http_diagnostics.stage("http_request");
+        let response = await_cancellable(request.send(), cancel.clone())
             .await?
             .map_err(network_error)?;
-        if let Some(error) = parse_typed_transcription_error(&body) {
-            return Err(error);
+        let status = response.status();
+        http_diagnostics.response(
+            status.as_u16(),
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+        );
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(transcription_error(
+                "ai_transcription_remote_auth_failed",
+                &format!("Transcription provider rejected authentication with status {status}."),
+            ));
         }
-        return Err(transcription_error(
-            &format!(
-                "ai_transcription_remote_{}",
-                crate::provider_http::status_code(status)
-            ),
-            &format!("Transcription provider failed with status {status}."),
-        ));
+        if !status.is_success() {
+            let body = await_cancellable(response.text(), cancel.clone())
+                .await?
+                .map_err(network_error)?;
+            if let Some(error) = parse_typed_transcription_error(&body) {
+                return Err(error);
+            }
+            return Err(transcription_error(
+                &format!(
+                    "ai_transcription_remote_{}",
+                    crate::provider_http::status_code(status)
+                ),
+                &format!("Transcription provider failed with status {status}."),
+            ));
+        }
+        let body = await_cancellable(response.text(), cancel)
+            .await?
+            .map_err(network_error)?;
+        http_diagnostics.bytes(body.len());
+        http_diagnostics.stage("output_validation");
+        parse_verbose_transcription(&body)
     }
-    let body = await_cancellable(response.text(), cancel)
-        .await?
-        .map_err(network_error)?;
-    parse_verbose_transcription(&body)
+    .await;
+    http_diagnostics.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
 }
 
 async fn await_cancellable<F, T>(

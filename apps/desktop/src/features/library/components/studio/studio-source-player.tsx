@@ -49,7 +49,7 @@ export function StudioSourcePlayer({
               sources.select(trackId);
               playback.actions.seekTimeline(
                 playback.state.displayedTimelineMs,
-                { resume: playback.state.isPlaying },
+                { resume: playback.state.playRequested },
               );
             }}
           >
@@ -187,7 +187,8 @@ function SourceGridVideo({
       majorSince.current,
     );
     majorSince.current = correction.majorSinceMs;
-    element.playbackRate = correction.rate;
+    element.playbackRate = playback.state.playbackRate * correction.rate;
+    element.preservesPitch = true;
     if (correction.seek && Number.isFinite(element.duration))
       element.currentTime = target;
     if (playback.state.isPlaying) void element.play().catch(() => undefined);
@@ -199,6 +200,7 @@ function SourceGridVideo({
     timeline,
     segmentOffset,
     playback.state.isPlaying,
+    playback.state.playbackRate,
   ]);
   const masked = detail.redactions.some(
     (cut) =>

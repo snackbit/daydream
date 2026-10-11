@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { ModelTransferRowProps } from '@/features/ai/models/model-transfer-row';
+import { ModelSelector } from '../models/model-selector';
 import { ModelCacheRow } from './ai-model-cache-card';
 import { CheckboxField } from './ai-settings-fields';
 import { RecallProfileFields } from './recall-profile-fields';
@@ -50,6 +51,17 @@ export function RecallSettingsCard(props: RecallSettingsCardProps) {
         ...current,
         ai: {
           ...current.ai,
+          ...(value === 'local' && current.ai.modelRegistry
+            ? {
+                modelRegistry: {
+                  ...current.ai.modelRegistry,
+                  bindings: {
+                    ...current.ai.modelRegistry.bindings,
+                    embedding: null,
+                  },
+                },
+              }
+            : {}),
           recall: {
             ...current.ai.recall,
             embedding: { ...current.ai.recall.embedding, provider: value },
@@ -249,6 +261,24 @@ export function RecallSettingsCard(props: RecallSettingsCardProps) {
                 local.
               </p>
             </>
+          ) : draft.ai.modelRegistry ? (
+            <>
+              <ModelSelector
+                draft={draft}
+                feature="embedding"
+                capability="embedding"
+                label="Embedding model"
+                onUpdateDraft={onUpdateDraft}
+              />
+              <CheckboxField
+                checked={recall.embedding.enabled}
+                label="Enable remote embeddings"
+                description="Eligible OCR and transcripts are sent to the selected model for indexing and search. This consent is separate from summaries and Vision."
+                onCheckedChange={(enabled) =>
+                  handleEmbedding({ ...recall.embedding, enabled })
+                }
+              />
+            </>
           ) : (
             <>
               <div className="grid gap-5 sm:grid-cols-2">
@@ -304,18 +334,38 @@ export function RecallSettingsCard(props: RecallSettingsCardProps) {
         <CardHeader>
           <CardTitle>Day summaries</CardTitle>
           <CardDescription>
-            A separately enabled text provider creates grounded summaries and
-            suggestions. Tasks and feedback stay local.
+            Create summaries and suggestions from OCR and transcripts. Tasks
+            stay local.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6">
-          <RecallProfileFields
-            kind="generation"
-            settings={recall}
-            keyDraft={props.generationKeyDraft}
-            onKeyChange={props.onGenerationKeyChange}
-            onChange={handleGeneration}
-          />
+          {draft.ai.modelRegistry ? (
+            <>
+              <ModelSelector
+                draft={draft}
+                feature="summary"
+                capability="text"
+                label="Summary model"
+                onUpdateDraft={onUpdateDraft}
+              />
+              <CheckboxField
+                checked={recall.generation.enabled}
+                label="Enable remote day summaries"
+                description="Eligible OCR and transcripts are sent to the selected model. Screen images are not sent for day summaries. This consent is separate from embeddings and Vision."
+                onCheckedChange={(enabled) =>
+                  handleGeneration({ ...recall.generation, enabled })
+                }
+              />
+            </>
+          ) : (
+            <RecallProfileFields
+              kind="generation"
+              settings={recall}
+              keyDraft={props.generationKeyDraft}
+              onKeyChange={props.onGenerationKeyChange}
+              onChange={handleGeneration}
+            />
+          )}
           <CheckboxField
             checked={recall.autoGenerate}
             label="Generate automatically"

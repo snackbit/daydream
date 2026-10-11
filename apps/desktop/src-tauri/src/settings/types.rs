@@ -38,6 +38,8 @@ pub struct ExpertSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_registry: Option<crate::model_registry::types::Registry>,
     #[serde(default)]
     pub recall: RecallSettings,
     pub activity: AiActivitySettings,
@@ -68,6 +70,8 @@ pub struct AiTranscriptionProviderSettings {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AiVisionProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_route: Option<crate::model_registry::types::Route>,
     #[serde(
         default = "default_vision_auth_mode",
         skip_serializing_if = "default_key_auth"
@@ -299,12 +303,16 @@ pub struct StorageSettingsLimits {
 pub struct SaveAppSettingsInput {
     pub settings: AppSettings,
     #[serde(default)]
+    pub apply_storage_cleanup: Option<bool>,
+    #[serde(default)]
     pub credentials: SettingsCredentialDrafts,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsCredentialDrafts {
+    #[serde(default)]
+    pub model_keys: std::collections::BTreeMap<String, String>,
     pub recall_embedding_key: Option<String>,
     pub recall_generation_key: Option<String>,
     pub transcription_key: Option<String>,

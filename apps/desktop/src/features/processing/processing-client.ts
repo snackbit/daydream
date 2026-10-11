@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type {
   BackgroundTaskDetail,
   BackgroundTaskPage,
@@ -16,6 +14,9 @@ import type {
   RecordingProcessingActionResult,
 } from '@daydream/shared';
 import { processingJob } from '@/features/ai/ocr/ocr-response-decoder';
+import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 import {
   decodeRecordingGroupPage,
   decodeRecordingLaneDetail,
@@ -30,52 +31,75 @@ import {
 export async function listRecordingProcessingGroups(
   input?: ListRecordingProcessingGroupsInput,
 ): Promise<RecordingProcessingGroupPage> {
-  return decodeRecordingGroupPage(
+  return decodeResponse(
+    'listRecordingProcessingGroups',
     await invoke<unknown>('listRecordingProcessingGroups', { input }),
+    decodeRecordingGroupPage,
   );
 }
 export async function getRecordingProcessingLane(
   input: GetRecordingProcessingLaneInput,
 ): Promise<RecordingProcessingLaneDetail> {
-  return decodeRecordingLaneDetail(
+  return decodeResponse(
+    'getRecordingProcessingLane',
     await invoke<unknown>('getRecordingProcessingLane', { input }),
+    decodeRecordingLaneDetail,
   );
 }
 export async function controlRecordingProcessingGroups(
   input: ControlRecordingProcessingGroupsInput,
 ): Promise<RecordingProcessingActionResult> {
-  return decodeRecordingActionResult(
+  const result = decodeResponse(
+    'controlRecordingProcessingGroups',
     await invoke<unknown>('controlRecordingProcessingGroups', { input }),
+    decodeRecordingActionResult,
   );
+  for (const action of result.results)
+    if (!action.succeeded)
+      reportFrontendFailure(
+        'controlRecordingProcessingGroups',
+        'execute',
+        action.errorCode,
+        { deduplicate: false },
+      );
+  return result;
 }
 
 export async function listBackgroundTasks(
   input?: ListBackgroundTasksInput,
 ): Promise<BackgroundTaskPage> {
-  return decodeTaskPage(
+  return decodeResponse(
+    'listBackgroundTasks',
     await invoke<unknown>('listBackgroundTasks', { input }),
+    decodeTaskPage,
   );
 }
 export async function getBackgroundTask(
   input: GetBackgroundTaskInput,
 ): Promise<BackgroundTaskDetail> {
-  return decodeTaskDetail(
+  return decodeResponse(
+    'getBackgroundTask',
     await invoke<unknown>('getBackgroundTask', { input }),
+    decodeTaskDetail,
   );
 }
 export async function retryProcessingUnits(
   input: RetryProcessingUnitsInput,
 ): Promise<ProcessingJob> {
-  return processingJob(
+  return decodeResponse(
+    'retryProcessingUnits',
     await invoke<unknown>('retryProcessingUnits', { input }),
+    processingJob,
   );
 }
 
 export async function reprocessRecordingTranscription(input: {
   recordingId: string;
 }): Promise<ProcessingJob> {
-  return processingJob(
+  return decodeResponse(
+    'reprocessRecordingTranscription',
     await invoke<unknown>('reprocessRecordingTranscription', { input }),
+    processingJob,
   );
 }
 export async function listenToBackgroundTasksChanged(

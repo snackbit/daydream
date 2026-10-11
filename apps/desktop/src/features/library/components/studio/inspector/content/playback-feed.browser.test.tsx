@@ -12,6 +12,98 @@ afterEach(() => {
   cleanup();
   delete document.documentElement.dataset.theme;
 });
+
+test('spoken words follow their source timing without changing transcript text or rounding seek targets', async () => {
+  const microphone = {
+    ...speech('mic', 'Microphone', 1000, 3000),
+    text: 'Hallo, Welt!',
+    words: [
+      {
+        id: 'hello',
+        text: 'Hallo,',
+        startOffsetMs: 1000,
+        endOffsetMs: 1500,
+        probability: null,
+      },
+      {
+        id: 'world',
+        text: 'Welt!',
+        startOffsetMs: 1600,
+        endOffsetMs: 2300,
+        probability: null,
+      },
+    ],
+  };
+  const desktop = {
+    ...speech('desktop', 'Desktop audio', 1200, 2400),
+    text: '同时播放',
+    words: [
+      {
+        id: 'desktop-word',
+        text: '同时播放',
+        startOffsetMs: 1200,
+        endOffsetMs: 2000,
+        probability: null,
+      },
+    ],
+  };
+  const index: InspectorContentIndex = {
+    entries: [microphone, desktop],
+    speechBySource: new Map([
+      ['mic', [microphone]],
+      ['desktop', [desktop]],
+    ]),
+    focus: [],
+  };
+  const seek = vi.fn();
+  const view = render(
+    <PlaybackInspectorFeed index={index} time={1250} isPlaying onSeek={seek} />,
+  );
+  expect(screen.getByText('Hallo,').getAttribute('aria-current')).toBe('true');
+  expect(screen.getByText('同时播放').getAttribute('aria-current')).toBe(
+    'true',
+  );
+  view.rerender(
+    <PlaybackInspectorFeed
+      index={index}
+      time={1500}
+      isPlaying={false}
+      onSeek={seek}
+    />,
+  );
+  expect(screen.getByText('Hallo,').hasAttribute('aria-current')).toBe(false);
+  view.rerender(
+    <PlaybackInspectorFeed
+      index={index}
+      time={1700}
+      isPlaying={false}
+      onSeek={seek}
+    />,
+  );
+  expect(screen.getByText('Welt!').getAttribute('aria-current')).toBe('true');
+  const button = screen.getByRole('button', {
+    name: 'Jump to Desktop audio at 0:01',
+  });
+  await userEvent.click(button);
+  expect(seek).toHaveBeenCalledWith(1200);
+});
+
+test('raw screen text stays out of playback findings', () => {
+  const ocr: InspectorContentEntry = {
+    ...speech('ocr', 'Monitor', 1250, 2000),
+    kind: 'screen-text',
+    text: 'Synthetic raw OCR',
+  };
+  render(
+    <PlaybackInspectorFeed
+      index={{ entries: [ocr], speechBySource: new Map(), focus: [] }}
+      time={1300}
+      isPlaying={false}
+      onSeek={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText('Synthetic raw OCR')).toBeNull();
+});
 function speech(
   id: string,
   source: string,
@@ -72,19 +164,19 @@ test('playback feed keeps simultaneous sources, seeks from entries and allows br
   expect(seek).toHaveBeenCalledWith(5000);
   fireEvent.wheel(screen.getByText('Synthetic desktop'), { deltaY: 100 });
   expect(
-    screen.getByRole('button', { name: 'Return to playback' }),
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
   ).toBeTruthy();
   view.rerender(
     <PlaybackInspectorFeed index={index} time={2800} isPlaying onSeek={seek} />,
   );
   expect(
-    screen.getByRole('button', { name: 'Return to playback' }),
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
   ).toBeTruthy();
   await userEvent.click(
-    screen.getByRole('button', { name: 'Return to playback' }),
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
   );
   expect(
-    screen.queryByRole('button', { name: 'Return to playback' }),
+    screen.queryByRole('button', { name: 'Resume auto-scroll' }),
   ).toBeNull();
   fireEvent.wheel(screen.getByText('Synthetic desktop'), { deltaY: 100 });
   view.rerender(
@@ -97,6 +189,6 @@ test('playback feed keeps simultaneous sources, seeks from entries and allows br
   );
   expect(screen.queryByText('Synthetic desktop')).toBeNull();
   expect(
-    screen.queryByRole('button', { name: 'Return to playback' }),
+    screen.queryByRole('button', { name: 'Resume auto-scroll' }),
   ).toBeNull();
 });

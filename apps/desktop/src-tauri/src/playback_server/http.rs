@@ -15,23 +15,9 @@ use super::{
     PlaybackSegment, PlaybackSession,
 };
 
-pub(super) enum PlaybackRequest {
-    Audio {
-        segment_id: String,
-        start_ms: i64,
-        track_id: String,
-    },
-    Thumbnail {
-        stream_index: Option<i64>,
-        offset_ms: i64,
-        segment_id: String,
-    },
-    Video {
-        stream_index: Option<i64>,
-        segment_id: String,
-        start_ms: i64,
-    },
-}
+mod request;
+use request::read_request;
+pub(super) use request::{parse_request, PlaybackRequest};
 pub(super) fn handle_stream(
     mut stream: TcpStream,
     sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
@@ -39,6 +25,8 @@ pub(super) fn handle_stream(
     encoder: VideoEncoder,
     resource: super::resources::ResourceLease,
 ) {
+    let span = tracing::info_span!("playback_http", request_id = %uuid::Uuid::new_v4());
+    let _entered = span.enter();
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(10)));
     let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
     let Ok(request) = read_request(&mut stream) else {
@@ -95,85 +83,6 @@ pub(super) fn handle_stream(
     }
 }
 
-fn read_request(stream: &mut TcpStream) -> Result<String, String> {
-    let mut buffer = [0_u8; 4096];
-    let size = stream
-        .read(&mut buffer)
-        .map_err(|error| error.to_string())?;
-    String::from_utf8(buffer[..size].to_vec()).map_err(|error| error.to_string())
-}
-
-pub(super) fn parse_request(request: &str) -> Option<(String, String, PlaybackRequest)> {
-    let first_line = request.lines().next()?;
-    let mut parts = first_line.split_whitespace();
-    let method = parts.next()?;
-    let url = parts.next()?;
-    if method != "GET" {
-        return None;
-    }
-    let (path, query) = url.split_once('?').unwrap_or((url, ""));
-    let segments = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
-    if segments.len() < 6
-        || segments[0] != "playback"
-        || !matches!(segments[3], "segments" | "runs")
-    {
-        return None;
-    }
-    let session_id = segments[1].to_string();
-    let token = segments[2].to_string();
-    let segment_id = segments[4].to_string();
-    let start_ms = query_value(query, "startMs").unwrap_or(0).max(0);
-
-    match segments.get(5).copied()? {
-        "video" => Some((
-            session_id,
-            token,
-            PlaybackRequest::Video {
-                stream_index: segments
-                    .get(6)
-                    .map(|value| value.parse::<i64>())
-                    .transpose()
-                    .ok()?,
-                segment_id,
-                start_ms,
-            },
-        )),
-        "audio" => Some((
-            session_id,
-            token,
-            PlaybackRequest::Audio {
-                segment_id,
-                start_ms,
-                track_id: segments.get(6)?.to_string(),
-            },
-        )),
-        "thumbnail" => {
-            let offset = segments.get(6)?.strip_suffix(".jpg")?.parse().ok()?;
-            Some((
-                session_id,
-                token,
-                PlaybackRequest::Thumbnail {
-                    stream_index: segments
-                        .get(7)
-                        .map(|value| value.parse::<i64>())
-                        .transpose()
-                        .ok()?,
-                    offset_ms: offset,
-                    segment_id,
-                },
-            ))
-        }
-        _ => None,
-    }
-}
-
-fn query_value(query: &str, key: &str) -> Option<i64> {
-    query.split('&').find_map(|pair| {
-        let (pair_key, value) = pair.split_once('=')?;
-        (pair_key == key).then(|| value.parse().ok()).flatten()
-    })
-}
-
 fn stream_video(
     stream: &mut TcpStream,
     segment: &PlaybackSegment,
@@ -215,13 +124,7 @@ fn stream_video(
         ),
     ]);
     command
-        .args([
-            "-movflags",
-            "empty_moov+frag_keyframe+default_base_moof",
-            "-f",
-            "mp4",
-            "pipe:1",
-        ])
+        .args(super::ffmpeg_args::video_muxer_ffmpeg_args())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
@@ -401,6 +304,9 @@ fn stream_ffmpeg_stdout(
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) {
+    if status >= 400 {
+        tracing::warn!(http_status = status, "playback_http_response_failed");
+    }
     let status_label = match status {
         200 => "OK",
         400 => "Bad Request",
@@ -413,6 +319,10 @@ fn write_response(stream: &mut TcpStream, status: u16, content_type: &str, body:
         "HTTP/1.1 {status} {status_label}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    let _ = stream.write_all(header.as_bytes());
-    let _ = stream.write_all(body);
+    if let Err(error) = stream
+        .write_all(header.as_bytes())
+        .and_then(|_| stream.write_all(body))
+    {
+        tracing::info!(http_status = status, category = ?error.kind(), "playback_client_disconnected");
+    }
 }

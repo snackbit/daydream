@@ -2,6 +2,20 @@ use super::PlaybackSegment;
 
 const THUMBNAIL_WIDTH_PX: i64 = 320;
 
+pub(super) fn video_muxer_ffmpeg_args() -> &'static [&'static str] {
+    &[
+        "-movflags",
+        "empty_moov+frag_keyframe+default_base_moof",
+        // Sparse capture can go minutes without another keyframe. Flush a
+        // half-second fragment so playback and seek do not wait for EOF.
+        "-frag_duration",
+        "500000",
+        "-f",
+        "mp4",
+        "pipe:1",
+    ]
+}
+
 pub(super) fn input_seek_ffmpeg_args(start_ms: i64, file_path: &str) -> Vec<String> {
     vec![
         "-i".to_string(),

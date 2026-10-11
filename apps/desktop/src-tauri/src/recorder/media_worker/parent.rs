@@ -44,6 +44,18 @@ fn failure(code: &str) -> RecorderError {
         "The media worker could not finish safely. Saved recording files have been preserved.",
     )
 }
+fn startup_failure(stage: &'static str, error: &io::Error) -> RecorderError {
+    tracing::warn!(
+        stage,
+        error_kind = ?error.kind(),
+        os_error = error.raw_os_error(),
+        "recorder_media_worker_start_failed"
+    );
+    dependency_error(
+        "recorder_media_worker_start_failed",
+        "The recording media worker could not start. Saved recording files have been preserved.",
+    )
+}
 pub(super) fn acquire() -> Result<(), RecorderError> {
     if is_quarantined()
         || ACTIVE
@@ -109,13 +121,8 @@ fn start_process_segment_with_timing(
             if error.kind() == io::ErrorKind::TimedOut {
                 quarantine();
             }
-            #[cfg(test)]
-            eprintln!(
-                "synthetic media fixture spawn error: {:?}",
-                error.raw_os_error()
-            );
             release();
-            failure("recorder_media_worker_start_failed")
+            startup_failure("spawn", &error)
         })?;
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst);
     let (sender, responses) = mpsc::sync_channel(64);
@@ -195,16 +202,19 @@ fn start_process_segment_with_timing(
             input: input.clone(),
         },
     )
-    .map_err(|_| failure("recorder_media_worker_start_failed"))?;
+    .map_err(|error| startup_failure("start-request", &error))?;
     match process.responses.recv_timeout(Duration::from_secs(10)) {
         Ok(Response::Ready { generation: g }) if g == generation => {
             Ok(MediaWriterSegment::Process(process))
         }
         Ok(Response::Failed { error, .. }) => Err(error),
-        _other => {
-            #[cfg(test)]
-            eprintln!("synthetic media fixture initial response: {_other:?}");
-            Err(failure("recorder_media_worker_start_failed"))
+        other => {
+            let kind = match other {
+                Err(mpsc::RecvTimeoutError::Timeout) => io::ErrorKind::TimedOut,
+                Err(mpsc::RecvTimeoutError::Disconnected) => io::ErrorKind::UnexpectedEof,
+                Ok(_) => io::ErrorKind::InvalidData,
+            };
+            Err(startup_failure("ready", &kind.into()))
         }
     }
 }
@@ -435,5 +445,38 @@ impl MediaProcess {
 impl Drop for MediaProcess {
     fn drop(&mut self) {
         self.kill_and_reap(Instant::now() + Duration::from_secs(3));
+    }
+}
+
+#[cfg(test)]
+mod startup_failure_tests {
+    use super::*;
+
+    #[test]
+    fn startup_errors_report_safe_metadata_and_preserve_the_error_contract() {
+        let capture = crate::telemetry::test_support::LogCapture::default();
+        tracing::subscriber::with_default(capture.subscriber(), || {
+            let error = startup_failure("spawn", &io::Error::from_raw_os_error(2));
+            assert_eq!(error.code, "recorder_media_worker_start_failed");
+            assert!(error.message.contains("could not start"));
+            assert!(error.message.contains("preserved"));
+            startup_failure(
+                "start-request",
+                &io::Error::new(io::ErrorKind::BrokenPipe, "synthetic-private-payload"),
+            );
+        });
+        let logs = capture.text();
+        assert!(!logs.contains("synthetic-private-payload"));
+        let records: Vec<serde_json::Value> = logs
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["fields"]["stage"], "spawn");
+        assert_eq!(records[0]["fields"]["error_kind"], "NotFound");
+        assert_eq!(records[0]["fields"]["os_error"], 2);
+        assert_eq!(records[1]["fields"]["stage"], "start-request");
+        assert_eq!(records[1]["fields"]["error_kind"], "BrokenPipe");
+        assert!(records[1]["fields"].get("os_error").is_none());
     }
 }

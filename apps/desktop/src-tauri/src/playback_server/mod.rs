@@ -41,6 +41,7 @@ use thumbnails::{thumbnail_offsets, ThumbnailService, THUMBNAIL_WORKER_COUNT};
 #[derive(Clone)]
 pub struct PlaybackServer {
     address: String,
+    thumbnail_address: String,
     sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
     thumbnails: ThumbnailService,
     resources: resources::PlaybackResources,
@@ -68,6 +69,10 @@ impl PlaybackServer {
     pub fn start() -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let address = format!("http://{}", listener.local_addr()?);
+        // Browsers bound concurrent HTTP/1 connections per origin. Slow preview
+        // jobs must not occupy the connections needed by playback or seeking.
+        let thumbnail_listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let thumbnail_address = format!("http://{}", thumbnail_listener.local_addr()?);
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let resources = resources::PlaybackResources::default();
         let thumbnails = ThumbnailService::new_with_resources(
@@ -75,38 +80,44 @@ impl PlaybackServer {
             THUMBNAIL_WORKER_COUNT,
             resources.clone(),
         );
-        let sessions_for_thread = Arc::clone(&sessions);
-        let thumbnails_for_thread = thumbnails.clone();
         let encoder = detect_video_encoder();
-        let encoder_for_thread = encoder.clone();
-        let resources_for_thread = resources.clone();
+        for (listener, thread_name) in [
+            (listener, "daydream-playback-server"),
+            (thumbnail_listener, "daydream-preview-server"),
+        ] {
+            let sessions_for_thread = Arc::clone(&sessions);
+            let thumbnails_for_thread = thumbnails.clone();
+            let encoder_for_thread = encoder.clone();
+            let resources_for_thread = resources.clone();
 
-        thread::Builder::new()
-            .name("daydream-playback-server".to_string())
-            .spawn(move || {
-                for stream in listener.incoming().flatten() {
-                    let Ok(resource) = resources_for_thread.begin(Some(&stream), None) else {
-                        continue;
-                    };
-                    let sessions_for_request = Arc::clone(&sessions_for_thread);
-                    let thumbnails_for_request = thumbnails_for_thread.clone();
-                    let encoder_for_request = encoder_for_thread.clone();
-                    let _ = thread::Builder::new()
-                        .name("daydream-playback-request".to_string())
-                        .spawn(move || {
-                            handle_stream(
-                                stream,
-                                sessions_for_request,
-                                thumbnails_for_request,
-                                encoder_for_request,
-                                resource,
-                            );
-                        });
-                }
-            })?;
+            thread::Builder::new()
+                .name(thread_name.to_string())
+                .spawn(move || {
+                    for stream in listener.incoming().flatten() {
+                        let Ok(resource) = resources_for_thread.begin(Some(&stream), None) else {
+                            continue;
+                        };
+                        let sessions_for_request = Arc::clone(&sessions_for_thread);
+                        let thumbnails_for_request = thumbnails_for_thread.clone();
+                        let encoder_for_request = encoder_for_thread.clone();
+                        let _ = thread::Builder::new()
+                            .name("daydream-playback-request".to_string())
+                            .spawn(move || {
+                                handle_stream(
+                                    stream,
+                                    sessions_for_request,
+                                    thumbnails_for_request,
+                                    encoder_for_request,
+                                    resource,
+                                );
+                            });
+                    }
+                })?;
+        }
 
         Ok(Self {
             address,
+            thumbnail_address,
             sessions,
             thumbnails,
             resources,
@@ -147,6 +158,10 @@ impl PlaybackServer {
                 "{}/playback/{}/{}/segments/{}",
                 self.address, session_id, token, segment.id
             );
+            let thumbnail_base = format!(
+                "{}/playback/{}/{}/segments/{}",
+                self.thumbnail_address, session_id, token, segment.id
+            );
             let mut audio = Vec::new();
             if let Some(stream_index) = segment.desktop_audio_stream_index {
                 audio.push(LibraryPlaybackAudioAsset {
@@ -179,7 +194,7 @@ impl PlaybackServer {
                             .map(|offset_ms| LibraryPlaybackThumbnail {
                                 offset_ms,
                                 url: format!(
-                                    "{base}/thumbnail/{offset_ms}.jpg/{}",
+                                    "{thumbnail_base}/thumbnail/{offset_ms}.jpg/{}",
                                     video.stream_index
                                 ),
                             })
@@ -192,7 +207,7 @@ impl PlaybackServer {
                     .into_iter()
                     .map(|offset_ms| LibraryPlaybackThumbnail {
                         offset_ms,
-                        url: format!("{base}/thumbnail/{offset_ms}.jpg"),
+                        url: format!("{thumbnail_base}/thumbnail/{offset_ms}.jpg"),
                     })
                     .collect(),
                 video_url: format!("{base}/video"),

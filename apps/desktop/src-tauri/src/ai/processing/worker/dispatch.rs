@@ -41,7 +41,7 @@ pub(in crate::ai) fn claim_next_processing_chunk(
                 }
                 if !storage::processing_chunk_retry_ready(connection, &chunks[index].id, now_ms())? { continue; }
                 let chunk = &chunks[index];
-                if chunk.source_kind=="audio"&&storage::processing_job_input_open(connection,job_id)? {
+                if chunk.source_kind=="audio"&&!storage::speech_strategy(connection,job_id)?&&storage::processing_job_input_open(connection,job_id)? {
                     let segments=storage::list_recording_segments(connection,&chunk.recording_id)?;
                     if let Some(index)=segments.iter().position(|segment|Some(segment.id.as_str())==chunk.segment_id.as_deref()) {
                         let segment=&segments[index];
@@ -111,6 +111,17 @@ pub(in crate::ai) fn claim_next_processing_chunk(
 }
 
 fn chunk_ready_to_claim(chunk: &ProcessingChunkRow, chunks: &[ProcessingChunkRow]) -> bool {
+    if chunk.source_kind == "audio" {
+        return !chunks.iter().any(|candidate| {
+            candidate.id != chunk.id
+                && candidate.source_kind == "audio"
+                && candidate.track_id == chunk.track_id
+                && (candidate.status == "running"
+                    || (candidate.status == "queued"
+                        && (candidate.start_offset_ms, &candidate.id)
+                            < (chunk.start_offset_ms, &chunk.id)))
+        });
+    }
     if chunk.source_kind != "vlm" {
         return true;
     }
@@ -135,6 +146,31 @@ fn chunks_overlap(left: &ProcessingChunkRow, right: &ProcessingChunkRow) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_waits_for_previous_speech_on_its_track_but_not_other_tracks() {
+        let segment = "synthetic-segment";
+        let mut first = test_chunk("audio", "running", 0, 1000, segment);
+        first.track_id = Some("mic".into());
+        let next = ProcessingChunkRow {
+            id: "later".into(),
+            status: "queued".into(),
+            start_offset_ms: Some(1000),
+            end_offset_ms: Some(2000),
+            ..first.clone()
+        };
+        assert!(!chunk_ready_to_claim(&next, &[first.clone(), next.clone()]));
+        let mut desktop = next.clone();
+        desktop.track_id = Some("desktop".into());
+        assert!(chunk_ready_to_claim(
+            &desktop,
+            &[first.clone(), desktop.clone()]
+        ));
+        first.status = "queued".into();
+        assert!(!chunk_ready_to_claim(&next, &[next.clone(), first.clone()]));
+        first.status = "failed".into();
+        assert!(chunk_ready_to_claim(&next, &[first, next.clone()]));
+    }
 
     #[test]
     fn vlm_chunk_waits_for_overlapping_ocr_chunk() {

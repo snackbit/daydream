@@ -158,6 +158,7 @@ fn start_with_kind(
         let timestamp=now_ms();
         let job=storage::create_processing_job(&transaction,&CreateProcessingJobInput{id:Uuid::now_v7().to_string(),recording_id:input.recording_id.clone(),kind:kind.into(),status:"queued".into(),created_at_ms:timestamp,updated_at_ms:timestamp,error:None})?;
         storage::set_processing_job_runtime(&transaction,&job.id,false,&configuration)?;
+        storage::enable_speech_strategy(&transaction,&job.id)?;
         storage::save_processing_job_ocr_config(&transaction,&job.id,&capture_ocr_job_config(&settings).map_err(|_|rusqlite::Error::InvalidQuery)?)?;
         for scope in plan.preview.scopes {
             let group=Uuid::now_v7().to_string();

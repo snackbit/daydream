@@ -51,20 +51,22 @@ export function RecordingStudioScreen() {
         detail={state.detail}
         loadStatus={state.status}
         processingStartBusy={state.processingStartBusy}
+        loadingStatus={
+          state.status === 'loading'
+            ? 'Loading recording...'
+            : state.ocrTimelineStatus === 'loading'
+              ? 'Loading OCR observation index…'
+              : recall.state?.status === 'loading'
+                ? 'Checking recall source…'
+                : null
+        }
         onDebug={openDebug}
         onDelete={openDelete}
         onRefresh={refresh}
         onRename={openRename}
         onStartAiProcessing={startProcessing}
       />
-      {recall.state?.status === 'loading' ? (
-        <p
-          role="status"
-          className="text-muted-foreground px-5 pb-6 text-sm lg:px-8"
-        >
-          Checking recall source…
-        </p>
-      ) : recall.state?.status === 'unavailable' ? (
+      {recall.state?.status === 'unavailable' ? (
         <div className="rounded-panel mx-5 mb-6 flex flex-wrap items-center gap-4 border p-6 lg:mx-8">
           <p role="status" className="text-sm">
             This recall source is unavailable. It may have been hidden, deleted
@@ -90,11 +92,6 @@ export function RecordingStudioScreen() {
         </div>
       ) : null}
 
-      {state.status === 'loading' ? (
-        <div className="text-muted-foreground p-4 text-sm">
-          Loading recording...
-        </div>
-      ) : null}
       {state.ocrTimelineError ? (
         <div className="px-4 py-2">
           <Alert variant="destructive">
@@ -104,17 +101,11 @@ export function RecordingStudioScreen() {
             </AlertDescription>
           </Alert>
         </div>
-      ) : state.ocrTimelineStatus === 'loading' ? (
-        <p
-          className="text-muted-foreground px-5 py-3 text-xs lg:px-8"
-          role="status"
-        >
-          Loading OCR observation index…
-        </p>
       ) : null}
 
       {state.detail ? (
         <RecordingStudio
+          key={state.detail.id}
           debugEnabled={debugEnabled}
           activity={state.activity.state}
           aiProcessingState={state.aiProcessing.state}

@@ -144,14 +144,14 @@ export function RecordingProcessingCard({
             ? `${coverage.indexed}/${coverage.total} ready`
             : coverage.applicability === 'disabled'
               ? 'Disabled'
-              : 'No eligible evidence'
+              : 'No text or transcripts available'
         }
         className="bg-muted/40 mt-1"
       >
         {coverage.applicability === 'available' ? (
           <>
             <Progress
-              aria-label="Eligible search evidence indexed"
+              aria-label="Available text and transcripts indexed"
               value={
                 coverage.total
                   ? (100 * coverage.indexed) / coverage.total
@@ -162,7 +162,7 @@ export function RecordingProcessingCard({
               {coverage.pending
                 ? `${coverage.pending} eligible passages waiting for the shared index worker.`
                 : 'Current eligible passages are ready for semantic search.'}{' '}
-              New processing results can add more evidence.
+              New processing results can add more text and transcripts.
             </p>
           </>
         ) : (

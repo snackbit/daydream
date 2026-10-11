@@ -1,4 +1,4 @@
-import type { ChangeEvent } from 'react';
+import { useId, type ChangeEvent } from 'react';
 import {
   AlertDialog as Dialog,
   AlertDialogContent as DialogContent,
@@ -19,6 +19,7 @@ import {
 
 export interface SettingsDangerZoneProps {
   disabled?: boolean;
+  scope?: 'general' | 'storage' | 'recovery' | 'all';
 }
 function maintenancePhaseLabel(phase: string): string {
   switch (phase) {
@@ -38,7 +39,9 @@ function maintenancePhaseLabel(phase: string): string {
 }
 export function SettingsDangerZone({
   disabled = false,
+  scope = 'all',
 }: SettingsDangerZoneProps) {
+  const headingId = useId();
   const controller = useMaintenanceController();
   function resetPreferences() {
     void controller.open('reset-preferences');
@@ -67,74 +70,85 @@ export function SettingsDangerZone({
   const confirmationMatches =
     action !== undefined &&
     (!typed || controller.confirmation === maintenanceConfirmations[action]);
+  if (scope === 'recovery' && !controller.recovery) return null;
   return (
     <section
-      aria-labelledby="settings-danger-zone"
+      aria-labelledby={headingId}
       className="border-destructive/30 mt-6 border-t pt-4"
     >
-      <h2 id="settings-danger-zone" className="text-sm font-medium">
-        Danger zone
+      <h2 id={headingId} className="text-sm font-medium">
+        {scope === 'general'
+          ? 'Reset preferences'
+          : scope === 'recovery'
+            ? 'Cleanup needs attention'
+            : 'Library maintenance'}
       </h2>
       <p className="text-muted-foreground mt-1 text-xs">
         Stop recording before continuing. These actions stop background work.
         Operating system permission grants remain unchanged.
       </p>
-      <div className="mt-3 grid gap-3">
-        <div>
-          <Button
-            disabled={
-              blocked ||
-              (controller.recovery !== null &&
-                controller.recovery.action !== 'reset-preferences')
-            }
-            variant="outline"
-            onClick={resetPreferences}
-          >
-            Reset preferences
-          </Button>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Restore settings, capture scenes and appearance to defaults, and
-            remove API keys. Keep recordings, user edits and downloaded models.
-            Automatic storage cleanup stays paused until you explicitly save
-            settings.
-          </p>
-        </div>
-        <div>
-          <Button
-            disabled={
-              blocked ||
-              (controller.recovery !== null &&
-                controller.recovery.action !== 'clear-library')
-            }
-            variant="destructive"
-            onClick={clearLibrary}
-          >
-            Clear library
-          </Button>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Permanently remove all recordings, derived data, search vectors,
-            days, jobs, tasks, notes, feedback and corrections. Keep settings,
-            API keys and downloaded models.
-          </p>
-        </div>
-        <div>
-          <Button
-            disabled={
-              blocked ||
-              (controller.recovery !== null &&
-                controller.recovery.action !== 'factory-reset')
-            }
-            variant="destructive"
-            onClick={factoryReset}
-          >
-            Factory reset
-          </Button>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Remove all recordings, saved configuration, model files and partial
-            downloads, API keys, capture scenes, restore tokens and logs.
-            Restore defaults and restart after successful cleanup.
-          </p>
-        </div>
+      <div className="mt-3 grid gap-5">
+        {scope === 'general' || scope === 'all' ? (
+          <div>
+            <Button
+              disabled={
+                blocked ||
+                (controller.recovery !== null &&
+                  controller.recovery.action !== 'reset-preferences')
+              }
+              variant="outline"
+              onClick={resetPreferences}
+            >
+              Reset preferences
+            </Button>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Restore settings, capture scenes and appearance to defaults, and
+              remove API keys. Keep recordings, user edits and downloaded
+              models. Automatic storage cleanup stays paused until you review a
+              storage policy.
+            </p>
+          </div>
+        ) : null}
+        {scope === 'storage' || scope === 'all' ? (
+          <div>
+            <Button
+              disabled={
+                blocked ||
+                (controller.recovery !== null &&
+                  controller.recovery.action !== 'clear-library')
+              }
+              variant="destructive"
+              onClick={clearLibrary}
+            >
+              Clear library
+            </Button>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Permanently remove all recordings, derived data, search vectors,
+              days, jobs, tasks, notes, feedback and corrections. Keep settings,
+              API keys and downloaded models.
+            </p>
+          </div>
+        ) : null}
+        {scope === 'storage' || scope === 'all' ? (
+          <div>
+            <Button
+              disabled={
+                blocked ||
+                (controller.recovery !== null &&
+                  controller.recovery.action !== 'factory-reset')
+              }
+              variant="destructive"
+              onClick={factoryReset}
+            >
+              Factory reset
+            </Button>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Remove all recordings, saved configuration, model files and
+              partial downloads, API keys, capture scenes, restore tokens and
+              logs. Restore defaults and restart after successful cleanup.
+            </p>
+          </div>
+        ) : null}
       </div>
       {controller.recovery ? (
         <div className="mt-3" role="alert">

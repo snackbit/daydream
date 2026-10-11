@@ -15,6 +15,7 @@ export interface RecallEvidenceInspectorProps {
     ranges: CreateLibraryRedactionRangeInput[],
   ) => Promise<void>;
   debugEnabled?: boolean;
+  sourceTrackIds?: string[];
 }
 
 export function RecallEvidenceInspector({
@@ -23,6 +24,7 @@ export function RecallEvidenceInspector({
   onClear,
   onCreateRedactions,
   debugEnabled = false,
+  sourceTrackIds,
 }: RecallEvidenceInspectorProps) {
   const [masking, setMasking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,7 @@ export function RecallEvidenceInspector({
         {
           startOffsetMs: evidence.startOffsetMs,
           endOffsetMs: evidence.endOffsetMs,
-          trackIds: [evidence.sourceTrackId],
+          trackIds: sourceTrackIds ?? [evidence.sourceTrackId],
         },
       ]);
     } catch {
@@ -46,6 +48,7 @@ export function RecallEvidenceInspector({
     evidence.startOffsetMs,
     evidence.endOffsetMs,
     evidence.sourceTrackId,
+    sourceTrackIds,
     onCreateRedactions,
   ]);
   const jump = useCallback(
@@ -80,7 +83,7 @@ export function RecallEvidenceInspector({
           <>
             <InspectorField label="Segment" value={evidence.segmentId} />
             <InspectorField label="Track" value={evidence.sourceTrackId} />
-            <InspectorField label="Evidence" value={evidence.sourceId} />
+            <InspectorField label="Source" value={evidence.sourceId} />
           </>
         ) : null}
       </dl>

@@ -92,6 +92,19 @@ pub fn get_ai_provider_status(
         },
         vision: if app_settings.ai.vision.provider == "disabled" {
             "disabled".to_string()
+        } else if app_settings
+            .ai
+            .vision
+            .model_route
+            .as_ref()
+            .is_some_and(|route| {
+                route.subscription
+                    && route.subscription_id.as_deref().is_none_or(|id| {
+                        !crate::model_registry::subscription::configured(&storage, id)
+                    })
+            })
+        {
+            "reconnect-required".to_string()
         } else if settings::vision_ready(&app_settings.ai.vision) {
             "configured".to_string()
         } else {

@@ -37,6 +37,7 @@ import { TimelineReprocessingContextMenu } from './reprocessing/timeline-reproce
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
+import type { TimelinePlannedScope } from './timeline/processing/timeline-processing-ranges';
 import { TrackTimelineLanes } from './timeline/track-timeline-lanes';
 import {
   TRACK_LABEL_WIDTH_PX,
@@ -62,6 +63,7 @@ import { useWaveformTileQueue } from './use-waveform-tile-queue';
 export function TrackTimeline({
   activity,
   aiProcessingState,
+  plannedProcessingScopes,
   detail,
   mutedTrackIds,
   onCreateRedactions,
@@ -80,6 +82,7 @@ export function TrackTimeline({
 }: {
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
+  plannedProcessingScopes?: readonly TimelinePlannedScope[];
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
   onCreateRedactions: (
@@ -402,6 +405,7 @@ export function TrackTimeline({
                   media={{
                     visibleRange: viewModel.waveformRequestRange,
                     aiProcessingState,
+                    plannedProcessingScopes,
                     clipDrafts: clipsById,
                     detail,
                     mutedTrackIds,

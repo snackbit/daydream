@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   AiModelAssetList,
   CancelAiModelDownloadInput,
@@ -6,6 +5,7 @@ import type {
   DownloadAiModelInput,
   Notification,
 } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
 
 export type ModelTransferAction =
   'download' | 'pause' | 'resume' | 'cancel' | 'delete' | 'remove';

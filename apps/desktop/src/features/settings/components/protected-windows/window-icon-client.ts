@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 
 const icons = new Map<string, Promise<string | null>>();
 const maxEncodedPngBytes = Math.ceil((64 * 1024) / 3) * 4;
@@ -38,7 +38,11 @@ export function getWindowApplicationIcon(
   const request = invoke<unknown>('getWindowApplicationIcon', {
     input: { iconKey },
   })
-    .then((value) => decodeWindowIcon(value, iconKey))
+    .then((value) =>
+      decodeResponse('getWindowApplicationIcon', value, (value) =>
+        decodeWindowIcon(value, iconKey),
+      ),
+    )
     .catch((error: unknown) => {
       if (icons.get(iconKey) === request) icons.delete(iconKey);
       throw error;

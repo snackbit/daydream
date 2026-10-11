@@ -36,6 +36,7 @@ export function RecordingStudioToolbar({
   onRename,
   onStartAiProcessing,
   processingStartBusy,
+  loadingStatus = null,
 }: {
   aiProcessing: { state: RecordingAiProcessingState | null };
   debugEnabled: boolean;
@@ -47,6 +48,7 @@ export function RecordingStudioToolbar({
   onRename: () => void;
   onStartAiProcessing: () => void;
   processingStartBusy: boolean;
+  loadingStatus?: string | null;
 }) {
   const processingJob = aiProcessing.state?.job ?? null;
   const hasActiveProcessingChunks =
@@ -111,6 +113,13 @@ export function RecordingStudioToolbar({
               </span>
             )}
           </div>
+          <p
+            role="status"
+            className="text-muted-foreground mt-2 h-4 truncate text-xs leading-4"
+            title={detail ? (loadingStatus ?? undefined) : undefined}
+          >
+            {detail ? loadingStatus : null}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           {detail ? (

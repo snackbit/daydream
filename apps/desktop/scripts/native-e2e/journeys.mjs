@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { connectInspector } from './inspector.mjs';
 import { checkLongPlayback, longPlayback } from './long-playback.mjs';
+import { checkModelSettings } from './model-settings.mjs';
 import { createNativePointer } from './pointer.mjs';
+import { checkStudioControls } from './studio-controls.mjs';
 import { connectNativeKeyboard } from './webdriver.mjs';
 
 const phase = process.argv[2] ?? 'initial';
@@ -156,6 +165,8 @@ try {
   }
   async function checkbox(label) {
     const selector = await native.evaluate(`(() => {
+      const switchControl = [...document.querySelectorAll('[role=switch]')].find(e => e.getAttribute('aria-label') === ${JSON.stringify(label)});
+      if (switchControl) return '[role="switch"][aria-label=' + JSON.stringify(${JSON.stringify(label)}) + ']';
       const label = [...document.querySelectorAll('label')].find(e => e.textContent.includes(${JSON.stringify(label)}));
       if (!label) throw new Error('Missing checkbox label');
       return '#' + CSS.escape(label.htmlFor);
@@ -253,7 +264,7 @@ try {
   } else {
     await navigate('Settings', '/settings');
     await native.wait(
-      'document.querySelector("[role=checkbox]") !== null',
+      'document.querySelector("[role=switch]") !== null',
       'settings loaded',
     );
     const expert = await checkbox('Enable expert mode');
@@ -320,7 +331,7 @@ try {
       );
       await button('Confirm');
       await native.wait(
-        `(() => { const label = [...document.querySelectorAll('label')].find(element => element.textContent.includes('Enable expert mode')); const id = label?.getAttribute('for'); return id && document.getElementById(id)?.getAttribute('aria-checked') === 'false'; })()`,
+        `document.querySelector('[aria-label="Enable expert mode"]')?.getAttribute('aria-checked') === 'false'`,
         'reset defaults',
       );
       assert.equal(
@@ -366,46 +377,35 @@ try {
       stories.push('NATIVE-LOCAL-CONSENT-DEFAULTS');
       await click(expert);
       await native.wait(
-        'document.querySelector("header") !== null && document.body.textContent.includes("Unsaved changes")',
-        'dirty settings',
-      );
-      await button('Save');
-      await native.wait(
-        'document.body.textContent.includes("Saved just now")',
-        'saved settings',
+        `document.body.textContent.includes('Saved') && document.querySelector('[aria-label="Enable expert mode"]')?.getAttribute('aria-checked') === 'true'`,
+        'autosaved settings',
       );
       assert.equal(
         (await native.invoke('getAppSettings')).settings.expert.enabled,
         true,
       );
       stories.push('NATIVE-SETTINGS-SAVE');
-      await click(expert);
-      await click('nav a[aria-label="Library"]');
-      await native.wait(
-        'document.querySelector("[role=dialog]") !== null',
-        'unsaved navigation dialog',
-      );
-      await button('Stay');
+      await checkModelSettings({ native, button, checkbox, click });
+      stories.push('NATIVE-MODEL-FAILURE-LOGGING-RETRY');
+      stories.push('NATIVE-MODEL-CAPABILITIES-SAVE-WITHOUT-REMOTE-CONSENT');
+      await click(await checkbox('Enable expert mode'));
+      await navigate('Library', '/library');
       await native.wait(
         'document.querySelector("[role=dialog]") === null',
-        'stay dialog closed',
+        'autosave allows navigation',
       );
-      assert.equal(await native.evaluate('location.pathname'), '/settings');
-      await click('nav a[aria-label="Library"]');
-      await native.wait(
-        'document.querySelector("[role=dialog]") !== null',
-        'discard navigation dialog',
+      assert.equal(
+        (await native.invoke('getAppSettings')).settings.expert.enabled,
+        false,
       );
-      await button('Discard changes');
-      await native.wait(
-        'location.pathname === "/library"',
-        'discard navigation',
-      );
+      await navigate('Settings', '/settings');
+      await click(await checkbox('Enable expert mode'));
+      await navigate('Library', '/library');
       assert.equal(
         (await native.invoke('getAppSettings')).settings.expert.enabled,
         true,
       );
-      stories.push('NATIVE-SETTINGS-DIRTY-STAY-DISCARD');
+      stories.push('NATIVE-SETTINGS-AUTOSAVE-NAVIGATION');
       await navigate('Search', '/search');
       await native.wait(
         'document.querySelector("main input") !== null',
@@ -450,6 +450,13 @@ try {
       );
       assert.equal(scene.desktopAudioSourceId, null);
       assert.equal(scene.microphoneAudioSourceId, null);
+      // Replace only the isolated package copy, as a build would replace a live
+      // executable. Start and Resume must still launch the parent's media worker.
+      const executable = `${artifacts}/package/daydream-desktop`;
+      const originalInode = (await stat(executable)).ino;
+      await copyFile(executable, `${executable}.replacement`);
+      await rename(`${executable}.replacement`, executable);
+      assert.notEqual((await stat(executable)).ino, originalInode);
       await button('Start');
       await native.wait(
         'document.body.textContent.includes("Status: recording")',
@@ -508,6 +515,7 @@ try {
       assert.equal(stoppedStatus.state, 'idle');
       assert.equal(stoppedStatus.finalization, null);
       stories.push('NATIVE-SYNTHETIC-CAPTURE-SAVE-START-PAUSE-RESUME-STOP');
+      stories.push('NATIVE-CAPTURE-AFTER-EXECUTABLE-REPLACEMENT');
       const recordings = await native.invoke('listLibraryRecordings');
       assert.equal(recordings.length, 1);
       assert.equal(recordings[0].availability, 'available');
@@ -535,6 +543,8 @@ try {
         await native.evaluate('document.querySelector("video").videoWidth > 0'),
       );
       stories.push('NATIVE-RECORDED-MEDIA-LIBRARY-STUDIO');
+      await checkStudioControls({ native, button, click });
+      stories.push('NATIVE-STUDIO-TABS-AND-SPEED');
       await click('button[aria-label="Play"]');
       await native.wait(
         'document.querySelector("video").currentTime > 0.1 && !document.querySelector("video").paused',
@@ -547,7 +557,7 @@ try {
       );
       stories.push('NATIVE-STUDIO-PLAY-TIME-ADVANCE-PAUSE');
       if (longPlayback) {
-        await checkLongPlayback({ native, click, detail });
+        await checkLongPlayback({ native, click, detail, artifacts });
         stories.push('NATIVE-STUDIO-MULTI-FRAGMENT-FULL-PLAYBACK');
       }
     }

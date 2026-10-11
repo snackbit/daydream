@@ -45,6 +45,9 @@ checks actual storage rollovers, full player duration and native seek/play after
 30, 60 and 90 seconds. The regular journey keeps its short capture. Audio remains
 off here; native synthetic-beep tests verify both audio streams, and browser
 regressions verify waveform timing.
+Play is pressed immediately after each seek, before waiting for media readiness.
+`initial-seek-timings.json` records advancing-playback latency,
+including pointer interaction, plus the pending thumbnail count at each seek.
 
 For a driver outside `PATH`, pass its executable explicitly:
 
@@ -71,6 +74,9 @@ settings commands to disable window activity, OCR and automatic processing;
 desktop audio and microphone are asserted off. Ambient display variables are
 cleared. A test-display preload shim corrects Broadway's
 unset DPI sentinel to 96; positive DPI and production assets remain untouched.
+Before capture, the journey atomically replaces its isolated package executable
+with a fresh copy. Start and Resume must still launch the running executable's
+media worker, even though its original inode has been unlinked.
 Each phase starts a fresh Broadway display and native process while retaining the
 same synthetic data/config/cache/state. This avoids GTK Broadway's disconnect
 assertion when reusing a display across process restarts. All owned processes are
@@ -78,8 +84,11 @@ stopped and reaped. Synthetic artifacts are retained in the printed directory fo
 review: per-phase native/display logs, screenshots, asset/input diagnostics and
 JSON story reports. Remove that directory when no longer needed.
 
-Covered stories: local consent defaults, settings save, dirty navigation stay and
-discard, persistence across actual native process restart, reset cancellation and
+Covered stories: local consent defaults, preference autosave through navigation,
+reusable model capability setup and saving without enabling remote processing,
+visible synthetic provider failure, correlated native/frontend file diagnostics
+without provider bodies, and successful text/vision retry,
+persistence across actual native process restart, reset cancellation and
 confirmation, empty Library/Search/Processing navigation, and synthetic screen
 capture start/pause/resume/stop through the real native writer. The existing fake
 capture adapter supplies synthetic frames at the configured source-output
@@ -89,5 +98,6 @@ The resulting segments are checked on disk and opened through Library in Studio;
 the actual WebKit video must load a decoded frame, play with advancing media time,
 and pause. Native command reads corroborate
 visible state after user actions. Device permissions, live portals,
-microphones and populated Recall/model workflows require their separate native
-integration and browser stories; this suite does not claim those boundaries.
+microphones, live model authentication and populated Recall workflows require
+their separate native integration and browser stories; this suite does not claim
+those boundaries.

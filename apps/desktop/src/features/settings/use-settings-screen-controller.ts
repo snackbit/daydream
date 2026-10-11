@@ -6,10 +6,10 @@ import type {
 } from '@daydream/shared';
 import { useNotificationsStore } from '@/features/notifications/notifications-store';
 import type { CadenceMode } from '@/features/settings/components/record-settings-tab';
-import { settingsForCleanupPreview } from '@/features/settings/settings-ai-secret-utils';
 import { validateDraftSettings } from '@/features/settings/settings-screen-utils';
 import { useSettingsStore } from '@/features/settings/settings-store';
 import { useSettingsAiController } from '@/features/settings/use-settings-ai-controller';
+import { applySettingsEdit } from './autosave/settings-edit';
 
 export interface CleanupConfirmation {
   proceedAfterSuccess: boolean;
@@ -27,9 +27,9 @@ export function useSettingsScreenController() {
   const previewStorageCleanup = useSettingsStore(
     (state) => state.previewStorageCleanup,
   );
-  const save = useSettingsStore((state) => state.save);
+  const commit = useSettingsStore((state) => state.commit);
+  const retryAutosave = useSettingsStore((state) => state.retryAutosave);
   const savedScene = useSettingsStore((state) => state.savedScene);
-  const setDraft = useSettingsStore((state) => state.setDraft);
   const settingsState = useSettingsStore((state) => state.settingsState);
   const preferenceRevision = useSettingsStore(
     (state) => state.preferenceRevision,
@@ -72,7 +72,7 @@ export function useSettingsScreenController() {
   );
   const saving = mutationStatus === 'loading' || preparingSave;
   const busy = saving || cleanupPreviewing;
-  const hasUnsavedSettings = isDirty || ai.hasAiSecretDraft;
+  const hasUnsavedSettings = isDirty && mutationStatus === 'error';
   const canSave = Boolean(
     draft && hasUnsavedSettings && !validationError && !busy,
   );
@@ -91,7 +91,7 @@ export function useSettingsScreenController() {
       return;
     }
 
-    setDraft(updater(draft));
+    void commit(updater);
   }
 
   function retryLoadSettings() {
@@ -103,9 +103,7 @@ export function useSettingsScreenController() {
       return;
     }
 
-    await runWithCleanupConfirmation(settingsForCleanupPreview(draft), {
-      proceedAfterSuccess: false,
-    });
+    await retryAutosave();
   }
 
   async function runWithCleanupConfirmation(
@@ -127,7 +125,11 @@ export function useSettingsScreenController() {
         return false;
       }
 
-      return await savePreparedSettings(settings);
+      return await commit(
+        (current) => ({ ...current, storage: settings.storage }),
+        undefined,
+        true,
+      );
     } finally {
       setCleanupPreviewing(false);
     }
@@ -140,13 +142,19 @@ export function useSettingsScreenController() {
     }
 
     setCleanupConfirmation(null);
-    const saved = await savePreparedSettings(confirmation.settings);
+    const saved = await commit(
+      (current) => ({ ...current, storage: confirmation.settings.storage }),
+      undefined,
+      true,
+    );
     if (saved && confirmation.proceedAfterSuccess) {
       blocker.proceed?.();
     }
   }
 
   async function savePreparedSettings(settings: AppSettings): Promise<boolean> {
+    const base = useSettingsStore.getState().draft;
+    if (!base) return false;
     setPreparingSave(true);
     try {
       const preparation = await ai.prepareAiSettingsForSave(settings);
@@ -155,7 +163,13 @@ export function useSettingsScreenController() {
       }
 
       try {
-        await save(preparation.settings, preparation.credentials);
+        const saved = await useSettingsStore
+          .getState()
+          .commitEditor(
+            (latest) => applySettingsEdit(base, preparation.settings, latest),
+            preparation.credentials,
+          );
+        if (!saved) return false;
       } catch {
         return false;
       }
@@ -173,19 +187,14 @@ export function useSettingsScreenController() {
       return;
     }
 
-    const saved = await runWithCleanupConfirmation(
-      settingsForCleanupPreview(draft),
-      { proceedAfterSuccess: true },
-    );
+    const saved = await retryAutosave();
     if (saved) {
       blocker.proceed?.();
     }
   }
 
   function discardAndLeaveSettings() {
-    if (settingsState) {
-      setDraft(settingsState.settings);
-    }
+    useSettingsStore.getState().revertAutosave();
     ai.clearSecretDrafts();
     ai.clearPendingSecretRefsForDeletion();
     blocker.proceed?.();
@@ -198,6 +207,9 @@ export function useSettingsScreenController() {
   }
 
   return {
+    modelKeyDrafts: ai.modelKeyDrafts,
+    preferenceRevision,
+    changeModelKey: ai.changeModelKey,
     aiActionError: ai.aiActionError,
     aiModels: ai.aiModels,
     aiProviderStatus: ai.aiProviderStatus,
@@ -217,6 +229,14 @@ export function useSettingsScreenController() {
     inputActivityRepairing: ai.inputActivityRepairing,
     inputActivityStatus: ai.inputActivityStatus,
     requestSave,
+    savePreparedSettings,
+    updateStorage: (updater: (draft: AppSettings) => AppSettings) => {
+      if (draft)
+        void runWithCleanupConfirmation(updater(draft), {
+          proceedAfterSuccess: false,
+        });
+    },
+    clearSecretDrafts: ai.clearSecretDrafts,
     refreshInputActivityStatus: ai.refreshInputActivityStatus,
     repairInputActivity: ai.repairInputActivity,
     runAiModelAction: ai.runAiModelAction,

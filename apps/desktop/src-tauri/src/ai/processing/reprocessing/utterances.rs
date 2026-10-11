@@ -23,6 +23,34 @@ pub(super) fn utterance_ranges(
         let (role, start, end) = row?;
         by_role.entry(role).or_default().push((start, end));
     }
+    // Canonical speech may span media fragments. Its submitted context is not
+    // itself a new utterance, but connects forced cuts of the same speech.
+    let mut query=connection.prepare("SELECT t.kind,u.start_ms,u.end_ms,u.right_open FROM processing_speech_units u JOIN processing_jobs j ON j.id=u.job_id JOIN recording_tracks t ON t.id=u.track_id WHERE j.recording_id=?1 AND u.submitted_end_ms>u.submitted_start_ms ORDER BY u.job_id,u.track_id,u.start_ms")?;
+    let mut previous: Option<(String, i64, i64, bool)> = None;
+    for row in query.query_map([recording_id], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, bool>(3)?,
+        ))
+    })? {
+        let (role, start, end, open) = row?;
+        if let Some((old_role, old_start, old_end, old_open)) = previous.take() {
+            if old_role == role && old_end == start && old_open {
+                previous = Some((role, old_start, end, open));
+                continue;
+            }
+            by_role
+                .entry(old_role)
+                .or_default()
+                .push((old_start, old_end));
+        }
+        previous = Some((role, start, end, open));
+    }
+    if let Some((role, start, end, _)) = previous {
+        by_role.entry(role).or_default().push((start, end));
+    }
     for ranges in by_role.values_mut() {
         ranges.sort_unstable();
         let mut merged: Vec<(i64, i64)> = Vec::new();

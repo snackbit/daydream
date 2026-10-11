@@ -15,6 +15,17 @@ export interface ProcessingErrorDescription {
 export function describeProcessingError(
   code: string,
 ): ProcessingErrorDescription {
+  if (code.includes('subscription_'))
+    return {
+      summary: code.includes('usage_limit')
+        ? 'ChatGPT subscription usage is exhausted. Check ChatGPT Settings → Usage, then retry later.'
+        : code.includes('usage_unavailable')
+          ? 'Subscription model access is unavailable. Review your ChatGPT plan and connected-app access.'
+          : 'Sign in with ChatGPT again for the selected model, then retry the failed sections.',
+      settingsTab: 'ai',
+      settingsSection: 'models',
+      settingsLabel: 'Review model connections',
+    };
   if (code === 'ai_maintenance_active')
     return {
       summary:
@@ -38,7 +49,7 @@ export function describeProcessingError(
     return {
       summary:
         code.includes('privacy') || code.includes('stale')
-          ? 'Recall inputs changed. Hidden sources remain excluded; retry to use current eligible evidence.'
+          ? 'Recorded content changed. Retry to use the current text and transcripts. Hidden sources stay excluded.'
           : code.includes('auth') || code.includes('credential')
             ? 'The Recall provider could not authenticate. Review its separate credentials before retrying.'
             : code.includes('model') || code.includes('backend')

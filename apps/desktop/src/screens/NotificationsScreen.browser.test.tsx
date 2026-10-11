@@ -20,6 +20,8 @@ const client = vi.hoisted(() => ({
   executeNotificationAction: vi.fn(),
   getNotifications: vi.fn(),
 }));
+const diagnosticNative = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => diagnosticNative);
 
 const aiClient = vi.hoisted(() => ({
   cancelAiModelDownload: vi.fn(),
@@ -113,6 +115,7 @@ const activeNotification: Notification = {
 };
 
 beforeEach(() => {
+  diagnosticNative.invoke.mockReset().mockResolvedValue(undefined);
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-06-09T12:00:00'));
   vi.resetAllMocks();
@@ -262,6 +265,21 @@ test('NOT-01 failed permanent deletion keeps history available until the user re
     .getByRole('button', { name: /permanently dismiss older update/i })
     .click();
   expect(await screen.findByText('Local history is busy.')).toBeTruthy();
+  await waitFor(() =>
+    expect(diagnosticNative.invoke).toHaveBeenCalledWith(
+      'log_frontend_failure',
+      {
+        input: expect.objectContaining({
+          operation: 'frontend_action',
+          stage: 'execute',
+          errorKind: 'Error',
+        }),
+      },
+    ),
+  );
+  expect(JSON.stringify(diagnosticNative.invoke.mock.calls)).not.toContain(
+    'Local history is busy.',
+  );
   expect(screen.getByText('Older update')).toBeTruthy();
   await page
     .getByRole('button', { name: /permanently dismiss older update/i })

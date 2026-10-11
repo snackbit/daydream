@@ -84,10 +84,12 @@ pub(crate) fn constrain_owned_transcription(
                 let mut cursor = 0;
                 let mut first = None;
                 let mut last = 0;
+                let mut aligned = true;
                 for word in words {
                     let text = word.word.trim();
                     let Some(offset) = segment.text[cursor..].find(text) else {
-                        return false;
+                        aligned = false;
+                        break;
                     };
                     let start = cursor + offset;
                     cursor = start + text.len();
@@ -95,6 +97,12 @@ pub(crate) fn constrain_owned_transcription(
                         first.get_or_insert(start);
                         last = cursor;
                     }
+                }
+                if !aligned {
+                    // A provider's token spelling can differ from its segment
+                    // text. Keep the original segment with coarse ownership
+                    // rather than losing an otherwise valid utterance.
+                    return belongs(segment.start, segment.end);
                 }
                 let Some(first) = first else {
                     return false;
@@ -132,6 +140,7 @@ mod tests {
             language: None,
             task: None,
             text: "Synthetic reply".into(),
+            language_confidence: None,
             segments: vec![VerboseTranscriptionSegment {
                 id: 0,
                 start: 0.1,
@@ -171,6 +180,7 @@ mod tests {
             language: None,
             task: None,
             text: "Untrusted".into(),
+            language_confidence: None,
             segments: vec![
                 VerboseTranscriptionSegment {
                     id: 0,
@@ -195,6 +205,7 @@ mod tests {
         let value = VerboseTranscription {
             duration: None,
             language: Some("en".into()),
+            language_confidence: None,
             task: None,
             text: "Yes.".into(),
             segments: vec![VerboseTranscriptionSegment {

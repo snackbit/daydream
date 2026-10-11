@@ -21,8 +21,8 @@ export function SearchResults({ result }: SearchResultsProps) {
       </div>
       {!result.complete ? (
         <p role="status" className="bg-muted rounded-2xl p-4 text-sm">
-          Search coverage is incomplete. More eligible evidence may still need
-          indexing.{' '}
+          Search coverage is incomplete. More text and transcripts may still
+          need indexing.{' '}
           <Link to="/processing" className="underline">
             Inspect processing
           </Link>

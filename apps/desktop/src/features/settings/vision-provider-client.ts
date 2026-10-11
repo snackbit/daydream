@@ -1,8 +1,9 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   TestVisionProviderInput,
   VisionProviderTestResult,
 } from '@daydream/shared';
+import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -11,6 +12,9 @@ export async function testVisionProvider(
   input: TestVisionProviderInput,
 ): Promise<VisionProviderTestResult> {
   const result: unknown = await invoke('testVisionProvider', { input });
+  return decodeResponse('testVisionProvider', result, decodeVisionTest);
+}
+function decodeVisionTest(result: unknown): VisionProviderTestResult {
   if (!record(result) || !Array.isArray(result.checks))
     throw new Error('The provider test returned an invalid response.');
   const checks: VisionProviderTestResult['checks'] = [];
@@ -31,6 +35,11 @@ export async function testVisionProvider(
       errorCode: check.errorCode,
       elapsedMs: check.elapsedMs,
     });
+    if (check.status === 'failed')
+      reportFrontendFailure('testVisionProvider', 'execute', check.errorCode, {
+        elapsedMs: check.elapsedMs,
+        deduplicate: false,
+      });
   }
   return { checks };
 }

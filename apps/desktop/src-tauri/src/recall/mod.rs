@@ -16,6 +16,8 @@ pub(crate) mod generation_store;
 pub(crate) mod generation_windows;
 #[path = "retrieval/index.rs"]
 pub(crate) mod index;
+#[path = "retrieval/index_worker.rs"]
+mod index_worker;
 #[path = "generation/jobs.rs"]
 pub(crate) mod jobs;
 #[path = "ipc/mutations.rs"]

@@ -288,6 +288,92 @@ test('saving preserves newer edits and keeps a single settings request in flight
   });
 });
 
+test('autosave serializes newer edits and never requests storage cleanup', async () => {
+  const store = createSettingsStore();
+  await store.getState().load();
+  let finish!: (result: AppSettingsState) => void;
+  settingsClient.saveAppSettings
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockImplementation(async ({ settings }) => ({
+      ...settingsState,
+      settings,
+    }));
+  const first = store
+    .getState()
+    .commit((current) => ({ ...current, debug: { enabled: true } }));
+  const second = store
+    .getState()
+    .commit((current) => ({ ...current, expert: { enabled: true } }));
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledTimes(1);
+  finish({
+    ...settingsState,
+    settings: settingsClient.saveAppSettings.mock.calls[0]?.[0].settings,
+  });
+  await Promise.all([first, second]);
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledTimes(2);
+  expect(settingsClient.saveAppSettings.mock.calls[1]?.[0]).toMatchObject({
+    applyStorageCleanup: false,
+    settings: { debug: { enabled: true }, expert: { enabled: true } },
+  });
+  expect(store.getState().isDirty).toBe(false);
+});
+
+test('failed autosave retains credentials for explicit retry', async () => {
+  const store = createSettingsStore();
+  await store.getState().load();
+  settingsClient.saveAppSettings.mockRejectedValueOnce(
+    new Error('Synthetic save failure'),
+  );
+  expect(
+    await store
+      .getState()
+      .commit((current) => ({ ...current, debug: { enabled: true } }), {
+        transcriptionKey: 'synthetic-key',
+      }),
+  ).toBe(false);
+  expect(store.getState().isDirty).toBe(true);
+  settingsClient.saveAppSettings.mockImplementation(async ({ settings }) => ({
+    ...settingsState,
+    settings,
+  }));
+  expect(await store.getState().retryAutosave()).toBe(true);
+  expect(settingsClient.saveAppSettings.mock.calls[1]?.[0].credentials).toEqual(
+    { transcriptionKey: 'synthetic-key' },
+  );
+  expect(store.getState().isDirty).toBe(false);
+});
+test('preference invalidation abandons queued edits and credentials after an in-flight save', async () => {
+  const store = createSettingsStore();
+  await store.getState().load();
+  let finish: ((value: AppSettingsState) => void) | undefined;
+  settingsClient.saveAppSettings.mockImplementationOnce(
+    () =>
+      new Promise<AppSettingsState>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const first = store
+    .getState()
+    .commit((current) => ({ ...current, debug: { enabled: true } }));
+  const queued = store
+    .getState()
+    .commit((current) => ({ ...current, expert: { enabled: true } }), {
+      transcriptionKey: 'synthetic-key',
+    });
+  store.getState().invalidatePreferences();
+  finish?.(settingsState);
+  await Promise.all([first, queued]);
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledOnce();
+  expect(store.getState().draft).toBeNull();
+  expect(await store.getState().retryAutosave()).toBe(true);
+  expect(settingsClient.saveAppSettings).toHaveBeenCalledOnce();
+});
+
 test('settings store saves dirty draft and resets to defaults', async () => {
   await useSettingsStore.getState().load();
   useSettingsStore.getState().setDraft({

@@ -3,9 +3,11 @@ import type * as TauriCore from '@tauri-apps/api/core';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
+  RecordingAiProcessingState,
 } from '@daydream/shared';
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
@@ -102,6 +104,36 @@ const assets: LibraryPlaybackAssets = {
 };
 const noAction = () => undefined;
 const noMutation = async () => undefined;
+
+function renderPlayback(
+  debugEnabled = false,
+  recordingDetail = detail,
+  aiProcessingState: RecordingAiProcessingState | null = null,
+) {
+  return render(
+    <RecordingStudio
+      detail={recordingDetail}
+      playbackAssets={assets}
+      thumbnailStatus="loading"
+      debugEnabled={debugEnabled}
+      activity={null}
+      aiProcessingState={aiProcessingState}
+      visualObservations={null}
+      onRefreshPlayback={noAction}
+      onCreateRedactions={noMutation}
+      onDeleteRedaction={noMutation}
+      onUnredactRanges={noMutation}
+    />,
+  );
+}
+
+function mediaReady(container: HTMLElement, state: number) {
+  for (const media of container.querySelectorAll('video, audio'))
+    Object.defineProperty(media, 'readyState', {
+      configurable: true,
+      get: () => state,
+    });
+}
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();
@@ -110,6 +142,7 @@ beforeEach(async () => {
     true,
   );
   native.invoke.mockImplementation(async (command: string) => {
+    if (command === 'log_frontend_failure') return;
     if (command === 'createLibraryPlaybackSession') return assets;
     if (command === 'getRecordingWaveformTiles')
       return { recordingId: detail.id, binMs: 10, tracks: [], error: null };
@@ -162,6 +195,416 @@ test('STU-14 Retry loading rebuilds failed playback assets through the actual ty
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  delete document.documentElement.dataset.theme;
+});
+
+test('immediate Play after seeking queues until video and both audio tracks are ready', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_METADATA);
+  const position = await screen.findByRole('slider', {
+    name: 'Playback position',
+  });
+  position.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  mediaReady(view.container, HTMLMediaElement.HAVE_METADATA);
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic video missing');
+  Object.defineProperty(video, 'readyState', {
+    configurable: true,
+    value: HTMLMediaElement.HAVE_ENOUGH_DATA,
+  });
+  fireEvent.canPlay(video);
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  fireEvent.canPlay(video);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(3),
+  );
+  expect(screen.queryByText('Playback failed')).toBeNull();
+  expect(position).toHaveAttribute('aria-valuenow', '5000');
+});
+
+test('a superseded play rejection cannot abort the new seek', async () => {
+  const pending = Promise.withResolvers<void>();
+  vi.mocked(HTMLMediaElement.prototype.play).mockImplementationOnce(
+    () => pending.promise,
+  );
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const oldVideo = view.container.querySelector('video');
+  if (!oldVideo) throw new Error('Synthetic video missing');
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  fireEvent.play(oldVideo);
+  screen.getByRole('slider', { name: 'Playback position' }).focus();
+  await userEvent.keyboard('{ArrowRight}');
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const replacement = view.container.querySelector('video');
+  if (!replacement) throw new Error('Synthetic replacement missing');
+  fireEvent.canPlay(replacement);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(6),
+  );
+  await act(async () => {
+    pending.reject(new DOMException('Synthetic old start', 'AbortError'));
+  });
+  expect(screen.queryByText('Playback failed')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+});
+
+test('Play waits through seeking, rapid replacements ignore old events, and unmount retires pending starts', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const original = view.container.querySelector('video');
+  if (!original) throw new Error('Synthetic video missing');
+  let seeking = true;
+  Object.defineProperty(original, 'seeking', {
+    configurable: true,
+    get: () => seeking,
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  seeking = false;
+  fireEvent.seeked(original);
+  await act(async () => undefined);
+  screen.getByRole('slider', { name: 'Playback position' }).focus();
+  await userEvent.keyboard('{ArrowRight}{ArrowLeft}');
+  const current = view.container.querySelector('video');
+  expect(current).not.toBe(original);
+  fireEvent.error(original);
+  fireEvent.pause(original);
+  expect(screen.queryByRole('button', { name: 'Retry playback' })).toBeNull();
+  const pending = Promise.withResolvers<void>();
+  vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(
+    () => pending.promise,
+  );
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  if (!current) throw new Error('Synthetic replacement missing');
+  fireEvent.canPlay(current);
+  vi.mocked(HTMLMediaElement.prototype.pause).mockClear();
+  view.unmount();
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(3);
+  await act(async () =>
+    pending.reject(new DOMException('Synthetic retired start', 'AbortError')),
+  );
+  expect(
+    native.invoke.mock.calls.some(
+      ([command]) => command === 'log_frontend_failure',
+    ),
+  ).toBe(false);
+});
+
+test.each([
+  ['light', 1440],
+  ['dark', 1440],
+  ['light', 620],
+  ['dark', 620],
+] as const)(
+  'sidebar tabs and speed popup preserve selection in %s at %i pixels',
+  async (theme, width) => {
+    await page.viewport(width, 960);
+    document.documentElement.dataset.theme = theme;
+    renderPlayback(true);
+    await userEvent.click(
+      await screen.findByRole('button', { name: /^Select Desktop audio$/ }),
+    );
+    if (width < 1200)
+      await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+    const inspector = await screen.findByRole('tab', { name: 'Inspector' });
+    expect(inspector).toHaveAttribute('aria-selected', 'true');
+    const selected = useStudioTimelineStore.getState().selection;
+    await userEvent.click(screen.getByRole('tab', { name: 'Teleprompter' }));
+    expect(useStudioTimelineStore.getState().selection).toBe(selected);
+    await userEvent.click(inspector);
+    expect(
+      await screen.findByRole('textbox', { name: 'Track name' }),
+    ).toBeTruthy();
+    await page.screenshot({
+      path: `__screenshots__/playback-inspector-${theme}-${width}.png`,
+    });
+    if (width < 1200)
+      await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Playback speed' }),
+    );
+    await userEvent.click(screen.getByRole('option', { name: '1.5x' }));
+    expect(useStudioTimelineStore.getState().selection).toBe(selected);
+    await screen.findByRole('combobox', { name: 'Playback speed' });
+    await page.screenshot({
+      path: `__screenshots__/playback-speed-${theme}-${width}.png`,
+    });
+  },
+);
+
+test('unavailable recordings select Inspector and disable Teleprompter', async () => {
+  renderPlayback(false, {
+    ...detail,
+    availability: 'missing-files',
+    missingReasons: ['Synthetic missing media'],
+  });
+  expect(
+    await screen.findByRole('tab', { name: 'Teleprompter' }),
+  ).toBeDisabled();
+  expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(screen.getByText('Recording details')).toBeTruthy();
+  expect(screen.queryByText('Recording ID')).toBeNull();
+});
+
+test('Teleprompter and Inspector remain directly accessible with Debug enabled', async () => {
+  renderPlayback(true);
+  const teleprompter = await screen.findByRole('tab', { name: 'Teleprompter' });
+  expect(teleprompter).toHaveAttribute('aria-selected', 'true');
+  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  expect(await screen.findByText('Recording details')).toBeTruthy();
+  await userEvent.click(teleprompter);
+  expect(teleprompter).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Pause cancels queued and pending starts; repeated readiness does not restart playback', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_METADATA);
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic video missing');
+  fireEvent.canPlay(video);
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  const pending = Promise.withResolvers<void>();
+  vi.mocked(HTMLMediaElement.prototype.play).mockImplementationOnce(
+    () => pending.promise,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  await act(async () => pending.resolve());
+  expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  await act(async () => undefined);
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  fireEvent.canPlay(video);
+  fireEvent.seeked(video);
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+});
+
+test('all speed choices apply to every track without replacing media and persist after a seek', async () => {
+  const view = renderPlayback();
+  const original = view.container.querySelector('video');
+  for (const rate of [0.25, 0.5, 1, 1.25, 1.5, 2]) {
+    await userEvent.click(
+      await screen.findByRole('combobox', { name: 'Playback speed' }),
+    );
+    await userEvent.click(screen.getByRole('option', { name: `${rate}x` }));
+    expect(view.container.querySelector('video')).toBe(original);
+    for (const media of view.container.querySelectorAll<HTMLMediaElement>(
+      'video, audio',
+    )) {
+      expect(media.playbackRate).toBe(rate);
+      expect(media.preservesPitch).toBe(true);
+    }
+  }
+  (await screen.findByRole('slider', { name: 'Playback position' })).focus();
+  await userEvent.keyboard('{ArrowRight}');
+  expect(view.container.querySelector('video')).not.toBe(original);
+  for (const media of view.container.querySelectorAll<HTMLMediaElement>(
+    'video, audio',
+  ))
+    expect(media.playbackRate).toBe(2);
+  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  await userEvent.keyboard('{Escape}');
+  expect(screen.getByRole('tab', { name: 'Teleprompter' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+});
+
+test('a current audio error stops the group, logs safe details and Retry replaces the failed media', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  const audio = view.container.querySelector('audio');
+  if (!audio) throw new Error('Synthetic audio missing');
+  fireEvent.error(audio);
+  expect(
+    await screen.findByRole('button', { name: 'Retry playback' }),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+  expect(native.invoke).toHaveBeenCalledWith('log_frontend_failure', {
+    input: expect.objectContaining({
+      operation: 'studio_playback',
+      errorCode: 'playback_media_failed',
+    }),
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Retry playback' }));
+  expect(view.container.querySelector('audio')).not.toBe(audio);
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic replacement missing');
+  fireEvent.canPlay(video);
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Retry playback' })).toBeNull();
+});
+
+test('an already failed track rejects Play once and Retry recovers without exposing its decoder message', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const audio = view.container.querySelector('audio');
+  if (!audio) throw new Error('Synthetic audio missing');
+  Object.defineProperty(audio, 'error', {
+    value: { code: 3, message: 'synthetic-private-decoder-message' },
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  fireEvent.error(audio);
+  expect(
+    native.invoke.mock.calls.filter(
+      ([command]) => command === 'log_frontend_failure',
+    ),
+  ).toHaveLength(1);
+  expect(screen.queryByText('synthetic-private-decoder-message')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry playback' }));
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic replacement missing');
+  fireEvent.canPlay(video);
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+});
+
+test('synchronizing an audio track may seek it; the group waits for its resulting seeked event', async () => {
+  const view = renderPlayback();
+  mediaReady(view.container, HTMLMediaElement.HAVE_ENOUGH_DATA);
+  const video = view.container.querySelector('video'),
+    audio = view.container.querySelector('audio');
+  if (!video || !audio) throw new Error('Synthetic media missing');
+  Object.defineProperty(video, 'currentTime', { get: () => 1 });
+  let time = 0,
+    ready = HTMLMediaElement.HAVE_ENOUGH_DATA as number;
+  Object.defineProperty(audio, 'currentTime', {
+    get: () => time,
+    set: (next) => {
+      time = next;
+      ready = HTMLMediaElement.HAVE_METADATA;
+    },
+  });
+  Object.defineProperty(audio, 'readyState', {
+    configurable: true,
+    get: () => ready,
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  ready = HTMLMediaElement.HAVE_ENOUGH_DATA;
+  fireEvent.seeked(audio);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(3),
+  );
+});
+
+test('real media advances Teleprompter highlights while browsing, changes speed, pauses and resumes after immediate seek/Play', async () => {
+  vi.mocked(HTMLMediaElement.prototype.play).mockRestore();
+  vi.mocked(HTMLMediaElement.prototype.pause).mockRestore();
+  const state: RecordingAiProcessingState = {
+    recordingId: detail.id,
+    job: null,
+    chunks: [],
+    transcript: {
+      recordingId: detail.id,
+      tracks: [
+        {
+          trackId: 'microphone-2',
+          sourceRole: 'microphone',
+          segments: [
+            {
+              id: 'timed-speech',
+              segmentId: 'segment',
+              startOffsetMs: 0,
+              endOffsetMs: 10000,
+              provider: 'local-whisper-cpp',
+              model: 'synthetic',
+              confidence: 1,
+              text: 'Early Later',
+              words: [
+                {
+                  id: 'early',
+                  text: 'Early',
+                  startOffsetMs: 0,
+                  endOffsetMs: 2000,
+                  probability: 1,
+                },
+                {
+                  id: 'later',
+                  text: 'Later',
+                  startOffsetMs: 2000,
+                  endOffsetMs: 10000,
+                  probability: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const view = renderPlayback(true, detail, state);
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic video missing');
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  await waitFor(() => {
+    expect(video.videoWidth).toBeGreaterThan(0);
+    expect(video.currentTime).toBeGreaterThan(0.1);
+    for (const audio of view.container.querySelectorAll('audio'))
+      expect(audio.currentTime).toBeGreaterThan(0);
+  });
+  await new Promise<void>((resolve) =>
+    video.requestVideoFrameCallback(() => resolve()),
+  );
+  await waitFor(() =>
+    expect(screen.getByText('Early')).toHaveAttribute('aria-current', 'true'),
+  );
+  fireEvent.wheel(screen.getByRole('list', { name: 'Teleprompter entries' }), {
+    deltaY: 1,
+  });
+  expect(
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
+  ).toBeTruthy();
+  await waitFor(
+    () =>
+      expect(screen.getByText('Later')).toHaveAttribute('aria-current', 'true'),
+    { timeout: 4000 },
+  );
+  expect(screen.getByText('Early')).not.toHaveAttribute('aria-current');
+  expect(video.paused).toBe(false);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
+  );
+  expect(
+    screen.queryByRole('button', { name: 'Resume auto-scroll' }),
+  ).toBeNull();
+  await userEvent.click(
+    screen.getByRole('combobox', { name: 'Playback speed' }),
+  );
+  await userEvent.click(screen.getByRole('option', { name: '2x' }));
+  expect(video.playbackRate).toBeGreaterThan(1.9);
+  await userEvent.click(await screen.findByRole('button', { name: 'Pause' }));
+  expect(video.paused).toBe(true);
+  const pausedTime = video.currentTime;
+  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Teleprompter' }));
+  expect(video.currentTime).toBe(pausedTime);
+  screen.getByRole('slider', { name: 'Playback position' }).focus();
+  await userEvent.keyboard('{ArrowRight}');
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  const replacement = view.container.querySelector('video');
+  if (!replacement) throw new Error('Synthetic replacement missing');
+  await waitFor(() => expect(replacement.currentTime).toBeGreaterThan(0.1));
+  expect(replacement.paused).toBe(false);
+  expect(screen.queryByRole('button', { name: 'Retry playback' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
 });
 
 test('STU-03 adjusting volume and global mute preserves independent source mute while editing the Inspector', async () => {
@@ -251,6 +694,89 @@ test('STU-05 skip buttons clamp both ends while paused and do not autoplay', asy
   expect(position).toHaveAttribute('aria-valuenow', '0');
   expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+test('buffered playback survives a stalled download and genuine buffering resumes when all media is ready', async () => {
+  const view = render(
+    <RecordingStudio
+      detail={detail}
+      playbackAssets={assets}
+      thumbnailStatus="loading"
+      activity={null}
+      aiProcessingState={null}
+      visualObservations={null}
+      onRefreshPlayback={noAction}
+      onCreateRedactions={noMutation}
+      onDeleteRedaction={noMutation}
+      onUnredactRanges={noMutation}
+    />,
+  );
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Synthetic video element missing');
+  let ready: number = HTMLMediaElement.HAVE_ENOUGH_DATA;
+  Object.defineProperty(video, 'readyState', { get: () => ready });
+  for (const audio of view.container.querySelectorAll('audio'))
+    Object.defineProperty(audio, 'readyState', {
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  await screen.findByRole('button', { name: 'Pause' });
+  vi.mocked(HTMLMediaElement.prototype.pause).mockClear();
+  fireEvent.stalled(video);
+  expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+
+  ready = HTMLMediaElement.HAVE_CURRENT_DATA;
+  fireEvent.waiting(video);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  ready = HTMLMediaElement.HAVE_ENOUGH_DATA;
+  fireEvent.canPlay(video);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(3),
+  );
+  fireEvent.play(video);
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+});
+
+test('seeking during playback resumes the replacement stream while previews are still loading', async () => {
+  const view = render(
+    <RecordingStudio
+      detail={detail}
+      playbackAssets={assets}
+      thumbnailStatus="loading"
+      activity={null}
+      aiProcessingState={null}
+      visualObservations={null}
+      onRefreshPlayback={noAction}
+      onCreateRedactions={noMutation}
+      onDeleteRedaction={noMutation}
+      onUnredactRanges={noMutation}
+    />,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
+  await screen.findByRole('button', { name: 'Pause' });
+  const previous = view.container.querySelector('video');
+  const position = screen.getByRole('slider', { name: 'Playback position' });
+  position.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  const replacement = view.container.querySelector('video');
+  if (!replacement) throw new Error('Synthetic replacement stream missing');
+  expect(replacement).not.toBe(previous);
+  expect(position).toHaveAttribute('aria-valuenow', '5000');
+  expect(replacement.getAttribute('src')).toContain('startMs=5000');
+  for (const media of view.container.querySelectorAll('video, audio'))
+    Object.defineProperty(media, 'readyState', {
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  fireEvent.canPlay(replacement);
+  await waitFor(() =>
+    expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(3),
+  );
+  fireEvent.play(replacement);
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Retry playback' })).toBeNull();
 });
 
 test('STU-06 keyboard reorders a track and cancelling a later drag preserves its committed order', async () => {
@@ -362,11 +888,19 @@ test('STU-13 Retry playback clears the rejected play and resumes the same source
     />,
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
-  expect(await screen.findByText(/Synthetic playback blocked/)).toBeTruthy();
+  expect(
+    await screen.findByText('Playback could not start. Try again.'),
+  ).toBeTruthy();
+  expect(native.invoke).toHaveBeenCalledWith('log_frontend_failure', {
+    input: expect.objectContaining({
+      operation: 'studio_playback',
+      errorCode: 'playback_start_failed',
+    }),
+  });
   const video = view.container.querySelector('video');
   if (!video) throw new Error('Synthetic video element missing');
   await userEvent.click(screen.getByRole('button', { name: 'Retry playback' }));
-  expect(screen.queryByText(/Synthetic playback blocked/)).toBeNull();
+  expect(screen.queryByText('Playback could not start. Try again.')).toBeNull();
   fireEvent.canPlay(video);
   fireEvent.play(video);
   expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();

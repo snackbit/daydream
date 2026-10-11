@@ -24,6 +24,7 @@ import { useStudioTimelineStore } from './studio-timeline-store';
 import { buildStudioVisualFrames } from './studio-visual-observations';
 import { TrackTimeline } from './track-timeline';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
+import { useStudioEntryNavigation } from './use-studio-entry-navigation';
 import { useStudioFrameNavigation } from './use-studio-frame-navigation';
 import { useStudioRecallNavigation } from './use-studio-recall-navigation';
 import { useStudioSpacePlayback } from './use-studio-space-playback';
@@ -50,6 +51,8 @@ export interface RecordingStudioProps {
   initialSeek?: number | null;
 }
 
+const EMPTY_OCR_FRAMES: OcrTimelineFrame[] = [];
+
 export function RecordingStudio({
   debugEnabled = false,
   activity,
@@ -62,11 +65,14 @@ export function RecordingStudio({
   playbackAssets,
   thumbnailStatus,
   visualObservations,
-  ocrFrames = [],
+  ocrFrames = EMPTY_OCR_FRAMES,
   initialEvidence = null,
   initialSeek = null,
 }: RecordingStudioProps) {
-  const reprocessing = useStudioReprocessing(detail.id);
+  const reprocessing = useStudioReprocessing(
+    detail.id,
+    aiProcessingState?.job ?? null,
+  );
   const [dismissedEvidenceId, setDismissedEvidenceId] = useState<string | null>(
     null,
   );
@@ -78,6 +84,7 @@ export function RecordingStudio({
     redactionSignature: string;
     selection: StudioInspectorSelection;
   } | null>(null);
+  const [sidebarResetRevision, setSidebarResetRevision] = useState(0);
   const initializeTimeline = useStudioTimelineStore(
     (state) => state.initializeFromDetail,
   );
@@ -137,10 +144,15 @@ export function RecordingStudio({
     initialSeekApplied.current = key;
     seekTimeline(initialSeek, { resume: false });
   }, [initialSeek, initialEvidence, playbackAssets, seekTimeline, detail.id]);
-  const handleClearInspectorSelection = useCallback(() => {
-    setInspectorSelectionState(null);
-    setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
-  }, [initialEvidence?.evidenceId]);
+  const handleClearInspectorSelection = useCallback(
+    (reason?: 'outside' | 'escape') => {
+      if (reason === 'escape')
+        setSidebarResetRevision((revision) => revision + 1);
+      setInspectorSelectionState(null);
+      setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
+    },
+    [initialEvidence?.evidenceId],
+  );
   useStudioSelectionDismissal(handleClearInspectorSelection);
   const handleInspectActivity = useCallback(
     (selection: StudioInspectorSelection) => {
@@ -178,6 +190,13 @@ export function RecordingStudio({
     detail.segments.some((segment) => (segment.videoStreams?.length ?? 0) > 0)
       ? sources.selectedTrackId
       : undefined,
+  );
+  const handleEntryNavigation = useStudioEntryNavigation(
+    detail.id,
+    redactionSignature,
+    sources,
+    playbackAssets !== null,
+    handleInspectorSeek,
   );
   useStudioSpacePlayback(playback.actions.togglePlayback, frameNavigation.step);
 
@@ -222,6 +241,7 @@ export function RecordingStudio({
       suspendFollow={reprocessing.request !== null}
       activity={activity}
       aiProcessingState={aiProcessingState}
+      plannedProcessingScopes={reprocessing.plannedScopes}
       detail={runView.detail}
       mutedTrackIds={mutedTrackIds}
       playback={playback}
@@ -239,17 +259,21 @@ export function RecordingStudio({
   const inspector = (
     <StudioSidebar
       actions={{
+        readPlaybackTimeMs: playback.actions.readPlaybackTimeMs,
         onClearActivitySelection: handleClearInspectorSelection,
         onCreateRedactions,
         onDeleteRedaction,
         onSeek: handleInspectorSeek,
+        onNavigateEntry: handleEntryNavigation,
         onUnredactRanges,
       }}
       model={{
+        seekRevision: playback.state.seekRevision,
         aiProcessingState,
         activity,
         isPlaying: playback.state.snapshot.isPlaying,
         debugEnabled,
+        resetRevision: sidebarResetRevision,
         timelineOffsetMs: playback.state.displayedTimelineMs,
         detail,
         selection: inspectorSelection,

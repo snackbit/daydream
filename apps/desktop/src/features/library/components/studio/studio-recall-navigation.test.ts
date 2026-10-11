@@ -61,6 +61,83 @@ const detail: LibraryRecordingDetail = {
   ],
 };
 
+test('audio Recall citations can cover contiguous fragments and reject missing, paused or redacted tails', () => {
+  const first = detail.segments[0];
+  if (!first) throw new Error('Missing synthetic segment');
+  const audio: RecallEvidence = {
+    ...evidence,
+    sourceKind: 'desktop-audio',
+    sourceTrackId: 'desktop-audio-1',
+    sourceFrameRef: null,
+    documentId: null,
+    startOffsetMs: 1500,
+    endOffsetMs: 2500,
+  };
+  const recording: LibraryRecordingDetail = {
+    ...detail,
+    durationMs: 4000,
+    endedAtMs: 5000,
+    tracks: [
+      {
+        id: 'desktop-audio-1',
+        kind: 'desktop-audio',
+        label: 'Desktop audio',
+        description: '',
+        codec: null,
+        streamIndex: 1,
+      },
+    ],
+    segments: [
+      { ...first, desktopAudioStreamIndex: 1 },
+      {
+        ...first,
+        id: 'tail',
+        segmentIndex: 1,
+        playbackOffsetMs: 2000,
+        startedAtMs: 3000,
+        endedAtMs: 5000,
+        desktopAudioStreamIndex: 3,
+      },
+    ],
+  };
+  expect(studioRecallEvidenceAvailable(audio, recording)).toBe(true);
+  for (const invalid of [
+    { fileExists: false },
+    { state: 'failed' as const },
+    { desktopAudioStreamIndex: null },
+    { playbackOffsetMs: 2100 },
+    { startedAtMs: 3100 },
+  ]) {
+    expect(
+      studioRecallEvidenceAvailable(audio, {
+        ...recording,
+        segments: recording.segments.map((s, i) =>
+          i === 1 ? { ...s, ...invalid } : s,
+        ),
+      }),
+    ).toBe(false);
+  }
+  expect(
+    studioRecallEvidenceAvailable(audio, {
+      ...recording,
+      redactions: [
+        {
+          id: 'tail-mask',
+          recordingId: detail.id,
+          createdAtMs: 0,
+          reason: null,
+          startOffsetMs: 2200,
+          endOffsetMs: 2300,
+          trackIds: ['desktop-audio-3'],
+        },
+      ],
+    }),
+  ).toBe(false);
+  expect(
+    studioRecallEvidenceAvailable({ ...audio, endOffsetMs: 4500 }, recording),
+  ).toBe(false);
+});
+
 test('recall links after a real pause use segment timeline bounds rather than captured duration', () => {
   const firstSegment = detail.segments[0];
   if (!firstSegment) throw new Error('Missing synthetic segment');

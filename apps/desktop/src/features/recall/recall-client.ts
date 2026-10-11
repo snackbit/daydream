@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import type {
   AcceptRecallSuggestionInput,
   ControlRecallJobInput,
@@ -23,6 +22,9 @@ import type {
   TestRecallProviderInput,
   UpdateRecallTaskInput,
 } from '@daydream/shared';
+import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 import {
   decodeRecallDay,
   decodeRecallDays,
@@ -38,92 +40,140 @@ import {
 export async function listRecallDays(
   input: ListRecallDaysInput,
 ): Promise<RecallDayCard[]> {
-  return decodeRecallDays(await invoke<unknown>('listRecallDays', { input }));
+  return decodeResponse(
+    'listRecallDays',
+    await invoke<unknown>('listRecallDays', { input }),
+    decodeRecallDays,
+  );
 }
 export async function getRecallDay(input: RecallDayInput): Promise<RecallDay> {
-  return decodeRecallDay(await invoke<unknown>('getRecallDay', { input }));
+  return decodeResponse(
+    'getRecallDay',
+    await invoke<unknown>('getRecallDay', { input }),
+    decodeRecallDay,
+  );
 }
 export async function searchRecallEvidence(
   input: RecallSearchInput,
 ): Promise<RecallSearchResult> {
-  return decodeRecallSearchResult(
+  return decodeResponse(
+    'searchRecallEvidence',
     await invoke<unknown>('searchRecallEvidence', { input }),
+    decodeRecallSearchResult,
   );
 }
 export async function resolveRecallEvidence(
   input: ResolveRecallEvidenceInput,
 ): Promise<RecallEvidence | null> {
-  return decodeResolvedRecallEvidence(
+  return decodeResponse(
+    'resolveRecallEvidence',
     await invoke<unknown>('resolveRecallEvidence', { input }),
+    decodeResolvedRecallEvidence,
   );
 }
 export async function regenerateRecallDay(
   input: RecallDayInput,
 ): Promise<RecallJob> {
-  return decodeRecallJob(
+  return decodeResponse(
+    'regenerateRecallDay',
     await invoke<unknown>('regenerateRecallDay', { input }),
+    decodeRecallJob,
   );
 }
 export async function setRecallFeedback(
   input: SetRecallFeedbackInput,
 ): Promise<RecallDay> {
-  return decodeRecallDay(await invoke<unknown>('setRecallFeedback', { input }));
+  return decodeResponse(
+    'setRecallFeedback',
+    await invoke<unknown>('setRecallFeedback', { input }),
+    decodeRecallDay,
+  );
 }
 export async function setRecallSessionCorrection(
   input: SetRecallSessionCorrectionInput,
 ): Promise<RecallDay> {
-  return decodeRecallDay(
+  return decodeResponse(
+    'setRecallSessionCorrection',
     await invoke<unknown>('setRecallSessionCorrection', { input }),
+    decodeRecallDay,
   );
 }
 export async function acceptRecallSuggestion(
   input: AcceptRecallSuggestionInput,
 ): Promise<RecallTask> {
-  return decodeRecallTask(
+  return decodeResponse(
+    'acceptRecallSuggestion',
     await invoke<unknown>('acceptRecallSuggestion', { input }),
+    decodeRecallTask,
   );
 }
 export async function updateRecallTask(
   input: UpdateRecallTaskInput,
 ): Promise<RecallTask> {
-  return decodeRecallTask(await invoke<unknown>('updateRecallTask', { input }));
+  return decodeResponse(
+    'updateRecallTask',
+    await invoke<unknown>('updateRecallTask', { input }),
+    decodeRecallTask,
+  );
 }
 export async function dismissRecallSuggestion(
   input: DismissRecallSuggestionInput,
 ): Promise<RecallDay> {
-  return decodeRecallDay(
+  return decodeResponse(
+    'dismissRecallSuggestion',
     await invoke<unknown>('dismissRecallSuggestion', { input }),
+    decodeRecallDay,
   );
 }
 export async function setRecallDayReviewed(
   input: SetRecallDayReviewedInput,
 ): Promise<RecallDay> {
-  return decodeRecallDay(
+  return decodeResponse(
+    'setRecallDayReviewed',
     await invoke<unknown>('setRecallDayReviewed', { input }),
+    decodeRecallDay,
   );
 }
 export async function getRecallStatus(): Promise<RecallStatus> {
-  return decodeRecallStatus(await invoke<unknown>('getRecallStatus'));
+  return decodeResponse(
+    'getRecallStatus',
+    await invoke<unknown>('getRecallStatus'),
+    decodeRecallStatus,
+  );
 }
 export async function cancelRecallSearch(): Promise<void> {
   const result = await invoke<unknown>('cancelRecallSearch');
-  if (result !== null && result !== undefined) {
-    throw new Error(
-      'Recall returned an invalid response. Reload to reconnect.',
-    );
-  }
+  decodeResponse('cancelRecallSearch', result, (result) => {
+    if (result !== null && result !== undefined) {
+      throw new Error(
+        'Recall returned an invalid response. Reload to reconnect.',
+      );
+    }
+  });
 }
 export async function testRecallProvider(
   input: TestRecallProviderInput,
 ): Promise<RecallProviderTestResult> {
-  return decodeRecallProviderTestResult(
+  const result = decodeResponse(
+    'testRecallProvider',
     await invoke<unknown>('testRecallProvider', { input }),
+    decodeRecallProviderTestResult,
   );
+  if (result.status === 'failed')
+    reportFrontendFailure('testRecallProvider', 'execute', result.errorCode, {
+      elapsedMs: result.elapsedMs,
+      deduplicate: false,
+    });
+  return result;
 }
 export async function controlRecallJob(
   input: ControlRecallJobInput,
 ): Promise<RecallJob> {
-  return decodeRecallJob(await invoke<unknown>('controlRecallJob', { input }));
+  return decodeResponse(
+    'controlRecallJob',
+    await invoke<unknown>('controlRecallJob', { input }),
+    decodeRecallJob,
+  );
 }
 export async function listenToRecallStateChanged(
   handler: (event: RecallStateChanged) => void,
@@ -137,6 +187,9 @@ export async function listenToRecallStateChanged(
       const error = new Error(
         'Recall returned an invalid response. Reload to reconnect.',
       );
+      reportFrontendFailure('recall-state-changed', 'decode', error, {
+        deduplicate: false,
+      });
       if (onInvalid) {
         onInvalid(error);
         return;

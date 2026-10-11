@@ -1,4 +1,7 @@
-import type { ProcessingChunkStatus } from './processing.js';
+import type {
+  ProcessingChunkStatus,
+  ProcessingJobStatus,
+} from './processing.js';
 import type { AiProviderKind, TranscriptSourceRole } from './provider-kinds.js';
 
 export type RecordingTranscriptionChunkResult =
@@ -23,6 +26,16 @@ export type RecordingTranscriptionTrackStatus =
 
 export interface GetRecordingTranscriptInput {
   recordingId: string;
+}
+
+/** Source-time coverage published atomically with the current transcript. */
+export interface RecordingTranscriptionProgress {
+  jobId: string;
+  trackId: string;
+  sourceRole: TranscriptSourceRole;
+  status: ProcessingJobStatus;
+  ranges: Array<{ startOffsetMs: number; endOffsetMs: number }>;
+  publishedRanges: Array<{ startOffsetMs: number; endOffsetMs: number }>;
 }
 
 export interface RecordingTranscriptionTrackState {

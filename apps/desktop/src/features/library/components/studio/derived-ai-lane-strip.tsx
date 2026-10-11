@@ -44,12 +44,18 @@ export function SegmentTranscriptionLayer({
   segment,
   track,
   onInspectTranscript,
+  hiddenRanges = [],
+  publishedRanges = [],
+  revealOffsetMs = null,
 }: {
   color: string;
   lane: DerivedAiLane;
   segment: LibraryRecordingSegment;
   track: LibraryRecordingTrack;
   onInspectTranscript: (selection: StudioInspectorSelection) => void;
+  hiddenRanges?: readonly { startOffsetMs: number; endOffsetMs: number }[];
+  publishedRanges?: readonly { startOffsetMs: number; endOffsetMs: number }[];
+  revealOffsetMs?: number | null;
 }) {
   const segmentStartMs = segment.playbackOffsetMs;
   const segmentDurationMs = Math.max(1, segment.durationMs ?? 0);
@@ -61,11 +67,35 @@ export function SegmentTranscriptionLayer({
   );
   // Current scopes precede retained history. Paint historical status behind
   // current transcript actions when their processing windows overlap.
+  const seen = new Set<string>();
   const displayItems = chunks
     .toReversed()
     .flatMap((chunk) =>
       transcriptionDisplayItems(chunk, segmentStartMs, segmentEndMs),
-    );
+    )
+    .filter((item) => {
+      const id =
+        item.kind === 'transcript-segment'
+          ? item.transcriptSegment.id
+          : item.id;
+      if (
+        seen.has(id) ||
+        (hiddenRanges.some(
+          (range) =>
+            (item.startOffsetMs ?? 0) < range.endOffsetMs &&
+            (item.endOffsetMs ?? 0) > range.startOffsetMs,
+        ) &&
+          !publishedRanges.some(
+            (range) =>
+              item.kind === 'transcript-segment' &&
+              (item.startOffsetMs ?? 0) < range.endOffsetMs &&
+              (item.endOffsetMs ?? 0) > range.startOffsetMs,
+          ))
+      )
+        return false;
+      seen.add(id);
+      return true;
+    });
 
   if (displayItems.length === 0) {
     return null;
@@ -87,6 +117,9 @@ export function SegmentTranscriptionLayer({
           segmentStartMs={segmentStartMs}
           track={track}
           onInspectTranscript={onInspectTranscript}
+          covered={
+            revealOffsetMs !== null && (item.endOffsetMs ?? 0) > revealOffsetMs
+          }
         />
       ))}
     </div>
@@ -137,6 +170,7 @@ function SegmentTranscriptionItem({
   segmentStartMs,
   track,
   onInspectTranscript,
+  covered,
 }: {
   color: string;
   item: SegmentTranscriptionDisplayItem;
@@ -144,6 +178,7 @@ function SegmentTranscriptionItem({
   segmentStartMs: number;
   track: LibraryRecordingTrack;
   onInspectTranscript: (selection: StudioInspectorSelection) => void;
+  covered: boolean;
 }) {
   const chunk = item.chunk;
   const startMs = Math.max(
@@ -205,6 +240,8 @@ function SegmentTranscriptionItem({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
+            disabled={covered}
+            aria-hidden={covered || undefined}
             aria-label={`Inspect ${track.label} transcript ${formatDuration(startMs)} to ${formatDuration(endMs)}`}
             className={cn(
               className,

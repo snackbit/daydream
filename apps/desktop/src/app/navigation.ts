@@ -28,7 +28,7 @@ export const navigationItems: NavigationItem[] = [
     label: 'Capture',
   },
   {
-    description: 'Find text and meaning in eligible screen and audio evidence.',
+    description: 'Find text and meaning in your recordings and transcripts.',
     href: '/search',
     icon: Search,
     label: 'Search',

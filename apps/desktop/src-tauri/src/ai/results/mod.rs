@@ -2,6 +2,7 @@ mod activity;
 mod processing;
 mod transcript;
 mod transcription_history;
+pub(crate) mod transcription_progress;
 mod visual;
 mod vlm;
 

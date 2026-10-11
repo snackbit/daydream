@@ -15,11 +15,13 @@ import { InspectorField, InspectorSection } from './inspector-section';
 export interface RecordingInspectorSummaryProps {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
+  debugEnabled?: boolean;
 }
 
 export function RecordingInspectorSummary({
   aiProcessingState,
   detail,
+  debugEnabled = false,
 }: RecordingInspectorSummaryProps) {
   const transcriptionTracks = aiProcessingState?.transcriptionTracks ?? [];
 
@@ -55,10 +57,12 @@ export function RecordingInspectorSummary({
             label="Redactions"
             value={String(detail.redactions.length)}
           />
-          <InspectorField
-            label="Recording ID"
-            value={<code>{detail.id}</code>}
-          />
+          {debugEnabled ? (
+            <InspectorField
+              label="Recording ID"
+              value={<code>{detail.id}</code>}
+            />
+          ) : null}
         </dl>
       </InspectorSection>
 
@@ -89,6 +93,7 @@ export function RecordingInspectorSummary({
                 detail={detail}
                 key={track.trackKey}
                 track={track}
+                debugEnabled={debugEnabled}
               />
             ))}
           </div>
@@ -105,9 +110,11 @@ export function RecordingInspectorSummary({
 function TranscriptionSourceSummary({
   detail,
   track,
+  debugEnabled,
 }: {
   detail: LibraryRecordingDetail;
   track: RecordingTranscriptionTrackState;
+  debugEnabled: boolean;
 }) {
   const sourceName = transcriptionSourceLabel(track.sourceRole);
   const libraryTrack = track.libraryTrackId
@@ -123,16 +130,18 @@ function TranscriptionSourceSummary({
           label="Capture track"
           value={libraryTrack?.label ?? track.libraryTrackId ?? 'Unavailable'}
         />
-        <InspectorField
-          label="Track ID"
-          value={
-            track.libraryTrackId ? (
-              <code>{track.libraryTrackId}</code>
-            ) : (
-              'Unavailable'
-            )
-          }
-        />
+        {debugEnabled ? (
+          <InspectorField
+            label="Track ID"
+            value={
+              track.libraryTrackId ? (
+                <code>{track.libraryTrackId}</code>
+              ) : (
+                'Unavailable'
+              )
+            }
+          />
+        ) : null}
         <InspectorField label="Chunks" value={String(track.chunks.length)} />
         <InspectorField
           label="Text segments"

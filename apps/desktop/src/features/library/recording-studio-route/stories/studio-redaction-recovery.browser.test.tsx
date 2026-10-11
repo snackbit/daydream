@@ -17,10 +17,13 @@ import {
 } from '../../library-client';
 import { deferredStory, studioStoryRecording } from './studio-route-fixture';
 
-const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+const native = vi.hoisted(() => ({ invoke: vi.fn(), diagnostic: vi.fn() }));
 vi.mock('@tauri-apps/api/core', async (importOriginal) => ({
   ...(await importOriginal<typeof TauriCore>()),
-  invoke: native.invoke,
+  invoke: (...args: unknown[]) =>
+    args[0] === 'log_frontend_failure'
+      ? native.diagnostic(...args)
+      : native.invoke(...args),
 }));
 const mask = {
   recordingId: studioStoryRecording.id,

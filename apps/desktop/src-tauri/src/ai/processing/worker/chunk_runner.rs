@@ -74,6 +74,10 @@ async fn process_audio_chunk(
     .await;
 
     match result {
+        Err(error) if error.code == "ai_processing_waiting_for_audio" => {
+            context.emit_processing_state();
+            Ok(())
+        }
         Ok(outcome) => {
             context.mark_succeeded(outcome.result_code.as_deref())?;
             tracing::info!(

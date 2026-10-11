@@ -62,3 +62,61 @@ fn playback_admission_tracks_maintenance_lease_without_manual_resume() {
     drop(maintenance);
     assert!(resources.begin(None, None).is_ok());
 }
+
+#[test]
+fn video_stream_delivers_a_playable_fragment_before_the_recording_finishes() {
+    let resources = PlaybackResources::default();
+    let lease = resources
+        .begin(None, Some("synthetic-startup".into()))
+        .unwrap();
+    let mut command = Command::new(crate::ffmpeg::binary_path());
+    command.args([
+        "-hide_banner",
+        "-v",
+        "error",
+        "-re",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=size=64x48:rate=4:duration=6",
+        "-an",
+    ]);
+    super::encoders::append_video_encoder_args_with_tail(
+        &mut command,
+        &super::encoders::VideoEncoder::Libx264,
+        4.,
+        6000,
+    );
+    command
+        .args(["-t", "6"])
+        .args(super::ffmpeg_args::video_muxer_ffmpeg_args())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut output = lease.spawn(&mut command).unwrap();
+    let (done, finished) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 4096];
+        while let Ok(size) = output.read(&mut buffer) {
+            if size == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..size]);
+            if bytes.windows(4).any(|part| part == b"moof") {
+                done.send(true).unwrap();
+                return;
+            }
+        }
+        let _ = done.send(false);
+        drop(lease);
+    });
+    // Input is paced for six seconds. A two-second first-fragment deadline
+    // detects waiting for EOF or the encoder's much later keyframe.
+    let arrived = finished.recv_timeout(Duration::from_secs(2));
+    resources.cancel_and_drain(Duration::from_secs(3)).unwrap();
+    reader.join().unwrap();
+    assert!(
+        arrived.unwrap_or(false),
+        "video startup waited for the complete recording instead of emitting a fragment"
+    );
+}

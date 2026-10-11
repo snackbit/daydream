@@ -70,12 +70,22 @@ pub(in crate::ai) struct PreviousVisualObservation {
     pub(in crate::ai) text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default)]
 pub(in crate::ai) struct VisionRequestConfig {
+    pub(in crate::ai) route: Option<crate::model_registry::types::Route>,
+    pub(in crate::ai) storage: Option<crate::storage::AppStorage>,
     pub(in crate::ai) api_key: String,
     pub(in crate::ai) base_url: String,
     pub(in crate::ai) model: String,
     pub(in crate::ai) provider: String,
+}
+impl std::fmt::Debug for VisionRequestConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VisionRequestConfig")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]

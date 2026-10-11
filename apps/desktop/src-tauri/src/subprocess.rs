@@ -7,6 +7,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Keep workers on the running image even if a build replaces its filesystem path.
+pub(crate) fn worker_executable() -> io::Result<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        // Use the magic link directly: resolving it returns a stale `(deleted)` path.
+        Ok("/proc/self/exe".into())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe()
+    }
+}
+
 fn read_bounded(mut stream: impl Read, limit: usize) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0u8; 8192];

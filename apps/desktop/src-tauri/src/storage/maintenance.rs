@@ -54,6 +54,7 @@ pub(crate) const LIBRARY_TABLES: &[&str] = &[
     "ocr_regions",
     "frame_activity_intervals",
     "transcript_words",
+    "transcript_language_context",
     "transcript_segments",
     "processing_chunks",
     "processing_jobs",

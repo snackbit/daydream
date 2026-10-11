@@ -1,3 +1,5 @@
+import { reportFrontendFailure } from './diagnostics/failure-logging';
+
 type AsyncStoreActionOptions<Result> = {
   before?: () => void;
   cleanup?: () => void | Promise<void>;
@@ -15,7 +17,12 @@ export async function runAsyncStoreAction<Result>({
   run,
   success,
 }: AsyncStoreActionOptions<Result>): Promise<Result | undefined> {
-  before?.();
+  try {
+    before?.();
+  } catch (error) {
+    reportFrontendFailure('frontend_action', 'execute', error);
+    throw error;
+  }
 
   try {
     const result = await run();
@@ -23,6 +30,7 @@ export async function runAsyncStoreAction<Result>({
 
     return result;
   } catch (error) {
+    reportFrontendFailure('frontend_action', 'execute', error);
     const failureResult = await failure?.(error);
     if (rethrow && failureResult !== false) {
       throw error;
@@ -30,7 +38,14 @@ export async function runAsyncStoreAction<Result>({
 
     return undefined;
   } finally {
-    await cleanup?.();
+    await (async () => {
+      try {
+        await cleanup?.();
+      } catch (error) {
+        reportFrontendFailure('frontend_action', 'execute', error);
+        throw error;
+      }
+    })();
   }
 }
 

@@ -1,7 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,6 +9,10 @@ use rusqlite::Connection;
 use tauri::Manager;
 
 mod ai;
+pub use ai::{
+    enable_speech_strategy, fail_speech_unit, publish_speech_unit, save_speech_unit,
+    speech_strategy, speech_unit_error, speech_units, stage_speech_unit, SpeechUnit,
+};
 mod diagnostics;
 pub(crate) mod maintenance;
 mod notifications;
@@ -70,6 +74,10 @@ pub use ai::{
     get_processing_job_ocr_config, normalize_ocr_text, save_ocr_frame_result,
     save_processing_job_ocr_config,
 };
+pub use ai::{
+    preceding_transcript_language, save_transcript_language_context, TranscriptLanguageContext,
+    LANGUAGE_CONTEXT_MIN_CONFIDENCE,
+};
 pub use ai::{processing_chunk_config, processing_chunk_selection, set_processing_chunk_total};
 pub use ai::{
     OcrBlockInput, OcrCachedContent, OcrContentInput, OcrFrameInput, OcrWordHierarchy, OcrWordInput,
@@ -118,12 +126,15 @@ pub use settings::{
 #[cfg(test)]
 use diagnostics::collect_database_diagnostics_from_connection;
 #[cfg(test)]
-use schema::{apply_migrations, enable_connection_pragmas, migrations};
+pub(crate) use schema::migrations;
+#[cfg(test)]
+use schema::{apply_migrations, enable_connection_pragmas};
 
 const DATABASE_FILE_NAME: &str = "daydream.sqlite3";
 
+#[derive(Clone)]
 pub struct AppStorage {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
     path: PathBuf,
 }
 
@@ -136,10 +147,13 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
     schema::apply_migrations(&mut connection)?;
     recordings::recover_interrupted_recordings(&connection, now_ms())?;
 
-    Ok(AppStorage {
-        connection: Mutex::new(connection),
+    let storage = AppStorage {
+        connection: Arc::new(Mutex::new(connection)),
         path: db_path,
-    })
+    };
+    crate::settings::import_model_registry(&storage)
+        .map_err(|_| "Model settings import failed; saved settings were not changed.")?;
+    Ok(storage)
 }
 
 impl AppStorage {
@@ -175,7 +189,7 @@ pub fn test_storage(path: PathBuf) -> AppStorage {
     schema::apply_migrations(&mut connection).expect("apply migrations");
 
     AppStorage {
-        connection: Mutex::new(connection),
+        connection: Arc::new(Mutex::new(connection)),
         path,
     }
 }
@@ -187,7 +201,7 @@ pub fn test_file_storage(path: PathBuf) -> AppStorage {
     let mut connection = schema::open_connection(&path).expect("open fixture sqlite database");
     schema::apply_migrations(&mut connection).expect("apply fixture migrations");
     AppStorage {
-        connection: Mutex::new(connection),
+        connection: Arc::new(Mutex::new(connection)),
         path,
     }
 }

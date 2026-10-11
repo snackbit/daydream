@@ -211,8 +211,10 @@ export function AiTranscriptionCard({
               </SelectContent>
             </Select>
             <FieldDescription>
-              Auto-detect is best for recordings that may switch languages.
-              Choose a language to force transcription in that language.
+              Local Whisper remembers confident language detections during
+              nearby speech and detects again after a gap longer than 15
+              seconds. Choose a language to force transcription in that
+              language.
             </FieldDescription>
           </Field>
 

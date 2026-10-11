@@ -12,6 +12,8 @@ use std::{
 };
 pub(crate) static PROCESS_TEST: Mutex<()> = Mutex::new(());
 
+mod transport_budget;
+
 #[test]
 fn worker_entry() {
     if std::env::var_os("DAYDREAM_TEST_MEDIA_WORKER").is_some() {
@@ -66,17 +68,6 @@ fn transport_rejects_stale_generation_source_sequences_and_truncated_pixels() {
     std::fs::remove_dir_all(input.output_path.parent().unwrap()).unwrap();
 }
 #[test]
-fn transport_budget_accepts_wide_monitor_at_max_fps_and_rejects_unfit_configurations() {
-    let mut input = input(5120, 1440, 5.0);
-    assert!(protocol::validate_input(&input).is_ok());
-    input.fps = 5.01;
-    assert!(protocol::validate_input(&input).is_err());
-    input.fps = 5.0;
-    input.canvas_width = 10000;
-    assert!(protocol::validate_input(&input).is_err());
-    std::fs::remove_dir_all(input.output_path.parent().unwrap()).unwrap();
-}
-#[test]
 fn latest_pending_frame_replaces_unsent_source_without_cloning_pixels() {
     let (sender, receiver) = latest_frame_channel(2);
     sender.try_send(frame(16, 16, 1000)).unwrap();
@@ -89,7 +80,7 @@ fn latest_pending_frame_replaces_unsent_source_without_cloning_pixels() {
 }
 
 #[test]
-fn same_executable_worker_finalizes_video_and_two_real_gstreamer_audio_branches() {
+pub(super) fn same_executable_worker_finalizes_video_and_two_real_gstreamer_audio_branches() {
     let _serial = PROCESS_TEST.lock().unwrap();
     let input = input(320, 180, 5.0);
     let (sender, frames) = bounded_frame_channel(1);

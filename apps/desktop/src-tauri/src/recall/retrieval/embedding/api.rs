@@ -1,11 +1,9 @@
 use super::EmbeddingPurpose;
 use crate::settings::RecallEmbeddingSettings;
-use futures_util::StreamExt;
 use serde::Deserialize;
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::time::Duration;
 
 #[derive(Deserialize)]
 struct Response {
@@ -59,71 +57,26 @@ pub(super) async fn embed(
             _ => text.clone(),
         })
         .collect();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "recall_embedding_client_failed")?;
-    let mut request = client
-        .post(format!("{}/embeddings", base.trim_end_matches('/')))
-        .json(&serde_json::json!({"model":model,"input":input,"encoding_format":"float"}));
-    match settings.auth_mode.as_str() {
-        "api-key" => {
-            request = request.bearer_auth(
-                key.filter(|key| !key.is_empty())
-                    .ok_or("recall_embedding_key_missing")?,
-            )
-        }
-        "none" => {}
+    let key = match settings.auth_mode.as_str() {
+        "api-key" => Some(
+            key.filter(|key| !key.is_empty())
+                .ok_or("recall_embedding_key_missing")?,
+        ),
+        "none" => None,
         _ => return Err("recall_embedding_auth_invalid".into()),
-    }
-    let operation = async {
-        if cancelled.load(Ordering::Acquire) {
-            return Err("recall_cancelled".into());
-        }
-        let response = request.send().await.map_err(|error| {
-            if error.is_timeout() {
-                "recall_embedding_timeout"
-            } else {
-                "recall_embedding_connection_failed"
-            }
-        })?;
-        if !response.status().is_success() {
-            return Err(match response.status().as_u16() {
-                401 | 403 => "recall_embedding_auth_failed",
-                429 => "recall_embedding_rate_limited",
-                408 | 504 => "recall_embedding_timeout",
-                500..=599 => "recall_embedding_server_failed",
-                _ => "recall_embedding_request_rejected",
-            }
-            .to_string());
-        }
-        let mut bytes = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| "recall_embedding_response_failed")?;
-            if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-                return Err("recall_embedding_response_limit".into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        decode(&bytes, texts.len())
     };
-    tokio::pin!(operation);
-    let cancellation = async {
-        loop {
-            if cancelled.load(Ordering::Acquire) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    };
-    tokio::pin!(cancellation);
-    tokio::select! {
-        biased;
-        _=&mut cancellation=>Err("recall_cancelled".into()),
-        result=&mut operation=>result,
-    }
+    let response = crate::model_registry::transport::embeddings(
+        base,
+        key,
+        serde_json::json!({"model":model,"input":input,"encoding_format":"float"}),
+        cancelled,
+    )
+    .await
+    .map_err(|code| crate::model_registry::transport::feature_error(&code, "recall_embedding"))?;
+    decode(
+        &serde_json::to_vec(&response).map_err(|_| "recall_embedding_response_invalid")?,
+        texts.len(),
+    )
 }
 
 fn decode(bytes: &[u8], count: usize) -> Result<Vec<Vec<f32>>, String> {

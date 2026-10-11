@@ -154,7 +154,8 @@ impl LocalTranscriptionRunner for WhisperCppTranscriptionRunner {
 
 impl WhisperProcessTranscriptionRunner {
     pub(super) fn new(app_data_dir: PathBuf) -> Result<Self, TranscriptionError> {
-        let worker_executable = std::env::current_exe().map_err(worker_spawn_error)?;
+        let worker_executable =
+            crate::subprocess::worker_executable().map_err(worker_spawn_error)?;
 
         Ok(Self {
             app_data_dir,

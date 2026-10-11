@@ -5,6 +5,11 @@ import type {
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { TranscriptionSelectionDetails } from '../../studio-sidebar-transcription';
+import {
+  selectInspectorEntries,
+  type InspectorContentEntry,
+} from './inspector-content';
+import { InspectorContentEntryCard } from './inspector-content-entry';
 
 afterEach(cleanup);
 const phrase: RecordingTranscriptSegment = {
@@ -118,3 +123,48 @@ test('range inspection separates sources and emphasizes only the selected words,
   expect(screen.queryByText(/Unrelated content/)).toBeNull();
   expect(screen.queryByText('Chunks')).toBeNull();
 });
+
+test.each([
+  ['Zusammenfassung, bitte.', ['Zusammen', 'fassung', ',', ' bitte', '.']],
+  ['Hello,  hello!\n世界', ['Hello', ',', ' hello', '!', '世界']],
+  ['Unmatched original sentence.', ['Different', 'tokens']],
+] as const)(
+  'selection preserves the canonical sentence %s rather than inserting token separators',
+  (text, tokens) => {
+    const entry: InspectorContentEntry = {
+      id: 'speech',
+      kind: 'speech',
+      source: 'Microphone',
+      trackId: 'mic',
+      startMs: 1000,
+      endMs: 3000,
+      text,
+      boundary: false,
+      fragments: [],
+      words: tokens.map((token, i) => ({
+        id: `word-${i}`,
+        text: token,
+        startOffsetMs: 1000 + i * 100,
+        endOffsetMs: 1090 + i * 100,
+        probability: null,
+      })),
+    };
+    const [selected] = selectInspectorEntries(
+      [entry],
+      [{ id: 'range', laneIds: ['mic'], startMs: 1100, endMs: 1200 }],
+    );
+    if (!selected) throw new Error('Missing selected transcript');
+    const view = render(
+      <ol>
+        <InspectorContentEntryCard entry={selected} />
+      </ol>,
+    );
+    expect(view.container.querySelector('p')?.textContent).toBe(text);
+    if (text.startsWith('Zusammen'))
+      expect(screen.getByText('fassung').getAttribute('data-emphasis')).toBe(
+        'selected',
+      );
+    if (text.startsWith('Unmatched'))
+      expect(screen.getByText(/Exact word timing is unavailable/)).toBeTruthy();
+  },
+);

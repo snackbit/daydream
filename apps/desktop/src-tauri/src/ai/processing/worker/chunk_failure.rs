@@ -6,6 +6,7 @@ pub(super) fn fail_chunk(
     code: &str,
     timestamp: i64,
 ) -> Result<(), AiError> {
+    tracing::warn!(job_id = %chunk.job_id, chunk_id = %chunk.id, error_code = crate::telemetry::failures::safe_error_code(code), attempt = chunk.attempt_count, "processing_chunk_attempt_failed");
     storage.with_connection_mut(|connection|{
         let transaction=connection.transaction()?;
         let current=storage::get_processing_chunk(&transaction,&chunk.id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;

@@ -29,7 +29,7 @@ pub fn retry_processing_job_chunks(
         .filter_map(|id| {
             connection
                 .query_row(
-                    "SELECT COUNT(*) FROM processing_audio_ranges WHERE chunk_id=?1",
+                "SELECT (SELECT COUNT(*) FROM processing_audio_ranges WHERE chunk_id=?1)+(SELECT COUNT(*) FROM processing_speech_unit_chunks WHERE chunk_id=?1)",
                     [id],
                     |row| row.get::<_, i64>(0),
                 )

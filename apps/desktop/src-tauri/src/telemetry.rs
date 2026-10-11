@@ -18,6 +18,9 @@ use tracing_subscriber::{
 };
 
 const DEFAULT_FILTER: &str = "daydream_desktop_lib=info,warn";
+pub(crate) mod failures;
+#[cfg(test)]
+pub(crate) mod test_support;
 const LOG_FILE_NAME: &str = "daydream.log";
 const LOG_RETENTION_DAYS: u64 = 7;
 const LOG_ROLLOVER_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
@@ -122,6 +125,7 @@ pub fn initialize(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .with(stdout_layer)
         .with(file_layer)
         .try_init()?;
+    failures::install_panic_logging();
 
     let runtime = TelemetryRuntime {
         file_sink,

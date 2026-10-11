@@ -23,6 +23,8 @@ pub struct TranscriptionRequest {
 pub struct VerboseTranscription {
     pub duration: Option<f64>,
     pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_confidence: Option<f64>,
     pub segments: Vec<VerboseTranscriptionSegment>,
     pub task: Option<String>,
     pub text: String,
@@ -73,4 +75,23 @@ pub struct LocalTranscriptionWarmup {
     pub local_backend: String,
     pub model_id: String,
     pub model_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn language_detection_confidence_survives_the_local_response_protocol() {
+        let input = serde_json::json!({"language":"de", "languageConfidence":0.91, "segments":[], "text":"", "words":[]});
+        let result: VerboseTranscription = serde_json::from_value(input).unwrap();
+        let output = serde_json::to_value(result).unwrap();
+        assert_eq!(output["languageConfidence"], 0.91);
+        let legacy = serde_json::json!({"language":"de", "segments":[], "text":""});
+        let result: VerboseTranscription = serde_json::from_value(legacy).unwrap();
+        assert_eq!(result.language_confidence, None);
+        assert!(serde_json::to_value(result)
+            .unwrap()
+            .get("languageConfidence")
+            .is_none());
+    }
 }

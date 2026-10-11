@@ -33,10 +33,9 @@ export function SettingsLeaveDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Do you want to save?</DialogTitle>
+          <DialogTitle>Changes have not been saved</DialogTitle>
           <DialogDescription>
-            Settings has unsaved changes. Save them before leaving, discard
-            them, or stay on this page.
+            Retry saving before leaving, discard the changes, or keep editing.
           </DialogDescription>
         </DialogHeader>
         {validationError ? (
@@ -52,7 +51,7 @@ export function SettingsLeaveDialog({
             Discard changes
           </Button>
           <Button disabled={!canSave} onClick={onSave}>
-            Save
+            Retry and leave
           </Button>
         </DialogFooter>
       </DialogContent>

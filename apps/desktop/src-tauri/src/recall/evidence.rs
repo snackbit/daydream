@@ -7,12 +7,12 @@ pub fn resolve(
     input: &ResolveRecallEvidenceInput,
 ) -> Result<Option<RecallEvidence>, String> {
     if input.evidence_id.is_empty() || input.evidence_id.len() > 512 {
-        return Err("Invalid evidence reference.".into());
+        return Err("Invalid source reference.".into());
     }
     storage
         .with_connection(|connection| {
             storage::refresh_evidence(connection)?;
             storage::read_evidence(connection, &input.evidence_id)
         })
-        .map_err(|_| "Evidence could not be read.".into())
+        .map_err(|_| "Source text could not be read.".into())
 }

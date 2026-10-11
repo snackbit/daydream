@@ -99,6 +99,7 @@ pub fn default_window_protection_settings() -> RecordWindowProtectionSettings {
 
 pub fn default_ai_settings() -> AiSettings {
     AiSettings {
+        model_registry: None,
         recall: RecallSettings::default(),
         activity: AiActivitySettings {
             frame_deltas: AiActivitySourceSettings { enabled: true },
@@ -147,6 +148,7 @@ pub fn default_ai_settings() -> AiSettings {
             word_timestamps_enabled: true,
         },
         vision: AiVisionProviderSettings {
+            model_route: None,
             auth_mode: "api-key".into(),
             observations_enabled: false,
             api_key_ref: None,

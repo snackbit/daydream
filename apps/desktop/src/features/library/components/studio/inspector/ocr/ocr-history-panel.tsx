@@ -133,7 +133,7 @@ function OcrHistoryRevision({
       ) : null}
       {entry.provenance === 'reconstructed' ? (
         <p className="text-muted-foreground text-xs">
-          Reconstructed legacy evidence
+          Reconstructed older text
         </p>
       ) : null}
       {diff && (diff.added || diff.removed) ? (

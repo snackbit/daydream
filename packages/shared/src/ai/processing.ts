@@ -2,6 +2,7 @@ import type { RecordingReprocessingProgress } from './reprocessing.js';
 import type {
   RecordingTranscript,
   RecordingTranscriptionTrackState,
+  RecordingTranscriptionProgress,
 } from './transcript.js';
 
 export type ProcessingJobKind =
@@ -108,6 +109,7 @@ export interface GetRecordingAiProcessingStateInput {
 }
 
 export interface RecordingAiProcessingState {
+  transcriptionProgress?: RecordingTranscriptionProgress[];
   reprocessingScopes?: RecordingReprocessingProgress[];
   resultsRevision?: string;
   chunks: ProcessingChunk[];

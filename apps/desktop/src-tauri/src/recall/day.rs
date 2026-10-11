@@ -92,10 +92,11 @@ pub fn list_days(
 }
 
 pub fn base_day(connection: &Connection, input: &RecallDayInput) -> Result<RecallDay, String> {
-    storage::refresh_evidence(connection).map_err(|_| "Day evidence could not be read.")?;
+    storage::refresh_evidence(connection)
+        .map_err(|_| "Day text and transcripts could not be read.")?;
     let (start, end) = day_bounds(&input.day_id, &input.timezone)?;
     let evidence = storage::list_evidence_range(connection, start, end)
-        .map_err(|_| "Day evidence could not be read.")?;
+        .map_err(|_| "Day text and transcripts could not be read.")?;
     let mut coverage = Vec::new();
     let mut recordings = BTreeSet::new();
     let mut recording_summaries = Vec::new();

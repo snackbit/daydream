@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
 pub(super) const VERSION: u32 = 1;
-pub(super) const FRAME_BUDGET: usize = 256 * 1024 * 1024;
+pub(super) const FRAME_BUDGET: usize = 512 * 1024 * 1024;
 const CONTROL_LIMIT: usize = 1024 * 1024;
 const MAGIC: u32 = 0x44445246;
 

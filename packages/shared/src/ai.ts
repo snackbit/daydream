@@ -1,6 +1,7 @@
 export * from './ai/activity.js';
 export * from './ai/background.js';
 export * from './ai/models.js';
+export * from './ai/model-registry.js';
 export * from './ai/notifications.js';
 export * from './ai/ocr.js';
 export * from './ai/processing.js';

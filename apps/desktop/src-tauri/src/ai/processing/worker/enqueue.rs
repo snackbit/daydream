@@ -159,6 +159,7 @@ fn enqueue_processing<R: tauri::Runtime>(
                 .as_ref()
                 .map(|job| job.id.clone())
                 .unwrap_or_else(|| Uuid::now_v7().to_string());
+            let new_job = existing.is_none();
             let job = if let Some(existing) = existing {
                 existing
             } else {
@@ -175,6 +176,9 @@ fn enqueue_processing<R: tauri::Runtime>(
                     },
                 )?
             };
+            if new_job {
+                storage::enable_speech_strategy(connection, &job.id)?;
+            }
             storage::save_processing_job_ocr_config(connection, &job.id, &ocr_config_json)?;
             let config =
                 serde_json::to_string(&app_settings).map_err(|_| rusqlite::Error::InvalidQuery)?;

@@ -7,6 +7,8 @@ import type {
 } from '@daydream/shared';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
+import { RecallEvidenceInspector } from './inspector/recall-evidence-inspector';
 import { RecordingStudio } from './recording-studio';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import { useStudioRecallEvidence } from './use-studio-recall-evidence';
@@ -96,6 +98,62 @@ const assets: LibraryPlaybackAssets = {
 };
 const noAction = () => undefined;
 const noMutation = async () => undefined;
+
+test('single-fragment inspector callers keep the anchor-track hide contract', async () => {
+  const mask = vi.fn(noMutation);
+  render(
+    <RecallEvidenceInspector
+      evidence={evidence}
+      onSeek={noAction}
+      onClear={noAction}
+      onCreateRedactions={mask}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Hide source interval' }),
+  );
+  expect(mask).toHaveBeenCalledWith([
+    { startOffsetMs: 500, endOffsetMs: 1000, trackIds: ['microphone-2'] },
+  ]);
+});
+
+test('a cross-fragment Recall link shows the full utterance and hides all covered audio aliases', async () => {
+  const spanning: RecallEvidence = {
+    ...evidence,
+    startOffsetMs: 1500,
+    endOffsetMs: 2500,
+    text: 'Synthetic cross-fragment utterance',
+  };
+  const mask = vi.fn(noMutation);
+  render(
+    <RecordingStudio
+      detail={detail}
+      initialEvidence={spanning}
+      playbackAssets={assets}
+      activity={null}
+      aiProcessingState={null}
+      visualObservations={null}
+      thumbnailStatus="ready"
+      onRefreshPlayback={noAction}
+      onCreateRedactions={mask}
+      onDeleteRedaction={noMutation}
+      onUnredactRanges={noMutation}
+    />,
+  );
+  expect(await screen.findByText(spanning.text)).toBeTruthy();
+  expect(screen.queryByText(/This recall source is unavailable/)).toBeNull();
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Hide source interval' }),
+  );
+  expect(mask).toHaveBeenCalledWith([
+    {
+      startOffsetMs: 1500,
+      endOffsetMs: 2500,
+      trackIds: ['microphone-2', 'microphone-3'],
+    },
+  ]);
+});
+
 function EvidenceStudio() {
   const read = useStudioRecallEvidence(
     {

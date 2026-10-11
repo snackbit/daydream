@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type {
   AiModelAssetList,
   BackgroundTasksChanged,
@@ -25,6 +23,9 @@ import type {
   StartRecordingAiProcessingInput,
   GetRecordingTranscriptInput,
 } from '@daydream/shared';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
+import { decodeTranscriptionProgress } from './transcription-progress-decoder';
 
 export {
   pauseAiModelDownload,
@@ -118,9 +119,22 @@ export async function startRecordingAiProcessing(
 export async function getRecordingAiProcessingState(
   input: GetRecordingAiProcessingStateInput,
 ): Promise<RecordingAiProcessingState> {
-  return invoke<RecordingAiProcessingState>('getRecordingAiProcessingState', {
-    input,
-  });
+  const state = await invoke<RecordingAiProcessingState>(
+    'getRecordingAiProcessingState',
+    {
+      input,
+    },
+  );
+  return state.transcriptionProgress === undefined
+    ? state
+    : {
+        ...state,
+        transcriptionProgress: decodeResponse(
+          'getRecordingAiProcessingState',
+          state.transcriptionProgress,
+          decodeTranscriptionProgress,
+        ),
+      };
 }
 
 export async function getRecordingTranscript(

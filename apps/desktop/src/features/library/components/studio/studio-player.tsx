@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -17,6 +18,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { formatDuration, formatTimestamp } from '../../library-format';
+import { PlaybackAudio } from './playback/playback-audio';
+import { PlaybackSpeedControl } from './playback/playback-speed-control';
 import { SegmentScrubber } from './segment-scrubber';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
 
@@ -32,6 +35,13 @@ export function StudioPlayer({
   playbackAssets: LibraryPlaybackAssets | null;
 }) {
   const { actions, state } = playback;
+  const { setVideoElement } = actions;
+  const attachVideo = useCallback(
+    (element: HTMLVideoElement | null) => {
+      setVideoElement(element);
+    },
+    [setVideoElement],
+  );
   function handleRetryPlayback() {
     actions.seekTimeline(state.displayedTimelineMs, { resume: true });
   }
@@ -136,7 +146,7 @@ export function StudioPlayer({
       >
         <video
           key={`${currentPlaybackSegment.segmentId}-${state.streamStartMs}-${state.streamRevision}-video`}
-          ref={(element) => actions.setVideoElement(element)}
+          ref={attachVideo}
           className="h-full w-full object-contain"
           preload="metadata"
           src={streamUrl(
@@ -144,27 +154,23 @@ export function StudioPlayer({
             state.streamStartMs,
             state.streamRevision,
           )}
-          onPause={() => actions.handleVideoPause()}
-          onPlay={() => actions.handleVideoPlay()}
+          onPause={actions.handleVideoPause}
+          onPlay={actions.handleVideoPlay}
           onTimeUpdate={(event) =>
             actions.handleVideoTimeUpdate(event.currentTarget)
           }
-          onCanPlay={() => actions.handleVideoCanPlay()}
+          onCanPlay={actions.handleVideoCanPlay}
+          onSeeked={actions.handleVideoCanPlay}
           onWaiting={actions.handleBuffering}
           onStalled={actions.handleBuffering}
-          onEnded={() => actions.handleEnded()}
-          onError={() => actions.handleVideoError()}
+          onEnded={actions.handleEnded}
+          onError={actions.handleMediaError}
         />
         {currentPlaybackSegment.audio.map((audio) => (
-          <audio
+          <PlaybackAudio
             key={`${currentPlaybackSegment.segmentId}-${audio.trackId}-${state.streamStartMs}-${state.streamRevision}`}
-            ref={(element) =>
-              actions.registerAudioElement(audio.trackId, element)
-            }
-            preload="metadata"
-            onCanPlay={actions.handleVideoCanPlay}
-            onWaiting={actions.handleBuffering}
-            onStalled={actions.handleBuffering}
+            audio={audio}
+            actions={actions}
             src={streamUrl(
               audio.url,
               state.streamStartMs,
@@ -276,12 +282,13 @@ export function StudioPlayer({
               <SkipBack className="size-4" />
             </Button>
             <Button
-              aria-label={state.isPlaying ? 'Pause' : 'Play'}
+              aria-label={state.playRequested ? 'Pause' : 'Play'}
+              disabled={state.resumeProgress !== null}
               size="icon"
               variant="secondary"
               onClick={() => void actions.togglePlayback()}
             >
-              {state.isPlaying ? (
+              {state.playRequested ? (
                 <Pause className="size-4" />
               ) : (
                 <Play className="size-4" />
@@ -309,6 +316,10 @@ export function StudioPlayer({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            <PlaybackSpeedControl
+              value={state.playbackRate}
+              onChange={actions.setPlaybackRate}
+            />
             <Button
               aria-label={state.isMuted ? 'Unmute' : 'Mute'}
               size="icon"

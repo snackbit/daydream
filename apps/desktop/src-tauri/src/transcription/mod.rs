@@ -14,7 +14,7 @@ mod provider;
 mod remote;
 mod types;
 mod validation;
-pub(crate) use validation::constrain_owned_transcription;
+pub(crate) use validation::{constrain_owned_transcription, constrain_transcription};
 
 use crate::whisper_backend;
 pub use local_server::run_whisper_worker_process;

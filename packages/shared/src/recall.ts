@@ -1,4 +1,6 @@
 /** Recall reads always revalidate source eligibility before returning private content. */
+import type { AiModelRoute } from './ai/model-registry.js';
+
 export type RecallSourceKind = 'ocr' | 'desktop-audio' | 'microphone';
 export type RecallJobStatus =
   'pending' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
@@ -207,6 +209,7 @@ export interface RecallStateChanged {
   privacyRevision: number;
 }
 export interface RecallExternalProfile {
+  modelRoute?: AiModelRoute;
   enabled: boolean;
   baseUrl: string | null;
   model: string | null;

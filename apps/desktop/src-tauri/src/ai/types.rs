@@ -238,6 +238,9 @@ pub struct RecordingAiResultInput {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiProcessingState {
     #[serde(default)]
+    pub transcription_progress:
+        Vec<super::results::transcription_progress::RecordingTranscriptionProgress>,
+    #[serde(default)]
     pub reprocessing_scopes: Vec<super::processing::reprocessing::RecordingReprocessingProgress>,
     #[serde(default)]
     pub results_revision: String,

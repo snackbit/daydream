@@ -4,12 +4,23 @@ pub(in crate::ai) fn transcript_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingTranscript, AiError> {
-    let segments = visible_transcript_segments_for_recording(storage, recording_id)?;
+    storage
+        .with_connection(|connection| transcript_from_connection(connection, recording_id))
+        .map_err(storage_error)
+}
+
+pub(super) fn transcript_from_connection(
+    connection: &rusqlite::Connection,
+    recording_id: &str,
+) -> rusqlite::Result<RecordingTranscript> {
+    let segments = filter_visible_transcript_segments(
+        storage::list_transcript_segments(connection, recording_id)?,
+        &storage::list_redactions(connection, recording_id)?,
+        &storage::list_recording_segments(connection, recording_id)?,
+    );
     let mut words_by_segment = BTreeMap::new();
     for segment in &segments {
-        let words = storage
-            .with_connection(|connection| storage::list_transcript_words(connection, &segment.id))
-            .map_err(storage_error)?;
+        let words = storage::list_transcript_words(connection, &segment.id)?;
         words_by_segment.insert(segment.id.clone(), words);
     }
     Ok(transcript_from_rows(

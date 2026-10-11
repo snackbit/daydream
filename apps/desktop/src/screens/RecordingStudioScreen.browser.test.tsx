@@ -33,6 +33,7 @@ import {
   TRACK_LANE_HEIGHT_PX,
   TRACK_RULER_HEIGHT_PX,
 } from '@/features/library/components/studio/track-timeline-math';
+import syntheticMedia from '@/features/library/recording-studio-route/stories/fixtures/synthetic-player.webm?url';
 import { RecordingStudioScreen } from './RecordingStudioScreen';
 
 const client = vi.hoisted(() => ({
@@ -245,13 +246,13 @@ test('independent source selection and grid keep stream URLs and redactions isol
         {
           trackId: sourceA,
           streamIndex: 0,
-          url: 'http://127.0.0.1/source-a',
+          url: `${new URL(syntheticMedia, window.location.origin).href}?fixture=source-a`,
           thumbnails: [],
         },
         {
           trackId: sourceB,
           streamIndex: 1,
-          url: 'http://127.0.0.1/source-b',
+          url: `${new URL(syntheticMedia, window.location.origin).href}?fixture=source-b`,
           thumbnails: [],
         },
       ],
@@ -265,12 +266,21 @@ test('independent source selection and grid keep stream URLs and redactions isol
   await waitFor(() =>
     expect(
       view.container.querySelector('video')?.getAttribute('src'),
-    ).toContain('/source-b'),
+    ).toContain('fixture=source-b'),
   );
   fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
   await screen.findByLabelText('Screen A synchronized video');
   expect(screen.getByLabelText('Screen A redacted')).toBeTruthy();
   expect(screen.queryByLabelText('Screen B redacted')).toBeNull();
+  await userEvent.click(
+    screen.getByRole('combobox', { name: 'Playback speed' }),
+  );
+  await userEvent.click(screen.getByRole('option', { name: '2x' }));
+  await screen.findByRole('combobox', { name: 'Playback speed' });
+  for (const video of view.container.querySelectorAll('video'))
+    expect(video.playbackRate).toBe(2);
+  expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  client.adjacentLibraryFrame.mockResolvedValue(500);
   fireEvent.keyDown(document.body, { key: '.', code: 'Period' });
   await waitFor(() =>
     expect(client.adjacentLibraryFrame).toHaveBeenCalledWith(
@@ -279,6 +289,30 @@ test('independent source selection and grid keep stream URLs and redactions isol
       1,
       sourceB,
     ),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole('slider', { name: 'Playback position' }),
+    ).toHaveAttribute('aria-valuenow', '500'),
+  );
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_METADATA);
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Video source' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Screen A' }));
+  expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();
+  expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
+  fireEvent.canPlay(view.container.querySelector('video')!);
+  await waitFor(() =>
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
   );
 });
 
@@ -365,7 +399,7 @@ const playbackAssets = {
           kind: 'desktop-audio',
           streamIndex: 1,
           trackId: 'desktop-audio-1',
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-1/audio/desktop-audio-1',
+          url: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-1-audio`,
         },
       ],
       segmentId: 'segment-1',
@@ -379,8 +413,7 @@ const playbackAssets = {
           url: syntheticThumbnail('#268958'),
         },
       ],
-      videoUrl:
-        'http://127.0.0.1:5000/playback/session/token/segments/segment-1/video',
+      videoUrl: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-1-video`,
     },
     {
       audio: [
@@ -388,7 +421,7 @@ const playbackAssets = {
           kind: 'desktop-audio',
           streamIndex: 1,
           trackId: 'desktop-audio-1',
-          url: 'http://127.0.0.1:5000/playback/session/token/segments/segment-2/audio/desktop-audio-1',
+          url: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-2-audio`,
         },
       ],
       segmentId: 'segment-2',
@@ -398,8 +431,7 @@ const playbackAssets = {
           url: syntheticThumbnail('#b87826'),
         },
       ],
-      videoUrl:
-        'http://127.0.0.1:5000/playback/session/token/segments/segment-2/video',
+      videoUrl: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-2-video`,
     },
   ],
   sessionId: 'session',
@@ -433,8 +465,7 @@ const longPlaybackAssets = {
           url: syntheticThumbnail('#5287f9'),
         },
       ],
-      videoUrl:
-        'http://127.0.0.1:5000/playback/session/token/segments/segment-long/video',
+      videoUrl: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-long-video`,
     },
   ],
 } satisfies LibraryPlaybackAssets;
@@ -533,6 +564,9 @@ beforeEach(async () => {
     'readyState',
     'get',
   ).mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
+  vi.spyOn(window.HTMLMediaElement.prototype, 'seeking', 'get').mockReturnValue(
+    false,
+  );
   routeState.recordingId = 'recording-1';
   routeState.search = { evidenceId: null, source: null, seek: null };
   recallClient.resolveRecallEvidence.mockResolvedValue(null);
@@ -806,7 +840,7 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
     document.querySelectorAll('[data-segment-boundary="start"]'),
   ).toHaveLength(2);
   expect(screen.getByText('Desktop audio')).toBeTruthy();
-  expect(screen.getByRole('heading', { name: 'Inspector' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
   expect(
     screen.getByRole('heading', { name: 'Recording details' }),
   ).toBeTruthy();
@@ -991,6 +1025,7 @@ test('RecordingStudioScreen clears stale AI state after route changes', async ()
   routeState.recordingId = 'recording-2';
   rerender(<RecordingStudioScreen />);
 
+  await page.getByRole('tab', { name: 'Inspector' }).click();
   await waitFor(() =>
     expect(screen.getAllByText('recording-2').length).toBeGreaterThan(0),
   );
@@ -1000,6 +1035,31 @@ test('RecordingStudioScreen clears stale AI state after route changes', async ()
   });
   expect((processButton as HTMLButtonElement).disabled).toBe(false);
   expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
+});
+
+test('opening another recording resets speed to 1x and replaces the media group', async () => {
+  client.getLibraryRecording.mockImplementation((recordingId: string) =>
+    Promise.resolve({ ...detail, id: recordingId }),
+  );
+  client.createLibraryPlaybackSession.mockImplementation(
+    ({ recordingId }: { recordingId: string }) =>
+      Promise.resolve({ ...playbackAssets, recordingId }),
+  );
+  const view = render(<RecordingStudioScreen />);
+  await userEvent.click(
+    await screen.findByRole('combobox', { name: 'Playback speed' }),
+  );
+  await userEvent.click(screen.getByRole('option', { name: '2x' }));
+  const original = view.container.querySelector('video');
+  expect(original?.playbackRate).toBe(2);
+  routeState.recordingId = 'recording-2';
+  view.rerender(<RecordingStudioScreen />);
+  await waitFor(() => {
+    const replacement = view.container.querySelector('video');
+    expect(replacement).toBeTruthy();
+    expect(replacement).not.toBe(original);
+    expect(replacement?.playbackRate).toBe(1);
+  });
 });
 
 test('RecordingStudioScreen treats active chunks as processing even when the job is succeeded', async () => {
@@ -1048,7 +1108,11 @@ test('RecordingStudioScreen treats active chunks as processing even when the job
 
   expect((processingButton as HTMLButtonElement).disabled).toBe(true);
   expect(screen.queryByRole('button', { name: /processed/i })).toBeNull();
-  expect(screen.getByLabelText('AI processing in progress')).toBeTruthy();
+  expect(
+    screen.getByRole('progressbar', {
+      name: /Desktop audio · Transcription · Processing/,
+    }),
+  ).toBeTruthy();
 });
 
 test('RecordingStudioScreen updates AI lanes from processing events', async () => {
@@ -1101,7 +1165,9 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   });
 
   expect(
-    await screen.findByLabelText('AI processing in progress'),
+    await screen.findByRole('progressbar', {
+      name: /Desktop audio · Transcription · Processing/,
+    }),
   ).toBeTruthy();
   expect(screen.queryByText('Transcription in progress')).toBeNull();
   expect(
@@ -1185,7 +1251,11 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
     0,
   );
   expect(screen.queryByText('Transcription failed')).toBeNull();
-  expect(screen.getByLabelText('AI processing failed')).toBeTruthy();
+  expect(
+    screen.getByRole('progressbar', {
+      name: /Desktop audio · Transcription · Needs attention/,
+    }),
+  ).toBeTruthy();
   expect(
     (
       screen.getByRole('button', {
@@ -1917,8 +1987,8 @@ test('RecordingStudioScreen renders transcript text by transcript segment offset
 
   render(<RecordingStudioScreen />);
 
-  const firstText = await screen.findByText('First words');
-  const secondText = screen.getByText('Later words');
+  const firstText = (await screen.findAllByText('First words'))[0]!;
+  const secondText = screen.getAllByText('Later words')[0]!;
   expect(
     screen.getAllByRole('button', {
       name: /Inspect Desktop audio transcript/i,
@@ -2237,7 +2307,7 @@ test('RecordingStudioScreen commits ruler seeks through the playback pipeline', 
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${longPlaybackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+      `${longPlaybackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
     ),
   );
 
@@ -2256,7 +2326,7 @@ test('RecordingStudioScreen commits ruler seeks through the playback pipeline', 
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${longPlaybackAssets.segments[0]!.videoUrl}?startMs=`,
+      `${longPlaybackAssets.segments[0]!.videoUrl}&startMs=`,
     ),
   );
   await waitFor(() =>
@@ -2372,6 +2442,7 @@ test('RecordingStudioScreen ctrl-click adds a lane from the lane body', async ()
 
 test('RecordingStudioScreen clears selection on a plain timeline click', async () => {
   render(<RecordingStudioScreen />);
+  expect(await screen.findByRole('tab', { name: 'Teleprompter' })).toBeTruthy();
 
   fireEvent.click(
     await screen.findByRole('button', {
@@ -2379,6 +2450,10 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
     }),
   );
   expect(await screen.findByLabelText('Track name')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 
   const timeline = await screen.findByLabelText('Track timeline');
   await mockTimelineRect(timeline);
@@ -2405,6 +2480,10 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
     }),
   );
   expect(screen.queryByLabelText('Track name')).toBeNull();
+  expect(screen.getByRole('tab', { name: 'Teleprompter' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
 });
 
 test('RecordingStudioScreen selects all lanes from a ruler drag', async () => {
@@ -2930,8 +3009,7 @@ test('RecordingStudioScreen ignores stale playback assets after route changes', 
         audio: [],
         segmentId: 'segment-3',
         thumbnails: [],
-        videoUrl:
-          'http://127.0.0.1:5000/playback/session-2/token/segments/segment-3/video',
+        videoUrl: `${new URL(syntheticMedia, window.location.origin).href}?fixture=segment-3-video`,
       },
     ],
     sessionId: 'session-2',
@@ -3087,6 +3165,8 @@ test('RecordingStudioScreen masks and mutes redactions from media time before ti
   });
 
   video.currentTime = 0.95;
+  audio.currentTime = 0.95;
+  await userEvent.click(screen.getByRole('button', { name: /^play$/i }));
   fireEvent.play(video);
 
   await waitFor(() => {
@@ -3107,7 +3187,7 @@ test('RecordingStudioScreen masks and mutes redactions from media time before ti
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=1500&request=1`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=1500&request=1`,
     ),
   );
 
@@ -3119,7 +3199,7 @@ test('RecordingStudioScreen masks and mutes redactions from media time before ti
     expect(
       within(skippedVideo.parentElement!).queryByText('Redacted'),
     ).toBeNull();
-    expect(audio.muted).toBe(false);
+    expect(container.querySelector('audio')?.muted).toBe(false);
   });
 });
 
@@ -3140,8 +3220,11 @@ test('RecordingStudioScreen preserves playback intent when pause fires before se
   );
 
   const video = container.querySelector('video')!;
+  await userEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  Object.defineProperty(video, 'ended', { configurable: true, value: true });
   fireEvent.play(video);
   fireEvent.pause(video);
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.ended(video);
 
   await waitFor(() =>
@@ -3150,7 +3233,6 @@ test('RecordingStudioScreen preserves playback intent when pause fires before se
     ),
   );
 
-  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.canPlay(container.querySelector('video')!);
 
   await waitFor(() =>
@@ -3163,32 +3245,43 @@ test('RecordingStudioScreen commits a scrubbed seek and waits for canplay before
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
     ),
   );
 
-  fireEvent.play(container.querySelector('video')!);
+  await userEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_METADATA);
   const slider = screen.getByRole('slider', { name: /playback position/i });
   mockScrubberRect(slider);
   fireEvent.pointerDown(slider, { clientX: 0, pointerId: 1 });
   fireEvent.pointerMove(slider, { clientX: 100, pointerId: 1 });
 
   expect(container.querySelector('video')?.getAttribute('src')).toContain(
-    `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+    `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
   );
 
   fireEvent.pointerUp(slider, { clientX: 100, pointerId: 1 });
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=1000&request=1`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=1000&request=1`,
     ),
   );
   expect(container.querySelector('audio')?.getAttribute('src')).toContain(
-    `${playbackAssets.segments[0]!.audio[0]!.url}?startMs=1000&request=1`,
+    `${playbackAssets.segments[0]!.audio[0]!.url}&startMs=1000&request=1`,
   );
   expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
 
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
   fireEvent.canPlay(container.querySelector('video')!);
 
   await waitFor(() =>
@@ -3201,7 +3294,7 @@ test('RecordingStudioScreen seeks while paused without autoplaying', async () =>
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
     ),
   );
 
@@ -3212,7 +3305,7 @@ test('RecordingStudioScreen seeks while paused without autoplaying', async () =>
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=1000&request=1`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=1000&request=1`,
     ),
   );
 
@@ -3247,7 +3340,7 @@ test('RecordingStudioScreen jumps paused-gap seeks to the next segment', async (
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
     ),
   );
 
@@ -3258,7 +3351,7 @@ test('RecordingStudioScreen jumps paused-gap seeks to the next segment', async (
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[1]!.videoUrl}?startMs=0&request=1`,
+      `${playbackAssets.segments[1]!.videoUrl}&startMs=0&request=1`,
     ),
   );
 });
@@ -3274,7 +3367,7 @@ test('RecordingStudioScreen surfaces media play rejections', async () => {
   fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
 
   expect(await screen.findByText('Playback failed')).toBeTruthy();
-  expect(screen.getByText(/unsupported stream/i)).toBeTruthy();
+  expect(screen.getByText('Playback could not start. Try again.')).toBeTruthy();
 });
 
 test('RecordingStudioScreen replays from the beginning after the final stream ends', async () => {
@@ -3295,20 +3388,30 @@ test('RecordingStudioScreen replays from the beginning after the final stream en
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=0`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=0`,
     ),
   );
 
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_METADATA);
   fireEvent.ended(container.querySelector('video')!);
   fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${playbackAssets.segments[0]!.videoUrl}?startMs=0&request=1`,
+      `${playbackAssets.segments[0]!.videoUrl}&startMs=0&request=1`,
     ),
   );
   expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
 
+  vi.spyOn(
+    window.HTMLMediaElement.prototype,
+    'readyState',
+    'get',
+  ).mockReturnValue(HTMLMediaElement.HAVE_ENOUGH_DATA);
   fireEvent.canPlay(container.querySelector('video')!);
 
   await waitFor(() =>
@@ -3332,7 +3435,8 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
     ),
   );
 
-  fireEvent.play(container.querySelector('video')!);
+  await userEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.ended(container.querySelector('video')!);
 
   expect(screen.getByText(/Recording paused/i)).toBeTruthy();
@@ -3353,7 +3457,6 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
       playbackAssets.segments[1]!.videoUrl,
     ),
   );
-  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.canPlay(container.querySelector('video')!);
   await waitFor(() =>
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
@@ -3379,8 +3482,19 @@ test('RecordingStudioScreen play now skips the pause gap immediately', async () 
     ),
   );
 
-  fireEvent.play(container.querySelector('video')!);
-  fireEvent.ended(container.querySelector('video')!);
+  await userEvent.click(screen.getByRole('button', { name: /^play$/i }));
+  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
+  const retired = container.querySelector('video')!;
+  fireEvent.ended(retired);
+  // The old elements remain visible during a recorded pause gap, but their
+  // late browser events must not start, fail or advance the retired stream.
+  fireEvent.play(retired);
+  fireEvent.pause(retired);
+  fireEvent.timeUpdate(retired);
+  fireEvent.error(retired);
+  fireEvent.ended(retired);
+  expect(screen.queryByRole('button', { name: 'Retry playback' })).toBeNull();
+  expect(container.querySelector('video')).toBe(retired);
   fireEvent.click(screen.getByRole('button', { name: /play now/i }));
 
   await waitFor(() =>
@@ -3388,7 +3502,6 @@ test('RecordingStudioScreen play now skips the pause gap immediately', async () 
       playbackAssets.segments[1]!.videoUrl,
     ),
   );
-  vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.canPlay(container.querySelector('video')!);
   await waitFor(() =>
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
@@ -3849,7 +3962,7 @@ test('RecordingStudioScreen commits a lower mouse-lane seek before playback', as
 
   await waitFor(() =>
     expect(container.querySelector('video')?.getAttribute('src')).toContain(
-      `${longPlaybackAssets.segments[0]!.videoUrl}?startMs=12000&request=1`,
+      `${longPlaybackAssets.segments[0]!.videoUrl}&startMs=12000&request=1`,
     ),
   );
 
@@ -4000,7 +4113,9 @@ test('RecordingStudioScreen shows scoped redactions on the player seekbar and sk
       'Date',
     ],
   });
-  fireEvent.play(video);
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: /^play$/i })),
+  );
   await vi.advanceTimersByTimeAsync(0);
   expect(screen.getByText('Skipping in 3 seconds')).toBeTruthy();
   await act(() => vi.advanceTimersByTimeAsync(1_100));
@@ -4208,6 +4323,7 @@ test('RecordingStudioScreen distinguishes desktop no-speech from microphone text
   } satisfies RecordingAiProcessingState);
   client.getLibraryRecording.mockResolvedValue(microphoneDetail);
   const { container } = render(<RecordingStudioScreen />);
+  await userEvent.click(await screen.findByRole('tab', { name: 'Inspector' }));
   const summary = await screen.findByRole('region', {
     name: 'Audio transcription',
   });
@@ -4437,6 +4553,7 @@ test.each([false, true])(
 );
 
 test('RecordingStudioScreen cuts an actual OCR sample and ignores an older observation index that resolves afterward', async () => {
+  await loadStudioStyles();
   const sampledDetail = {
     ...longDetail,
     durationMs: 38_000,
@@ -4484,11 +4601,13 @@ test('RecordingStudioScreen cuts an actual OCR sample and ignores an older obser
     ).toHaveLength(3),
   );
   const stale = deferred<OcrTimelineFramePage>();
+  await page.screenshot({ path: '__screenshots__/studio-status-ready.png' });
   ocrClient.getOcrTimelineFrames.mockReturnValue(stale.promise);
   fireEvent.click(screen.getByRole('button', { name: /^Refresh$/i }));
   await waitFor(() =>
     expect(screen.getByText('Loading OCR observation index…')).toBeTruthy(),
   );
+  await page.screenshot({ path: '__screenshots__/studio-status-loading.png' });
   ocrClient.getOcrTimelineFrames.mockResolvedValue({
     recordingId: detail.id,
     frames: frames.filter((frame) => frame.frameTimestampMs !== 5_000),

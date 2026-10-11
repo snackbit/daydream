@@ -253,6 +253,8 @@ mod tests {
             suggestions: vec![],
         };
         let profile = Profile {
+            route: None,
+            storage: None,
             enabled: true,
             base_url: "http://localhost".into(),
             model: "test".into(),

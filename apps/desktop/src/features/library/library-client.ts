@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import type {
   CloseLibraryPlaybackSessionRequest,
   CreateLibraryRedactionsInput,
@@ -21,6 +21,7 @@ import type {
   UnredactLibraryRedactionsInput,
   ResizeLibraryRedactionInput,
 } from '@daydream/shared';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 import {
   decodeVideoAssets,
   decodePlaybackRuns,
@@ -47,10 +48,12 @@ export async function adjacentLibraryFrame(
       ...(sourceTrackId ? { sourceTrackId } : {}),
     },
   });
-  if (value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
-    throw new Error('Invalid frame navigation response.');
-  return value;
+  return decodeResponse('adjacentLibraryFrame', value, (value) => {
+    if (value === null) return null;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+      throw new Error('Invalid frame navigation response.');
+    return value;
+  });
 }
 
 export async function listLibraryRecordings(): Promise<
@@ -65,7 +68,7 @@ export async function getLibraryRecording(
   const detail = await invoke<LibraryRecordingDetail>('getLibraryRecording', {
     recordingId,
   });
-  return {
+  return decodeResponse('getLibraryRecording', detail, (detail) => ({
     ...detail,
     segments: detail.segments.map((segment) => ({
       ...segment,
@@ -73,7 +76,7 @@ export async function getLibraryRecording(
         ? {}
         : { videoStreams: decodeVideoStreams(segment.videoStreams) }),
     })),
-  };
+  }));
 }
 
 export async function deleteLibraryRecording(
@@ -143,7 +146,7 @@ export async function createLibraryPlaybackSession(
       input,
     },
   );
-  return {
+  return decodeResponse('createLibraryPlaybackSession', assets, (assets) => ({
     ...assets,
     ...(assets.runs === undefined
       ? {}
@@ -154,7 +157,7 @@ export async function createLibraryPlaybackSession(
         ? {}
         : { videos: decodeVideoAssets(segment.videos) }),
     })),
-  };
+  }));
 }
 
 export async function closeLibraryPlaybackSession(

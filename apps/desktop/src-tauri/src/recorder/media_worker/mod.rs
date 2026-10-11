@@ -1,6 +1,8 @@
 //! The media process owns all streaming locks; the UI process owns capture and storage.
 mod child;
 #[cfg(test)]
+mod deleted_executable_tests;
+#[cfg(test)]
 mod fd_tests;
 mod parent;
 #[cfg(test)]

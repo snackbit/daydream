@@ -206,6 +206,7 @@ fn handle_local_transcription_request(
         return Ok(VerboseTranscription {
             duration: None,
             language: None,
+            language_confidence: None,
             segments: Vec::new(),
             task: None,
             text: String::new(),

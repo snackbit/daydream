@@ -1,9 +1,18 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
 } from '@daydream/shared';
 import { segmentForTimeline, timelineDurationMs } from '../../library-timeline';
+import type { PlaybackSpeed } from './playback/playback-speed';
+import { usePlaybackTimelineClock } from './playback/use-playback-timeline-clock';
+import { usePlaybackTransport } from './playback/use-playback-transport';
 import { usePlaybackMediaElements } from './recording-playback-media-elements';
 import { usePlaybackRedactionController } from './recording-playback-redaction-controller';
 import { usePlaybackResumeTimer } from './recording-playback-resume-timer';
@@ -47,9 +56,11 @@ export function useRecordingPlaybackController({
   const [playbackEndedAtEnd, setPlaybackEndedAtEnd] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [pendingAutoplay, setPendingAutoplay] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState<PlaybackSpeed>(1);
   const [resumeProgress, setResumeProgress] = useState<number | null>(null);
   const { clearResumeTimer, startResumeTimer } = usePlaybackResumeTimer({
     setResumeProgress,
+    playbackRate,
   });
   const [scrubTimelineMs, setScrubTimelineMs] = useState<number | null>(null);
   const [seekRevision, setSeekRevision] = useState(0);
@@ -63,27 +74,33 @@ export function useRecordingPlaybackController({
       )
     : null;
   const totalDurationMs = timelineDurationMs(playableSegments);
-  const currentTimelineMs = currentSegment
-    ? currentSegment.playbackOffsetMs + currentTime * 1000
-    : 0;
-  const displayedTimelineMs = scrubTimelineMs ?? currentTimelineMs;
   const media = usePlaybackMediaElements({
     isMuted,
     mutedTrackIds,
     redactedTrackIdsRef,
     volume,
+    playbackRate,
   });
   const { videoRef } = media.refs;
   const {
     applyRedactedAudioSettings,
     clockTime,
-    pauseMediaElements,
     registerAudioElement,
     requestFullscreen,
     setFullscreenElement,
     syncAudioElements,
-    updateMediaSettings,
   } = media.actions;
+  const { currentTimelineMs, displayedTimelineMs, readPlaybackTimeMs } =
+    usePlaybackTimelineClock({
+      playbackOffsetMs: currentSegment?.playbackOffsetMs ?? null,
+      currentTimeSeconds: currentTime,
+      streamStartMs,
+      scrubTimelineMs,
+      totalDurationMs,
+      isPlaying,
+      pendingAutoplay,
+      clockTime,
+    });
   const redaction = usePlaybackRedactionController({
     applyRedactedAudioSettings,
     clockTime,
@@ -96,12 +113,12 @@ export function useRecordingPlaybackController({
     streamStartMs,
     totalDurationMs,
     videoRef,
+    playbackRate,
   });
   const {
     nextUnredactedVideoTimelineMs,
     redactedVideoActive,
     updateRedactionStateForTimeline,
-    updateRedactionStateFromVideo,
     videoTimelineMs,
     redactionSkipTargetMs,
   } = redaction;
@@ -113,57 +130,41 @@ export function useRecordingPlaybackController({
     totalDurationMs,
   };
 
-  const playMediaElements = useCallback(async (): Promise<boolean> => {
-    const video = videoRef.current;
-    if (!video) {
-      return false;
-    }
-    setPlaybackError(null);
-    updateRedactionStateForTimeline(videoTimelineMs(video));
-    syncAudioElements(video.currentTime, true);
-    try {
-      await video.play();
-    } catch (error) {
-      playbackIntentRef.current = false;
-      setIsPlaying(false);
-      setPendingAutoplay(false);
-      setPlaybackError(`Playback failed: ${errorMessage(error)}`);
-      return false;
-    }
-    const audioResults = await Promise.allSettled(
-      [...media.refs.audioRefs.current.entries()].map(
-        async ([trackId, audio]) => {
-          updateMediaSettings(audio, trackId);
-          await audio.play();
-        },
-      ),
-    );
-    const audioFailure = audioResults.find(
-      (result) => result.status === 'rejected',
-    );
-    if (audioFailure?.status === 'rejected') {
-      setPlaybackError(
-        `Audio playback failed: ${errorMessage(audioFailure.reason)}`,
-      );
-    }
-
-    return true;
-  }, [
-    syncAudioElements,
-    updateMediaSettings,
-    updateRedactionStateForTimeline,
-    videoTimelineMs,
-  ]);
+  const {
+    replaceStream,
+    requestPlayback,
+    playRequested,
+    isCurrentMedia,
+    handleVideoCanPlay,
+    handleBuffering,
+    handleVideoPlay,
+    handleVideoPause,
+    handleMediaError,
+  } = usePlaybackTransport({
+    media,
+    redaction,
+    playbackIntentRef,
+    streamIdentity: JSON.stringify([
+      detail.id,
+      currentPlaybackSegment?.videoUrl,
+      currentPlaybackSegment?.audio.map((audio) => [audio.trackId, audio.url]),
+      streamStartMs,
+      streamRevision,
+    ]),
+    resumeProgress,
+    setIsPlaying,
+    setPendingAutoplay,
+    setPlaybackError,
+  });
 
   const advanceToSegment = useCallback(
     (nextIndex: number, shouldPlay: boolean) => {
       clearResumeTimer();
-      playbackIntentRef.current = shouldPlay;
+      replaceStream(shouldPlay);
       setCurrentIndex(nextIndex);
       setCurrentTime(0);
       setPlaybackEndedAtEnd(false);
       setPlaybackError(null);
-      setPendingAutoplay(shouldPlay);
       setResumeProgress(null);
       setStreamStartMs(0);
       updateRedactionStateForTimeline(
@@ -171,9 +172,13 @@ export function useRecordingPlaybackController({
       );
       setStreamRevision((revision) => revision + 1);
       setSeekRevision((revision) => revision + 1);
-      setIsPlaying(shouldPlay);
     },
-    [clearResumeTimer, playableSegments, updateRedactionStateForTimeline],
+    [
+      clearResumeTimer,
+      playableSegments,
+      updateRedactionStateForTimeline,
+      replaceStream,
+    ],
   );
 
   const seekTimeline = useCallback(
@@ -185,12 +190,9 @@ export function useRecordingPlaybackController({
         if (!lastSegment) {
           return;
         }
-        pauseMediaElements();
-        playbackIntentRef.current = false;
+        replaceStream(false);
         setCurrentIndex(lastIndex);
         setCurrentTime((lastSegment.durationMs ?? 0) / 1000);
-        setPendingAutoplay(false);
-        setIsPlaying(false);
         setPlaybackEndedAtEnd(true);
         setPlaybackError(null);
         setResumeProgress(null);
@@ -207,12 +209,9 @@ export function useRecordingPlaybackController({
       }
       const shouldResume = options.resume ?? playbackIntentRef.current;
       clearResumeTimer();
-      pauseMediaElements();
-      playbackIntentRef.current = shouldResume;
+      replaceStream(shouldResume);
       setCurrentIndex(target.index);
       setCurrentTime(target.offsetMs / 1000);
-      setIsPlaying(shouldResume);
-      setPendingAutoplay(shouldResume);
       setPlaybackEndedAtEnd(false);
       setPlaybackError(null);
       setResumeProgress(null);
@@ -223,7 +222,7 @@ export function useRecordingPlaybackController({
     },
     [
       clearResumeTimer,
-      pauseMediaElements,
+      replaceStream,
       playableSegments,
       totalDurationMs,
       updateRedactionStateForTimeline,
@@ -242,17 +241,12 @@ export function useRecordingPlaybackController({
     if (!video) {
       return;
     }
-    if (video.paused) {
+    if (!playbackIntentRef.current) {
       setScrubTimelineMs(null);
       setPlaybackEndedAtEnd(false);
-      const played = await playMediaElements();
-      playbackIntentRef.current = played;
-      setIsPlaying(played);
+      requestPlayback(true);
     } else {
-      playbackIntentRef.current = false;
-      setPendingAutoplay(false);
-      pauseMediaElements();
-      setIsPlaying(false);
+      requestPlayback(false);
     }
   }
 
@@ -281,39 +275,42 @@ export function useRecordingPlaybackController({
     seekRevision,
   });
 
-  const handleEnded = useCallback(() => {
-    if (!currentSegment) {
-      return;
-    }
+  const handleEnded = useCallback(
+    (event: SyntheticEvent<HTMLVideoElement>) => {
+      if (!currentSegment || !isCurrentMedia(event.currentTarget)) {
+        return;
+      }
 
-    const nextIndex = currentIndex + 1;
-    if (nextIndex >= playableSegments.length) {
-      setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
-      playbackIntentRef.current = false;
-      setIsPlaying(false);
-      setPlaybackEndedAtEnd(true);
-      pauseMediaElements();
-      return;
-    }
-    const shouldContinuePlayback = playbackIntentRef.current;
-    const advanceToNextSegment = () =>
-      advanceToSegment(nextIndex, shouldContinuePlayback);
-    const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
-    if (pauseGapMs === 0) {
-      advanceToNextSegment();
-      return;
-    }
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= playableSegments.length) {
+        setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
+        replaceStream(false);
+        setPlaybackEndedAtEnd(true);
+        return;
+      }
+      const shouldContinuePlayback = playbackIntentRef.current;
+      const advanceToNextSegment = () =>
+        advanceToSegment(nextIndex, shouldContinuePlayback);
+      const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
+      if (pauseGapMs === 0) {
+        advanceToNextSegment();
+        return;
+      }
 
-    startResumeTimer(pauseGapMs, advanceToNextSegment);
-  }, [
-    advanceToSegment,
-    clearResumeTimer,
-    currentIndex,
-    currentSegment,
-    pauseMediaElements,
-    playableSegments.length,
-    startResumeTimer,
-  ]);
+      replaceStream(shouldContinuePlayback);
+      startResumeTimer(pauseGapMs, advanceToNextSegment);
+    },
+    [
+      advanceToSegment,
+      clearResumeTimer,
+      currentIndex,
+      currentSegment,
+      replaceStream,
+      isCurrentMedia,
+      playableSegments.length,
+      startResumeTimer,
+    ],
+  );
 
   function playNowAfterPause() {
     const nextIndex = currentIndex + 1;
@@ -322,59 +319,25 @@ export function useRecordingPlaybackController({
     }
   }
 
-  function setVideoElement(element: HTMLVideoElement | null) {
-    media.actions.setVideoElement(element);
-    if (element) {
-      updateRedactionStateForTimeline(videoTimelineMs(element));
-    }
-  }
-
-  function handleVideoPlay() {
-    playbackIntentRef.current = true;
-    setIsPlaying(true);
-    setPendingAutoplay(false);
-    setPlaybackEndedAtEnd(false);
-    updateRedactionStateFromVideo();
-  }
-
-  function handleVideoPause() {
-    setIsPlaying(false);
-  }
+  const setVideoElement = useCallback(
+    (element: HTMLVideoElement | null) => {
+      media.actions.setVideoElement(element);
+      if (element) {
+        updateRedactionStateForTimeline(videoTimelineMs(element));
+      }
+    },
+    [
+      media.actions.setVideoElement,
+      updateRedactionStateForTimeline,
+      videoTimelineMs,
+    ],
+  );
 
   function handleVideoTimeUpdate(video: HTMLVideoElement) {
+    if (!isCurrentMedia(video)) return;
     setCurrentTime(streamStartSeconds + clockTime());
     updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime);
-  }
-
-  function handleVideoCanPlay() {
-    updateRedactionStateFromVideo();
-    if (!pendingAutoplay || resumeProgress !== null) {
-      return;
-    }
-    if (
-      (videoRef.current?.readyState ?? 0) < HTMLMediaElement.HAVE_FUTURE_DATA ||
-      [...media.refs.audioRefs.current.values()].some(
-        (audio) => audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA,
-      )
-    )
-      return;
-    setPendingAutoplay(false);
-    void playMediaElements();
-  }
-
-  function handleBuffering() {
-    if (!playbackIntentRef.current || resumeProgress !== null) return;
-    setPendingAutoplay(true);
-    pauseMediaElements();
-    setIsPlaying(false);
-  }
-
-  function handleVideoError() {
-    playbackIntentRef.current = false;
-    setIsPlaying(false);
-    setPendingAutoplay(false);
-    setPlaybackError('Playback failed: video stream is not supported.');
   }
 
   return {
@@ -385,18 +348,20 @@ export function useRecordingPlaybackController({
       handleEnded,
       handleTimelineInput,
       handleVideoCanPlay,
-      handleVideoError,
+      handleMediaError,
       handleVideoPause,
       handleVideoPlay,
       handleVideoTimeUpdate,
       playNowAfterPause,
       registerAudioElement,
       requestFullscreen,
+      readPlaybackTimeMs,
       seekTimeline,
       setFullscreenElement,
       setIsMuted,
       setVideoElement,
       setVolume,
+      setPlaybackRate,
       skipToNextUnredactedVideo,
       togglePlayback,
     },
@@ -407,6 +372,8 @@ export function useRecordingPlaybackController({
       displayedTimelineMs,
       isMuted,
       isPlaying,
+      playRequested,
+      playbackRate,
       nextUnredactedVideoTimelineMs,
       playableSegments,
       playbackError,
@@ -421,8 +388,4 @@ export function useRecordingPlaybackController({
       volume,
     },
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

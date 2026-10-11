@@ -335,6 +335,8 @@ fn vlm_chat_completions_request_uses_plain_text_and_source_metadata() {
         width: 200,
     };
     let config = VisionRequestConfig {
+        route: None,
+        storage: None,
         api_key: "secret".to_string(),
         base_url: "https://example.test/api".to_string(),
         model: "vision-model".to_string(),
@@ -424,6 +426,8 @@ fn vlm_chat_completions_request_caps_ocr_candidates() {
         width: 16,
     };
     let config = VisionRequestConfig {
+        route: None,
+        storage: None,
         api_key: "secret".to_string(),
         base_url: "https://example.test/api".to_string(),
         model: "vision-model".to_string(),
@@ -2537,6 +2541,7 @@ pub(in crate::ai) fn test_verbose_transcription(
     transcription::VerboseTranscription {
         duration: Some(end),
         language: Some("en".to_string()),
+        language_confidence: None,
         segments: vec![transcription::VerboseTranscriptionSegment {
             end,
             id: 0,

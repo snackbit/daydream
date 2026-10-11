@@ -28,15 +28,9 @@ export function studioRecallEvidenceAvailable(
         : segment.videoStreamIndex !== null &&
           detail.tracks.find((track) => track.kind === 'video')?.id ===
             evidence.sourceTrackId
-      : evidence.sourceKind === 'desktop-audio'
-        ? segment.desktopAudioStreamIndex !== null &&
-          evidence.sourceTrackId ===
-            `desktop-audio-${segment.desktopAudioStreamIndex}`
-        : segment.microphoneAudioStreamIndex !== null &&
-          evidence.sourceTrackId ===
-            `microphone-${segment.microphoneAudioStreamIndex}`) &&
+      : audioTrackId(evidence, segment) === evidence.sourceTrackId) &&
     evidence.startOffsetMs >= segment.playbackOffsetMs &&
-    evidence.endOffsetMs <= segment.playbackOffsetMs + segment.durationMs &&
+    evidenceSpanAvailable(evidence, detail, segment) &&
     detail.tracks.some(
       (track) =>
         track.id === evidence.sourceTrackId &&
@@ -54,4 +48,89 @@ export function studioRecallEvidenceAvailable(
         range.endOffsetMs > evidence.startOffsetMs,
     )
   );
+}
+
+function evidenceSpanAvailable(
+  evidence: RecallEvidence,
+  detail: LibraryRecordingDetail,
+  anchor: LibraryRecordingDetail['segments'][number],
+): boolean {
+  if (evidence.sourceKind === 'ocr')
+    return (
+      anchor.durationMs !== null &&
+      evidence.endOffsetMs <= anchor.playbackOffsetMs + anchor.durationMs
+    );
+  let cursor = evidence.startOffsetMs;
+  let segment = anchor;
+  while (cursor < evidence.endOffsetMs) {
+    const duration = segment.durationMs;
+    const trackId = audioTrackId(evidence, segment);
+    if (
+      !segment.fileExists ||
+      segment.state !== 'finalized' ||
+      duration === null ||
+      trackId === null ||
+      cursor < segment.playbackOffsetMs ||
+      cursor >= segment.playbackOffsetMs + duration
+    )
+      return false;
+    const end = Math.min(
+      evidence.endOffsetMs,
+      segment.playbackOffsetMs + duration,
+    );
+    if (
+      detail.redactions.some(
+        (range) =>
+          range.startOffsetMs < end &&
+          range.endOffsetMs > cursor &&
+          (!range.trackIds.length || range.trackIds.includes(trackId)),
+      )
+    )
+      return false;
+    cursor = end;
+    if (cursor === evidence.endOffsetMs) return true;
+    const next = detail.segments.filter(
+      (candidate) => candidate.playbackOffsetMs === cursor,
+    );
+    const candidate = next[0];
+    if (
+      next.length !== 1 ||
+      !candidate ||
+      segment.endedAtMs !== candidate.startedAtMs
+    )
+      return false;
+    segment = candidate;
+  }
+  return false;
+}
+
+function audioTrackId(
+  evidence: RecallEvidence,
+  segment: LibraryRecordingDetail['segments'][number],
+): string | null {
+  const stream =
+    evidence.sourceKind === 'microphone'
+      ? segment.microphoneAudioStreamIndex
+      : segment.desktopAudioStreamIndex;
+  return stream === null ? null : `${evidence.sourceKind}-${stream}`;
+}
+
+/** A citation's anchor track can differ from later fragments of the same source. */
+export function studioRecallEvidenceTrackIds(
+  evidence: RecallEvidence,
+  detail: LibraryRecordingDetail,
+): string[] {
+  if (evidence.sourceKind === 'ocr') return [evidence.sourceTrackId];
+  const ids = new Set([evidence.sourceTrackId]);
+  for (const segment of detail.segments) {
+    if (
+      segment.durationMs === null ||
+      segment.playbackOffsetMs >= evidence.endOffsetMs ||
+      segment.playbackOffsetMs + segment.durationMs <= evidence.startOffsetMs
+    )
+      continue;
+    const id = audioTrackId(evidence, segment);
+    if (id !== null) ids.add(id);
+  }
+  return [...ids];
 }

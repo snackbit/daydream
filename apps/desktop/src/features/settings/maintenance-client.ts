@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   AcknowledgeMaintenanceThemeResetInput,
   ExecuteMaintenanceInput,
@@ -6,6 +5,7 @@ import type {
   MaintenanceStatus,
   PreviewMaintenanceInput,
 } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
 
 export function previewMaintenance(
   input: PreviewMaintenanceInput,

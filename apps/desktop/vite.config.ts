@@ -20,7 +20,9 @@ export default defineConfig(() => ({
   optimizeDeps: {
     include: [
       '@tanstack/react-router',
+      '@tanstack/react-virtual',
       '@tauri-apps/api/event',
+      'react-dom/client',
       'react-resizable-panels',
     ],
   },

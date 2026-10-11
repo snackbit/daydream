@@ -45,9 +45,9 @@ pub(super) fn spawn() -> io::Result<(WorkerChild, UnixStream, UnixStream, UnixSt
     #[cfg(test)]
     let executable = std::env::var_os("DAYDREAM_MEDIA_WORKER_BINARY")
         .map(std::path::PathBuf::from)
-        .unwrap_or(std::env::current_exe()?);
+        .map_or_else(crate::subprocess::worker_executable, Ok)?;
     #[cfg(not(test))]
-    let executable = std::env::current_exe()?;
+    let executable = crate::subprocess::worker_executable()?;
     let mut command = Command::new(executable);
     #[cfg(test)]
     if std::env::var_os("DAYDREAM_MEDIA_WORKER_BINARY").is_none() {

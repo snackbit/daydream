@@ -120,6 +120,9 @@ pub fn first_processing_chunk_failure(
     connection: &Connection,
     chunk_id: &str,
 ) -> rusqlite::Result<Option<String>> {
+    if let Some(error) = super::speech_units::speech_unit_error(connection, chunk_id)? {
+        return Ok(Some(error));
+    }
     connection.query_row("SELECT error_code FROM visual_frame_processing_states WHERE chunk_id=?1 AND status='failed' AND error_code IS NOT NULL UNION ALL SELECT r.error_code FROM processing_audio_ranges r WHERE r.chunk_id=?1 AND r.status='failed' AND r.error_code IS NOT NULL AND NOT EXISTS(SELECT 1 FROM processing_audio_ranges newer WHERE newer.chunk_id=r.chunk_id AND newer.start_ms=r.start_ms AND newer.end_ms=r.end_ms AND (newer.updated_at_ms>r.updated_at_ms OR (newer.updated_at_ms=r.updated_at_ms AND newer.rowid>r.rowid))) LIMIT 1", [chunk_id], |row| row.get(0)).optional()
 }
 

@@ -1,259 +1,329 @@
-import { useEffect } from 'react';
-import { LoaderCircle, Save } from 'lucide-react';
+import { useState } from 'react';
+import { LoaderCircle, Check } from 'lucide-react';
 import { PageHeader, PageLayout } from '@/app/PageLayout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { SettingsDangerZone } from '@/features/settings/components/settings-danger-zone';
 import { SettingsScreenDialogs } from '@/features/settings/screen/settings-screen-dialogs';
-import { SettingsScreenTabs } from '@/features/settings/screen/settings-screen-tabs';
 import type {
-  SettingsTab,
-  SettingsFocus,
+  SettingsScreenTabsModel,
+  SettingsScreenTabsActions,
+} from '@/features/settings/screen/settings-screen-tabs';
+import {
+  parseSettingsLocation,
+  type SettingsTab,
+  type SettingsFocus,
+  type SettingsSection,
+  type SettingsDetail,
 } from '@/features/settings/settings-location';
+import { useSettingsStore } from '@/features/settings/settings-store';
 import { settingsAiModelActions } from '@/features/settings/use-settings-ai-controller';
 import { useSettingsScreenController } from '@/features/settings/use-settings-screen-controller';
+import { ModelsAccounts } from '@/features/settings/workspace/accounts/models-accounts';
+import { FeatureEditor } from '@/features/settings/workspace/feature-editor';
+import { FeatureOverview } from '@/features/settings/workspace/features/feature-overview';
+import { GeneralPreferences } from '@/features/settings/workspace/pages/general-preferences';
+import { PrivacyPreferences } from '@/features/settings/workspace/pages/privacy-preferences';
+import { RecordingPreferences } from '@/features/settings/workspace/pages/recording-preferences';
+import { StoragePreferences } from '@/features/settings/workspace/pages/storage-preferences';
+import {
+  SettingsNavigation,
+  settingsSections,
+} from '@/features/settings/workspace/settings-navigation';
 
+const descriptions = {
+  general: 'Appearance and app preferences.',
+  recording: 'Capture cadence for new recordings.',
+  privacy: 'Choose what Daydream can capture.',
+  ai: 'Choose how your recordings become searchable.',
+  models: 'Your accounts, APIs and local models.',
+  storage: 'Manage recording retention and library size.',
+} satisfies Record<SettingsSection, string>;
 export interface SettingsScreenProps {
   tab?: SettingsTab | undefined;
   focusSection?: SettingsFocus | null | undefined;
   onTabChange?: ((tab: SettingsTab) => void) | undefined;
+  section?: SettingsSection | undefined;
+  detail?: SettingsDetail | null | undefined;
+  onLocationChange?:
+    | ((section: SettingsSection, detail: SettingsDetail | null) => void)
+    | undefined;
 }
 export function SettingsScreen({
   tab,
   focusSection,
   onTabChange,
+  section,
+  detail,
+  onLocationChange,
 }: SettingsScreenProps = {}) {
-  const {
-    aiActionError,
-    aiModels,
-    aiProviderStatus,
-    blocker,
-    busy,
-    cadenceMode,
-    canSave,
-    cleanupConfirmation,
-    confirmCleanup,
-    discardAndLeaveSettings,
-    dismissCleanupConfirmation,
-    draft,
-    error,
-    loadStatus,
-    retryLoadSettings,
-    inputActivityRepairMessage,
-    inputActivityRepairing,
-    inputActivityStatus,
-    requestSave,
-    refreshInputActivityStatus,
-    repairInputActivity,
-    runAiModelAction,
-    runModelTransferAction,
-    modelActionErrors,
-    savedScene,
-    saving,
-    setCadenceMode,
-    setTranscriptionKeyDraft,
-    setVisionKeyDraft,
-    recallEmbeddingKeyDraft,
-    recallGenerationKeyDraft,
-    setRecallEmbeddingKeyDraft,
-    setRecallGenerationKeyDraft,
-    settingsState,
-    successMessage,
-    transcriptionKeyDraft,
-    updateDraft,
-    validationError,
-    visionKeyDraft,
-    saveAndLeaveSettings,
-  } = useSettingsScreenController();
+  const controller = useSettingsScreenController();
+  const legacy = parseSettingsLocation({ tab, focus: focusSection });
+  const [localSection, setLocalSection] = useState(legacy.section);
+  const [localDetail, setLocalDetail] = useState(legacy.detail);
+  const active = section ?? (onTabChange ? legacy.section : localSection);
+  const selectedDetail = detail === undefined ? localDetail : detail;
+  const { draft, settingsState } = controller;
   const loaded = draft !== null && settingsState !== null;
-  useEffect(() => {
-    if (!loaded || !focusSection) return;
-    const frame = window.requestAnimationFrame(() => {
-      const section = document.getElementById(`ai-${focusSection}`);
-      section?.scrollIntoView({ block: 'start' });
-      section?.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusSection, loaded, tab]);
-  const { cancelAiModelDownload, deleteAiModel, downloadAiModel } =
-    settingsAiModelActions;
-  function handleCancelAiModelDownload(modelId: string) {
-    void runAiModelAction(() => cancelAiModelDownload({ modelId }), modelId);
+  function navigate(
+    next: SettingsSection,
+    nextDetail: SettingsDetail | null = null,
+  ) {
+    setLocalSection(next);
+    setLocalDetail(nextDetail);
+    onLocationChange?.(next, nextDetail);
+    if (next !== active)
+      onTabChange?.(
+        next === 'recording' || next === 'privacy'
+          ? 'record'
+          : next === 'models'
+            ? 'ai'
+            : next,
+      );
   }
-
-  function handleDeleteAiModel(modelId: string) {
-    void runAiModelAction(() => deleteAiModel({ modelId }), modelId);
+  function changeSection(next: SettingsSection) {
+    navigate(next);
   }
-
-  function handleDownloadAiModel(modelId: string) {
-    void runAiModelAction(() => downloadAiModel({ modelId }), modelId);
+  function openDetail(next: SettingsDetail) {
+    navigate(active, next);
   }
-
-  function handleRequestSave() {
-    void requestSave();
+  function closeDetail() {
+    navigate(active);
   }
-
-  function handleResetLeaveBlocker() {
-    blocker.reset?.();
+  function openProtection() {
+    openDetail('protection');
   }
-
-  const remoteProcessingEnabled = Boolean(
-    draft &&
-    (draft.ai.transcription.provider === 'openai-compatible' ||
-      draft.ai.vision.provider === 'openai-compatible' ||
-      (draft.ai.recall.embedding.provider === 'openai-compatible' &&
-        draft.ai.recall.embedding.enabled) ||
-      draft.ai.recall.generation.enabled),
-  );
-  const saveStatus = saving
-    ? 'Saving changes…'
-    : busy
-      ? 'Checking storage changes…'
-      : validationError
-        ? 'Review settings before saving'
-        : canSave
-          ? 'Unsaved changes'
-          : successMessage
-            ? 'Saved just now'
-            : loadStatus === 'ready'
-              ? 'All changes saved'
-              : 'Loading settings';
-
+  function cancelDownload(modelId: string) {
+    void controller.runAiModelAction(
+      () => settingsAiModelActions.cancelAiModelDownload({ modelId }),
+      modelId,
+    );
+  }
+  function deleteModel(modelId: string) {
+    void controller.runAiModelAction(
+      () => settingsAiModelActions.deleteAiModel({ modelId }),
+      modelId,
+    );
+  }
+  function downloadModel(modelId: string) {
+    void controller.runAiModelAction(
+      () => settingsAiModelActions.downloadAiModel({ modelId }),
+      modelId,
+    );
+  }
+  function retrySave() {
+    void controller.requestSave();
+  }
+  function revert() {
+    useSettingsStore.getState().revertAutosave();
+  }
+  function resetBlocker() {
+    controller.blocker.reset?.();
+  }
+  const model: SettingsScreenTabsModel | null =
+    draft && settingsState
+      ? {
+          modelKeyDrafts: controller.modelKeyDrafts,
+          aiModels: controller.aiModels,
+          modelActionErrors: controller.modelActionErrors,
+          aiProviderStatus: controller.aiProviderStatus,
+          cadenceMode: controller.cadenceMode,
+          draft,
+          inputActivityRepairMessage: controller.inputActivityRepairMessage,
+          inputActivityRepairing: controller.inputActivityRepairing,
+          inputActivityStatus: controller.inputActivityStatus,
+          limits: settingsState.limits,
+          savedScene: controller.savedScene,
+          transcriptionKeyDraft: controller.transcriptionKeyDraft,
+          visionKeyDraft: controller.visionKeyDraft,
+          recallEmbeddingKeyDraft: controller.recallEmbeddingKeyDraft,
+          recallGenerationKeyDraft: controller.recallGenerationKeyDraft,
+        }
+      : null;
+  const actions: SettingsScreenTabsActions = {
+    changeModelKey: controller.changeModelKey,
+    cancelAiModelDownload: cancelDownload,
+    changeCadenceMode: controller.setCadenceMode,
+    changeTranscriptionKey: controller.setTranscriptionKeyDraft,
+    changeVisionKey: controller.setVisionKeyDraft,
+    changeRecallEmbeddingKey: controller.setRecallEmbeddingKeyDraft,
+    changeRecallGenerationKey: controller.setRecallGenerationKeyDraft,
+    deleteAiModel: deleteModel,
+    downloadAiModel: downloadModel,
+    transferAiModel: controller.runModelTransferAction,
+    refreshInputActivityStatus: controller.refreshInputActivityStatus,
+    repairInputActivity: controller.repairInputActivity,
+    updateDraft: controller.updateDraft,
+  };
   return (
-    <PageLayout>
+    <PageLayout className="max-w-[1120px] gap-7">
       <PageHeader
         title="Settings"
-        description="Make Daydream work for your day. Changes are saved together."
         actions={
-          <div className="flex flex-wrap items-center gap-3">
-            <span
-              aria-live="polite"
-              className={
-                validationError
-                  ? 'text-destructive text-xs'
-                  : 'text-muted-foreground text-xs'
-              }
-              role="status"
-            >
-              {saving || busy ? (
-                <LoaderCircle className="mr-1 inline size-3 animate-spin" />
-              ) : null}
-              {saveStatus}
-            </span>
-            <Button disabled={!canSave} onClick={handleRequestSave} size="sm">
-              {saving || busy ? (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              ) : (
-                <Save className="size-3.5" />
-              )}
-              {saving ? 'Saving…' : busy ? 'Checking…' : 'Save'}
-            </Button>
-          </div>
+          <span
+            role="status"
+            aria-live="polite"
+            className="text-muted-foreground flex items-center gap-1.5 pt-2 text-xs"
+          >
+            {controller.saving ? (
+              <>
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="size-3 animate-spin"
+                />
+                Saving…
+              </>
+            ) : controller.error ? (
+              'Changes need attention'
+            ) : loaded ? (
+              <>
+                <Check aria-hidden="true" className="size-3" />
+                Saved
+              </>
+            ) : (
+              'Loading…'
+            )}
+          </span>
         }
       />
-      <p className="text-muted-foreground text-sm leading-6">
-        {remoteProcessingEnabled
-          ? 'Remote AI is selected. Review the data sent in AI/LLM.'
-          : 'Local processing is the default. Remote AI is opt-in in AI/LLM.'}
-      </p>
-
+      <SettingsDangerZone
+        scope="recovery"
+        disabled={controller.busy || !loaded}
+      />
+      <div className="grid min-w-0 gap-7 lg:grid-cols-[176px_minmax(0,1fr)] lg:gap-10">
+        <SettingsNavigation section={active} onChange={changeSection} />
+        <div className="max-w-[800px] min-w-0">
+          <div className="mb-7">
+            <h2 className="text-xl font-medium tracking-tight">
+              {settingsSections.find((item) => item.id === active)?.label}
+            </h2>
+            <p className="text-muted-foreground mt-2 text-sm">
+              {descriptions[active]}
+            </p>
+          </div>
+          {controller.error ? (
+            <Alert variant="destructive" className="mb-6">
+              <AlertTitle>Could not save changes</AlertTitle>
+              <AlertDescription>
+                {controller.error}
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={controller.busy}
+                    onClick={retrySave}
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={controller.busy}
+                    onClick={revert}
+                  >
+                    Revert changes
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {controller.aiActionError ? (
+            <Alert variant="destructive" className="mb-6">
+              <AlertTitle>AI setup needs attention</AlertTitle>
+              <AlertDescription>{controller.aiActionError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {!model ? (
+            <div role="status" className="text-muted-foreground py-8 text-sm">
+              {controller.loadStatus === 'error' ? (
+                <>
+                  <p>Settings are unavailable.</p>
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    onClick={controller.retryLoadSettings}
+                  >
+                    Try again
+                  </Button>
+                </>
+              ) : (
+                'Loading settings…'
+              )}
+            </div>
+          ) : active === 'general' ? (
+            <>
+              <GeneralPreferences
+                draft={model.draft}
+                onUpdate={controller.updateDraft}
+              />
+              <SettingsDangerZone scope="general" disabled={controller.busy} />
+            </>
+          ) : active === 'recording' ? (
+            <RecordingPreferences
+              draft={model.draft}
+              limits={model.limits}
+              scene={model.savedScene}
+              onUpdate={controller.updateDraft}
+            />
+          ) : active === 'privacy' ? (
+            <PrivacyPreferences
+              model={model}
+              actions={actions}
+              onOpenProtection={openProtection}
+            />
+          ) : active === 'ai' ? (
+            <FeatureOverview
+              draft={model.draft}
+              models={model.aiModels}
+              onOpen={openDetail}
+              onUpdate={controller.updateDraft}
+            />
+          ) : active === 'models' ? (
+            <ModelsAccounts model={model} actions={actions} />
+          ) : (
+            <>
+              <StoragePreferences
+                draft={model.draft}
+                limits={model.limits}
+                onUpdate={controller.updateStorage}
+              />
+              <SettingsDangerZone scope="storage" disabled={controller.busy} />
+            </>
+          )}
+        </div>
+      </div>
+      {model && selectedDetail ? (
+        <FeatureEditor
+          key={`${selectedDetail}-${controller.preferenceRevision}`}
+          detail={selectedDetail}
+          model={model}
+          actions={actions}
+          onClose={closeDetail}
+          onDiscard={() => {
+            controller.clearSecretDrafts();
+            if (!useSettingsStore.getState().isDirty)
+              useSettingsStore.getState().revertAutosave();
+          }}
+          onSave={controller.savePreparedSettings}
+        />
+      ) : null}
       <SettingsScreenDialogs
         actions={{
-          confirmCleanup,
-          discardAndLeaveSettings,
-          dismissCleanupConfirmation,
-          resetLeaveBlocker: handleResetLeaveBlocker,
-          saveAndLeaveSettings,
+          confirmCleanup: controller.confirmCleanup,
+          discardAndLeaveSettings: controller.discardAndLeaveSettings,
+          dismissCleanupConfirmation: controller.dismissCleanupConfirmation,
+          resetLeaveBlocker: resetBlocker,
+          saveAndLeaveSettings: controller.saveAndLeaveSettings,
         }}
         model={{
-          blockerStatus: blocker.status,
-          busy,
-          canSave,
-          cleanupConfirmation,
-          saving,
-          validationError,
+          blockerStatus: controller.blocker.status,
+          busy: controller.busy,
+          canSave: controller.canSave,
+          cleanupConfirmation: controller.cleanupConfirmation,
+          saving: controller.saving,
+          validationError: controller.validationError,
         }}
       />
-
-      {error ? (
-        <Alert variant="destructive">
-          <AlertTitle>Settings failed</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-      {successMessage ? (
-        <p aria-live="polite" className="text-muted-foreground text-xs">
-          {successMessage}
-        </p>
-      ) : null}
-      {validationError ? (
-        <p className="text-destructive text-xs" role="alert">
-          {validationError}
-        </p>
-      ) : null}
-      {aiActionError ? (
-        <Alert variant="destructive">
-          <AlertTitle>AI settings failed</AlertTitle>
-          <AlertDescription>{aiActionError}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!draft || !settingsState ? (
-        <div
-          className="bg-muted text-muted-foreground rounded-panel grid gap-3 p-6 text-sm"
-          role="status"
-        >
-          {loadStatus === 'error'
-            ? 'Settings are unavailable.'
-            : 'Loading settings.'}
-          {loadStatus === 'error' ? (
-            <Button
-              className="w-fit"
-              onClick={retryLoadSettings}
-              variant="outline"
-            >
-              Try again
-            </Button>
-          ) : null}
-        </div>
-      ) : (
-        <SettingsScreenTabs
-          tab={tab}
-          onTabChange={onTabChange}
-          actions={{
-            cancelAiModelDownload: handleCancelAiModelDownload,
-            changeCadenceMode: setCadenceMode,
-            changeTranscriptionKey: setTranscriptionKeyDraft,
-            changeVisionKey: setVisionKeyDraft,
-            changeRecallEmbeddingKey: setRecallEmbeddingKeyDraft,
-            changeRecallGenerationKey: setRecallGenerationKeyDraft,
-            deleteAiModel: handleDeleteAiModel,
-            downloadAiModel: handleDownloadAiModel,
-            transferAiModel: runModelTransferAction,
-            refreshInputActivityStatus: refreshInputActivityStatus,
-            repairInputActivity,
-            updateDraft,
-          }}
-          busy={busy}
-          model={{
-            aiModels,
-            modelActionErrors,
-            aiProviderStatus,
-            cadenceMode,
-            draft,
-            inputActivityRepairMessage,
-            inputActivityRepairing,
-            inputActivityStatus,
-            limits: settingsState.limits,
-            savedScene,
-            transcriptionKeyDraft,
-            visionKeyDraft,
-            recallEmbeddingKeyDraft,
-            recallGenerationKeyDraft,
-          }}
-        />
-      )}
-      <SettingsDangerZone disabled={busy || !loaded} />
     </PageLayout>
   );
 }

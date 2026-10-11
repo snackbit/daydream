@@ -311,7 +311,7 @@ pub async fn search(
     if semantic_used && indexed_evidence_count < eligible_evidence_count {
         complete = false;
         unavailable_reason = Some(
-            "Semantic indexing is incomplete; all currently indexed evidence was searched".into(),
+            "Semantic indexing is incomplete; all currently indexed text and transcripts were searched".into(),
         );
     }
     let next_cursor = if has_more && offset + limit <= 10_000 {

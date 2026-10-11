@@ -113,13 +113,23 @@ test.each([
     expect(screen.getByText('Range selected')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Reprocess' }));
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
-    expect(invoke).toHaveBeenLastCalledWith('startRecordingReprocessing', {
-      input: {
-        recordingId: 'synthetic',
-        targets,
-        planFingerprint: 'settings-and-scope',
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command]) => command === 'startRecordingReprocessing',
+        )
+        .at(-1),
+    ).toEqual([
+      'startRecordingReprocessing',
+      {
+        input: {
+          recordingId: 'synthetic',
+          targets,
+          planFingerprint: 'settings-and-scope',
+        },
       },
-    });
+    ]);
     expect(screen.getByText('Range selected')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await userEvent.click(

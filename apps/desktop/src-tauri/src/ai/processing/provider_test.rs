@@ -40,6 +40,7 @@ pub(crate) async fn test_vision_provider(
     let mut draft =
         settings::load_app_settings(&app.state::<AppStorage>()).map_err(settings_error)?;
     draft.ai.vision = input.vision;
+    draft.ai.model_registry = None;
     settings::validate_settings(draft.clone()).map_err(|_| {
         ai_error(
             "ai_vision_profile_invalid",
@@ -55,6 +56,8 @@ pub(crate) async fn test_vision_provider(
         visual::vision_request_config_for_ocr(&app.state::<AppStorage>(), &draft)?
     } else {
         visual::VisionRequestConfig {
+            route: None,
+            storage: None,
             api_key: input.key_draft.unwrap_or_default().trim().into(),
             base_url: draft.ai.vision.base_url.clone().unwrap_or_default(),
             model: draft.ai.vision.model.clone().unwrap_or_default(),
@@ -114,6 +117,14 @@ async fn probe(
         Ok(Err(error)) => Some(error.code),
         Err(_) => Some("ai_vision_test_timeout".into()),
     };
+    if let Some(code) = &error_code {
+        tracing::warn!(
+            capability = kind,
+            error_code = crate::telemetry::failures::safe_error_code(code),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "vision_provider_test_failed"
+        );
+    }
     VisionProviderCheck {
         kind,
         status: if error_code.is_some() {
@@ -233,6 +244,8 @@ mod tests {
                 let path = directory.path().join("test.png");
                 write_test_image(&path).unwrap();
                 let config = visual::VisionRequestConfig {
+                    route: None,
+                    storage: None,
                     api_key: String::new(),
                     base_url: format!("http://{address}"),
                     model: "synthetic".into(),

@@ -1,5 +1,706 @@
 # Refactoring Tasks
 
+## Implemented: Recall speech publication review fixes
+
+Cross-fragment utterances remain one citation anchored in their first media
+fragment, with every covered fragment recorded in internal provenance. The
+evidence writer indexes eligible media once per recording and validates full
+source coverage, contiguous timeline/wall-clock boundaries, audio presence and
+redactions for every fragment. It keeps the full utterance for search and summary
+inputs. Studio accepts the same contiguous span and hides all covered source
+aliases when stream indexes differ between fragments. Public IPC shapes are unchanged.
+
+A migration adds publication-state/delete/insert dirty triggers and queues existing
+recordings for one-time repair. Silent publication therefore invalidates Recall
+inside the same transaction even while raw historical rows and replacement units
+remain pending. Cache rebuild removes stale FTS, vectors and generation lineage.
+
+Both native defects and the frontend span rejection have intended-red regressions.
+The frontend navigation/hide workflows passed 107 unit/browser scenarios and 60/61
+branch outcomes (98.36%) for the navigation owner; all consumer types passed.
+Native verification passed 65 Recall tests covering real SQLite publication,
+rollback, missing/gapped support, migration repair and the production
+speech-to-Studio/Recall path. The full native run passed 653 tests but found two
+old schema-version assertions; updating them to version 34 passed all 44 storage
+compatibility tests. Native formatting and Clippy passed without warnings.
+The JS gate passed lint/types and 698 of 700 tests; unchanged Capture focus and
+Recall screenshot timing cases failed under load. Both suites passed all 43
+scenarios in isolation without wider timeouts. Single-fragment hiding also passed
+its compatibility regression (eight inspector browser tests).
+The dependency rebuild
+and workspace build lock delayed native checks; no unrelated build was stopped.
+No Rust branch-coverage run is claimed: the project has no configured native
+branch instrumentation runner. Native acceptance is recorded separately from
+frontend coverage. Fixtures contain only synthetic media/text. Evidence logs use
+`/tmp/daydream-recall-*`.
+
+The full JS gate is not claimed green; the isolated workflows and all changed
+behavior passed. The native full run's only failures were the two version
+expectations, followed by the passing compatibility suite. No repeated full run
+was used to hide the initial failures. The evidence writer split reduced
+`storage/recall.rs` to 273 lines; the new writer is 185 lines. Existing dense
+storage and Studio folders remain follow-up debt; no production file exceeds
+400 lines because of this fix. The new `storage/recall` owner isolates media-span
+validation and hashing rather than enlarging the storage facade.
+
+## Completed: live Teleprompter highlighting during browsing
+
+Browsing suspends auto-scroll while sentence phase, active words and the ruler
+continue reading the live playback clock. The browsing owner stores only content
+identity and seek revision; it no longer retains a frozen highlight frame.
+Scrolling gestures and list-scrolling keys pause following, while Tab, transcript
+activation, handled/modified keys, zoom and zero-motion wheels do not. The action
+is labeled Resume auto-scroll. An absent OCR-frame input uses a stable empty array
+so playback time updates do not rebuild content and reset browsing ownership.
+
+| Transition | Expected result | Proof |
+| --- | --- | --- |
+| Browse while playing | Live words/sentences; viewport stays put | Compact and long virtualized browser regressions |
+| Playback 55 → 61 → 90 seconds | Highlights keep advancing; offscreen marker tracks current time | Long transcript fixture |
+| Resume following | Center current entry without seeking or starting media | Full-feed and ruler workflows |
+| Pause, seek, privacy/index replacement | Pause clock sampling; seek resets following; removed text disappears | Compact/ruler scenarios |
+| Scroll vs navigation/activation | Only genuine scroll actions detach following | Keyboard, wheel and touch cases |
+| Media timeupdate with no OCR input | Browsing survives; live highlights consume actual controller time | Assembled Studio with real WebM A/V |
+
+The highlight-freeze and control-Space regressions failed before implementation.
+All 152 scoped feed/Studio scenarios passed, including actual Chromium decoding
+of the synthetic WebM's video and both audio tracks. Those browser scenarios
+substitute Tauri reads, but retain the production Studio, controller, content
+builder, playback clock and highlighting path. The theme exploration passed six
+scenarios; styled 1:01 and offscreen 1:30 screenshots were inspected in both themes.
+The final `corepack yarn check` passed lint, all workspace typechecks, 698 desktop
+tests, nine shared tests and one FFmpeg test. Desktop production build passed.
+Fixtures contain synthetic content only.
+Public component/IPC/storage shapes and playback sampling remain unchanged.
+This supersedes historical notes below that described frozen browsing.
+
+V8 source-mapped changed branch coverage passed 29/29 outcomes (100%) across all
+five changed production modules, mapped against the task's start snapshots.
+Reports: `/tmp/daydream-teleprompter-coverage/`; reproducible gate:
+`/tmp/daydream-teleprompter-coverage-gate.cjs`. No runtime branches changed in Rust,
+and no native branch-coverage or new device/provider acceptance is claimed. Logs:
+`/tmp/daydream-teleprompter-{red,focused,integration,real-media,coverage,exploration,final-check,build}.log`.
+All changed production files remain below 400 lines (list: 245; Studio: 321).
+Existing Studio-root density remains follow-up debt; no flat-root owner, source
+folder or dependency was added. The existing TanStack Virtual Compiler warning
+and browser ResizeObserver console messages remain.
+
+## Completed correction: worker launch after executable replacement
+
+The reported recorder startup failed because the running executable had been
+replaced by a build. Linux `current_exe()` returned a path ending in `(deleted)`;
+launching that path failed with ENOENT, while the retained `/proc` executable
+started successfully. Both media and cached local Whisper workers use this path.
+
+- [x] Reproduce the failure with an isolated deleted-executable fixture.
+- [x] Share a Linux `/proc/self/exe` worker path with the non-Linux fallback.
+- [x] Keep startup diagnostics useful without logging paths or private payloads.
+- [x] Verify worker lifetime, synthetic media/recovery and native recording UI.
+- [x] Run native formatting, Clippy and the final native test gate.
+
+Fixtures use disposable executable copies and synthetic media. Existing worker
+protocols, explicit test overrides, deadlines and quarantine semantics stay intact.
+The regression failed with the original startup error before the launcher fix.
+All 20 focused media-worker tests pass, including real synthetic audio/video,
+recovery, retained-image re-execution from a cached path, descriptor handoff,
+parent-death signals and startup-thread lifetime. The native journey now replaces
+only its isolated package executable before Start and Resume. Formatting and
+Clippy pass; the full native gate passes 648 tests and three staging tests, with
+four existing opt-in checks ignored. The Whisper startup-failure scenario passes.
+Journey lint/syntax checks and fresh frontend/native builds also pass. All three
+Tauri/WebKit journey phases pass, including capture Start/Pause/Resume/Stop and
+decoded playback after replacing the package executable, persistence across
+restart and trusted keyboard input. A direct production Whisper readiness and
+clean-shutdown check passes without loading a model; credentials were omitted.
+
+Commands: pinned `corepack yarn rust:fmt`, `rust:clippy`, and
+`rust:test -- --test-threads=2`; the focused `rust:test recorder::media_worker::`
+run; desktop `build`; locked two-job Cargo build with `tauri/custom-protocol`;
+and `test:e2e:native --reuse-validated-build` using those exact fresh artifacts.
+Evidence: `/tmp/daydream-worker-reexec-{red,focused,native,fmt,clippy,build,ui-build,journeys}.log`
+and `/tmp/daydream-native-e2e.x4rwmH/`. The regression's red result was observed
+before changing either worker launcher. The final synthetic Studio screenshot
+was inspected: saved tracks are visible and the recorder is idle; the missing
+local-model notice is expected in the isolated fixture. Native branch coverage is not measured
+because `cargo llvm-cov` is unavailable; no percentage is claimed. Real portal,
+audio devices and the non-Linux fallback were not manually exercised. Public
+IPC, storage and worker wire formats are unchanged. Restart the running app once
+to load the corrected launcher.
+
+## Completed implementation: playback request ownership, sidebar modes and speed
+
+Playback starts belong to a committed media set and generation. Seeking,
+pausing, buffering and unmount retire pending starts; readiness gates video and
+every audio track together. Sidebar tabs expose Teleprompter independently of
+Debug and selections. Recording-local speed applies to every synchronized media
+element, recorded pause gaps and redaction boundary scheduling.
+
+Transition checks: immediate seek/Play while unready queues; Pause cancels queued
+or pending starts; obsolete success/rejection cannot change a replacement; genuine
+failure shows Retry and logs sanitized metadata; buffering resumes the requested
+group. Speed changes preserve sources and selections, survive seek/rollover and
+reset for another recording. Sidebar selection opens Inspector, explicit tabs
+preserve selections, Escape restores Teleprompter and unavailable records disable it.
+
+| Action | Reachable state/input | Expected outcome | Proof |
+| --- | --- | --- | --- |
+| Play / Pause | Metadata-only, seeking, or pending start | Wait for all tracks; Pause cancels intent | Audio race scenarios; real decoder workflow |
+| Seek / source change | Playing or queued, rapid replacements | Preserve requested playback; reject stale completion/events | Audio regressions; multi-source screen scenario; native late seeks |
+| Buffer / stall | Usable buffer or genuinely unready track | Continue usable playback; pause and resume an unready group | Buffered-stall and readiness scenarios |
+| Retry | Current decoder error or rejected Play | Visible safe error, one diagnostic, replacement resumes | Audio failure/recovery; native failure-policy tests |
+| Speed | All six choices, paused/playing, seek, grid, new recording | Apply to every track; preserve sources; reset new recording to 1x | Real media, synchronized grid and route-reset scenarios |
+| Gap / redaction | 0.25x or 2x; speed changes during gap | Scale recorded time; keep masks/mutes before boundary | Gap and privacy-boundary tests |
+| Tabs / Escape | Debug, selected lane, no selection, missing media | Preserve selection across tabs/popup; Escape resets; unavailable Teleprompter disabled | Theme/viewport journeys and unavailable-record scenario |
+| Unmount | Pending start or gap | Retire promises, pause captured media, clear timers | Audio cleanup and gap timer scenarios |
+
+The original four regressions failed before implementation. Real decoded video
+and both audio tracks advance, change speed, pause and resume after immediate
+seek/Play. Browser exploration in both themes at 1440 and 620 pixels caught a
+Radix pointerup/removed-popup click retargeting bug; retaining pointer gesture
+ownership now preserves selection. Existing screen fixtures use the synthetic
+WebM instead of failing loopback URLs and model media readiness explicitly.
+
+All affected scenarios passed in the scoped run (270 successes); its one unrelated
+playhead-scroll test failed under coverage and passed in isolation. The additional
+retired-stream scenario passed. The JavaScript gate passed lint, workspace
+typechecks, 688 desktop tests, nine shared tests and one FFmpeg test. Immutable
+install, desktop typecheck/build and two native failure-policy/privacy tests passed.
+The synchronized grid check confirmed rate application and preserving queued
+Play on source change. Its focused regression passed. After that last correction,
+the refreshed gate passed lint/typechecks and 687 desktop tests, but the unchanged
+Capture light/390px dialog-focus assertion failed again at line 290. No gate retry
+was used to manufacture a green result. Its isolated Capture suite passed all
+31 scenarios (`/tmp/daydream-playback-capture-isolated.log`). Frame-navigation fixtures explicitly
+return 500 ms and await the visible seek before another operation.
+The actual Tauri/WebKit long journey, restart and keyboard phases passed; immediate
+seek/Play at 31, 61 and 91 seconds reached advancing playback in 522, 504 and
+509 ms respectively with synthetic video, warm local data and no pending thumbnails.
+These measurements are fixture-specific, not a universal latency guarantee. Native
+journeys leave ambient audio off; Chromium provides the real two-audio-track proof.
+
+V8 source-mapped changed branch coverage passed 167/184 outcomes (90.76%). The
+gate uses the task's start snapshots and exact patch lines for the pre-existing
+dirty recording composition module. New modules count every branch. Reports and
+the reproducible mapping script are `/tmp/daydream-playback-coverage/` and
+`/tmp/daydream-playback-changed-coverage.cjs`; the measured set includes executable
+zero-branch JSX/rate assignments without inventing percentages for them. Remaining
+uncovered outcomes are defensive invalid speed, already-paused media, cancelled
+timer callbacks, no clock fallback and sidebar/metadata fallback paths. Current
+failure, cancellation, retry, redaction and retired-result outcomes have assertions.
+No executable Rust source changed in this task; native branch coverage is not claimed.
+
+Styled screenshots were inspected in both themes at desktop and narrow widths.
+Native evidence is `/tmp/daydream-native-e2e.kmwrTm/`; focused and final check logs
+use `/tmp/daydream-playback-*`. A short initial native journey passed after the
+popup fix; final UI and matching native builds also passed after the source fix.
+The existing TanStack Virtual Compiler warning and browser ResizeObserver console
+warnings remain. The final full JavaScript gate is therefore not green; playback
+checks and native journeys passed. IPC and storage shapes are unchanged. All
+touched production files stay below 400 physical lines (controller: 391). The
+existing Studio root still has 57 direct production TypeScript files; its density
+remains follow-up debt, without a new folder budget or flat-root production owner.
+
+## Completed: boundary-safe transcription and transcript progress
+
+New jobs plan Silero speech units across contiguous audio fragments. Submissions
+stay within 30 seconds, with up to two seconds of context at forced cuts.
+Boundary outputs are reconciled before publication; checkpoints, source coverage
+and replacement publication share a transaction. Earlier replacement groups can
+finish when a shared utterance completes in a later fragment. Schema versions 32
+and 33 add the unit ledger, publication view and source/time indexes; existing
+jobs retain their strategy.
+
+Each audio lane has one curtain in its transcript row. Old items disappear during
+reprocessing; published text remains beneath the smoothly retreating edge,
+including whole words that cross its boundary. Loading and reprocessing status
+rows reserve their height so the player stays in place.
+
+The divided-bar and crossing-segment regressions failed before their fixes.
+The JavaScript gate passed 668 desktop, nine shared and one FFmpeg tests, lint
+and all workspace typechecks. The full native run passed 640 tests and three
+resource tests; four existing tests remain ignored. Final edge fixes passed all
+11 curtain browser scenarios, 18 speech scenarios and 12 reprocessing scenarios.
+Native formatting and Clippy passed without warnings. Ten migration scenarios
+and both legacy-database upgrade scenarios passed. The existing TanStack Virtual
+React Compiler warning remains.
+
+Styled screenshots were checked in both themes at desktop and narrow widths;
+the header's player and timeline positions match before and during loading.
+Real microphone/model quality, device permissions and packaged UI journeys were
+not exercised. Segment-only providers retain coarse timing limitations.
+Evidence: `/tmp/daydream-transcription-js-settled.log`,
+`/tmp/daydream-transcription-native-green.log`,
+`/tmp/daydream-speech-retry-green.log`,
+`/tmp/daydream-speech-retry-reprocessing.log` and
+`/tmp/daydream-curtain-crossing-green.log`. `git diff --check` passed.
+
+The compatibility coordinator in `audio/legacy.rs` stays within its 500-line
+ceiling and receives no new processing behavior. Retire it when unfinished legacy
+jobs no longer need compatibility. `ai/types.rs` remains a 452-line flat transport
+declaration file; new speech logic and progress types have separate owners.
+
+## Completed: settings review fixes
+
+Selecting Local clears the remote embedding binding before saving, while keeping
+other feature bindings and reusable models. Feature controls and discard actions
+are locked during a pending save; failure restores the editable draft for retry.
+New account requests after sign-out report reconnect requirements rather than
+cancellation. Existing requests still cancel and drain before sign-out completes;
+sign-in reopens account admission. IPC shapes and storage remain unchanged.
+
+The consent, pending-save and sign-out regressions failed before their fixes.
+All 18 focused settings browser scenarios and 26 model/account tests passed.
+Native formatting and Clippy passed, along with 628 native unit tests and three
+resource tests; four existing native tests remain ignored. Workspace typechecks
+passed. The full desktop run passed 655 tests but hit the existing Capture focus
+failure; all 31 Capture cases passed in isolation. The existing React Compiler
+warning for TanStack Virtual remains. `git diff --check` passed.
+Evidence: `/tmp/daydream-review-findings-browser-green.log`,
+`/tmp/daydream-review-findings-native-final.log`,
+`/tmp/daydream-review-findings-js-final.log` and
+`/tmp/daydream-review-findings-capture-isolated.log`.
+
+## Completed: playback during preview loading
+
+Media startup and readiness have a focused owner beside the playback clock.
+The playback coordinator remains below 400 lines. Buffered media ignores network
+stalls; genuine underflow still pauses synchronized tracks and resumes when all
+are ready. Thumbnail URLs use a separate local HTTP origin so preview work cannot
+occupy the browser connections needed by media startup and seek replacement.
+Both listeners share session tokens, revocation and maintenance resource ownership.
+Video MP4 output also flushes half-second fragments instead of waiting for a
+keyframe or EOF. IPC shapes and storage remain unchanged.
+
+The buffered-stall, connection-origin and first-fragment regressions failed before
+their fixes. Focused playback checks passed 23 native scenarios. A paced six-second
+video now produces a fragment within the two-second startup deadline. Browser
+coverage includes buffering recovery and seeking with playback intent while
+previews are loading. Native formatting, Clippy and the frontend build passed.
+The full JavaScript run passed 652 scenarios with one Capture focus failure; all
+39 Capture/playback scenarios passed together in the targeted rerun. The full
+native run passed 626 tests with one model-logging assertion failure; that test
+passed in isolation. Four existing native tests remain ignored. Those unrelated
+failures were not hidden or patched as part of playback work. The JavaScript lint
+gate also retains an existing React Compiler warning for TanStack Virtual.
+All three actual Tauri phases passed with a 103-second synthetic recording.
+Seeks to 31, 61 and 91 seconds reached a decoded frame in 345–361 ms and advancing
+playback in 604–673 ms, including pointer interaction overhead. Thumbnails were
+already complete for those timing samples; loading overlap is covered by the
+buffering and connection-origin regressions. No private recording was benchmarked.
+Evidence: `/tmp/daydream-playback-native-settled.log`,
+`/tmp/daydream-playback-browser-final-focused.log`,
+`/tmp/daydream-playback-native-journeys.log` and
+`/tmp/daydream-native-e2e.KVCATh/initial-seek-timings.json`.
+`git diff --check` passed.
+
+## Completed: subscription response parsing and app-wide failure diagnostics
+
+SSE framing and completed-text ownership now live beside the bounded model
+transport. Keepalive and multiline-event regressions failed against the original
+parser. Frontend clients share failure reporting for invocation, decoding and
+event handling; a validated metadata-only command writes to the existing local
+log. HTTP adapters record failure stages, statuses and timings without payloads.
+Model-test checks add an optional frontend error code; storage is unchanged.
+Playback HTTP admission and synthetic capability probes have focused owners.
+Background indexing has its own queue owner; the generation coordinator and VLM
+adapter retain their lifecycle ownership. Their roughly 400-line modules remain
+cohesive around one generation queue and one observation adapter, respectively.
+
+Verification: the original keepalive and multiline regressions failed
+before the fix. All 26 model/account native scenarios and 29 focused frontend
+scenarios passed. The final JavaScript gate passed 651 desktop, nine shared and
+one FFmpeg tests, lint and workspace typechecks. The full native suite passed
+625 unit tests and three resource tests; four existing hardware/benchmark tests
+remain ignored. Native formatting and Clippy passed without warnings.
+The real Tauri model workflow exposed a worker-stack crash after diagnostics were
+nested around large SDK futures. Boxing those futures fixed the crash. The native
+rerun passed 625 tests but caught one tracing-context regression: a span was
+created before its subscriber attached. Span creation now happens when polled;
+all 26 model/account tests passed after that correction. The other native tests
+were not repeated after this focused change.
+All three synthetic Tauri phases passed. The final rebuilt app also passed the
+initial phase, including visible provider failure, correlated frontend/native file
+diagnostics without provider bodies, successful text/vision retry, capability
+persistence without remote consent, and capture/playback. Immutable Yarn install
+and `git diff --check` passed. Evidence is in
+`/tmp/daydream-failure-js-final.log`,
+`/tmp/daydream-failure-native-corrected.log`,
+`/tmp/daydream-failure-native-final-journeys.log` and
+`/tmp/daydream-failure-native-corrected-journey.log`.
+Native checks use the existing development Cargo cache to avoid alternating
+dependency rebuilds with the running app. Live ChatGPT inference remains a manual
+service check.
+
+## Completed: teleprompter entry navigation and audio language continuity
+
+Transcript, activity and AI observation entries use consistent source icons and
+accessible seek actions. Selecting text does not seek; annotation expansion stays
+independent. Annotation navigation selects its monitor before seeking, while audio
+navigation retains the current monitor. Entry seeks pause playback.
+
+Automatic local Whisper transcription retains detections with probability at least
+0.60 within each recording and audio track. Successful speech renews the context
+for 15 seconds after its end; gaps, empty results and failed ranges do not renew it.
+Explicit language settings take precedence. Same-track chunks run chronologically,
+while other tracks and video remain independent. An additive migration stores the
+language hint with its original detection source in the transcript transaction.
+Current redactions, protection eligibility, deletion and replacement publication
+are checked before reuse. Existing transcripts remain valid but do not seed hints.
+
+The navigation and response-metadata regressions failed before their fixes. All
+25 focused browser scenarios passed; synthetic light/dark layouts were reviewed
+at 390 and 900 pixels. A further hide/unhide regression reproduced a stale pending
+monitor seek and passed after cancellation was made permanent. The final
+JavaScript gate passed all 651 tests, lint and workspace typechecks. Two unrelated
+browser failures in the first full run passed in isolation and in the final run.
+All 17 focused native checks passed, covering confidence metadata, exact gap
+boundaries, track separation, restart, migration from legacy transcripts,
+checkpoint rollback, deletion, UUID/legacy/global redactions, unpublished
+replacements and detection context across a changed fragment stream index. The
+last case failed before redaction checks were aligned to each source fragment.
+Final native formatting and Clippy passed, alongside 613 unit tests and three
+resource tests; three resource-intensive benchmarks and one display-dependent
+test remain ignored. `git diff --check` passed.
+Logs are
+`/tmp/daydream-entry-language-js-final.log`,
+`/tmp/daydream-entry-navigation-final-browser.log`,
+`/tmp/daydream-entry-navigation-cancel-green.log` and
+`/tmp/daydream-language-context-green.log`,
+`/tmp/daydream-entry-language-native-clippy.log` and
+`/tmp/daydream-entry-language-native-gate.log`. Native checks used the existing
+development Cargo cache to avoid alternating dependency rebuilds with the running
+development app; that app was not stopped. No dependency or vendor changes were
+needed. The internal provider response adds optional language confidence; frontend
+IPC stays unchanged. Audio orchestration remains at 485 physical lines, with
+language policy and eligible-hint retrieval in focused owners.
+Live devices and real Whisper model inference were not exercised; native Tauri
+journeys were not rerun for this task. Browser workflows cover source navigation
+and text selection, while the native suite covers persistence and privacy rules.
+
+## Implemented: shared headings for consecutive teleprompter speech
+
+Consecutive transcript entries from the same audio track share one source
+heading. A different track or intervening activity/annotation starts a new group.
+Grouping uses the full filtered feed, so virtualized scrolling does not repeat
+headings at viewport boundaries. Every entry keeps its timestamp, accessible
+source name, precise seeking and word highlighting; continuation rows also use
+a shorter size estimate.
+
+The repeated-heading and virtualized-browsing regressions failed before the fix.
+All 20 focused feed/ruler browser scenarios passed, including source changes,
+distinct microphone tracks, timestamp seeking and browsing the complete recording.
+Scoped ESLint passed with the existing unsuppressed TanStack Virtual compatibility
+warning, and `git diff --check` passed. Logs are
+`/tmp/daydream-teleprompter-headings-red.log`,
+`/tmp/daydream-teleprompter-headings-browser.log` and
+`/tmp/daydream-teleprompter-headings-format.log`.
+Reviewed the synthetic grouped transcript at 390 pixels and the dark compact
+feed. No IPC, storage or native behavior changed; native journeys were not rerun
+for this layout change.
+
+## Implemented: stable teleprompter marker during word-timing gaps
+
+Word-timing gaps previously cleared the ruler's word anchor and moved its marker
+back to the source header. The playback frame now separates the ruler's text
+position from active speech highlighting. The marker holds the preceding word
+through silence and anchors to the first timed word before speech begins;
+highlights still respect exact start-inclusive/end-exclusive intervals. The anchor
+is derived from current content and playback time, so backward seeks and privacy
+invalidation cannot retain a stale word. Render signatures include the ruler anchor.
+
+The unit and visible browser regressions failed before the fix. All 19 focused
+playback/ruler browser scenarios and five text/timing unit checks passed, including
+word gaps, backward seeks, missing timings, simultaneous sources, browsing and
+privacy invalidation. Scoped formatting and `git diff --check` passed. Logs are
+`/tmp/daydream-ruler-gap-unit-red.log`,
+`/tmp/daydream-ruler-gap-browser-red.log`, `/tmp/daydream-ruler-gap-unit.log`,
+`/tmp/daydream-ruler-gap-browser.log` and `/tmp/daydream-ruler-gap-format.log`.
+The final repository JavaScript gate passed lint and all workspace typechecks;
+the desktop suite passed 631 tests and failed one Capture screen focus assertion
+after closing the source-output sheet at 1024 pixels. That unchanged scenario
+passed when rerun alone (one passed, 30 skipped); the full gate remains recorded
+as failed, and its later workspace test commands were not reached. See
+`/tmp/daydream-ruler-gap-gate.log` and
+`/tmp/daydream-ruler-gap-capture-diagnostic.log`. No native, media or IPC changes
+were needed; fresh native journeys were not run for this focused marker fix.
+
+## Implemented: teleprompter time ruler and canonical selection text
+
+The teleprompter has a left time gutter with entry-aligned ticks, whole-second
+labels and precise timestamp seeking. A separate live frame keeps the current
+clock and word-line marker moving while manual browsing freezes highlighting
+and scrolling. Offscreen direction controls return to current playback without
+seeking, including before the first entry and after the last. Mounted row/word
+measurements track scrolling, resizing and expanded annotations; the existing
+virtualizer still mounts only a bounded part of long feeds.
+
+Playback and selected-range inspection share canonical transcript text alignment.
+Timing tokens annotate original substrings rather than rebuilding sentences with
+inserted spaces. Subword tokens, punctuation, repeated words, multilingual text
+and whitespace retain their original form. Unalignable timings preserve the
+sentence and disclose unavailable word-level selection timing.
+
+The selection and missing-ruler regressions failed before implementation. Final
+focused Browser Mode checks passed all 116 feed/selection/Studio scenarios, and
+the four canonical text/timing unit checks passed. Light/dark desktop and narrow
+screenshots were reviewed, including wrapped words, hour-long timestamps and
+expanded annotations. Scoped ESLint passed with the existing unsuppressed TanStack
+Virtual React Compiler compatibility warning. Studio runs also emitted
+ResizeObserver notification warnings; the isolated ruler workflows ran cleanly.
+`git diff --check` passed. Logs are `/tmp/daydream-ruler-red.log`,
+`/tmp/daydream-ruler-browser-final.log`, `/tmp/daydream-ruler-unit.log`,
+`/tmp/daydream-ruler-layout-diagnostic.log` and
+`/tmp/daydream-ruler-final-format.log`.
+
+The repository JavaScript gate remains blocked by unrelated settings lint errors,
+and desktop typecheck reports settings-workflow test API/type errors. No settings
+files were changed for this task. A fresh native build/journey was not run because
+frontend compilation has that blocker. See `/tmp/daydream-ruler-js-gate.log` and
+`/tmp/daydream-ruler-types.log`. No dependencies, native IPC, storage, media or
+remote-consent contracts changed. The new ruler has focused rendering, timestamp
+interaction and DOM measurement owners; every touched production owner remains
+under 400 physical lines, with no new source-size or folder budgets.
+
+## Implemented: complete teleprompter browsing and compact activity
+
+The teleprompter now scrolls through the whole recording rather than a bounded
+playback window. Measured virtualization mounts visible rows for lists over 40
+entries; shorter feeds remain fully mounted. Playback word timing still uses a
+bounded calculation, and manual wheel/touch/keyboard/scrollbar browsing holds its
+position until Return to playback or an explicit seek. Paused seeks reposition
+the list. Privacy invalidation discards frozen content.
+
+Window, mouse and keyboard entries use one line with a timestamp. Long titles
+truncate within the panel, and speech wraps within equal side padding. The normal
+panel title is Teleprompter; selected-source and debug inspection retain Inspector.
+Following playback and the repeated current-window/status row are removed.
+
+`@tanstack/react-virtual` 3.14.13 and virtual-core 3.17.11 were checked against
+official metadata and release notes, with React 19 peers and MIT license notices
+packaged locally. The latest version was rejected by Yarn's age gate; the selected
+stable release satisfies it. Immutable installation passed. ESLint retains the
+library's React Compiler compatibility warning: its imperative API cannot be
+automatically memoized. This app does not enable React Compiler; the virtualizer
+stays local to its list owner, and only ordinary entry values reach child rows.
+The warning is not suppressed.
+
+The full-list regression failed before implementation. All 105 feed/Studio browser
+scenarios passed, including browsing to entry 300 while playback continues,
+returning to the current paragraph, paused seeks and privacy invalidation. The
+existing selection-dismissal workflow also verifies both panel titles. Light/dark
+desktop and narrow screenshots were reviewed. Scoped lint passed with the warning
+described above, and `git diff --check` passed.
+
+The final `yarn check` stops on in-progress settings lint errors. Desktop
+typecheck separately reports settings-store and storage-preference type errors;
+no settings files were changed for this task. A fresh native build/journey is
+deferred because its frontend compilation has the same blocker. These full gates
+need rerunning once the settings work settles. Logs are
+`/tmp/daydream-full-feed-browser-gate.log`,
+`/tmp/daydream-full-feed-mode-test.log`,
+`/tmp/daydream-full-feed-types.log`, `/tmp/daydream-full-feed-js-gate.log` and
+`/tmp/daydream-full-feed-immutable.log`.
+
+Native IPC, recording media and remote consent stay unchanged. The new list owner
+stays below 200 lines in the existing playback folder. Synthetic fixtures cover
+these checks; no personal recordings or live provider calls were used.
+
+## Completed: settings workspace and autosave
+
+Replace the settings tabs with a category rail, feature-first AI rows and focused
+editors. Keep app navigation, move provider/model forms behind compact lists,
+and use short copy. Ordinary preference edits save through one app-scoped queue;
+storage-policy changes retain impact review. The additive save flag prevents
+ordinary autosaves from authorizing or running retention cleanup. Credential
+tests move with their owner instead of growing the persistence implementation.
+
+The six sections are General, Recording, Privacy, AI features, Models & accounts
+and Storage. Compound editors retain their drafts and keys until Done succeeds;
+failed saves can retry without committing the draft, and Cancel clears it. Actual
+browser history protects edited sheets on Back. Connection save logic has its own
+hook, and the unused tab renderer is removed. Legacy settings URLs remain valid.
+The optional `applyStorageCleanup` IPC field defaults to the prior behavior when
+omitted; autosave passes false. No database migration is required.
+
+Focused verification passed: 17 state/rebase/route unit tests, 30 settings browser
+scenarios and two actual browser-history scenarios. The browser layouts cover
+light/dark at 1440, 1024 and 390 pixels; desktop and mobile screenshots were
+reviewed. Coverage includes failed saves, credential cancellation, independent
+remote consent, endpoint changes, protected windows, download recovery and storage
+review. The native settings regression confirms ordinary autosave cannot resume
+retention after reset and a failed explicit save cannot authorize cleanup.
+
+Rust formatting and Clippy passed. The authorized native gate passed 605 library
+tests and three FFmpeg tests, with four ignored library fixtures. The actual
+custom-protocol Tauri journeys passed initial, restart and keyboard phases using
+fresh production assets and synthetic capture. Reports are under
+`/tmp/daydream-native-e2e.QHVfcm`; the source-change checks used
+`/tmp/daydream-settings-native-authorized.log` and
+`/tmp/daydream-settings-gate-recovery.log`. Live provider authorization and ambient
+devices were not exercised.
+
+The final `yarn check` passed lint, all workspace typechecks and 641 tests. Its
+earlier run was stopped after a late `react-dom/client` optimization reloaded test
+frames. That entrypoint is now preoptimized, and the affected navigation/playback
+checks passed. Existing playback virtualizer lint and ResizeObserver messages
+remain in the passing gate output. The final log is
+`/tmp/daydream-settings-js-final-3.log`.
+
+## Completed: compact playback transcript and AI annotations
+
+The playback inspector uses compact transcript paragraphs with whole-second
+timestamps and precise seek offsets. Persisted word intervals highlight one word
+per speaking source; missing or unalignable timings preserve the canonical text
+without guessed highlights. Existing screen observations appear as compact,
+expandable annotations. Raw OCR and corrected OCR stay in direct inspection and
+selected-range summaries rather than the playback feed.
+
+A read-only accessor exposes the existing audio-first playback clock. Sampling
+stays inside the feed, capped at 30 Hz, without changing media positions or
+rerendering all of Studio at word cadence. Browsing freezes the feed; explicit
+seeks, paused scrubbing and privacy/index changes cannot retain stale highlights
+or content. Reduced-motion preferences apply to paragraph scrolling.
+
+Focused regressions first exposed word highlighting, OCR filtering and paused
+scrub failures. Four deterministic timing/text tests and all 11 focused browser
+scenarios passed, including keyboard expansion, independent source timing,
+pause/seek handling and privacy invalidation. Synthetic desktop and 390-pixel
+layouts were inspected in both themes; highlighted words, compact notes and
+expansion controls remain readable. Final `yarn check` passed lint, typechecks
+and 629 tests. The fresh production build and all Tauri/WebKit phases passed,
+including native synthetic capture and actual video play/pause. That native
+journey disables model processing and audio; timed-word behavior is proven by
+the focused browser scenarios, not a live transcription rerun.
+
+Logs: `/tmp/daydream-compact-feed-unit.log`,
+`/tmp/daydream-compact-feed-focused-final.log`,
+`/tmp/daydream-compact-feed-js-gate.log` and
+`/tmp/daydream-compact-feed-native-journeys.log`. The full browser suite still
+emits the ResizeObserver loop warnings also present in earlier gates; the focused
+feed checks emit none.
+
+New rendering, timing and test owners live under `inspector/content/playback/`
+and `playback/`. The 437-line playback controller retains lifecycle orchestration;
+its timeline-clock calculation moved to a focused owner. No new flat Studio-root
+files, native contracts, stored data, inference requests or remote consent changes
+are introduced. Live model transcription and personal recordings are not used
+for these checks.
+
+## Completed: ChatGPT sign-in reliability and diagnostics
+
+The OAuth callback now reads the documented `client_id` field, and early account
+reads cannot overwrite sign-in results. Loopback callback admission and bounded
+OAuth HTTP parsing have separate owners with coverage for malformed, denied and
+unrelated browser requests. Normal local logs record opaque attempt
+IDs, authentication stages, timings and allowlisted failure metadata; credentials,
+identities, callback URLs and provider bodies remain excluded.
+
+Risk coverage: native loopback callback admission/denial and log privacy; browser
+success with late status/error reads, retry and independent remote consent.
+Live OpenAI authorization and system-keyring behavior require an operator check.
+All 16 focused model-registry native scenarios passed, including callback and log
+privacy regressions. Native formatting, Clippy and the full suite passed: 605
+unit tests and 3 resource tests; 4 hardware tests remain intentionally ignored.
+Scoped UI lint and desktop typecheck passed.
+The final `yarn check` passed (607 desktop, 9 shared and 1 FFmpeg tests), including
+the late status/error sign-in regressions. An earlier run stopped on concurrent
+Studio reprocessing syntax/format edits that have since cleared.
+
+Logs: `/tmp/daydream-auth-js-final.log`, `/tmp/daydream-auth-native-focused.log`,
+`/tmp/daydream-auth-clippy.log` and `/tmp/daydream-auth-native-final.log`. Native
+callback and browser stale-read regressions were observed failing before their
+fixes. All fixtures are synthetic. Live OAuth, keyring refresh/revocation and a
+fresh packaged Tauri journey were not performed for this fix.
+
+No IPC or stored credential format changed. Touched native production owners stay
+below 400 lines. The existing flat frontend `settings/models` folder (11 direct
+source files) remains structure debt; this fix adds no files there.
+
+## Completed: processing coverage in Studio tracks
+
+Studio now paints animated stripes over automatic and manual audio, OCR and
+screen-observation work. Preparing and queued ranges are visible before chunks
+arrive; native progress consumes the remaining fill. Successful video sample
+intervals clear independently, including samples with no recognized text. Audio
+percentages reflect reported speech-range completion, not an exact processed
+timestamp. Paused, failed and cancelled work stays visible without animation.
+Reduced-motion preferences stop stripe movement.
+
+Risk coverage: deterministic range tests cover source mapping, independent visual
+operations, completed intervals, parent failure/pause/cancellation, missing timing,
+missing media, actual pause gaps and redactions. Browser workflows cover rejected
+and successful admission, delayed native state, completion without revival, audio
+progress and independent video completion. Transcript interactions and existing
+annotation tests also pass. These bars carry operation metadata only; processing,
+remote consent, stored outputs and IPC contracts are unchanged.
+
+Focused verification passed: six range tests, 15 browser scenarios across the
+processing/reprocessing/annotation owners, targeted ESLint and desktop typecheck.
+Synthetic screenshots were reviewed at 1440 and 390 pixels in both themes,
+including horizontal scrolling and sticky source headers. Final `yarn check`
+passed all 617 tests plus lint and typechecks. The fresh production build and
+Tauri/WebKit journeys also passed. These journeys use synthetic capture; live
+model processing has not been rerun manually. No native contracts changed in this
+task, so the previous model-settings native gate was not repeated.
+
+Logs: `/tmp/daydream-timeline-progress-unit.log`,
+`/tmp/daydream-timeline-progress-browser.log`,
+`/tmp/daydream-timeline-progress-js-gate.log` and
+`/tmp/daydream-timeline-progress-native-journeys.log`.
+
+New range mapping, presentation and tests live under `timeline/processing/`;
+production owners are 295 and 121 lines. The existing 448-line `track-timeline.tsx`
+retains lane orchestration with only prop wiring added. The dense Studio root
+remains follow-up debt; no new flat-root files or source-size budgets were added.
+
+## Completed: reusable model settings and ChatGPT connections
+
+Models now owns reusable OpenAI and OpenAI-compatible connections, capability
+selection and independent synthetic tests. Summaries, embeddings and OCR/Vision
+select compatible models and retain separate consent. Existing local model controls,
+job snapshots and credential references remain compatible. Startup imports legacy
+settings transactionally; additive IPC fields and settings rows require no schema
+migration. User-facing labels and errors now refer to text, transcripts and sources.
+
+The community `async-openai` SDK sits behind a bounded transport that suppresses
+provider bodies in errors and logs. Official ChatGPT OAuth has separate registration,
+encrypted token, refresh and cancellation ownership. Subscription requests use the
+public Responses API, never fall back to API billing and cannot supply embeddings.
+Vision provider configuration has a focused owner; its request module is 389 lines.
+
+Verification passed: immutable Yarn install, `yarn check` (591 desktop, 9 shared and
+1 FFmpeg tests), native formatting, Clippy, 599 native unit tests and 3 resource
+tests. Four hardware tests remain intentionally ignored. Final provider/credential
+checks passed all 23 scenarios, including save rollback, safe malformed responses,
+partial streaming failure and cancellation draining. Fresh Tauri/WebKit initial,
+restart and keyboard journeys passed, including model capability saving with all
+remote consent off. A stale checkbox selector after tab switching was corrected in
+the journey. Narrow light/dark model forms were visually reviewed; the standalone
+captures show the upper form, not a complete scrolled settings page.
+
+Logs: `/tmp/daydream-model-js-final.log`, `/tmp/daydream-model-native-gate.log`,
+`/tmp/daydream-model-final-focused.log`, `/tmp/daydream-model-settled-clippy.log`
+and `/tmp/daydream-model-native-journeys-final.log`. Tests use synthetic content.
+Live OAuth sign-in, refresh/revocation against OpenAI and paid API calls were not
+exercised; account eligibility and service behavior still need a manual check.
+
+No source-size budget was introduced or exceeded. Existing touched implementation
+owners above 400 lines remain: native `recall/day.rs` (449),
+`recall/generation/generation_store.rs` (412), `recall/generation/worker.rs` (505),
+`settings/credentials.rs` (498, including its existing tests),
+`settings/persistence.rs` (451), `settings/validation.rs` (446), and
+`scripts/native-e2e/journeys.mjs` (600). Their changes are limited to compatibility
+wiring, credentials or existing workflow orchestration. Larger touched test owners
+remain `ai/tests.rs` (2637), `ai/tests/privacy_regressions.rs` (501),
+`storage/tests.rs` (2699), and the settings workflow browser test (527).
+
+Touched folders without an active density budget still have these direct source
+counts: native root (15), native `ai/processing/visual` (12), `settings` (13),
+`storage` (16); desktop `src/app` (10), `features/processing` (13),
+`features/settings` (18), its `components` (17) and `models` (11), `screens` (23);
+shared `src` (11) and `src/ai` (13). Models contains ten focused production owners
+and one browser test. The older flat folders remain follow-up structure debt.
+
 ## Completed: reprocessing publication review fixes
 
 Review found last-reference OCR cache pruning, loss of unreplaced sampling

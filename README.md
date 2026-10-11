@@ -112,8 +112,14 @@ GStreamer for segmented media writing, and separate desktop and microphone
 audio tracks. Processing handles finalized fragments during recording or after
 stop, according to the selected timing setting, in bounded, resumable chunks.
 
+New transcription jobs use local Silero VAD to follow speech across contiguous
+audio fragments. Long utterances use bounded overlapping windows; unfinished
+live speech waits for neighboring audio or recording stop. Studio hides stale
+transcript items during reprocessing and reveals published replacements behind
+one animated curtain per audio source. Existing jobs retain their saved strategy.
+
 ```text
-capture
+capture![img.png](img.png)
   -> local MKV segments and activity metadata
   -> redaction-aware chunk planning
   -> transcription, OCR, activity, and optional vision processing
@@ -132,13 +138,44 @@ job's pinned configuration; explicit OCR reprocessing uses current settings with
 rerunning audio. See [OCR document behavior](docs/ocr-documents-design.md) for schema,
 legacy reconstruction, provider failure and privacy details.
 
-Recall indexes current eligible OCR and transcript evidence locally, combining
+Recall indexes current available OCR and transcripts locally, combining
 FTS5 text retrieval with normalized embeddings. Long documents retain bounded,
 source-linked passages. Day generation runs after a five-minute quiet period,
 at most every fifteen minutes while recording; explicit regeneration remains
 available. Follow-ups stay inside Daydream and never execute external actions.
-In AI/LLM Settings, choose/download a local embedding model or explicitly enable
-an embedding API, then separately configure generation if wanted.
+Settings has six sections: General, Recording, Privacy, AI features, Models &
+accounts, and Storage. Ordinary preferences save automatically. Feature and
+account editors save together with Done; Cancel discards their drafts and keys.
+In Models & accounts, configure connections, choose model capabilities and test
+each model. AI features select compatible models and ask for remote-processing
+consent with the destination and data to be sent. Storage policies require cleanup
+review; ordinary preference saves do not authorize retention cleanup.
+Local embeddings, Tesseract and Whisper remain available. Day summaries send
+text and transcripts; choosing a Vision-capable model does not send screen images.
+
+OpenAI connections support API keys or official ChatGPT subscription sign-in.
+Subscription connections use the public Responses API and the account's available
+model list. They do not support embeddings or silently fall back to API billing.
+Credentials stay encrypted locally; sign-out cancels and drains account requests
+before clearing tokens. Availability and limits depend on ChatGPT Settings → Usage
+and the [OpenAI preview](https://developers.openai.com/siwc/token-sharing-open-source).
+OpenAI-compatible services can use API keys or anonymous access and either the
+Chat Completions or Responses protocol. Synthetic tests send no recordings.
+ChatGPT connection diagnostics are enabled in the normal local logs. Diagnostics
+shows the `daydream.log` path and can copy a debug log bundle. Filter for
+`chatgpt_` and `model_test_` events: sign-in attempts include an opaque request ID,
+the last authentication stage, elapsed time, HTTP status and safe error categories.
+Tokens, authorization codes, callback URLs, account identities and provider bodies
+are excluded. The browser callback acknowledges authorization; Daydream reports
+whether token validation and local credential storage completed.
+Frontend IPC, response decoding, runtime failures and failed HTTP operations also
+write safe metadata to this log. Filter for `frontend_operation_failed`,
+`http_operation_failed`, `model_json_invalid` and `model_response_rejected`.
+Model diagnostics distinguish HTTP JSON, SSE events, completed output and
+capability validation, with request IDs, stages, timings and applicable counts.
+No request arguments, model output, exception messages or full API URLs are logged
+by these failure reporters. New commands and safe error codes belong in the shared
+diagnostic metadata policy; unknown values are categorized without being copied.
 See [redesign and recall behavior](docs/recall-redesign-implementation.md) and
 [embedding runtime](docs/embedding-runtime.md) for model pins, validation and limits.
 

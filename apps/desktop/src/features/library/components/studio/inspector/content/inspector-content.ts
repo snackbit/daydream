@@ -4,6 +4,7 @@ import type {
   RecordingAiProcessingState,
   RecordingTranscriptSegment,
   RecordingTranscriptWord,
+  VlmObservation,
 } from '@daydream/shared';
 import {
   ACTIVITY_FOCUS_LANE_ID,
@@ -12,6 +13,7 @@ import {
 } from '../../studio-activity-lanes';
 import type { StudioTimeRangeSelection } from '../../studio-timeline-store';
 import type { StudioVisualFrame } from '../../studio-visual-observations';
+import { transcriptTextSpans } from './transcript-text-spans';
 
 export interface InspectorFragment {
   text: string;
@@ -28,6 +30,8 @@ export interface InspectorContentEntry {
   words: RecordingTranscriptWord[];
   fragments: InspectorFragment[];
   boundary: boolean;
+  wordTimingUnavailable?: boolean;
+  observationKind?: VlmObservation['observationKind'];
 }
 export interface InspectorContentIndex {
   entries: InspectorContentEntry[];
@@ -153,6 +157,7 @@ export function buildInspectorContent({
       entries.push({
         id: `observation:${observation.id}`,
         kind: 'observation',
+        observationKind: observation.observationKind,
         source,
         trackId,
         startMs: frame.frameTimestampMs,
@@ -236,11 +241,17 @@ export function selectInspectorEntries(
     const boundary = !selected.some(
       (range) => range.startMs <= entry.startMs && range.endMs >= entry.endMs,
     );
-    const fragments =
-      entry.kind === 'speech' && entry.words.length > 0
-        ? entry.words.map((word) => ({
-            text: word.text,
-            emphasis: selected.some((range) =>
+    const spans =
+      entry.kind === 'speech'
+        ? transcriptTextSpans(entry.text, entry.words)
+        : [];
+    const wordTimingUnavailable = !spans.some((span) => span.word !== null);
+    const fragments = !wordTimingUnavailable
+      ? spans.map(({ text, word }) => ({
+          text,
+          emphasis:
+            word &&
+            selected.some((range) =>
               overlaps(
                 word.startOffsetMs,
                 word.endOffsetMs,
@@ -250,14 +261,14 @@ export function selectInspectorEntries(
             )
               ? ('selected' as const)
               : ('context' as const),
-          }))
-        : [
-            {
-              text: entry.text,
-              emphasis: boundary ? ('context' as const) : ('selected' as const),
-            },
-          ];
-    return [{ ...entry, boundary, fragments }];
+        }))
+      : [
+          {
+            text: entry.text,
+            emphasis: boundary ? ('context' as const) : ('selected' as const),
+          },
+        ];
+    return [{ ...entry, boundary, fragments, wordTimingUnavailable }];
   });
 }
 function compareEntries(

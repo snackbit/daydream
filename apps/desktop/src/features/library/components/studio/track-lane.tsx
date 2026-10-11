@@ -1,5 +1,6 @@
 import {
   useRef,
+  useMemo,
   type ButtonHTMLAttributes,
   type MouseEvent,
   type PointerEvent,
@@ -23,6 +24,14 @@ import {
   type StudioTimeRangeSelection,
 } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
+import { TimelineProcessingOverlay } from './timeline/processing/timeline-processing-overlay';
+import {
+  timelineProcessingRanges,
+  type TimelinePlannedScope,
+} from './timeline/processing/timeline-processing-ranges';
+import { TranscriptionCurtain } from './timeline/processing/transcription-curtain';
+import { transcriptionCurtain } from './timeline/processing/transcription-curtain-model';
+import { useTranscriptionCurtainMotion } from './timeline/processing/use-transcription-curtain-motion';
 import { TrackClip } from './track-clip';
 import { TrackLaneHeader } from './track-lane-header';
 import { TrackClipMedia } from './track-lane-media';
@@ -34,6 +43,7 @@ import {
 } from './track-timeline-math';
 
 export interface TrackLaneProps {
+  plannedProcessingScopes?: readonly TimelinePlannedScope[] | undefined;
   onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
   visibleRange: { startTimelineMs: number; endTimelineMs: number };
   aiProcessingState: RecordingAiProcessingState | null;
@@ -63,6 +73,7 @@ export interface TrackLaneProps {
 }
 
 export function TrackLane({
+  plannedProcessingScopes,
   visibleRange,
   aiProcessingState,
   clipDrafts,
@@ -90,6 +101,34 @@ export function TrackLane({
   onSelectVisualFrame,
   onReprocess,
 }: TrackLaneProps) {
+  const curtain = useMemo(
+    () =>
+      transcriptionCurtain({
+        detail,
+        track,
+        state: aiProcessingState,
+        ...(plannedProcessingScopes
+          ? { plannedScopes: plannedProcessingScopes }
+          : {}),
+      }),
+    [detail, track, aiProcessingState, plannedProcessingScopes],
+  );
+  const curtainMotion = useTranscriptionCurtainMotion(
+    curtain,
+    `${detail.id}:${track.id}`,
+  );
+  const processingRanges = useMemo(
+    () =>
+      timelineProcessingRanges({
+        detail,
+        track,
+        state: aiProcessingState,
+        ...(plannedProcessingScopes
+          ? { plannedScopes: plannedProcessingScopes }
+          : {}),
+      }),
+    [detail, track, aiProcessingState, plannedProcessingScopes],
+  );
   const waveformTrack = waveformTiles?.tracks.find(
     (waveform) =>
       waveform.trackId === track.kind || waveform.kind === track.kind,
@@ -100,10 +139,10 @@ export function TrackLane({
     redaction.trackIds.includes(track.id),
   );
   const color = studioColorById(lane.colorId);
-  const derivedLane = buildDerivedLane({
-    aiProcessingState,
-    track,
-  });
+  const derivedLane = useMemo(
+    () => buildDerivedLane({ aiProcessingState, track }),
+    [aiProcessingState, track],
+  );
   const laneContentClickRef = useRef<{
     moved: boolean;
     x: number;
@@ -216,6 +255,11 @@ export function TrackLane({
                 onSelectClip={onSelectClip}
                 onInspectTranscript={onInspectTranscript}
                 derivedLane={derivedLane}
+                hiddenTranscriptRanges={curtain?.pendingRanges ?? []}
+                publishedTranscriptRanges={curtain?.publishedRanges ?? []}
+                transcriptRevealOffsetMs={
+                  curtainMotion.visible ? curtainMotion.revealOffsetMs : null
+                }
               >
                 <TrackClipMedia
                   segment={segment}
@@ -283,6 +327,25 @@ export function TrackLane({
                   frame.frameTimestampMs < visibleRange.endTimelineMs,
               )}
             onSelectVisualFrame={onSelectVisualFrame}
+          />
+        ) : null}
+        {track.kind === 'video' ? (
+          <TimelineProcessingOverlay
+            ranges={processingRanges}
+            trackLabel={track.label}
+            video={track.kind === 'video'}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            visibleRange={visibleRange}
+          />
+        ) : curtain && curtainMotion.visible ? (
+          <TranscriptionCurtain
+            curtain={curtain}
+            revealOffsetMs={curtainMotion.revealOffsetMs}
+            trackLabel={track.label}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            visibleRange={visibleRange}
           />
         ) : null}
       </div>

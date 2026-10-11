@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   AcknowledgeNotificationsInput,
   DeleteNotificationsInput,
@@ -6,6 +5,7 @@ import type {
   ExecuteNotificationActionInput,
   NotificationList,
 } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
 
 export async function getNotifications(): Promise<NotificationList> {
   return invoke<NotificationList>('getNotifications');

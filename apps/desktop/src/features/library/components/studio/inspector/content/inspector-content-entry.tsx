@@ -80,13 +80,13 @@ export function InspectorContentEntryCard({
                 data-emphasis={fragment.emphasis}
                 className="data-[emphasis=context]:text-muted-foreground data-[emphasis=selected]:text-foreground"
               >
-                {i > 0 ? ' ' : ''}
                 {fragment.text}
               </span>
             ))
           : entry.text}
       </p>
-      {entry.boundary && entry.words.length === 0 ? (
+      {entry.boundary &&
+      (entry.wordTimingUnavailable ?? entry.words.length === 0) ? (
         <p className="text-muted-foreground text-xs">
           Partly selected · {formatTimelineOffset(entry.startMs)}–
           {formatTimelineOffset(entry.endMs)}. Exact word timing is unavailable.

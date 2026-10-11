@@ -4,6 +4,7 @@ mod diagnostics;
 mod ffmpeg;
 mod library;
 mod maintenance;
+mod model_registry;
 mod notifications;
 mod playback_server;
 mod provider_http;
@@ -108,6 +109,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            telemetry::failures::log_frontend_failure,
+            model_registry::commands::test_configured_model,
+            model_registry::commands::cancel_model_request,
+            model_registry::commands::sign_in_chatgpt,
+            model_registry::commands::prepare_chatgpt_connection,
+            model_registry::commands::get_chatgpt_connection,
+            model_registry::commands::sign_out_chatgpt,
             maintenance::commands::preview_maintenance,
             maintenance::commands::execute_maintenance,
             maintenance::commands::get_maintenance_status,

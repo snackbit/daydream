@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { DaydreamDiagnostics, DebugLogBundle } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
 
 export async function getDiagnostics(): Promise<DaydreamDiagnostics> {
   return invoke<DaydreamDiagnostics>('get_diagnostics');

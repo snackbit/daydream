@@ -52,14 +52,14 @@ export function validateStudioSearch(
       evidenceId.length === 0 ||
       evidenceId.length > 256)
   ) {
-    throw new Error('Evidence link is invalid.');
+    throw new Error('Source link is invalid.');
   }
   const seek = input.seek ?? null;
   if (
     seek !== null &&
     (typeof seek !== 'number' || !Number.isSafeInteger(seek) || seek < 0)
   ) {
-    throw new Error('Evidence position is invalid.');
+    throw new Error('Source position is invalid.');
   }
   return { evidenceId, source: source(input.source), seek };
 }

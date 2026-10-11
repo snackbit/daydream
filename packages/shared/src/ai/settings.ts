@@ -1,4 +1,5 @@
 import type { RecallSettings } from '../recall.js';
+import type { AiModelRegistry, AiModelRoute } from './model-registry.js';
 import type {
   AiOcrEngine,
   AiProviderKind,
@@ -7,6 +8,7 @@ import type {
 } from './provider-kinds.js';
 
 export interface AiSettings {
+  modelRegistry?: AiModelRegistry;
   recall: RecallSettings;
   activity: AiActivitySettings;
   ocr: AiOcrSettings;
@@ -32,6 +34,7 @@ export interface AiTranscriptionProviderSettings {
 }
 
 export interface AiVisionProviderSettings {
+  modelRoute?: AiModelRoute;
   authMode?: 'api-key' | 'none';
   observationsEnabled: boolean;
   apiKeyRef: string | null;

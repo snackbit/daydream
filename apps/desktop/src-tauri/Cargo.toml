@@ -36,20 +36,27 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 rusqlite_migration = "2.6.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-uuid = { version = "1.27.0", features = ["rng", "v7"] }
+uuid = { version = "1.27.0", features = ["rng", "v7", "v4"] }
 base64 = "0.22.1"
 aes-gcm = "0.10.3"
 png = "0.18.1"
 jpeg-encoder = "=0.7.1"
 futures-util = "0.3.31"
+eventsource-stream = "=0.2.3"
 hex = "0.4.3"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+async-openai = { version = "=0.42.1", default-features = false, features = ["rustls", "responses", "chat-completion", "embedding", "byot", "middleware"] }
+model-http = { package = "reqwest", version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
+openidconnect = { version = "=4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
+tower = { version = "0.5", features = ["util"] }
+http = "1"
+secrecy = "0.10"
 regex = "1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 chrono = "0.4.45"
 chrono-tz = "0.10.4"
-tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros", "net"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-log = "0.2"

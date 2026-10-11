@@ -205,6 +205,8 @@ mod tests {
         settings.generation.base_url = Some("http://127.0.0.1:1".into());
         settings.generation.model = Some("synthetic".into());
         let profile = Profile {
+            route: None,
+            storage: None,
             enabled: true,
             base_url: settings.generation.base_url.clone().unwrap(),
             model: "synthetic".into(),

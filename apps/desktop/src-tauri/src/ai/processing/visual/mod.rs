@@ -17,6 +17,7 @@ mod frame_jobs;
 mod image;
 mod ocr;
 mod persistence;
+mod provider_configuration;
 mod types;
 mod vlm;
 

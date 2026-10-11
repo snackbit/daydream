@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   GetOcrDocumentInput,
   GetOcrHistoryInput,
@@ -7,6 +6,7 @@ import type {
   GetOcrTimelineFramesInput,
   OcrTimelineFramePage,
 } from '@daydream/shared';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 import {
   decodeOcrDocumentSelection,
   decodeOcrHistoryPage,
@@ -32,33 +32,43 @@ async function invokeOcr(command: string, input: object): Promise<unknown> {
 export async function getOcrDocument(
   input: GetOcrDocumentInput,
 ): Promise<OcrDocumentSelection> {
-  const result = decodeOcrDocumentSelection(
+  return decodeResponse(
+    'getOcrDocument',
     await invokeOcr('getOcrDocument', input),
+    (value) => {
+      const result = decodeOcrDocumentSelection(value);
+      if (
+        result.recordingId !== input.recordingId ||
+        result.sourceTrackId !== input.sourceTrackId ||
+        (result.job && result.job.recordingId !== input.recordingId) ||
+        (result.document &&
+          (result.document.recordingId !== input.recordingId ||
+            result.document.sourceTrackId !== input.sourceTrackId))
+      )
+        throw new Error('The OCR document belongs to another source.');
+      return result;
+    },
   );
-  if (
-    result.recordingId !== input.recordingId ||
-    result.sourceTrackId !== input.sourceTrackId ||
-    (result.job && result.job.recordingId !== input.recordingId) ||
-    (result.document &&
-      (result.document.recordingId !== input.recordingId ||
-        result.document.sourceTrackId !== input.sourceTrackId))
-  )
-    throw new Error('The OCR document belongs to another source.');
-  return result;
 }
 export async function getOcrHistory(
   input: GetOcrHistoryInput,
 ): Promise<OcrHistoryPage> {
-  const result = decodeOcrHistoryPage(await invokeOcr('getOcrHistory', input));
-  if (
-    result.items.some(
-      (item) =>
-        item.recordingId !== input.recordingId ||
-        (input.sourceTrackId && item.sourceTrackId !== input.sourceTrackId),
-    )
-  )
-    throw new Error('The OCR history belongs to another source.');
-  return result;
+  return decodeResponse(
+    'getOcrHistory',
+    await invokeOcr('getOcrHistory', input),
+    (value) => {
+      const result = decodeOcrHistoryPage(value);
+      if (
+        result.items.some(
+          (item) =>
+            item.recordingId !== input.recordingId ||
+            (input.sourceTrackId && item.sourceTrackId !== input.sourceTrackId),
+        )
+      )
+        throw new Error('The OCR history belongs to another source.');
+      return result;
+    },
+  );
 }
 
 export async function reprocessRecordingOcr(
@@ -70,17 +80,22 @@ export async function reprocessRecordingOcr(
 export async function getOcrTimelineFrames(
   input: GetOcrTimelineFramesInput,
 ): Promise<OcrTimelineFramePage> {
-  const page = decodeOcrTimelineFramePage(
+  return decodeResponse(
+    'getOcrTimelineFrames',
     await invokeOcr('getOcrTimelineFrames', input),
+    (value) => {
+      const page = decodeOcrTimelineFramePage(value);
+      if (
+        page.recordingId !== input.recordingId ||
+        page.frames.some(
+          (frame) =>
+            frame.recordingId !== input.recordingId ||
+            (input.sourceTrackId &&
+              frame.sourceTrackId !== input.sourceTrackId),
+        )
+      )
+        throw new Error('The OCR observation index belongs to another source.');
+      return page;
+    },
   );
-  if (
-    page.recordingId !== input.recordingId ||
-    page.frames.some(
-      (frame) =>
-        frame.recordingId !== input.recordingId ||
-        (input.sourceTrackId && frame.sourceTrackId !== input.sourceTrackId),
-    )
-  )
-    throw new Error('The OCR observation index belongs to another source.');
-  return page;
 }

@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   PreviewRecordingReprocessingInput,
   RecordingReprocessingPreview,
@@ -15,6 +14,7 @@ import {
   record,
   string,
 } from '@/features/processing/task-decoder';
+import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 
 export function reprocessingOperation(value: unknown): ReprocessingOperation {
   if (
@@ -62,14 +62,18 @@ export function decodeReprocessingPreview(
 export async function previewRecordingReprocessing(
   input: PreviewRecordingReprocessingInput,
 ) {
-  return decodeReprocessingPreview(
+  return decodeResponse(
+    'previewRecordingReprocessing',
     await invoke<unknown>('previewRecordingReprocessing', { input }),
+    decodeReprocessingPreview,
   );
 }
 export async function startRecordingReprocessing(
   input: StartRecordingReprocessingInput,
 ) {
-  return processingJob(
+  return decodeResponse(
+    'startRecordingReprocessing',
     await invoke<unknown>('startRecordingReprocessing', { input }),
+    processingJob,
   );
 }

@@ -4,7 +4,10 @@ use std::collections::BTreeSet;
 use super::recall_validation::validate_recall_settings;
 use super::{defaults::*, types::*};
 
-pub(crate) fn validate_settings(settings: AppSettings) -> Result<AppSettings, AppSettingsError> {
+pub(crate) fn validate_settings(
+    mut settings: AppSettings,
+) -> Result<AppSettings, AppSettingsError> {
+    crate::model_registry::project(&mut settings)?;
     validate_f64_range(
         "record.fps",
         settings.record.fps,

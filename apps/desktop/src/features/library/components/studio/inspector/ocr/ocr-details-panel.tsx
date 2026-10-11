@@ -44,7 +44,7 @@ export function OcrDetailsPanel({
           }
         />
         <InspectorField
-          label="Evidence"
+          label="Source"
           value={
             document.provenance === 'reconstructed'
               ? 'Reconstructed legacy words'

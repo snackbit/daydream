@@ -32,6 +32,7 @@ test('desktop audio owns the clock across rollover times and ordinary drift neve
       mutedTrackIds: new Set<string>(),
       redactedTrackIdsRef: protectedTracks,
       volume: 1,
+      playbackRate: 2,
     }),
   );
   view.result.current.refs.audioRefs.current.set(
@@ -54,9 +55,9 @@ test('desktop audio owns the clock across rollover times and ordinary drift neve
   }
   for (const item of [desktop, microphone, video])
     expect(item.seek).not.toHaveBeenCalled();
-  expect(desktop.element.playbackRate).toBe(1);
-  expect(microphone.element.playbackRate).toBeGreaterThan(1);
-  expect(video.element.playbackRate).toBeLessThan(1);
+  expect(desktop.element.playbackRate).toBe(2);
+  expect(microphone.element.playbackRate).toBeGreaterThan(2);
+  expect(video.element.playbackRate).toBeLessThan(2);
   protectedTracks.current.add('desktop-audio-1');
   view.result.current.actions.applyRedactedAudioSettings(
     protectedTracks.current,

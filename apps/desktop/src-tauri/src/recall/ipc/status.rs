@@ -106,6 +106,7 @@ pub async fn test_provider(
     let mut proposed =
         settings::load_app_settings(&storage).map_err(|_| "recall_settings_failed")?;
     proposed.ai.recall = input.settings.clone();
+    proposed.ai.model_registry = None;
     settings::validate_settings(proposed).map_err(|_| "recall_profile_invalid")?;
     let result = match input.kind.as_str() {
         "embedding" => {

@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   PreviewRecordingReprocessingInput,
   RecordingReprocessingPreview,
   ReprocessingOperation,
   ReprocessingTarget,
+  ProcessingJob,
+  RecordingReprocessingScope,
 } from '@daydream/shared';
 import {
   previewRecordingReprocessing,
   startRecordingReprocessing,
 } from './reprocessing-client';
 
-export function useStudioReprocessing(recordingId: string) {
+export function useStudioReprocessing(
+  recordingId: string,
+  observedJob: ProcessingJob | null = null,
+) {
   const [owner, setOwner] = useState(recordingId);
   const [request, setRequest] =
     useState<PreviewRecordingReprocessingInput | null>(null);
@@ -20,6 +25,11 @@ export function useStudioReprocessing(recordingId: string) {
   const [pending, setPending] = useState(false),
     [error, setError] = useState<string | null>(null),
     [queued, setQueued] = useState(false);
+  const [submitted, setSubmitted] = useState<{
+    recordingId: string;
+    job: ProcessingJob;
+    scopes: RecordingReprocessingScope[];
+  } | null>(null);
   const generation = useRef(0);
   const open = useCallback(
     (targets: ReprocessingTarget[]) => {
@@ -70,11 +80,12 @@ export function useStudioReprocessing(recordingId: string) {
     setPending(true);
     setError(null);
     try {
-      await startRecordingReprocessing({
+      const job = await startRecordingReprocessing({
         ...request,
         planFingerprint: preview.planFingerprint,
       });
       if (run === generation.current) {
+        setSubmitted({ recordingId, job, scopes: preview.scopes });
         setQueued(true);
         setRequest(null);
         setPreview(null);
@@ -87,8 +98,35 @@ export function useStudioReprocessing(recordingId: string) {
     } finally {
       if (run === generation.current) setPending(false);
     }
-  }, [request, preview, pending]);
+  }, [request, preview, pending, recordingId]);
+  // Keep admitted work visible until the native read model catches up. A newer
+  // persisted job also owns this handoff, so an old submission cannot reappear.
+  const submittedVisible =
+    submitted?.recordingId === recordingId &&
+    !(
+      observedJob &&
+      (observedJob.id === submitted.job.id ||
+        observedJob.createdAtMs > submitted.job.createdAtMs)
+    );
+  const plannedScopes = useMemo(
+    () =>
+      owner !== recordingId
+        ? []
+        : pending && preview
+          ? preview.scopes.map((scope) => ({
+              ...scope,
+              status: 'planned' as const,
+            }))
+          : submittedVisible
+            ? submitted.scopes.map((scope) => ({
+                ...scope,
+                status: 'queued' as const,
+              }))
+            : [],
+    [owner, recordingId, pending, preview, submittedVisible, submitted],
+  );
   return {
+    plannedScopes,
     open,
     close,
     operations,

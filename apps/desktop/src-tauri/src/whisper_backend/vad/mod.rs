@@ -16,6 +16,39 @@ use std::{
 pub const MODEL_SHA256: &str = "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987";
 pub const MODEL_FILE: &str = "vad/ggml-silero-v6.2.0.bin";
 
+pub(crate) fn detect_unpadded_speech_ranges(
+    model_path: &Path,
+    audio_path: &Path,
+    min_speech_ms: i64,
+    cancel: Arc<AtomicBool>,
+) -> Result<Vec<SpeechRange>, WhisperBackendError> {
+    check_cancel(&cancel)?;
+    let samples = read_detection_samples(audio_path)?;
+    if samples.len() > 30 * 16_000 {
+        return Err(error(
+            "ai_transcription_vad_input_invalid",
+            "Speech detection input exceeds its bounded window.",
+        ));
+    }
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+    let model = model::VadModel::load(model_path)?;
+    let detected = model.detect(&samples, min_speech_ms)?;
+    check_cancel(&cancel)?;
+    let duration = samples.len() as i64 / 16;
+    detected
+        .into_iter()
+        .map(|(start, end)| {
+            ranges::padded_range(start, end, duration)?;
+            Ok(SpeechRange {
+                start_ms: (start as f64 * 10.0).floor() as i64,
+                end_ms: ((end as f64 * 10.0).ceil() as i64).min(duration),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub fn detect_speech_ranges(
     model_path: &Path,

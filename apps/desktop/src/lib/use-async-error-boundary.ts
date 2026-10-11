@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { reportFrontendFailure } from './diagnostics/failure-logging';
 
 export function useAsyncErrorBoundary(): (
   action: () => Promise<unknown>,
@@ -10,6 +11,9 @@ export function useAsyncErrorBoundary(): (
   }
 
   return useCallback((action: () => Promise<unknown>) => {
-    void action().catch(setError);
+    void action().catch((error: unknown) => {
+      reportFrontendFailure('frontend_action', 'execute', error);
+      setError(error);
+    });
   }, []);
 }

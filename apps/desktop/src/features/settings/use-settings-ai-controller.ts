@@ -27,6 +27,7 @@ import {
   repairInputActivityPermissions,
 } from '@/features/settings/settings-client';
 import { screenErrorMessage } from '@/features/settings/settings-screen-utils';
+import { useModelKeyDrafts } from './models/use-model-key-drafts';
 
 interface AiSettingsSavePreparation {
   credentials: SettingsCredentialDrafts;
@@ -42,6 +43,7 @@ export function useSettingsAiController({
   loadNotifications,
   selectedAiModelId,
 }: UseSettingsAiControllerInput) {
+  const modelKeys = useModelKeyDrafts();
   const [aiActionError, setAiActionError] = useState<string | null>(null);
   const [scaffoldError, setScaffoldError] = useState<string | null>(null);
   const [aiModels, setAiModels] = useState<AiModelAsset[]>([]);
@@ -179,6 +181,15 @@ export function useSettingsAiController({
     return {
       settings,
       credentials: {
+        ...(modelKeys.hasModelKeyDraft
+          ? {
+              modelKeys: Object.fromEntries(
+                Object.entries(modelKeys.modelKeyDrafts).filter(([, key]) =>
+                  key.trim(),
+                ),
+              ),
+            }
+          : {}),
         ...(transcriptionKeyDraft.trim()
           ? { transcriptionKey: transcriptionKeyDraft }
           : {}),
@@ -281,12 +292,14 @@ export function useSettingsAiController({
   }
 
   const clearSecretDrafts = useCallback(() => {
+    modelKeys.clearModelKeys();
     setTranscriptionKeyDraft('');
     setVisionKeyDraft('');
     setRecallEmbeddingKeyDraft('');
     setRecallGenerationKeyDraft('');
-  }, []);
+  }, [modelKeys.clearModelKeys]);
   function clearSavedSecretDrafts(credentials: SettingsCredentialDrafts) {
+    modelKeys.clearSavedModelKeys(credentials.modelKeys ?? {});
     setTranscriptionKeyDraft((current) =>
       current === credentials.transcriptionKey ? '' : current,
     );
@@ -310,6 +323,8 @@ export function useSettingsAiController({
   }
 
   return {
+    modelKeyDrafts: modelKeys.modelKeyDrafts,
+    changeModelKey: modelKeys.changeModelKey,
     aiActionError: aiActionError ?? scaffoldError,
     aiModels,
     modelActionErrors,
@@ -319,6 +334,7 @@ export function useSettingsAiController({
     clearSavedSecretDrafts,
     deletePendingAiSecrets,
     hasAiSecretDraft: Boolean(
+      modelKeys.hasModelKeyDraft ||
       transcriptionKeyDraft.trim() ||
       visionKeyDraft.trim() ||
       recallEmbeddingKeyDraft.trim() ||

@@ -28,6 +28,7 @@ interface PlaybackRedactionControllerInput {
   streamStartMs: number;
   totalDurationMs: number;
   videoRef: RefObject<HTMLVideoElement | null>;
+  playbackRate?: number;
 }
 
 export function usePlaybackRedactionController({
@@ -42,6 +43,7 @@ export function usePlaybackRedactionController({
   streamStartMs,
   totalDurationMs,
   videoRef,
+  playbackRate = 1,
 }: PlaybackRedactionControllerInput) {
   const redactionBoundaryTimerRef = useRef<number | null>(null);
   const [redactedTrackIds, setRedactedTrackIds] = useState<Set<string>>(() => {
@@ -215,7 +217,14 @@ export function usePlaybackRedactionController({
       }
       redactionBoundaryTimerRef.current = window.setTimeout(
         scheduleNextBoundary,
-        delayMs,
+        delayMs /
+          Math.max(
+            playbackRate,
+            video.playbackRate,
+            ...[...audioRefs.current.values()].map(
+              (audio) => audio.playbackRate,
+            ),
+          ),
       );
     };
 
@@ -229,6 +238,8 @@ export function usePlaybackRedactionController({
     updateRedactionStateFromVideo,
     videoRef,
     videoTimelineMs,
+    playbackRate,
+    audioRefs,
   ]);
 
   useEffect(() => clearRedactionBoundaryTimer, [clearRedactionBoundaryTimer]);

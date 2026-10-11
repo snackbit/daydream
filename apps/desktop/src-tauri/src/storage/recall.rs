@@ -4,6 +4,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+mod evidence_writer;
+use evidence_writer::{insert_source, EvidenceMedia, Source};
+
 pub fn privacy_revision(connection: &Connection) -> rusqlite::Result<i64> {
     connection.query_row("SELECT revision FROM recall_meta WHERE id=1", [], |row| {
         row.get(0)
@@ -181,6 +184,8 @@ fn refresh_inner(connection: &Connection, scope: Option<&str>) -> rusqlite::Resu
             })
             .map(|segment| (segment.id.as_str(), segment))
             .collect::<BTreeMap<_, _>>();
+        let redactions = super::list_redactions(connection, &recording.id)?;
+        let media = EvidenceMedia::new(&eligible, &redactions);
         let visible = super::ai::recall_ocr_visibility_cte();
         // Consecutive exact documents form one recall item; support retains all
         // occurrences, including uncited frames consumed by interpretation.
@@ -199,7 +204,7 @@ fn refresh_inner(connection: &Connection, scope: Option<&str>) -> rusqlite::Resu
             })
         })?;
         for source in rows {
-            insert_source(connection, &recording.id, &eligible, source?)?;
+            insert_source(connection, &recording.id, &media, source?)?;
         }
         let mut statement = connection.prepare(TRANSCRIPTS)?;
         let rows = statement.query_map([&recording.id], |row| {
@@ -215,7 +220,7 @@ fn refresh_inner(connection: &Connection, scope: Option<&str>) -> rusqlite::Resu
             })
         })?;
         for source in rows {
-            insert_source(connection, &recording.id, &eligible, source?)?;
+            insert_source(connection, &recording.id, &media, source?)?;
         }
     }
     let changed: bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM recall_next n LEFT JOIN recall_evidence e ON e.id=n.id WHERE e.id IS NULL OR e.revision!=n.revision) OR EXISTS(SELECT 1 FROM recall_evidence e JOIN recall_dirty_recordings d ON d.recording_id=e.recording_id WHERE (?1 IS NULL OR d.recording_id IN(SELECT value FROM json_each(?1))) AND NOT EXISTS(SELECT 1 FROM recall_next n WHERE n.id=e.id))",[scope],|row|row.get(0))?;
@@ -224,111 +229,6 @@ fn refresh_inner(connection: &Connection, scope: Option<&str>) -> rusqlite::Resu
         connection.execute("INSERT INTO recall_evidence SELECT * FROM recall_next WHERE true ON CONFLICT(id) DO UPDATE SET recording_id=excluded.recording_id,segment_id=excluded.segment_id,source_kind=excluded.source_kind,source_track_id=excluded.source_track_id,source_id=excluded.source_id,start_offset_ms=excluded.start_offset_ms,end_offset_ms=excluded.end_offset_ms,started_at_ms=excluded.started_at_ms,ended_at_ms=excluded.ended_at_ms,revision=excluded.revision,text=excluded.text,provenance_json=excluded.provenance_json WHERE recall_evidence.revision!=excluded.revision",[])?;
         connection.execute("UPDATE recall_meta SET revision=revision+1 WHERE id=1", [])?;
     }
-    Ok(())
-}
-
-struct Source {
-    id: String,
-    segment_id: String,
-    track: String,
-    start: i64,
-    end: i64,
-    text: String,
-    provenance: String,
-    kind: String,
-}
-fn insert_source(
-    connection: &Connection,
-    recording: &str,
-    segments: &BTreeMap<&str, &super::RecordingSegmentRow>,
-    source: Source,
-) -> rusqlite::Result<()> {
-    let source_id = source
-        .id
-        .split_once(':')
-        .map(|(_, id)| id)
-        .ok_or(rusqlite::Error::InvalidQuery)?;
-    let fragments = super::recall_fragments::text_fragments(&source.text);
-    for (ordinal, text) in fragments.iter().enumerate() {
-        let id = if fragments.len() == 1 {
-            source.id.clone()
-        } else {
-            format!("{}#fragment:{ordinal}", source.id)
-        };
-        insert_fragment(
-            connection, recording, segments, &source, source_id, &id, text,
-        )?;
-    }
-    Ok(())
-}
-
-fn insert_fragment(
-    connection: &Connection,
-    recording: &str,
-    segments: &BTreeMap<&str, &super::RecordingSegmentRow>,
-    source: &Source,
-    source_id: &str,
-    evidence_id: &str,
-    text: &str,
-) -> rusqlite::Result<()> {
-    let Some(segment) = segments.get(source.segment_id.as_str()) else {
-        return Ok(());
-    };
-    let Some(base) = segment.timeline_base_ms else {
-        return Ok(());
-    };
-    let Some(duration) = segment.duration_ms else {
-        return Ok(());
-    };
-    if segment.timeline_basis_version != Some(1)
-        || segment.state != "finalized"
-        || source.start < base
-        || source.end <= source.start
-        || source.end > base.saturating_add(duration)
-    {
-        return Ok(());
-    }
-    let Some(start) = segment.started_at_ms.checked_add(source.start - base) else {
-        return Ok(());
-    };
-    let Some(end) = segment.started_at_ms.checked_add(source.end - base) else {
-        return Ok(());
-    };
-    let mut hasher = Sha256::new();
-    for value in [
-        super::recall_fragments::FRAGMENT_VERSION,
-        evidence_id,
-        source.segment_id.as_str(),
-        source.track.as_str(),
-        source.kind.as_str(),
-        text,
-        source.provenance.as_str(),
-    ] {
-        hasher.update((value.len() as u64).to_le_bytes());
-        hasher.update(value.as_bytes());
-    }
-    for value in [source.start, source.end, start, end] {
-        hasher.update(value.to_le_bytes());
-    }
-    let revision = format!("{:x}", hasher.finalize());
-    connection.execute(
-        "INSERT INTO recall_next VALUES(?1,?2,?3,?4,?5,?13,?6,?7,?8,?9,?10,?11,?12)",
-        params![
-            evidence_id,
-            recording,
-            source.segment_id,
-            source.kind,
-            source.track,
-            source.start,
-            source.end,
-            start,
-            end,
-            revision,
-            text,
-            source.provenance,
-            source_id
-        ],
-    )?;
     Ok(())
 }
 
@@ -355,9 +255,8 @@ FROM (SELECT * FROM runs ORDER BY frame_timestamp_ms,id) r GROUP BY segment_id,s
 const TRANSCRIPTS: &str = r#"
 SELECT t.id,t.segment_id,CASE WHEN t.source_role='microphone' THEN 'microphone-'||s.microphone_audio_stream_index ELSE 'desktop-audio-'||s.desktop_audio_stream_index END,t.start_offset_ms,t.end_offset_ms,t.text,
  json_object('jobId',t.job_id,'chunkId',t.chunk_id,'processingTrackId',t.track_id,'createdAt',t.created_at_ms,'provider',t.provider,'model',t.model),t.source_role
-FROM transcript_segments t JOIN processing_chunks p ON p.id=t.chunk_id JOIN processing_jobs j ON j.id=t.job_id JOIN recording_segments s ON s.id=t.segment_id
-WHERE t.recording_id=?1 AND trim(t.text)!='' AND (j.status!='cancelled' OR EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=t.chunk_id AND rg.committed=1)) AND p.status IN('running','succeeded','completed-with-errors')
-AND NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=t.chunk_id AND rg.committed=0)
+FROM published_transcript_segments t JOIN processing_chunks p ON p.id=t.chunk_id JOIN processing_jobs j ON j.id=t.job_id JOIN recording_segments s ON s.id=t.segment_id
+WHERE t.recording_id=?1 AND trim(t.text)!='' AND (EXISTS(SELECT 1 FROM processing_speech_unit_transcripts st JOIN processing_speech_units u ON u.id=st.unit_id WHERE st.transcript_id=t.id AND u.status='published') OR ((j.status!='cancelled' OR EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=t.chunk_id AND rg.committed=1)) AND p.status IN('running','succeeded','completed-with-errors')))
 AND (CASE WHEN t.source_role='microphone' THEN s.microphone_audio_stream_index ELSE s.desktop_audio_stream_index END) IS NOT NULL
 AND NOT EXISTS(SELECT 1 FROM recording_protection_spans ps WHERE ps.recording_id=t.recording_id AND ps.status!='materialized')
 AND NOT EXISTS(SELECT 1 FROM redactions r WHERE r.recording_id=t.recording_id AND r.start_offset_ms<t.end_offset_ms AND r.end_offset_ms>t.start_offset_ms AND
@@ -368,3 +267,7 @@ AND NOT EXISTS(SELECT 1 FROM processing_chunks newer JOIN processing_jobs nj ON 
 #[cfg(test)]
 #[path = "recall_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "recall_speech_tests.rs"]
+mod speech_tests;

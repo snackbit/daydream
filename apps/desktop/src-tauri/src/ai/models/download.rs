@@ -24,6 +24,10 @@ pub(in crate::ai) fn spawn_model_download(app: AppHandle, model_id: String) {
         let _lease = lease;
         let result = run_model_download(&app, &model_id).await;
         if let Err(error) = result {
+            tracing::warn!(
+                error_code = crate::telemetry::failures::safe_error_code(&error.code),
+                "model_download_failed"
+            );
             app.state::<AiModelManager>()
                 .set_telemetry(&model_id, "failed", None, None);
             let storage = app.state::<AppStorage>();

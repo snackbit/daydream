@@ -29,9 +29,10 @@ pub(super) fn settings_state(settings: AppSettings) -> AppSettingsState {
 }
 
 pub(super) fn settings_state_with_cleanup(
-    settings: AppSettings,
+    mut settings: AppSettings,
     storage_cleanup: Option<StorageCleanupResult>,
 ) -> AppSettingsState {
+    crate::model_registry::import_legacy(&mut settings);
     AppSettingsState {
         settings,
         defaults: default_settings(),

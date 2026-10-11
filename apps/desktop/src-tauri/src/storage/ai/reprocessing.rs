@@ -59,6 +59,18 @@ pub fn publish_ready_replacement(connection: &Connection, chunk_id: &str) -> rus
         return Err(rusqlite::Error::InvalidQuery);
     }
     if kind == "audio" {
+        let canonical:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM processing_speech_unit_chunks uc JOIN processing_replacement_chunks rc ON rc.chunk_id=uc.chunk_id WHERE rc.group_id=?1)",[&id],|row|row.get(0))?;
+        if canonical {
+            let pending:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM processing_speech_units u JOIN processing_speech_unit_chunks uc ON uc.unit_id=u.id JOIN processing_replacement_chunks rc ON rc.chunk_id=uc.chunk_id WHERE rc.group_id=?1 AND u.status!='published')",[&id],|row|row.get(0))?;
+            if pending {
+                return Ok(());
+            }
+            connection.execute(
+                "UPDATE processing_replacement_groups SET committed=1 WHERE id=?1",
+                [id],
+            )?;
+            return Ok(());
+        }
         connection.execute("DELETE FROM transcript_segments WHERE recording_id=?1 AND source_role=?2 AND start_offset_ms<?4 AND end_offset_ms>?3 AND chunk_id NOT IN (SELECT chunk_id FROM processing_replacement_chunks WHERE group_id=?5)",params![recording,role,start,end,id])?;
     }
     connection.execute(
@@ -68,7 +80,10 @@ pub fn publish_ready_replacement(connection: &Connection, chunk_id: &str) -> rus
     Ok(())
 }
 
-fn replacement_superseded(connection: &Connection, chunk_id: &str) -> rusqlite::Result<bool> {
+pub(super) fn replacement_superseded(
+    connection: &Connection,
+    chunk_id: &str,
+) -> rusqlite::Result<bool> {
     connection.query_row(
         r#"
         SELECT EXISTS(

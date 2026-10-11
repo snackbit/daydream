@@ -30,6 +30,60 @@ fn source() -> SegmentVideoStream {
 }
 
 #[test]
+fn thumbnails_do_not_share_media_connection_capacity_and_both_origins_revoke_sessions() {
+    let path =
+        std::env::temp_dir().join(format!("daydream-preview-origin-{}", uuid::Uuid::now_v7()));
+    std::fs::write(&path, b"synthetic").unwrap();
+    let fragment = fragment(0, path.to_str().unwrap());
+    let sources = BTreeMap::from([(fragment.id.clone(), vec![source()])]);
+    let server = PlaybackServer::start().unwrap();
+    let assets = server
+        .create_source_session(&recording(), &[fragment], &sources)
+        .unwrap();
+    let origin = |url: &str| reqwest::Url::parse(url).unwrap().origin();
+    for segment in assets
+        .segments
+        .iter()
+        .chain(assets.runs.iter().map(|run| &run.assets))
+    {
+        for thumbnail in &segment.thumbnails {
+            assert_ne!(
+                origin(&thumbnail.url),
+                origin(&segment.video_url),
+                "slow thumbnails must not occupy playback connections"
+            );
+        }
+        for video in &segment.videos {
+            for thumbnail in &video.thumbnails {
+                assert_ne!(origin(&thumbnail.url), origin(&video.url));
+            }
+        }
+        for audio in &segment.audio {
+            assert_ne!(origin(&segment.thumbnails[0].url), origin(&audio.url));
+        }
+    }
+    server.close_session(&assets.session_id).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let client = reqwest::Client::new();
+        for url in [
+            &assets.segments[0].video_url,
+            &assets.segments[0].thumbnails[0].url,
+            &assets.segments[0].videos[0].thumbnails[0].url,
+        ] {
+            assert_eq!(
+                client.get(url).send().await.unwrap().status(),
+                reqwest::StatusCode::FORBIDDEN
+            );
+        }
+    });
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn playback_session_resolves_missing_fragment_bases_without_truncating_the_run() {
     let path = std::env::temp_dir().join(format!("daydream-run-duration-{}", uuid::Uuid::now_v7()));
     std::fs::write(&path, b"synthetic").unwrap();

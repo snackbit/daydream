@@ -18,7 +18,10 @@ use super::{
 pub fn get_app_settings(
     storage: State<'_, AppStorage>,
 ) -> Result<AppSettingsState, AppSettingsError> {
-    load_app_settings(&storage).map(settings_state)
+    load_app_settings(&storage).map(|mut settings| {
+        crate::model_registry::import_legacy(&mut settings);
+        settings_state(settings)
+    })
 }
 
 #[tauri::command(rename = "previewAppSettingsStorageCleanup")]
@@ -48,10 +51,12 @@ pub fn save_app_settings(
                 message,
             }
         })?;
+    let apply_cleanup = input.apply_storage_cleanup.unwrap_or(true);
     super::credentials::save(&storage, input).map(|saved_settings| {
-        let cleanup = enforce_storage_cleanup_for_settings(&app, &storage, &saved_settings);
+        let cleanup = apply_cleanup
+            .then(|| enforce_storage_cleanup_for_settings(&app, &storage, &saved_settings));
         crate::recall::mutations::emit_changed(&app, None);
-        settings_state_with_cleanup(saved_settings, Some(cleanup))
+        settings_state_with_cleanup(saved_settings, cleanup)
     })
 }
 

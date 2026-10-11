@@ -14,6 +14,7 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { Separator } from '@/components/ui/separator';
 import type { UpdateSettingsDraft } from '@/features/settings/settings-draft-updaters';
+import { VisionModelSettings } from '../models/vision-model-settings';
 import { OcrEngineSettingsSection } from './ocr/ocr-engine-settings-section';
 import { VisionEndpointSettingsSection } from './vision/vision-endpoint-settings-section';
 import {
@@ -92,26 +93,32 @@ export function AiVisionCard({
               onUpdateDraft,
             }}
           />
-          {hasVisionConsumer && missingRequirements.length > 0 ? (
+          {!draft.ai.modelRegistry &&
+          hasVisionConsumer &&
+          missingRequirements.length > 0 ? (
             <VisionConfigurationAlert
               missingRequirements={missingRequirements}
             />
           ) : null}
           <Separator />
-          <VisionEndpointSettingsSection
-            model={{
-              ocrEnabled: ocr.enabled,
-              ocrEngine: ocr.engine,
-              settings: vision,
-              visionKeyDraft,
-              sourceCount,
-              samplesPerMinute: effectiveFrameRecognitionFps * 60,
-            }}
-            actions={{
-              onChangeVisionKey,
-              onUpdateDraft,
-            }}
-          />
+          {draft.ai.modelRegistry ? (
+            <VisionModelSettings draft={draft} onUpdateDraft={onUpdateDraft} />
+          ) : (
+            <VisionEndpointSettingsSection
+              model={{
+                ocrEnabled: ocr.enabled,
+                ocrEngine: ocr.engine,
+                settings: vision,
+                visionKeyDraft,
+                sourceCount,
+                samplesPerMinute: effectiveFrameRecognitionFps * 60,
+              }}
+              actions={{
+                onChangeVisionKey,
+                onUpdateDraft,
+              }}
+            />
+          )}
         </FieldGroup>
       </CardContent>
     </Card>

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecallExternalProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_route: Option<crate::model_registry::types::Route>,
     pub enabled: bool,
     pub base_url: Option<String>,
     pub model: Option<String>,
@@ -54,6 +56,7 @@ impl Default for RecallSettings {
                 api_key_ref: None,
             },
             generation: RecallExternalProfile {
+                model_route: None,
                 enabled: false,
                 base_url: None,
                 model: None,

@@ -7,6 +7,28 @@ This document highlights code and binaries that Daydream vendors, resolves, or
 expects directly. The JavaScript and Rust manifests and lockfiles contain the
 complete dependency lists.
 
+## Teleprompter virtualization
+
+The React teleprompter uses `@tanstack/react-virtual` 3.14.13 and
+`@tanstack/virtual-core` 3.17.11 (MIT, copyright 2021-present Tanner Linsley).
+Their MIT notice is included in the packaged license resources under
+`apps/desktop/src-tauri/resources/licenses/teleprompter/`.
+
+## Model connections
+
+The native model adapter uses `eventsource-stream` 0.2.3 (MIT OR Apache-2.0,
+Julian Popescu) for SSE framing; this version was already pinned through the SDK.
+The native model adapter uses `async-openai` 0.42.1 (MIT, Himanshu Neema)
+and `openidconnect` 4.0.1 (MIT, David Ramos). Their required Rust versions
+are 1.75 and 1.65 respectively, within the repository's Rust 1.95 toolchain.
+Their MIT notices are packaged under
+`apps/desktop/src-tauri/resources/licenses/model-connections/`.
+The generated Cargo lock pins registry checksums. The SDK uses reqwest 0.13
+through a bounded transport adapter; existing integrations retain reqwest 0.12.
+TLS and authentication dependencies remain listed in the Cargo lock for bundle
+license inventory. No OAuth client secret, model executable or remote account
+credential is bundled.
+
 ## whisper.cpp
 
 Daydream vendors `whisper.cpp` source under

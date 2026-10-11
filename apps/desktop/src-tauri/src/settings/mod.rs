@@ -10,6 +10,7 @@ mod types;
 mod validation;
 mod vision_readiness;
 
+pub(crate) use credentials::import_model_registry;
 pub(crate) use credentials::prune_unreferenced_secrets;
 pub use defaults::*;
 pub use service::load_app_settings;

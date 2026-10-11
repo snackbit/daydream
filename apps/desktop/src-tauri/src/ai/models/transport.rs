@@ -5,7 +5,20 @@ pub(super) async fn send_request(
     manager: &AiModelManager,
     model_id: &str,
 ) -> Result<Option<reqwest::Response>, AiError> {
-    tokio::select! { result=request.send()=>result.map(Some).map_err(download_error), _=manager.stopped(model_id)=>Ok(None) }
+    let mut diagnostics = crate::provider_http::HttpDiagnostics::new("model_download");
+    diagnostics.stage("http_request");
+    let result = tokio::select! { result=request.send()=>result.map(Some).map_err(download_error), _=manager.stopped(model_id)=>Ok(None) };
+    if let Ok(Some(response)) = &result {
+        diagnostics.response(
+            response.status().as_u16(),
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+        );
+    }
+    diagnostics.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
 }
 
 #[derive(Debug, PartialEq, Eq)]

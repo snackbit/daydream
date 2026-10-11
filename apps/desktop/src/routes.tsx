@@ -16,8 +16,10 @@ import {
 } from '@/features/navigation/recall-location';
 import {
   validateSettingsLocation,
-  type SettingsTab,
+  type SettingsSection,
+  type SettingsDetail,
 } from '@/features/settings/settings-location';
+import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
 
 const DayScreen = lazy(() =>
   import('@/screens/DayScreen').then(({ DayScreen }) => ({
@@ -69,6 +71,9 @@ const rootRoute = createRootRoute({
   component: AppShell,
   errorComponent: RouteErrorScreen,
   notFoundComponent: RouteNotFoundScreen,
+  onCatch: (error) => reportFrontendFailure('route_error', 'render', error),
+  onError: (error: unknown) =>
+    reportFrontendFailure('route_error', 'render', error),
 });
 
 const homeRoute = createRoute({
@@ -158,17 +163,29 @@ const settingsRoute = createRoute({
 function SettingsRouteScreen() {
   const search = settingsRoute.useSearch();
   const navigate = settingsRoute.useNavigate();
-  const changeTab = useCallback(
-    (tab: SettingsTab) => {
-      void navigate({ search: { tab, focus: null } });
+  const changeLocation = useCallback(
+    (section: SettingsSection, detail: SettingsDetail | null) => {
+      void navigate({
+        search: {
+          section,
+          detail,
+          tab:
+            section === 'recording' || section === 'privacy'
+              ? 'record'
+              : section === 'models'
+                ? 'ai'
+                : section,
+          focus: null,
+        },
+      });
     },
     [navigate],
   );
   return (
     <SettingsScreen
-      tab={search.tab}
-      focusSection={search.focus}
-      onTabChange={changeTab}
+      section={search.section}
+      detail={search.detail}
+      onLocationChange={changeLocation}
     />
   );
 }

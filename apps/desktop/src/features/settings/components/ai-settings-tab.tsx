@@ -77,7 +77,7 @@ export function AiSettingsTab({
         />
       </section>
 
-      <section id="ai-models" tabIndex={-1}>
+      <section id="ai-local-models" tabIndex={-1}>
         <AiModelCacheCard
           modelActionErrors={modelActionErrors}
           onTransferAction={onTransferAction}

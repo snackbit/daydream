@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   AppSettingsState,
   AppSettingsStorageCleanupPreview,
@@ -7,6 +6,7 @@ import type {
   PreviewAppSettingsStorageCleanupInput,
   SaveAppSettingsInput,
 } from '@daydream/shared';
+import { invoke } from '@/lib/diagnostics/invoke';
 
 export async function getAppSettings(): Promise<AppSettingsState> {
   return invoke<AppSettingsState>('getAppSettings');

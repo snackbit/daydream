@@ -12,11 +12,14 @@ mod processing_resilience;
 mod processing_units;
 mod protected_windows;
 mod recall;
+mod recall_speech;
 mod recovery;
 mod reprocessing;
 mod scene_recording;
 mod settings_processing;
 mod source_video;
+mod speech_units;
+mod transcript_languages;
 mod visual_frame_states;
 
 pub(in crate::storage) fn apply_migrations(
@@ -30,7 +33,7 @@ pub(in crate::storage) fn apply_migrations(
     result
 }
 
-pub(in crate::storage) fn migrations() -> Migrations<'static> {
+pub(crate) fn migrations() -> Migrations<'static> {
     let mut migrations = Vec::new();
     migrations.extend(initial::migrations());
     migrations.extend(scene_recording::migrations());
@@ -50,5 +53,8 @@ pub(in crate::storage) fn migrations() -> Migrations<'static> {
     migrations.extend(capture_runs::migrations());
     migrations.extend(recovery::output_ownership_migrations());
     migrations.extend(reprocessing::migrations());
+    migrations.extend(transcript_languages::migrations());
+    migrations.extend(speech_units::migrations());
+    migrations.extend(recall_speech::migrations());
     Migrations::new(migrations)
 }

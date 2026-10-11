@@ -93,9 +93,12 @@ export interface StorageSettingsLimits {
 export interface SaveAppSettingsInput {
   settings: AppSettings;
   credentials?: SettingsCredentialDrafts;
+  /** False for ordinary autosaves; true only after reviewing a storage-policy change. */
+  applyStorageCleanup?: boolean;
 }
 
 export interface SettingsCredentialDrafts {
+  modelKeys?: Record<string, string>;
   recallEmbeddingKey?: string | null;
   recallGenerationKey?: string | null;
   transcriptionKey?: string | null;

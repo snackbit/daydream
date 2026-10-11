@@ -2,108 +2,10 @@ use super::super::super::*;
 use super::image::decode_png_rgba;
 use super::types::*;
 
-pub(super) fn vision_provider_ready(app_settings: &settings::AppSettings) -> bool {
-    app_settings.ai.vision.observations_enabled && settings::vision_ready(&app_settings.ai.vision)
-}
-
-pub(in crate::ai) fn vision_request_config(
-    storage: &AppStorage,
-    app_settings: &settings::AppSettings,
-) -> Result<VisionRequestConfig, AiError> {
-    let base_url = app_settings
-        .ai
-        .vision
-        .base_url
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            ai_error(
-                "ai_vision_remote_unconfigured",
-                "Vision base URL is not configured.",
-            )
-        })?
-        .trim()
-        .to_string();
-    let model = app_settings
-        .ai
-        .vision
-        .model
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            ai_error(
-                "ai_vision_remote_unconfigured",
-                "Vision model is not configured.",
-            )
-        })?
-        .trim()
-        .to_string();
-    let api_key = if app_settings.ai.vision.auth_mode == "none" {
-        String::new()
-    } else {
-        let secret_ref = app_settings
-            .ai
-            .vision
-            .api_key_ref
-            .as_deref()
-            .ok_or_else(|| {
-                ai_error(
-                    "ai_vision_remote_unconfigured",
-                    "Vision API key is not configured.",
-                )
-            })?;
-        let envelope = storage
-            .with_connection(|connection| storage::get_app_setting(connection, secret_ref))
-            .map_err(storage_error)?
-            .ok_or_else(|| {
-                ai_error(
-                    "ai_vision_remote_unconfigured",
-                    "Vision API key is not configured.",
-                )
-            })?
-            .value_json;
-        secret_crypto::decrypt_sensitive_setting_with_platform_key(&envelope).map_err(|_| {
-            ai_error(
-                "ai_vision_remote_credential_unavailable",
-                "The saved vision credential could not be opened.",
-            )
-        })?
-    };
-    Ok(VisionRequestConfig {
-        api_key,
-        base_url,
-        model,
-        provider: "openai-compatible".to_string(),
-    })
-}
-
-pub(in crate::ai) fn verify_current_vision_configuration(
-    storage: &AppStorage,
-    pinned: &VisionRequestConfig,
-    ocr: bool,
-) -> Result<(), AiError> {
-    let current = settings::load_app_settings(storage).map_err(settings_error)?;
-    if current.ai.vision.provider != "openai-compatible"
-        || (ocr && (!current.ai.ocr.enabled || current.ai.ocr.engine != "vision"))
-        || (!ocr && !current.ai.vision.observations_enabled)
-    {
-        return Err(ai_error(
-            "ai_vision_configuration_changed",
-            "Remote vision is no longer enabled for this source.",
-        ));
-    }
-    let current = vision_request_config(storage, &current)?;
-    if current.base_url != pinned.base_url
-        || current.model != pinned.model
-        || current.api_key != pinned.api_key
-    {
-        return Err(ai_error(
-            "ai_vision_configuration_changed",
-            "Vision configuration changed. Retry with current settings.",
-        ));
-    }
-    Ok(())
-}
+pub(super) use super::provider_configuration::vision_provider_ready;
+pub(in crate::ai) use super::provider_configuration::{
+    verify_current_vision_configuration, vision_request_config,
+};
 
 pub(super) async fn request_vlm_observations(
     config: &VisionRequestConfig,
@@ -112,133 +14,174 @@ pub(super) async fn request_vlm_observations(
     previous_observations: &[PreviousVisualObservation],
     cancel: Arc<AtomicBool>,
 ) -> Result<Vec<PendingVlmObservation>, AiError> {
-    let endpoint = vision_chat_completions_url(&config.base_url);
-    let body = vlm_chat_completions_body(config, frame, ocr_regions, previous_observations)?;
-    let request_bytes = serde_json::to_vec(&body)
-        .map(|bytes| bytes.len())
-        .unwrap_or(0);
-
-    tracing::info!(
-        frame_timestamp_ms = frame.frame_timestamp_ms,
-        source_frame_ref = %frame.source_frame_ref,
-        provider = %config.provider,
-        model = %config.model,
-        endpoint = %endpoint,
-        ocr_candidate_count = ocr_regions.len(),
-        previous_observation_count = previous_observations.len(),
-        request_bytes,
-        "ai_vlm_request_started"
-    );
-    let started = Instant::now();
-    let request = crate::provider_http::client()
-        .post(endpoint)
-        .timeout(VLM_TIMEOUT)
-        .json(&body);
-    let request = if config.api_key.is_empty() {
-        request
-    } else {
-        request.header(AUTHORIZATION, format!("Bearer {}", config.api_key))
-    };
-    let response =
-        super::super::ocr_documents::vision::await_cancelled(request.send(), cancel.clone())
-            .await?
-            .map_err(|error| {
-                if error.is_timeout() {
-                    tracing::warn!(
-                        frame_timestamp_ms = frame.frame_timestamp_ms,
-                        source_frame_ref = %frame.source_frame_ref,
-                        elapsed_ms = elapsed_ms(started),
-                        "ai_vlm_request_timeout"
-                    );
-                    ai_error("ai_vision_remote_timeout", "Vision provider timed out.")
-                } else {
-                    tracing::warn!(
-                        frame_timestamp_ms = frame.frame_timestamp_ms,
-                        source_frame_ref = %frame.source_frame_ref,
-                        elapsed_ms = elapsed_ms(started),
-                        "ai_vlm_request_failed"
-                    );
-                    ai_error(
-                        "ai_vision_remote_request_failed",
-                        "Vision provider request failed.",
-                    )
-                }
+    let mut http_diagnostics = crate::provider_http::HttpDiagnostics::new("vision_observations");
+    let result: Result<_, AiError> = async {
+        let endpoint = vision_chat_completions_url(&config.base_url);
+        let body = vlm_chat_completions_body(config, frame, ocr_regions, previous_observations)?;
+        if config.route.is_some() {
+            let response = crate::model_registry::transport::authenticated_completion(
+                config.storage.as_ref(),
+                &config.base_url,
+                (!config.api_key.is_empty()).then_some(config.api_key.as_str()),
+                config.route.as_ref(),
+                body,
+                1_000_000,
+                &cancel,
+            )
+            .await
+            .map_err(|code| {
+                ai_error(
+                    &crate::model_registry::transport::feature_error(&code, "ai_vision_remote"),
+                    crate::model_registry::commands::friendly(&code),
+                )
             })?;
-    let status = response.status();
-    if !status.is_success() {
-        tracing::warn!(
+            http_diagnostics.stage("output_validation");
+            let response: VlmChatCompletionResponse =
+                serde_json::from_value(response).map_err(|_| {
+                    ai_error(
+                        "ai_vision_remote_response_invalid",
+                        "The provider returned an invalid response.",
+                    )
+                })?;
+            return validate_vlm_observation_text(vlm_chat_completion_text(&response)?, frame);
+        }
+        let request_bytes = serde_json::to_vec(&body)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+
+        tracing::info!(
             frame_timestamp_ms = frame.frame_timestamp_ms,
             source_frame_ref = %frame.source_frame_ref,
-            http_status = %status,
-            elapsed_ms = elapsed_ms(started),
-            "ai_vlm_response_status_failed"
+            provider = %config.provider,
+            ocr_candidate_count = ocr_regions.len(),
+            previous_observation_count = previous_observations.len(),
+            request_bytes,
+            "ai_vlm_request_started"
         );
-        return Err(AiError {
-            code: format!(
-                "ai_vision_remote_{}",
-                crate::provider_http::status_code(status)
-            ),
-            message: format!("Vision provider failed with HTTP status {status}."),
-        });
-    }
-    let response_body: VlmChatCompletionResponse =
-        super::super::ocr_documents::vision::await_cancelled(response.json(), cancel)
-            .await?
-            .map_err(|_error| {
+        let started = Instant::now();
+        let request = crate::provider_http::client()
+            .post(endpoint)
+            .timeout(VLM_TIMEOUT)
+            .json(&body);
+        let request = if config.api_key.is_empty() {
+            request
+        } else {
+            request.header(AUTHORIZATION, format!("Bearer {}", config.api_key))
+        };
+        http_diagnostics.stage("http_request");
+        let response =
+            super::super::ocr_documents::vision::await_cancelled(request.send(), cancel.clone())
+                .await?
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        tracing::warn!(
+                            frame_timestamp_ms = frame.frame_timestamp_ms,
+                            source_frame_ref = %frame.source_frame_ref,
+                            elapsed_ms = elapsed_ms(started),
+                            "ai_vlm_request_timeout"
+                        );
+                        ai_error("ai_vision_remote_timeout", "Vision provider timed out.")
+                    } else {
+                        tracing::warn!(
+                            frame_timestamp_ms = frame.frame_timestamp_ms,
+                            source_frame_ref = %frame.source_frame_ref,
+                            elapsed_ms = elapsed_ms(started),
+                            "ai_vlm_request_failed"
+                        );
+                        ai_error(
+                            "ai_vision_remote_request_failed",
+                            "Vision provider request failed.",
+                        )
+                    }
+                })?;
+        let status = response.status();
+        http_diagnostics.response(
+            status.as_u16(),
+            response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+        );
+        if !status.is_success() {
+            tracing::warn!(
+                frame_timestamp_ms = frame.frame_timestamp_ms,
+                source_frame_ref = %frame.source_frame_ref,
+                http_status = %status,
+                elapsed_ms = elapsed_ms(started),
+                "ai_vlm_response_status_failed"
+            );
+            return Err(AiError {
+                code: format!(
+                    "ai_vision_remote_{}",
+                    crate::provider_http::status_code(status)
+                ),
+                message: format!("Vision provider failed with HTTP status {status}."),
+            });
+        }
+        http_diagnostics.stage("http_json");
+        let response_body: VlmChatCompletionResponse =
+            super::super::ocr_documents::vision::await_cancelled(response.json(), cancel)
+                .await?
+                .map_err(|_error| {
+                    tracing::warn!(
+                        frame_timestamp_ms = frame.frame_timestamp_ms,
+                        source_frame_ref = %frame.source_frame_ref,
+                        http_status = %status,
+                        elapsed_ms = elapsed_ms(started),
+                        "ai_vlm_response_json_invalid"
+                    );
+                    ai_error(
+                        "ai_vision_remote_response_invalid",
+                        "Vision provider response was not valid JSON.",
+                    )
+                })?;
+        http_diagnostics.stage("output_validation");
+        let choice_count = response_body.choices.len();
+        let content = match vlm_chat_completion_text(&response_body) {
+            Ok(content) => content,
+            Err(error) => {
                 tracing::warn!(
                     frame_timestamp_ms = frame.frame_timestamp_ms,
                     source_frame_ref = %frame.source_frame_ref,
                     http_status = %status,
+                    choice_count,
+                    error_code = %error.code,
                     elapsed_ms = elapsed_ms(started),
-                    "ai_vlm_response_json_invalid"
+                    "ai_vlm_response_text_missing"
                 );
-                ai_error(
-                    "ai_vision_remote_response_invalid",
-                    "Vision provider response was not valid JSON.",
-                )
-            })?;
-    let choice_count = response_body.choices.len();
-    let content = match vlm_chat_completion_text(&response_body) {
-        Ok(content) => content,
-        Err(error) => {
-            tracing::warn!(
-                frame_timestamp_ms = frame.frame_timestamp_ms,
-                source_frame_ref = %frame.source_frame_ref,
-                http_status = %status,
-                choice_count,
-                error_code = %error.code,
-                elapsed_ms = elapsed_ms(started),
-                "ai_vlm_response_text_missing"
-            );
-            return Err(error);
-        }
-    };
-    let observations = match validate_vlm_observation_text(content, frame) {
-        Ok(observations) => observations,
-        Err(error) => {
-            tracing::warn!(
-                frame_timestamp_ms = frame.frame_timestamp_ms,
-                source_frame_ref = %frame.source_frame_ref,
-                http_status = %status,
-                choice_count,
-                content_char_count = content.chars().count(),
-                error_code = %error.code,
-                elapsed_ms = elapsed_ms(started),
-                "ai_vlm_observation_payload_invalid"
-            );
-            return Err(error);
-        }
-    };
-    tracing::info!(
-        frame_timestamp_ms = frame.frame_timestamp_ms,
-        source_frame_ref = %frame.source_frame_ref,
-        http_status = %status,
-        choice_count,
-        observation_count = observations.len(),
-        elapsed_ms = elapsed_ms(started),
-        "ai_vlm_request_completed"
-    );
-    Ok(observations)
+                return Err(error);
+            }
+        };
+        let observations = match validate_vlm_observation_text(content, frame) {
+            Ok(observations) => observations,
+            Err(error) => {
+                tracing::warn!(
+                    frame_timestamp_ms = frame.frame_timestamp_ms,
+                    source_frame_ref = %frame.source_frame_ref,
+                    http_status = %status,
+                    choice_count,
+                    content_char_count = content.chars().count(),
+                    error_code = %error.code,
+                    elapsed_ms = elapsed_ms(started),
+                    "ai_vlm_observation_payload_invalid"
+                );
+                return Err(error);
+            }
+        };
+        tracing::info!(
+            frame_timestamp_ms = frame.frame_timestamp_ms,
+            source_frame_ref = %frame.source_frame_ref,
+            http_status = %status,
+            choice_count,
+            observation_count = observations.len(),
+            elapsed_ms = elapsed_ms(started),
+            "ai_vlm_request_completed"
+        );
+        Ok(observations)
+    }
+    .await;
+    http_diagnostics.finish(result.as_ref().err().map(|error| error.code.as_str()));
+    result
 }
 
 pub(in crate::ai) fn vlm_chat_completions_body(

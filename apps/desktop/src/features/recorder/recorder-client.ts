@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type {
   AudioSourceList,
   CaptureSourceList,
@@ -21,6 +19,9 @@ import type {
   RecordingSaved,
   RecorderPreviewDemand,
 } from '@daydream/shared';
+import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
+import { invoke } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 
 export const recorderStatusChangedEvent = 'recorder-status-changed';
 export const recorderPreviewFrameEvent = 'recorder-preview-frame';
@@ -46,6 +47,13 @@ export async function listenToRecordingSaved(
       value.savedAtMs >= 0
     )
       handler({ recordingId: value.recordingId, savedAtMs: value.savedAtMs });
+    else
+      reportFrontendFailure(
+        'recording-saved',
+        'decode',
+        new Error('Invalid recording event'),
+        { deduplicate: false },
+      );
   });
 }
 
