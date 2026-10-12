@@ -37,7 +37,8 @@ mod tests {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
         crate::storage::schema::enable_connection_pragmas(&db).unwrap();
         let migrations = crate::storage::schema::migrations::migrations();
-        let previous = usize::try_from(migrations.pending_migrations(&db).unwrap() - 1).unwrap();
+        // Version 33 predates this migration, regardless of later additions.
+        let previous = 33;
         migrations.to_version(&mut db, previous).unwrap();
         let f = crate::storage::recall::tests::seed_recall_fixture(&db);
         crate::storage::refresh_evidence(&db).unwrap();

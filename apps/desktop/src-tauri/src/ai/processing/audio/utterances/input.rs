@@ -14,6 +14,7 @@ pub(super) struct SourceRun {
     pub start: i64,
     pub end: i64,
     pub open: bool,
+    pub cleanup: Option<std::sync::Arc<crate::library::audio_cleanup::CleanupManifest>>,
 }
 impl SourceRun {
     pub(super) fn window(&self, start: i64, end: i64) -> Self {
@@ -27,6 +28,7 @@ impl SourceRun {
             start,
             end,
             open: false,
+            cleanup: self.cleanup.clone(),
         }
     }
 }
@@ -38,6 +40,16 @@ pub(super) fn source_runs(
 ) -> Result<Vec<SourceRun>, AiError> {
     storage
         .with_connection(|connection| {
+            let cleanup = if track.kind == "microphone" {
+                crate::library::audio_cleanup::pinned_manifest(
+                    connection,
+                    &chunk.job_id,
+                    &chunk.recording_id,
+                )?
+                .map(std::sync::Arc::new)
+            } else {
+                None
+            };
             let segments = storage::list_recording_segments(connection, &chunk.recording_id)?;
             let bases = storage::segment_playback_bases(&segments);
             let redactions = storage::list_redactions(connection, &chunk.recording_id)?;
@@ -141,6 +153,7 @@ pub(super) fn source_runs(
                     end: part.end,
                     parts: vec![part],
                     open: false,
+                    cleanup: cleanup.clone(),
                 });
             }
             if let Some(run) = runs.last_mut() {
@@ -181,14 +194,31 @@ pub(super) fn extract_window(
         }
         check_atomic_cancel(cancel)?;
         let temp = TempAudioFile::new(path.with_extension(format!("part-{index}.wav")));
-        extract_audio_stream(
-            &part.segment.file_path,
-            part.stream,
-            from - part.base,
-            to - from,
-            temp.path(),
-            cancel,
-        )?;
+        if let Some(cleanup) = &run.cleanup {
+            crate::library::audio_cleanup::media::extract_cleaned_window(
+                cleanup,
+                &part.segment,
+                from - part.base,
+                to - from,
+                temp.path(),
+                cancel,
+            )
+            .map_err(|_| {
+                ai_error(
+                    "ai_processing_audio_cleanup_unavailable",
+                    "Cleaned audio is unavailable. Retry cleanup before transcription.",
+                )
+            })?;
+        } else {
+            extract_audio_stream(
+                &part.segment.file_path,
+                part.stream,
+                from - part.base,
+                to - from,
+                temp.path(),
+                cancel,
+            )?;
+        }
         let mut extracted = whisper_backend::vad::read_detection_samples(temp.path())
             .map_err(whisper_backend_error)?;
         let count = (to - from) as usize * 16;

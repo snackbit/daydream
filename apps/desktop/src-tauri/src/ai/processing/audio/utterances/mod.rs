@@ -26,6 +26,10 @@ pub(super) async fn process(
     let input = load_audio_chunk_input(app, chunk)?;
     let track = input.track;
     let runs = source_runs(&storage, chunk, &track)?;
+    let audio_revision = runs
+        .first()
+        .and_then(|run| run.cleanup.as_ref())
+        .map_or("original", |cleanup| cleanup.revision.as_str());
     publication::prune_ineligible_units(&storage, chunk, &track, &runs)?;
     let mut model_path = app
         .path()
@@ -56,6 +60,7 @@ pub(super) async fn process(
             config.as_slice(),
             whisper_backend::vad::MODEL_SHA256.as_bytes(),
             b"speech-units-v2",
+            audio_revision.as_bytes(),
         ]
         .concat(),
     ));

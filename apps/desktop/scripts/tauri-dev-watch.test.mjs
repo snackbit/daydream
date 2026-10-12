@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
   chmod,
@@ -19,6 +19,59 @@ const require = createRequire(import.meta.url);
 const cli = path.join(
   path.dirname(require.resolve('@tauri-apps/cli')),
   'tauri.js',
+);
+
+test(
+  'dev checks echo-cancellation tools before launching Tauri',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'daydream-dev-prerequisites-'),
+    );
+    try {
+      for (const tool of ['meson', 'ninja', 'yarn']) {
+        const executable = path.join(directory, tool);
+        await writeFile(
+          executable,
+          tool === 'yarn'
+            ? '#!/bin/sh\necho synthetic-tauri-started\n'
+            : '#!/bin/sh\nexit 0\n',
+        );
+        await chmod(executable, 0o755);
+      }
+      const run = () =>
+        spawnSync(
+          process.execPath,
+          [new URL('./tauri-dev.mjs', import.meta.url).pathname],
+          {
+            env: {
+              ...process.env,
+              PATH: directory,
+              DAYDREAM_TAURI_FEATURES: '',
+            },
+            encoding: 'utf8',
+          },
+        );
+      const ready = run();
+      assert.equal(ready.status, 0, ready.stderr);
+      assert.match(ready.stdout, /synthetic-tauri-started/);
+      for (const missing of ['meson', 'ninja']) {
+        const executable = path.join(directory, missing);
+        await chmod(executable, 0o644);
+        const failed = run();
+        assert.equal(failed.status, 1);
+        assert.match(
+          failed.stderr,
+          new RegExp(`Missing native build tools: ${missing}`),
+        );
+        assert.match(failed.stderr, /README.md.*rerun yarn dev/);
+        assert.doesNotMatch(failed.stdout, /synthetic-tauri-started/);
+        await chmod(executable, 0o755);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
 );
 
 for (const ignoreGenerated of [false, true]) {

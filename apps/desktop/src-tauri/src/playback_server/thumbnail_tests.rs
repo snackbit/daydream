@@ -76,6 +76,7 @@ fn sparse_video_thumbnails_hold_the_current_frame_through_audio_tail_without_loo
     let path = directory.join("synthetic.mkv");
     sparse_media(&path);
     let segment = PlaybackSegment {
+        microphone_fragments: vec![],
         fragments: vec![],
         duration_ms: 10_000,
         video_streams: vec![],

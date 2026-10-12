@@ -11,7 +11,7 @@ export function LibraryScreen() {
         description="A place to return to the work you left behind."
       />
       <Tabs defaultValue="days">
-        <TabsList>
+        <TabsList aria-label="Library views">
           <TabsTrigger value="days">Days</TabsTrigger>
           <TabsTrigger value="recordings">Recordings</TabsTrigger>
         </TabsList>

@@ -37,7 +37,7 @@ export function ActivityIntervalSpan({
   );
 
   const accessibleName = `${lane.label} activity, ${interval.state}, ${formatDuration(startMs)} to ${formatDuration(endMs)}`;
-  const tooltipLabel = `${lane.description} · ${interval.state} · ${formatDuration(startMs)}–${formatDuration(endMs)} · score ${interval.score ?? 'unavailable'}`;
+  const tooltipLabel = `${formatDuration(startMs)}–${formatDuration(endMs)}`;
 
   function handleInspect() {
     onInspect(interval);

@@ -34,6 +34,7 @@ pub(super) fn detail_from_rows(
     let library_redactions = library_redactions(redactions, &tracks);
 
     LibraryRecordingDetail {
+        audio_cleanup: None,
         availability: summary.availability,
         duration_ms: summary.duration_ms,
         ended_at_ms: summary.ended_at_ms,
@@ -77,6 +78,7 @@ pub(super) fn detail_for_recording(
     }
     detail.tracks = source_tracks(&segments, &mappings);
     detail.redactions = library_redactions(&redactions, &detail.tracks);
+    detail.audio_cleanup = Some(audio_cleanup::read_state(storage, recording_id)?);
     Ok(detail)
 }
 

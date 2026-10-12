@@ -63,3 +63,22 @@ export function validateStudioSearch(
   }
   return { evidenceId, source: source(input.source), seek };
 }
+
+export function validateDayStudioSearch(
+  input: SearchSchemaInput & {
+    recordingId?: unknown;
+    evidenceId?: unknown;
+    source?: unknown;
+    seek?: unknown;
+  },
+) {
+  const recordingId = input.recordingId ?? null;
+  if (
+    recordingId !== null &&
+    (typeof recordingId !== 'string' ||
+      recordingId.length === 0 ||
+      recordingId.length > 256)
+  )
+    throw new Error('Recording link is invalid.');
+  return { ...validateStudioSearch(input), recordingId };
+}

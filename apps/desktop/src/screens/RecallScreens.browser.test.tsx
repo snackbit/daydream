@@ -10,6 +10,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { DayReviewPanel as DayScreen } from '@/features/recall/day/day-review-panel';
 import type { RecallSearchLocation } from '@/features/recall/search/search-controls';
 import {
   recallDayFixture,
@@ -18,7 +19,6 @@ import {
   recallStatusFixture,
 } from '@/features/recall/testing/recall-browser-fixtures';
 import '../index.css';
-import { DayScreen } from './DayScreen';
 import { SearchScreen } from './SearchScreen';
 
 const native = vi.hoisted(() => ({
@@ -129,7 +129,7 @@ afterEach(() => {
   delete document.documentElement.dataset.theme;
 });
 
-test('Day opens short recordings without summaries, sessions or feedback setup', async () => {
+test('Day sidebar retains coverage without summaries, sessions or feedback setup', async () => {
   savedDay = {
     ...savedDay,
     day: {
@@ -164,13 +164,8 @@ test('Day opens short recordings without summaries, sessions or feedback setup',
     throw new Error('Unexpected synthetic command');
   });
   render(<DayScreen date="2026-10-05" />);
-  await screen.findByRole('heading', { name: 'Recordings' });
-  await screen.findByText(/8 seconds/);
-  await screen.findByText(/9 seconds/);
-  expect(screen.getByText('17 seconds')).toBeVisible();
-  expect(screen.getAllByRole('link', { name: 'Open recording' })).toHaveLength(
-    2,
-  );
+  await screen.findByText('17 seconds');
+  expect(screen.queryByRole('link', { name: 'Open recording' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Save feedback' })).toBeNull();
   expect(
     screen.queryByRole('heading', { name: 'Text and transcripts' }),

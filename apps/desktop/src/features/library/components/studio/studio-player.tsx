@@ -1,4 +1,3 @@
-import { useCallback } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -10,7 +9,6 @@ import {
   Pause,
   Play,
   RefreshCw,
-  SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
@@ -18,8 +16,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { formatDuration, formatTimestamp } from '../../library-format';
-import { PlaybackAudio } from './playback/playback-audio';
+import { PlaybackMediaGroup } from './playback/playback-media-group';
 import { PlaybackSpeedControl } from './playback/playback-speed-control';
+import { SeekTenIcon } from './playback/seek-ten-icon';
 import { SegmentScrubber } from './segment-scrubber';
 import type { RecordingPlaybackController } from './use-recording-playback-controller';
 
@@ -28,20 +27,19 @@ export function StudioPlayer({
   onRefreshPlayback,
   playback,
   playbackAssets,
+  grid = false,
+  sourceLabels,
+  sourceLabel,
 }: {
   detail: LibraryRecordingDetail;
   onRefreshPlayback: () => void;
   playback: RecordingPlaybackController;
   playbackAssets: LibraryPlaybackAssets | null;
+  grid?: boolean;
+  sourceLabels?: ReadonlyMap<string, string> | undefined;
+  sourceLabel?: string | undefined;
 }) {
   const { actions, state } = playback;
-  const { setVideoElement } = actions;
-  const attachVideo = useCallback(
-    (element: HTMLVideoElement | null) => {
-      setVideoElement(element);
-    },
-    [setVideoElement],
-  );
   function handleRetryPlayback() {
     actions.seekTimeline(state.displayedTimelineMs, { resume: true });
   }
@@ -85,7 +83,10 @@ export function StudioPlayer({
     );
   }
 
-  if (!playbackAssets) {
+  if (
+    !playbackAssets ||
+    (!state.currentPlaybackSegment && !playbackAssets.error)
+  ) {
     return (
       <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <div className="text-foreground text-sm font-medium">
@@ -109,6 +110,13 @@ export function StudioPlayer({
   }
 
   const currentPlaybackSegment = state.currentPlaybackSegment;
+  if (currentPlaybackSegment && !currentPlaybackSegment.videoUrl)
+    return (
+      <div className="bg-muted flex h-full items-center justify-center p-6 text-center text-sm">
+        This monitor was not recorded in this segment. Choose another source or
+        All monitors.
+      </div>
+    );
   if (playbackAssets.error || !currentPlaybackSegment) {
     return (
       <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -137,6 +145,20 @@ export function StudioPlayer({
 
   const nextSegmentIndex =
     state.playableSegments.indexOf(state.currentSegment) + 1;
+  const nextSegment = state.playableSegments[nextSegmentIndex];
+  const nextAsset = playbackAssets.segments.find(
+    (asset) => asset.segmentId === nextSegment?.id,
+  );
+  const currentStart =
+    (state.currentSegment.mediaStartMs ?? 0) + state.streamStartMs;
+  function rewind() {
+    actions.seekTimeline(Math.max(0, state.displayedTimelineMs - 10_000));
+  }
+  function forward() {
+    actions.seekTimeline(
+      Math.min(state.totalDurationMs, state.displayedTimelineMs + 10_000),
+    );
+  }
 
   return (
     <div className="bg-background text-foreground flex h-full min-h-0 flex-col">
@@ -144,74 +166,86 @@ export function StudioPlayer({
         ref={(element) => actions.setFullscreenElement(element)}
         className="relative min-h-0 flex-1 bg-black text-white"
       >
-        <video
-          key={`${currentPlaybackSegment.segmentId}-${state.streamStartMs}-${state.streamRevision}-video`}
-          ref={attachVideo}
-          className="h-full w-full object-contain"
-          preload="metadata"
-          src={streamUrl(
-            currentPlaybackSegment.videoUrl,
-            state.streamStartMs,
-            state.streamRevision,
-          )}
-          onPause={actions.handleVideoPause}
-          onPlay={actions.handleVideoPlay}
-          onTimeUpdate={(event) =>
-            actions.handleVideoTimeUpdate(event.currentTarget)
-          }
-          onCanPlay={actions.handleVideoCanPlay}
-          onSeeked={actions.handleVideoCanPlay}
-          onWaiting={actions.handleBuffering}
-          onStalled={actions.handleBuffering}
-          onEnded={actions.handleEnded}
-          onError={actions.handleMediaError}
-        />
-        {currentPlaybackSegment.audio.map((audio) => (
-          <PlaybackAudio
-            key={`${currentPlaybackSegment.segmentId}-${audio.trackId}-${state.streamStartMs}-${state.streamRevision}`}
-            audio={audio}
-            actions={actions}
-            src={streamUrl(
-              audio.url,
-              state.streamStartMs,
-              state.streamRevision,
-            )}
-          />
-        ))}
-        {state.redactedVideoActive ? (
-          <div
-            aria-label="Redacted video"
-            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-neutral-700 text-sm font-medium text-white"
-            role="group"
+        <div className="h-full min-h-0">
+          <PlaybackMediaGroup
+            key={`${currentPlaybackSegment.segmentId}-${currentStart}-${state.streamRevision}`}
+            active
+            asset={currentPlaybackSegment}
+            startMs={currentStart}
+            revision={state.streamRevision}
+            playback={playback}
+            label={sourceLabel}
+            grid={grid && (currentPlaybackSegment.videos?.length ?? 0) > 1}
+            detail={detail}
+            labels={sourceLabels}
+            timelineOffsetMs={state.currentSegment.playbackOffsetMs}
+            streamOffsetMs={state.streamStartMs}
           >
-            <div>Redacted</div>
-            {state.redactionCountdownSeconds !== null ? (
-              <div role="status">
-                Skipping in {state.redactionCountdownSeconds}{' '}
-                {state.redactionCountdownSeconds === 1 ? 'second' : 'seconds'}
+            {state.redactedVideoActive ? (
+              <div
+                aria-label="Redacted video"
+                className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-neutral-700 text-sm font-medium text-white"
+                role="group"
+              >
+                <div>Redacted</div>
+                {state.redactionCountdownSeconds !== null ? (
+                  <div role="status">
+                    Skipping in {state.redactionCountdownSeconds}{' '}
+                    {state.redactionCountdownSeconds === 1
+                      ? 'second'
+                      : 'seconds'}
+                  </div>
+                ) : null}
+                {state.redactionSkipTargetMs !== null ? (
+                  <Button
+                    className="gap-2"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => actions.skipToNextUnredactedVideo()}
+                  >
+                    <SkipForward className="size-3.5" />
+                    Skip redacted part
+                  </Button>
+                ) : null}
               </div>
             ) : null}
-            {state.redactionSkipTargetMs !== null ? (
-              <Button
-                className="gap-2"
-                size="sm"
-                variant="secondary"
-                onClick={() => actions.skipToNextUnredactedVideo()}
-              >
-                <SkipForward className="size-3.5" />
-                Skip redacted part
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
+          </PlaybackMediaGroup>
+          {nextAsset && nextSegment ? (
+            <PlaybackMediaGroup
+              key={`${nextAsset.segmentId}-${nextSegment.mediaStartMs ?? 0}-${state.streamRevision + 1}`}
+              active={false}
+              asset={nextAsset}
+              startMs={nextSegment.mediaStartMs ?? 0}
+              revision={state.streamRevision + 1}
+              playback={playback}
+              grid={grid && (nextAsset.videos?.length ?? 0) > 1}
+              detail={detail}
+              labels={sourceLabels}
+              timelineOffsetMs={nextSegment.playbackOffsetMs}
+              streamOffsetMs={0}
+            />
+          ) : null}
+        </div>
         {state.resumeProgress !== null ? (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70">
             <div className="w-80 max-w-[80%] text-center">
               <div className="text-sm font-medium">
-                Recording paused. Resuming at{' '}
+                Not recorded. Next recording at{' '}
                 {formatTimestamp(
                   state.playableSegments[nextSegmentIndex]?.startedAtMs ?? null,
                 )}
+              </div>
+              <div role="status" className="mt-2 text-sm">
+                Skipping in{' '}
+                {Math.max(
+                  1,
+                  Math.ceil(
+                    ((1 - state.resumeProgress) *
+                      Math.min(3000, state.currentSegment.pauseAfterMs)) /
+                      1000,
+                  ),
+                )}{' '}
+                seconds
               </div>
               <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/20">
                 <div
@@ -270,20 +304,15 @@ export function StudioPlayer({
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              aria-label="Skip back"
+              aria-label="Rewind 10 seconds"
               size="icon"
               variant="ghost"
-              onClick={() =>
-                actions.seekTimeline(
-                  Math.max(0, state.displayedTimelineMs - 10_000),
-                )
-              }
+              onClick={rewind}
             >
-              <SkipBack className="size-4" />
+              <SeekTenIcon direction="back" />
             </Button>
             <Button
               aria-label={state.playRequested ? 'Pause' : 'Play'}
-              disabled={state.resumeProgress !== null}
               size="icon"
               variant="secondary"
               onClick={() => void actions.togglePlayback()}
@@ -295,19 +324,12 @@ export function StudioPlayer({
               )}
             </Button>
             <Button
-              aria-label="Skip forward"
+              aria-label="Forward 10 seconds"
               size="icon"
               variant="ghost"
-              onClick={() =>
-                actions.seekTimeline(
-                  Math.min(
-                    state.totalDurationMs,
-                    state.displayedTimelineMs + 10_000,
-                  ),
-                )
-              }
+              onClick={forward}
             >
-              <SkipForward className="size-4" />
+              <SeekTenIcon direction="forward" />
             </Button>
             <span className="ml-2 text-xs tabular-nums">
               {formatDuration(state.displayedTimelineMs)} /{' '}
@@ -334,7 +356,7 @@ export function StudioPlayer({
             </Button>
             <Slider
               aria-label="Volume"
-              className="w-24"
+              className="w-16"
               max={1}
               min={0}
               step={0.05}
@@ -354,13 +376,4 @@ export function StudioPlayer({
       </div>
     </div>
   );
-}
-
-function streamUrl(url: string, startMs: number, revision: number): string {
-  const separator = url.includes('?') ? '&' : '?';
-
-  return `${url}${separator}startMs=${Math.max(
-    0,
-    Math.floor(startMs),
-  )}&request=${Math.max(0, Math.floor(revision))}`;
 }

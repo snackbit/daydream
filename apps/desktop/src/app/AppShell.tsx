@@ -45,7 +45,7 @@ export function AppShell() {
   const contextLabel = pathname.startsWith('/library/')
     ? 'Studio'
     : pathname.startsWith('/day/')
-      ? 'Day review'
+      ? 'Studio'
       : pathname === '/notifications'
         ? 'Notifications'
         : (context?.label ?? 'Library');

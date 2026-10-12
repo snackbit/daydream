@@ -116,7 +116,7 @@ export function RecordingStudioLayout({
     <ResizablePanelGroup className="min-h-0 flex-1" orientation="horizontal">
       <ResizablePanel defaultSize="68%" minSize="45%">
         <ResizablePanelGroup orientation="vertical">
-          <ResizablePanel defaultSize="60%" minSize={260}>
+          <ResizablePanel defaultSize="60%" minSize={320}>
             <div className="rounded-workspace h-full overflow-hidden">
               {player}
             </div>
@@ -125,7 +125,7 @@ export function RecordingStudioLayout({
             className="w-6 bg-transparent aria-[orientation=horizontal]:h-6"
             withHandle
           />
-          <ResizablePanel defaultSize="40%" minSize={240}>
+          <ResizablePanel defaultSize="40%" minSize={180}>
             <div className="rounded-panel h-full overflow-hidden border">
               {timeline}
             </div>

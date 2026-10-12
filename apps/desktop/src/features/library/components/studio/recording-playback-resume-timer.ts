@@ -15,6 +15,7 @@ export function usePlaybackResumeTimer({
     elapsed: number;
     sampledAt: number;
     rate: number;
+    paused: boolean;
     complete: () => void;
   } | null>(null);
 
@@ -35,13 +36,15 @@ export function usePlaybackResumeTimer({
         elapsed: 0,
         sampledAt: performance.now(),
         rate: playbackRate,
+        paused: false,
         complete: onComplete,
       };
       resumeTimerRef.current = window.setInterval(() => {
         const active = gap.current;
         if (!active) return;
         const now = performance.now();
-        active.elapsed += (now - active.sampledAt) * active.rate;
+        if (!active.paused)
+          active.elapsed += (now - active.sampledAt) * active.rate;
         active.sampledAt = now;
         const progress = Math.min(1, active.elapsed / active.duration);
         setResumeProgress(progress);
@@ -58,7 +61,8 @@ export function usePlaybackResumeTimer({
     const active = gap.current;
     if (!active) return;
     const now = performance.now();
-    active.elapsed += (now - active.sampledAt) * active.rate;
+    if (!active.paused)
+      active.elapsed += (now - active.sampledAt) * active.rate;
     active.sampledAt = now;
     active.rate = playbackRate;
   });
@@ -67,8 +71,19 @@ export function usePlaybackResumeTimer({
   }, [playbackRate]);
 
   useEffect(() => clearResumeTimer, [clearResumeTimer]);
+  const setResumeTimerPaused = useCallback((paused: boolean) => {
+    const active = gap.current;
+    if (active) {
+      const now = performance.now();
+      if (!active.paused)
+        active.elapsed += (now - active.sampledAt) * active.rate;
+      active.sampledAt = now;
+      active.paused = paused;
+    }
+  }, []);
 
   return {
+    setResumeTimerPaused,
     clearResumeTimer,
     startResumeTimer,
   };

@@ -101,8 +101,9 @@ pub use protection_spans::{
 pub use recordings::{
     create_recording, delete_recording, get_latest_recording_id, get_recording,
     is_active_recording_status, is_deletable_recording_status, list_recordings,
-    mark_recording_completed, mark_recording_started, recover_interrupted_recordings,
-    rename_recording, update_recording_status, CreateRecordingInput, RecordingRow,
+    list_recordings_in_range, mark_recording_completed, mark_recording_started,
+    recover_interrupted_recordings, rename_recording, update_recording_status,
+    CreateRecordingInput, RecordingRow,
 };
 pub use redactions::{
     create_redaction, delete_redaction, delete_redactions_for_recording, get_redaction,
@@ -153,6 +154,7 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
     };
     crate::settings::import_model_registry(&storage)
         .map_err(|_| "Model settings import failed; saved settings were not changed.")?;
+    crate::library::audio_cleanup::recover_interrupted(&storage)?;
     Ok(storage)
 }
 

@@ -99,7 +99,7 @@ function regionForTimeline(
 ): TimelineRegion | null {
   return (
     regions.find(
-      (region) => timelineMs >= region.startMs && timelineMs <= region.endMs,
+      (region) => timelineMs >= region.startMs && timelineMs < region.endMs,
     ) ?? null
   );
 }

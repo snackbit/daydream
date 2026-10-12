@@ -163,9 +163,6 @@ test('Library defaults to newest-first Days regardless of review status', async 
     recallDayFixture.day,
   ]);
   render(<LibraryScreen />);
-  expect(
-    screen.getByRole('tab', { name: 'Days' }).getAttribute('aria-selected'),
-  ).toBe('true');
   await screen.findByRole('link', { name: /open day.*october 6/i });
   expect(
     screen.getAllByRole('link', { name: /open day/i })[0],
@@ -173,8 +170,11 @@ test('Library defaults to newest-first Days regardless of review status', async 
   expect(screen.queryByText('Most recent unreviewed day')).toBeNull();
   expect(screen.queryByText(recallDayFixture.day.summary ?? '')).toBeNull();
   expect(screen.getByRole('link', { name: /today/i })).toBeTruthy();
-  await userEvent.click(screen.getByRole('tab', { name: 'Recordings' }));
-  await screen.findByRole('status', { name: 'Library summary' });
+  expect(screen.getByRole('tab', { name: 'Days' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(client.listLibraryRecordings).not.toHaveBeenCalled();
 });
 
 test('Library Days preserves primary links in both themes at desktop and narrow widths', async () => {
@@ -443,6 +443,34 @@ test('LibraryScreen deletes a recording from its visible row action after confir
     }),
   );
   await waitFor(() => expect(screen.queryByText('Ready')).toBeNull());
+});
+
+test('unavailable recordings remain reachable for rename and deletion from Library', async () => {
+  client.listLibraryRecordings.mockResolvedValue([missingRecording]);
+  await renderRecordings();
+  await screen.findByText('Missing files');
+  await userEvent.click(
+    screen.getByRole('button', { name: /rename recording/i }),
+  );
+  await userEvent.fill(screen.getByLabelText('Title'), 'Unavailable capture');
+  await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  await screen.findByText('Unavailable capture');
+  expect(client.renameLibraryRecording).toHaveBeenCalledWith({
+    recordingId: 'recording-missing',
+    title: 'Unavailable capture',
+  });
+  await userEvent.click(
+    await screen.findByRole('button', { name: /delete unavailable capture/i }),
+  );
+  await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+  await waitFor(() =>
+    expect(client.deleteLibraryRecording).toHaveBeenCalledWith({
+      recordingId: 'recording-missing',
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByText('Unavailable capture')).toBeNull(),
+  );
 });
 
 test('LibraryScreen renames and clears a recording from the context menu', async () => {

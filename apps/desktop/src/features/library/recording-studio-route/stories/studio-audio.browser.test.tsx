@@ -684,13 +684,21 @@ test('STU-05 skip buttons clamp both ends while paused and do not autoplay', asy
   const position = await screen.findByRole('slider', {
     name: 'Playback position',
   });
-  await userEvent.click(screen.getByRole('button', { name: 'Skip back' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Rewind 10 seconds' }),
+  );
   expect(position).toHaveAttribute('aria-valuenow', '0');
-  await userEvent.click(screen.getByRole('button', { name: 'Skip forward' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Forward 10 seconds' }),
+  );
   expect(position).toHaveAttribute('aria-valuenow', '10000');
-  await userEvent.click(screen.getByRole('button', { name: 'Skip forward' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Forward 10 seconds' }),
+  );
   expect(position).toHaveAttribute('aria-valuenow', '10000');
-  await userEvent.click(screen.getByRole('button', { name: 'Skip back' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Rewind 10 seconds' }),
+  );
   expect(position).toHaveAttribute('aria-valuenow', '0');
   expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();

@@ -58,10 +58,50 @@ test('desktop audio owns the clock across rollover times and ordinary drift neve
   expect(desktop.element.playbackRate).toBe(2);
   expect(microphone.element.playbackRate).toBeGreaterThan(2);
   expect(video.element.playbackRate).toBeLessThan(2);
+  expect(video.element.defaultPlaybackRate).toBe(2);
   protectedTracks.current.add('desktop-audio-1');
   view.result.current.actions.applyRedactedAudioSettings(
     protectedTracks.current,
   );
   expect(desktop.element.muted).toBe(true);
   expect(microphone.element.muted).toBe(false);
+});
+
+test('new media and monitor followers inherit the selected source-load speed and pause together', () => {
+  const view = renderHook(
+    ({ rate }) =>
+      usePlaybackMediaElements({
+        isMuted: false,
+        mutedTrackIds: new Set<string>(),
+        redactedTrackIdsRef: { current: new Set<string>() },
+        volume: 1,
+        playbackRate: rate,
+      }),
+    { initialProps: { rate: 1 as 1 | 2 } },
+  );
+  const video = document.createElement('video'),
+    follower = document.createElement('video'),
+    audio = document.createElement('audio');
+  view.result.current.actions.setVideoElement(video);
+  view.result.current.actions.registerVideoElement('monitor-2', follower);
+  view.result.current.actions.registerAudioElement('desktop-audio-1', audio);
+  view.rerender({ rate: 2 });
+  for (const media of [video, follower, audio]) {
+    expect(media.playbackRate).toBe(2);
+    expect(media.defaultPlaybackRate).toBe(2);
+  }
+  const replacement = document.createElement('video');
+  view.result.current.actions.setVideoElement(replacement);
+  expect(replacement.defaultPlaybackRate).toBe(2);
+  const pauseVideo = vi
+      .spyOn(replacement, 'pause')
+      .mockImplementation(() => undefined),
+    pauseFollower = vi
+      .spyOn(follower, 'pause')
+      .mockImplementation(() => undefined),
+    pauseAudio = vi.spyOn(audio, 'pause').mockImplementation(() => undefined);
+  view.result.current.actions.pauseMediaElements();
+  expect(pauseVideo).toHaveBeenCalledOnce();
+  expect(pauseFollower).toHaveBeenCalledOnce();
+  expect(pauseAudio).toHaveBeenCalledOnce();
 });

@@ -145,6 +145,7 @@ export function SortableTrackLane({
   waveformTiles,
   visualFrames,
   onReprocess,
+  onAudioCleanup,
 }: Omit<TrackLaneProps, 'dragHandleProps'>) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: track.id });
@@ -187,6 +188,7 @@ export function SortableTrackLane({
         waveformTiles={waveformTiles}
         visualFrames={visualFrames}
         onInspectTranscript={onInspectTranscript}
+        onAudioCleanup={onAudioCleanup}
         onSelectClip={onSelectClip}
         onSelectLane={onSelectLane}
         onSelectRedaction={onSelectRedaction}
@@ -254,9 +256,11 @@ export function SortableActivityTrackLane({
 export function TimeRuler({
   ticks,
   timelineWidthPx,
+  originMs,
 }: {
   ticks: RulerTick[];
   timelineWidthPx: number;
+  originMs?: number | undefined;
 }) {
   return (
     <div
@@ -276,7 +280,12 @@ export function TimeRuler({
         >
           {tick.major ? (
             <div className="text-muted-foreground mt-0.5 ml-1 text-xs tabular-nums">
-              {formatDuration(tick.timeMs)}
+              {originMs === undefined
+                ? formatDuration(tick.timeMs)
+                : new Date(originMs + tick.timeMs).toLocaleTimeString(
+                    undefined,
+                    { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+                  )}
             </div>
           ) : null}
         </div>

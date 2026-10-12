@@ -22,6 +22,7 @@ import type {
   ResizeLibraryRedactionInput,
 } from '@daydream/shared';
 import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { decodeAudioCleanupState } from './components/studio/audio-cleanup/audio-cleanup-client';
 import {
   decodeVideoAssets,
   decodePlaybackRuns,
@@ -70,6 +71,9 @@ export async function getLibraryRecording(
   });
   return decodeResponse('getLibraryRecording', detail, (detail) => ({
     ...detail,
+    ...(detail.audioCleanup === undefined
+      ? {}
+      : { audioCleanup: decodeAudioCleanupState(detail.audioCleanup) }),
     segments: detail.segments.map((segment) => ({
       ...segment,
       ...(segment.videoStreams === undefined

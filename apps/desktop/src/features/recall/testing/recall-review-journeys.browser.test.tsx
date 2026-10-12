@@ -87,7 +87,11 @@ async function open(path = '/day/2026-10-05') {
       </TooltipProvider>,
     );
   });
+  if (path.startsWith('/day/')) await openDayReview();
   return router;
+}
+async function openDayReview() {
+  await userEvent.click(await screen.findByRole('tab', { name: 'Day' }));
 }
 
 test('REC-01 session corrections survive real-route reloads and save recovery', async () => {
@@ -130,10 +134,11 @@ test('REC-01 session corrections survive real-route reloads and save recovery', 
   });
   expect(screen.queryByLabelText('Feedback or correction')).toBeNull();
   await act(async () => router.navigate({ to: '/library' }));
-  await screen.findByRole('tab', { name: 'Days' });
+  await screen.findByRole('link', { name: /today/i });
   await userEvent.click(
     await screen.findByRole('link', { name: /open.*october 5/i }),
   );
+  await openDayReview();
   await screen.findByRole('heading', { name: 'Keyboard planning' });
   expect(screen.getByText('Planning')).toBeTruthy();
   expect(screen.queryByLabelText('Feedback or correction')).toBeNull();
@@ -198,6 +203,7 @@ test('REC-02 accepted tasks edit, complete, reopen, dismiss and withhold without
   await screen.findByText('dismissed');
   await act(async () => router.navigate({ to: '/library' }));
   await userEvent.click(await screen.findByRole('link', { name: /open day/i }));
+  await openDayReview();
   await screen.findByRole('heading', { name: 'Check keyboard behavior' });
   expect(screen.getByRole('button', { name: 'Dismiss' })).toBeDisabled();
   backend.state.day.privacyRevision = 2;
@@ -222,6 +228,7 @@ test('REC-02 accepted tasks edit, complete, reopen, dismiss and withhold without
         handler({ payload: { dayId: '2026-10-05', privacyRevision: 2 } }),
       ),
   );
+  await openDayReview();
   await screen.findByText(/source content withheld after a privacy change/i);
   expect(screen.queryByText('Check keyboard behavior')).toBeNull();
   expect(screen.getByText('dismissed')).toBeTruthy();
@@ -238,6 +245,7 @@ test('REC-02 accepted tasks edit, complete, reopen, dismiss and withhold without
         handler({ payload: { dayId: '2026-10-05', privacyRevision: 3 } }),
       ),
   );
+  await openDayReview();
   await screen.findByRole('heading', { name: 'Check keyboard behavior' });
   expect(screen.getByText('Local synthetic action note')).toBeTruthy();
   expect(screen.getByText('dismissed')).toBeTruthy();
@@ -295,9 +303,10 @@ test('REC-03 generation blockers, explicit regeneration and review/unreview tran
 
 test('NAV-01 root redirects to Days and actual shell navigation preserves a Search query across history', async () => {
   const router = await open('/');
-  await screen.findByRole('tab', { name: 'Days' });
+  await screen.findByRole('link', { name: /today/i });
   expect(router.state.location.pathname).toBe('/library');
   await userEvent.click(await screen.findByRole('link', { name: /open day/i }));
+  await openDayReview();
   await screen.findByRole('button', { name: 'Mark reviewed' });
   expect(router.state.location.pathname).toBe('/day/2026-10-05');
   await userEvent.click(screen.getByRole('link', { name: 'Search' }));
@@ -309,7 +318,7 @@ test('NAV-01 root redirects to Days and actual shell navigation preserves a Sear
   await screen.findByText('Synthetic keyboard accessibility research notes.');
   expect(router.state.location.search.q).toBe('keyboard planning');
   await userEvent.click(screen.getByRole('link', { name: 'Library' }));
-  await screen.findByRole('tab', { name: 'Days' });
+  await screen.findByRole('link', { name: /today/i });
   await act(async () => {
     router.history.back();
     await router.load();

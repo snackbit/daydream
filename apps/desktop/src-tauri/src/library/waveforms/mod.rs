@@ -26,9 +26,17 @@ pub(super) use math::{waveform_bins, waveform_peak_rms_time_bins};
 #[cfg(test)]
 pub(super) use tiles::{waveform_tile_bin_ms, waveform_tile_ranges_for_segment};
 
+#[cfg(test)]
 pub(super) fn waveforms_for_recording(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
+) -> LibraryWaveforms {
+    waveforms_with_cleanup(recording, segments, None)
+}
+pub(super) fn waveforms_with_cleanup(
+    recording: &RecordingRow,
+    segments: &[RecordingSegmentRow],
+    cleanup: Option<&crate::library::audio_cleanup::CleanupManifest>,
 ) -> LibraryWaveforms {
     let mut error = None;
     let ffmpeg_path = ffmpeg::binary_path();
@@ -51,16 +59,23 @@ pub(super) fn waveforms_for_recording(
             let Some(stream_index) = stream_index else {
                 continue;
             };
-            let waveform = match waveform_from_ffmpeg(&ffmpeg_path, segment, stream_index) {
+            let source = cleanup_source(segment, &kind, cleanup);
+            let source_stream = if source.file_path != segment.file_path {
+                0
+            } else {
+                stream_index
+            };
+            let waveform = match waveform_from_ffmpeg(&ffmpeg_path, &source, source_stream) {
                 Ok(waveform) => Some(waveform),
                 Err(waveform_error) => {
                     error = Some(waveform_error);
                     None
                 }
             };
-            let Some(waveform) = waveform else {
+            let Some(mut waveform) = waveform else {
                 continue;
             };
+            waveform.stream_index = stream_index;
             let track_id = match kind {
                 LibraryTrackKind::DesktopAudio => "desktop-audio",
                 LibraryTrackKind::Microphone => "microphone",
@@ -86,10 +101,11 @@ pub(super) fn waveforms_for_recording(
     }
 }
 
-pub(super) fn waveform_tiles_for_recording(
+pub(super) fn waveform_tiles_with_cleanup(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
     input: &LibraryWaveformTileRequest,
+    cleanup: Option<&crate::library::audio_cleanup::CleanupManifest>,
 ) -> LibraryWaveformTiles {
     let mut error = None;
     let ffmpeg_path = ffmpeg::binary_path();
@@ -116,15 +132,28 @@ pub(super) fn waveform_tiles_for_recording(
     let mut tracks = Vec::new();
 
     for (kind, track_id) in track_inputs {
+        let owned_sources: Vec<_> = playable_segments
+            .iter()
+            .map(|(segment, _)| cleanup_source(segment, &kind, cleanup))
+            .collect();
         let track_segments = playable_segments
             .iter()
-            .filter_map(|(segment, library_segment)| {
+            .zip(&owned_sources)
+            .filter_map(|((segment, library_segment), source)| {
                 let stream_index = match kind {
                     LibraryTrackKind::DesktopAudio => segment.desktop_audio_stream_index,
                     LibraryTrackKind::Microphone => segment.microphone_audio_stream_index,
                     LibraryTrackKind::Video => None,
                 }?;
-                Some((*segment, library_segment.clone(), stream_index))
+                Some((
+                    source,
+                    library_segment.clone(),
+                    if source.file_path != segment.file_path {
+                        0
+                    } else {
+                        stream_index
+                    },
+                ))
             })
             .collect::<Vec<_>>();
         if track_segments.is_empty() {
@@ -161,7 +190,19 @@ pub(super) fn waveform_tiles_for_recording(
                     scale_amplitude,
                     tile,
                 }) {
-                    Ok(tile) => tiles.push(tile),
+                    Ok(mut tile) => {
+                        if let Some(original) =
+                            segments.iter().find(|part| part.id == tile.segment_id)
+                        {
+                            tile.stream_index = match kind {
+                                LibraryTrackKind::Microphone => original
+                                    .microphone_audio_stream_index
+                                    .unwrap_or(tile.stream_index),
+                                _ => tile.stream_index,
+                            };
+                        }
+                        tiles.push(tile)
+                    }
                     Err(tile_error) => {
                         error = Some(tile_error);
                     }
@@ -221,4 +262,23 @@ fn waveform_track_scale_amplitude(
     )?;
 
     Ok(scale_amplitude)
+}
+
+fn cleanup_source(
+    segment: &RecordingSegmentRow,
+    kind: &LibraryTrackKind,
+    cleanup: Option<&crate::library::audio_cleanup::CleanupManifest>,
+) -> RecordingSegmentRow {
+    let mut source = segment.clone();
+    if *kind == LibraryTrackKind::Microphone {
+        if let Some(block) = cleanup.and_then(|cleanup| {
+            cleanup
+                .blocks
+                .iter()
+                .find(|block| block.segment_id == segment.id)
+        }) {
+            source.file_path = block.path.clone();
+        }
+    }
+    source
 }

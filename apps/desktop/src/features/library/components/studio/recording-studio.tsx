@@ -10,6 +10,8 @@ import type {
   RecallEvidence,
 } from '@daydream/shared';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { AudioCleanupDialog } from './audio-cleanup/audio-cleanup-dialog';
+import { useAudioCleanup } from './audio-cleanup/use-audio-cleanup';
 import { useStudioSelectionDismissal } from './interactions/use-studio-selection-dismissal';
 import { RecordingStudioLayout } from './layout/recording-studio-layout';
 import { playbackRunView } from './playback-run-view';
@@ -111,8 +113,53 @@ export function RecordingStudio({
     detail: sources.selectedDetail,
     mutedTrackIds,
     playbackAssets: sources.selectedAssets,
-    autoSkipRedacted: !sources.grid,
+    skipOnlyWhenAllSources: sources.grid,
   });
+  const readCleanupRange = useCallback(() => {
+    const range = useStudioTimelineStore.getState().selection.ranges.at(-1);
+    const total = Math.max(1, detail.durationMs ?? 1);
+    const startOffsetMs = Math.min(
+      total - 1,
+      Math.max(
+        0,
+        Math.round(range?.startMs ?? playback.actions.readPlaybackTimeMs()),
+      ),
+    );
+    return {
+      startOffsetMs,
+      endOffsetMs: Math.min(
+        total,
+        startOffsetMs + 15_000,
+        range?.endMs ?? total,
+      ),
+    };
+  }, [detail.durationMs, playback.actions]);
+  const resumeAfterCleanup = useRef(false);
+  const restoreCleanupPlayback = useCallback(() => {
+    if (resumeAfterCleanup.current) {
+      resumeAfterCleanup.current = false;
+      void playback.actions.togglePlayback();
+    }
+  }, [playback.actions]);
+  const cleanup = useAudioCleanup({
+    detail,
+    readRange: readCleanupRange,
+    pausePlayback: playback.actions.pausePlayback,
+    refreshPlayback: onRefreshPlayback,
+    restorePlayback: restoreCleanupPlayback,
+  });
+  const openAudioCleanup = useCallback(() => {
+    resumeAfterCleanup.current = playback.state.snapshot.isPlaying;
+    void cleanup.open();
+  }, [cleanup, playback.state.snapshot.isPlaying]);
+  const regenerateMicrophone = useCallback(() => {
+    reprocessing.open(
+      detail.tracks
+        .filter((track) => track.kind === 'microphone')
+        .map((track) => ({ trackId: track.id, ranges: null })),
+    );
+    reprocessing.operations(['transcription']);
+  }, [detail.tracks, reprocessing]);
   const redactionSignature = useMemo(
     () =>
       detail.redactions
@@ -238,6 +285,7 @@ export function RecordingStudio({
     <TrackTimeline
       onRefreshRedactions={onRefreshPlayback}
       onReprocess={reprocessing.open}
+      onAudioCleanup={openAudioCleanup}
       suspendFollow={reprocessing.request !== null}
       activity={activity}
       aiProcessingState={aiProcessingState}
@@ -290,6 +338,20 @@ export function RecordingStudio({
         className="flex min-h-[40rem] w-full flex-1 flex-col gap-6 px-5 pb-6 lg:px-8"
       >
         <ReprocessingDialog controller={reprocessing} />
+        <AudioCleanupDialog
+          controller={cleanup}
+          onRegenerate={regenerateMicrophone}
+          unavailableReason={
+            detail.status === 'recording' || detail.status === 'paused'
+              ? 'Finish recording before removing speaker bleed.'
+              : null
+          }
+        />
+        {cleanup.state?.transcriptsOutdated ? (
+          <p className="text-muted-foreground text-xs" role="status">
+            Microphone transcripts · Previous audio settings
+          </p>
+        ) : null}
         <ReprocessingStatus
           state={aiProcessingState}
           queued={reprocessing.queued}

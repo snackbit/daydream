@@ -133,6 +133,17 @@ SOFTWARE.
 
 ## Other dependencies
 
+Microphone speaker-bleed removal uses `webrtc-audio-processing`, its configuration
+crate, and native wrapper, pinned to 2.1.0. The bundled WebRTC AudioProcessing code
+uses the BSD 3-Clause license. The upstream COPYING notice is packaged under
+`apps/desktop/src-tauri/resources/licenses/webrtc-audio-processing/`.
+Upstream: https://github.com/tonarino/webrtc-audio-processing/tree/v2.1.0.
+Its build uses Abseil (Apache-2.0), supplied by the build environment or the
+checksum-verified Meson wrap. Packagers must include the exact Abseil libraries
+and their notices; bundled WebRTC does not bundle an arbitrary system Abseil.
+The WAV reader/writer is `hound` 3.5.1 (Apache-2.0).
+Upstream: https://github.com/ruuda/hound.
+
 The capture editor uses `jpeg-encoder` 0.7.1, copyright (c) 2020 Vincent Stroebel,
 under MIT or Apache-2.0, with the IJG notice for its quantization tables.
 The unchanged upstream license texts are included in

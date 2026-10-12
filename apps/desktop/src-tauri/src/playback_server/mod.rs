@@ -16,6 +16,10 @@ use crate::{
     storage::{RecordingRow, RecordingSegmentRow},
 };
 
+mod audio_cleanup;
+#[cfg(test)]
+#[path = "tests/day_slice.rs"]
+mod day_slice_tests;
 mod encoders;
 mod ffmpeg_args;
 mod http;
@@ -36,6 +40,7 @@ mod thumbnails;
 
 use encoders::{detect_video_encoder, playback_video_fps};
 use http::handle_stream;
+pub(crate) use runs::concat_manifest as cleanup_concat_manifest;
 use thumbnails::{thumbnail_offsets, ThumbnailService, THUMBNAIL_WORKER_COUNT};
 
 #[derive(Clone)]
@@ -51,11 +56,22 @@ pub struct PlaybackServer {
 pub(super) struct PlaybackSession {
     segments: HashMap<String, PlaybackSegment>,
     token: String,
+    cleanup_dir: Option<std::path::PathBuf>,
+    cleanup_guard: Option<CleanupGuard>,
+}
+
+#[derive(Clone)]
+struct CleanupGuard {
+    storage: crate::storage::AppStorage,
+    recording_id: String,
+    fingerprint: String,
+    revision: Option<String>,
 }
 
 #[derive(Clone)]
 pub(super) struct PlaybackSegment {
     fragments: Vec<(String, i64)>,
+    microphone_fragments: Vec<(String, i64)>,
     duration_ms: i64,
     video_streams: Vec<crate::storage::SegmentVideoStream>,
     desktop_audio_stream_index: Option<i64>,
@@ -144,6 +160,7 @@ impl PlaybackServer {
                 segment.id.clone(),
                 PlaybackSegment {
                     fragments: vec![],
+                    microphone_fragments: vec![],
                     duration_ms,
                     video_streams: sources.get(&segment.id).cloned().unwrap_or_default(),
                     desktop_audio_stream_index: segment.desktop_audio_stream_index,
@@ -321,14 +338,20 @@ impl PlaybackServer {
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), String> {
-        self.sessions
+        let session = self
+            .sessions
             .lock()
             .map_err(|_error| "Unable to lock playback sessions.".to_string())?
             .remove(session_id);
         self.thumbnails.close_session(session_id);
         self.resources.cancel_session(session_id);
+        if let Some(dir) = session.and_then(|session| session.cleanup_dir) {
+            // The readers own child completion; unlinking previews does not reuse paths.
+            let _ = std::fs::remove_dir_all(dir);
+        }
         Ok(())
     }
+
     pub(crate) fn attach_runtime_registry(
         &self,
         registry: crate::maintenance::RuntimeActivityRegistry,
@@ -347,7 +370,12 @@ impl PlaybackServer {
 
 impl PlaybackSession {
     fn new(segments: HashMap<String, PlaybackSegment>, token: String) -> Self {
-        Self { segments, token }
+        Self {
+            segments,
+            token,
+            cleanup_dir: None,
+            cleanup_guard: None,
+        }
     }
 
     pub(super) fn segment_for_token(
@@ -355,6 +383,18 @@ impl PlaybackSession {
         token: &str,
         segment_id: &str,
     ) -> Option<PlaybackSegment> {
+        if let Some(guard) = &self.cleanup_guard {
+            let valid=guard.storage.with_connection(|c|{
+                if let Some(revision)=&guard.revision {
+                    let ready:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM audio_cleanup_generations WHERE id=?1 AND status='ready')",[revision],|r|r.get(0))?;
+                    if !ready {return Ok(false);}
+                }
+                Ok(crate::library::audio_cleanup::privacy_fingerprint(c,&guard.recording_id)?==guard.fingerprint)
+            }).unwrap_or(false);
+            if !valid {
+                return None;
+            }
+        }
         (self.token == token)
             .then(|| self.segments.get(segment_id).cloned())
             .flatten()

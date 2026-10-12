@@ -12,25 +12,32 @@ export interface PlaybackAudioProps {
     | 'handleBuffering'
     | 'handleMediaError'
   >;
+  active?: boolean;
 }
-export function PlaybackAudio({ audio, src, actions }: PlaybackAudioProps) {
+export function PlaybackAudio({
+  audio,
+  src,
+  actions,
+  active = true,
+}: PlaybackAudioProps) {
   const { registerAudioElement } = actions;
   const attach = useCallback(
     (element: HTMLAudioElement | null) => {
-      registerAudioElement(audio.trackId, element);
+      if (active) registerAudioElement(audio.trackId, element);
     },
-    [audio.trackId, registerAudioElement],
+    [audio.trackId, registerAudioElement, active],
   );
   return (
     <audio
       ref={attach}
       src={src}
-      preload="metadata"
-      onCanPlay={actions.handleVideoCanPlay}
-      onSeeked={actions.handleVideoCanPlay}
-      onWaiting={actions.handleBuffering}
-      onStalled={actions.handleBuffering}
-      onError={actions.handleMediaError}
+      preload="auto"
+      muted={!active}
+      onCanPlay={active ? actions.handleVideoCanPlay : undefined}
+      onSeeked={active ? actions.handleVideoCanPlay : undefined}
+      onWaiting={active ? actions.handleBuffering : undefined}
+      onStalled={active ? actions.handleBuffering : undefined}
+      onError={active ? actions.handleMediaError : undefined}
     />
   );
 }

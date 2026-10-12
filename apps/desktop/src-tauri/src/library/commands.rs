@@ -57,6 +57,7 @@ pub async fn delete_library_recording(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|error| error.to_string())?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+    close_cleanup_playback(&app, &recording.id).await?;
     delete_recording_row(&storage, &recordings_root, &recording)?;
     crate::recall::mutations::emit_changed(&app, None);
     Ok(())
@@ -92,6 +93,7 @@ pub async fn delete_library_recordings(
         crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
             .map_err(|error| error.to_string())?;
         let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+        close_cleanup_playback(&app, &recording.id).await?;
         delete_recording_row(&storage, &recordings_root, &recording)?;
         crate::recall::mutations::emit_changed(&app, None);
     }
@@ -148,6 +150,7 @@ pub async fn create_library_redactions<R: tauri::Runtime>(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|error| error.to_string())?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+    close_cleanup_playback(&app, &recording.id).await?;
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
         .map_err(|error| error.to_string())?;
@@ -189,6 +192,7 @@ pub async fn delete_library_redaction(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|error| error.to_string())?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+    close_cleanup_playback(&app, &recording.id).await?;
     let deleted = storage
         .with_connection(|connection| {
             storage::delete_redaction(connection, &input.recording_id, &input.redaction_id)
@@ -235,6 +239,7 @@ pub async fn unredact_library_redactions<R: tauri::Runtime>(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|error| error.to_string())?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+    close_cleanup_playback(&app, &recording.id).await?;
     let existing_redactions = storage
         .with_connection(|connection| storage::list_redactions(connection, &recording.id))
         .map_err(|error| error.to_string())?;
@@ -285,7 +290,10 @@ pub async fn get_recording_waveforms(
             })
             .map_err(|error| error.to_string())?;
 
-        let value = waveforms::waveforms_for_recording(&recording, &segments);
+        let cleanup = storage
+            .with_connection(|c| audio_cleanup::active_manifest(c, &recording.id))
+            .map_err(|_| "Cleanup is unavailable. Retry cleanup or turn it off.")?;
+        let value = waveforms::waveforms_with_cleanup(&recording, &segments, cleanup.as_ref());
         operation.finish(
             value
                 .error
@@ -321,7 +329,11 @@ pub async fn get_recording_waveform_tiles(
             })
             .map_err(|error| error.to_string())?;
 
-        let value = waveforms::waveform_tiles_for_recording(&recording, &segments, &input);
+        let cleanup = storage
+            .with_connection(|c| audio_cleanup::active_manifest(c, &recording.id))
+            .map_err(|_| "Cleanup is unavailable. Retry cleanup or turn it off.")?;
+        let value =
+            waveforms::waveform_tiles_with_cleanup(&recording, &segments, &input, cleanup.as_ref());
         operation.finish(
             value
                 .error
@@ -357,8 +369,14 @@ pub async fn create_library_playback_session(
                 storage::list_recording_segments(connection, &input.recording_id)
             })
             .map_err(|error| error.to_string())?;
-        let detail = detail_from_rows(&recording, &segments, &[]);
-        if detail.availability != LibraryRecordingAvailability::Available {
+        if storage::is_active_recording_status(&recording.status)
+            || !segments.iter().any(|segment| {
+                segment.state == "finalized"
+                    && segment.duration_ms.is_some_and(|duration| duration > 0)
+                    && segment.video_stream_index.is_some()
+                    && Path::new(&segment.file_path).is_file()
+            })
+        {
             return Ok(LibraryPlaybackAssets {
                 runs: vec![],
                 error: Some("Recording is not available for playback.".to_string()),
@@ -373,7 +391,12 @@ pub async fn create_library_playback_session(
                 storage::recording_video_streams(connection, &recording.id)
             })
             .map_err(|_| "Video sources could not be read.".to_string())?;
-        let result = playback_server.create_source_session(&recording, &segments, &sources);
+        let result = playback_server.create_recording_source_session(
+            &recording,
+            &segments,
+            &sources,
+            storage.inner().clone(),
+        );
         operation.finish(result.as_ref().err().map(|_| "ai_media_preparation_failed"));
         result
     })

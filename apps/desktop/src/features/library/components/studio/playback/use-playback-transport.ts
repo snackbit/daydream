@@ -26,7 +26,7 @@ interface Attempt {
 type Phase = 'paused' | 'waiting' | 'starting' | 'playing' | 'failed';
 interface PlaybackTransportInput {
   media: {
-    refs: Pick<Media['refs'], 'videoRef' | 'audioRefs'>;
+    refs: Pick<Media['refs'], 'videoRef' | 'audioRefs' | 'additionalVideoRefs'>;
     actions: Pick<
       Media['actions'],
       'syncAudioElements' | 'updateMediaSettings'
@@ -77,7 +77,7 @@ export function usePlaybackTransport({
     media: null,
     phase: 'paused',
   });
-  const { videoRef, audioRefs } = media.refs;
+  const { videoRef, audioRefs, additionalVideoRefs } = media.refs;
   const isCurrentMedia = useCallback((element: HTMLMediaElement) => {
     const set = owner.current.media;
     return set !== null && set.elements.includes(element);
@@ -182,7 +182,11 @@ export function usePlaybackTransport({
       ? {
           video,
           audio,
-          elements: [video, ...audio.map(([, element]) => element)],
+          elements: [
+            video,
+            ...audio.map(([, element]) => element),
+            ...additionalVideoRefs.current.values(),
+          ],
         }
       : null;
     owner.current.media = set;

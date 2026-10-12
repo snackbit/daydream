@@ -18,7 +18,15 @@ export function useStudioVideoSources(
     recordingId: string;
     trackId: string;
   } | null>(null);
-  const [gridRecord, setGridRecord] = useState<string | null>(null);
+  const [gridChoice, setGridChoice] = useState<{
+    recordingId: string;
+    grid: boolean;
+  } | null>(null);
+  const grid = inspectedSource
+    ? false
+    : gridChoice?.recordingId === detail.id
+      ? gridChoice.grid
+      : tracks.length > 1;
   const selectedTrackId =
     inspectedSource && tracks.some((track) => track.id === inspectedSource)
       ? inspectedSource
@@ -32,6 +40,7 @@ export function useStudioVideoSources(
     if (store.selection.visualFrameIds.length)
       store.setSelection({ ...store.selection, visualFrameIds: [] });
     setChoice({ recordingId: detail.id, trackId });
+    setGridChoice({ recordingId: detail.id, grid: false });
   }
   const selectedDetail = useMemo(
     () => ({
@@ -39,15 +48,20 @@ export function useStudioVideoSources(
       tracks: detail.tracks.filter(
         (track) => track.kind !== 'video' || track.id === selectedTrackId,
       ),
-      segments: detail.segments.map((segment) => ({
-        ...segment,
-        videoStreamIndex:
+      segments: detail.segments.map((segment) => {
+        const stream =
           segment.videoStreams?.find(
             (stream) => stream.trackId === selectedTrackId,
-          )?.streamIndex ?? segment.videoStreamIndex,
-      })),
+          ) ?? (grid ? segment.videoStreams?.[0] : undefined);
+        return {
+          ...segment,
+          // Source absence belongs to the asset URL; retain this segment's timing in the transport.
+          videoStreamIndex: stream?.streamIndex ?? segment.videoStreamIndex,
+          videoTrackId: stream?.trackId ?? selectedTrackId,
+        };
+      }),
     }),
-    [detail, selectedTrackId],
+    [detail, selectedTrackId, grid],
   );
   const selectedAssets = useMemo(
     () =>
@@ -55,32 +69,38 @@ export function useStudioVideoSources(
         ? {
             ...assets,
             segments: assets.segments.map((segment) => {
-              const video = segment.videos?.find(
-                (video) => video.trackId === selectedTrackId,
-              );
+              const video =
+                segment.videos?.find(
+                  (video) => video.trackId === selectedTrackId,
+                ) ?? (grid ? segment.videos?.[0] : undefined);
+              const legacy =
+                segment.videos === undefined &&
+                selectedTrackId === tracks[0]?.id;
               return {
                 ...segment,
-                videoUrl:
-                  video?.url ??
-                  (selectedTrackId === tracks[0]?.id ? segment.videoUrl : ''),
+                videoUrl: video?.url ?? (legacy ? segment.videoUrl : ''),
                 thumbnails:
-                  video?.thumbnails ??
-                  (selectedTrackId === tracks[0]?.id ? segment.thumbnails : []),
+                  video?.thumbnails ?? (legacy ? segment.thumbnails : []),
               };
             }),
           }
         : null,
-    [assets, selectedTrackId, tracks],
+    [assets, selectedTrackId, tracks, grid],
   );
   return {
     tracks,
     selectedTrackId,
     selectedDetail,
     selectedAssets,
-    grid: gridRecord === detail.id,
+    grid,
     select,
     toggleGrid: () =>
-      setGridRecord((current) => (current === detail.id ? null : detail.id)),
+      setGridChoice((current) => ({
+        recordingId: detail.id,
+        grid: !(current?.recordingId === detail.id
+          ? current.grid
+          : tracks.length > 1),
+      })),
   };
 }
 export type StudioVideoSources = ReturnType<typeof useStudioVideoSources>;

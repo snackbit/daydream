@@ -37,6 +37,7 @@ export function RecordingStudioToolbar({
   onStartAiProcessing,
   processingStartBusy,
   loadingStatus = null,
+  title,
 }: {
   aiProcessing: { state: RecordingAiProcessingState | null };
   debugEnabled: boolean;
@@ -49,6 +50,7 @@ export function RecordingStudioToolbar({
   onStartAiProcessing: () => void;
   processingStartBusy: boolean;
   loadingStatus?: string | null;
+  title?: string;
 }) {
   const processingJob = aiProcessing.state?.job ?? null;
   const hasActiveProcessingChunks =
@@ -91,14 +93,22 @@ export function RecordingStudioToolbar({
 
   return (
     <div className="shrink-0">
-      <div className="flex flex-col gap-6 px-5 py-6 lg:px-8 lg:py-8 xl:flex-row xl:items-center xl:justify-between">
+      <div
+        data-day={title !== undefined}
+        className="flex flex-col gap-6 px-5 py-6 lg:px-8 lg:py-8 lg:data-[day=true]:flex-row lg:data-[day=true]:items-center lg:data-[day=true]:justify-between lg:data-[day=true]:py-5 xl:flex-row xl:items-center xl:justify-between"
+      >
         <div className="min-w-0">
           <h1 className="text-[32px] font-light tracking-tight lg:text-4xl">
-            {detail ? recordingTitle(detail) : 'Recording'}
+            {title ?? (detail ? recordingTitle(detail) : 'Recording')}
           </h1>
           <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
             {detail ? (
               <>
+                {title ? (
+                  <span>
+                    {detail.title ?? formatTimestamp(detail.startedAtMs)}
+                  </span>
+                ) : null}
                 <span>{availabilityLabel(detail.availability)}</span>
                 {detail.title ? (
                   <span>{formatTimestamp(detail.startedAtMs)}</span>

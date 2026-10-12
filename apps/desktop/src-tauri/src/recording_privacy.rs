@@ -261,6 +261,7 @@ pub(crate) fn cancel_recording_processing(
     recording_id: &str,
     timestamp_ms: i64,
 ) -> rusqlite::Result<()> {
+    crate::library::audio_cleanup::request_cancel(recording_id);
     storage.with_connection(|connection| {
         for job in storage::list_processing_jobs(connection, Some(recording_id))? {
             if matches!(job.status.as_str(), "queued" | "running" | "paused") {

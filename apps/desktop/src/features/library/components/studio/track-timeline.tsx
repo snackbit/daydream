@@ -28,6 +28,10 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import type {
+  getRecordingWaveformTiles,
+  resizeLibraryRedaction,
+} from '../../library-client';
 import { timelineDurationMs } from '../../library-timeline';
 import { GroupedRedactions } from './redactions/grouped-redactions';
 import { useSelectionRedactionMutation } from './redactions/use-redaction-mutation';
@@ -38,6 +42,7 @@ import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
 import type { TimelinePlannedScope } from './timeline/processing/timeline-processing-ranges';
+import { TimelineGaps } from './timeline/timeline-gaps';
 import { TrackTimelineLanes } from './timeline/track-timeline-lanes';
 import {
   TRACK_LABEL_WIDTH_PX,
@@ -61,6 +66,9 @@ import { useTrackTimelineZoomScroll } from './use-track-timeline-zoom-scroll';
 import { useWaveformTileQueue } from './use-waveform-tile-queue';
 
 export function TrackTimeline({
+  timelineOriginMs,
+  readWaveformTiles,
+  onResizeRedaction,
   activity,
   aiProcessingState,
   plannedProcessingScopes,
@@ -78,8 +86,13 @@ export function TrackTimeline({
   visualFrames,
   onRefreshRedactions,
   onReprocess,
+  onAudioCleanup,
   suspendFollow = false,
 }: {
+  onAudioCleanup?: (() => void) | undefined;
+  timelineOriginMs?: number | undefined;
+  readWaveformTiles?: typeof getRecordingWaveformTiles | undefined;
+  onResizeRedaction?: typeof resizeLibraryRedaction | undefined;
   activity: RecordingActivity | null;
   aiProcessingState: RecordingAiProcessingState | null;
   plannedProcessingScopes?: readonly TimelinePlannedScope[];
@@ -166,6 +179,7 @@ export function TrackTimeline({
   );
   const [menuIsOpen, menuOpen] = useState(false);
   const { waveformStatus, waveformTiles } = useWaveformTileQueue({
+    readTiles: readWaveformTiles,
     detail,
     requestRange: viewModel.waveformRequestRange,
     timelineWidthPx: viewModel.timelineWidthPx,
@@ -367,6 +381,7 @@ export function TrackTimeline({
               totalDurationMs={viewModel.totalDurationMs}
             />
             <GroupedRedactions
+              onResize={onResizeRedaction}
               redactions={detail.redactions}
               lanes={viewModel.activeLaneLayouts}
               selectedIds={viewModel.selectedRedactionIds}
@@ -374,6 +389,11 @@ export function TrackTimeline({
               totalDurationMs={totalDurationMs}
               onSelect={handleSelectRedaction}
               onSaved={onRefreshRedactions}
+            />
+            <TimelineGaps
+              segments={detail.segments}
+              timelineWidthPx={viewModel.timelineWidthPx}
+              totalDurationMs={totalDurationMs}
             />
             <div
               className="grid"
@@ -386,6 +406,7 @@ export function TrackTimeline({
                 style={{ height: TRACK_RULER_HEIGHT_PX }}
               />
               <TimeRuler
+                originMs={timelineOriginMs}
                 ticks={viewModel.rulerTicks}
                 timelineWidthPx={viewModel.timelineWidthPx}
               />
@@ -425,6 +446,7 @@ export function TrackTimeline({
                     onSelectVisualFrame: selectVisualFrameForInspection,
                     onToggleTrackMuted,
                     onReprocess,
+                    onAudioCleanup,
                   }}
                   activity={{
                     activity,

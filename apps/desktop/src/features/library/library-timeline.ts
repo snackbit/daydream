@@ -22,13 +22,16 @@ export function segmentForTimeline(
   for (const [index, segment] of segments.entries()) {
     const durationMs = segment.durationMs ?? 0;
     const segmentEnd = segment.playbackOffsetMs + durationMs;
-    if (timelineMs <= segmentEnd) {
+    if (timelineMs < segmentEnd) {
       return {
         index,
         offsetMs: Math.max(0, timelineMs - segment.playbackOffsetMs),
       };
     }
-    if (timelineMs <= segmentEnd + segment.pauseAfterMs) {
+    if (
+      index + 1 < segments.length &&
+      timelineMs <= segmentEnd + segment.pauseAfterMs
+    ) {
       return { index: Math.min(index + 1, segments.length - 1), offsetMs: 0 };
     }
   }

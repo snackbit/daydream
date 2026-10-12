@@ -3,9 +3,33 @@ import {
   validateRecallDate,
   validateRecallSearch,
   validateStudioSearch,
+  validateDayStudioSearch,
 } from './recall-location';
 
 describe('Recall route input', () => {
+  it('keeps recording-local evidence positions on the day route and rejects malformed recording identity', () => {
+    const input = {
+      __TSearchSchemaInput__: 'TSearchSchemaInput' as const,
+      recordingId: 'synthetic-recording',
+      seek: 1200,
+      evidenceId: 'synthetic-evidence',
+      source: 'ocr',
+    };
+    expect(validateDayStudioSearch(input)).toEqual({
+      recordingId: 'synthetic-recording',
+      seek: 1200,
+      evidenceId: 'synthetic-evidence',
+      source: 'ocr',
+    });
+    expect(
+      validateDayStudioSearch({ __TSearchSchemaInput__: 'TSearchSchemaInput' })
+        .recordingId,
+    ).toBeNull();
+    for (const recordingId of ['', 4, 'x'.repeat(257)])
+      expect(() =>
+        validateDayStudioSearch({ ...input, recordingId }),
+      ).toThrow();
+  });
   it('accepts actual ISO calendar dates and rejects impossible days', () => {
     expect(validateRecallDate('2024-02-29')).toBe('2024-02-29');
     for (const date of [

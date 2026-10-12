@@ -21,6 +21,7 @@ export function TrackLaneHeader({
   selectedLane,
   trackId,
   onReprocess,
+  onAudioCleanup,
 }: {
   audioTrack: boolean;
   dragHandleProps: ButtonHTMLAttributes<HTMLButtonElement>;
@@ -32,6 +33,7 @@ export function TrackLaneHeader({
   selectedLane: boolean;
   trackId: string;
   onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
+  onAudioCleanup?: (() => void) | undefined;
 }) {
   const color = studioColorById(lane.colorId);
   const compact = heightPx < TRACK_LANE_HEIGHT_PX;
@@ -127,6 +129,7 @@ export function TrackLaneHeader({
             targets={targets}
             label={lane.label}
             onReprocess={onReprocess}
+            onAudioCleanup={onAudioCleanup}
           />
         ) : null}
       </div>
@@ -137,6 +140,7 @@ export function TrackLaneHeader({
       targets={targets}
       label={lane.label}
       onReprocess={onReprocess}
+      onAudioCleanup={onAudioCleanup}
     >
       {header}
     </ReprocessingContextMenu>

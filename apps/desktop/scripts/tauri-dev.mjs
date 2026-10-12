@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -57,6 +57,16 @@ function resolveTauriArgs() {
   }
 
   return args;
+}
+
+const missingTools = ['meson', 'ninja'].filter(
+  (tool) => spawnSync(tool, ['--version'], { stdio: 'ignore' }).status !== 0,
+);
+if (missingTools.length > 0) {
+  console.error(
+    `Missing native build tools: ${missingTools.join(', ')}. Install Meson and Ninja using README.md → Development → Prerequisites, then rerun yarn dev.`,
+  );
+  process.exit(1);
 }
 
 const child = spawn('yarn', resolveTauriArgs(), {

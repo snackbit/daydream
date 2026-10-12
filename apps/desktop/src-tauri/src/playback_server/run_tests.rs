@@ -155,6 +155,7 @@ fn assert_sparse_run_continuity(codec: &str) {
     let resources = super::resources::PlaybackResources::default();
     let lease = resources.begin(None, Some("synthetic".into())).unwrap();
     let segment = super::PlaybackSegment {
+        microphone_fragments: vec![],
         fragments,
         duration_ms: 60_000,
         playback_fps: 5.,

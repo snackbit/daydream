@@ -18,6 +18,11 @@ then turns that evidence into a timeline you can review and process locally.
 - Source controls for monitor crop and output scale, with shared frame interval
   and bitrate. New recordings keep each monitor in its own MKV video stream.
 - Separate desktop and microphone audio streams in local MKV segments.
+- Optional local speaker-bleed removal for saved recordings. In Studio, open the
+  microphone lane's actions and choose **Remove speaker bleed**. Compare the
+  original and cleaned microphone, tune sensitivity or cancellation amount, and
+  apply cleanup. Originals are retained. Regenerating microphone transcripts is
+  a separate action and uses the applied audio revision.
 - Explicit start, pause, resume, and stop controls.
 - Local Library playback with thumbnails, waveforms, track lanes, and source
   timestamps.
@@ -33,8 +38,12 @@ then turns that evidence into a timeline you can review and process locally.
 - Optional OpenAI-compatible remote transcription and vision endpoints.
 - Atomic provider/settings saves, anonymous Vision endpoints and a generated-image
   Vision test. Studio can select a video source or show a synchronized grid.
-- A review-first Days library, factual capture coverage, cited AI interpretations,
-  editable local tasks, corrections and review history.
+- A Days library that opens directly into Studio with one timeline across the
+  day's playable recordings. Gaps remain visible and skip after a short countdown;
+  the next media group is preloaded. Recordings and day review have sidebar tabs.
+- Factual capture coverage, cited AI interpretations, editable local tasks,
+  corrections and review history. Broken recordings stay out of day playback;
+  playable portions of partial recordings remain available.
 - Local text and semantic search over eligible OCR and both transcript tracks,
   with links to the exact source in Studio.
 - Managed multilingual E5 and English BGE embedding models on CPU or optional
@@ -191,6 +200,9 @@ See [redesign and recall behavior](docs/recall-redesign-implementation.md) and
 - GStreamer development headers and the base, good, bad, ugly, and PulseAudio
   plugin sets
 - CMake, Clang, and libclang for the vendored `whisper.cpp` build
+- Meson and Ninja for bundled WebRTC acoustic echo cancellation; Abseil headers
+  and libraries version 20240722 or newer, or Meson's checksum-verified fallback
+  source download during development builds
 - Tesseract for local OCR
 
 On Debian or Ubuntu, the native development packages include:
@@ -219,12 +231,19 @@ sudo apt install \
   gstreamer1.0-tools \
   gstreamer1.0-pulseaudio \
   cmake \
+  meson \
+  ninja-build \
+  libabsl-dev \
   clang \
   libclang-dev \
   tesseract-ocr
 ```
 
 Package names vary by distribution.
+
+On Arch Linux or CachyOS, install the echo-cancellation build prerequisites with
+`sudo pacman -S --needed meson ninja abseil-cpp`. They must be on `PATH` before
+running `yarn dev`; the launcher checks Meson and Ninja before starting the build.
 
 ### Install and run
 

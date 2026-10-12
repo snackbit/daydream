@@ -7,13 +7,16 @@ import {
 } from '@tanstack/react-router';
 import type { RecallSourceKind } from '@daydream/shared';
 import { AppShell } from '@/app/AppShell';
+import { getLibraryRecording } from '@/features/library/library-client';
 import { RouteErrorScreen } from '@/features/navigation/components/route-error-screen';
 import { RouteNotFoundScreen } from '@/features/navigation/components/route-not-found-screen';
 import {
   validateRecallDate,
   validateRecallSearch,
   validateStudioSearch,
+  validateDayStudioSearch,
 } from '@/features/navigation/recall-location';
+import { localDayId } from '@/features/recall/recall-format';
 import {
   validateSettingsLocation,
   type SettingsSection,
@@ -56,11 +59,6 @@ const ProcessingScreen = lazy(() =>
     default: ProcessingScreen,
   })),
 );
-const RecordingStudioScreen = lazy(() =>
-  import('@/screens/RecordingStudioScreen').then(
-    ({ RecordingStudioScreen }) => ({ default: RecordingStudioScreen }),
-  ),
-);
 const SettingsScreen = lazy(() =>
   import('@/screens/SettingsScreen').then(({ SettingsScreen }) => ({
     default: SettingsScreen,
@@ -97,7 +95,27 @@ const libraryRoute = createRoute({
 });
 
 const recordingStudioRoute = createRoute({
-  component: RecordingStudioScreen,
+  beforeLoad: async ({ params, search }) => {
+    const detail = await getLibraryRecording(params.recordingId);
+    const offset = search.seek ?? 0;
+    const segment =
+      detail.segments.find(
+        (s) =>
+          offset >= s.playbackOffsetMs &&
+          offset < s.playbackOffsetMs + (s.durationMs ?? 0),
+      ) ?? detail.segments[0];
+    const timestamp = segment
+      ? segment.startedAtMs + Math.max(0, offset - segment.playbackOffsetMs)
+      : detail.startedAtMs;
+    if (timestamp === null || timestamp === undefined)
+      throw new Error('Recording date is unavailable.');
+    throw redirect({
+      to: '/day/$date',
+      params: { date: localDayId(new Date(timestamp)) },
+      search: { ...search, recordingId: params.recordingId },
+      replace: true,
+    });
+  },
   getParentRoute: () => rootRoute,
   path: '/library/$recordingId',
   validateSearch: validateStudioSearch,
@@ -108,11 +126,13 @@ const dayRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/day/$date',
   params: { parse: (params) => ({ date: validateRecallDate(params.date) }) },
+  validateSearch: validateDayStudioSearch,
 });
 
 function DayRouteScreen() {
   const { date } = dayRoute.useParams();
-  return <DayScreen date={date} />;
+  const location = dayRoute.useSearch();
+  return <DayScreen date={date} location={location} />;
 }
 
 const searchRoute = createRoute({

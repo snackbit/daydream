@@ -51,8 +51,8 @@ export function RecordingDeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete recording</DialogTitle>
           <DialogDescription>
-            This removes the broken Library entry and any remaining files in
-            Daydream storage.
+            This removes the recording and its derived data. Media in Daydream
+            storage is deleted.
           </DialogDescription>
         </DialogHeader>
         {deleteError ? (

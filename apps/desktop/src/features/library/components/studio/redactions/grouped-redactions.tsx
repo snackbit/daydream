@@ -22,6 +22,7 @@ export interface GroupedRedactionsProps {
   totalDurationMs: number;
   onSelect: (id: string, additive: boolean) => void;
   onSaved: () => void;
+  onResize?: typeof resizeLibraryRedaction | undefined;
 }
 
 export function GroupedRedactions(props: GroupedRedactionsProps) {
@@ -63,6 +64,7 @@ function RedactionGroup({
   totalDurationMs,
   onSelect,
   onSaved,
+  onResize = resizeLibraryRedaction,
 }: GroupedRedactionsProps & {
   redaction: LibraryRecordingRedaction;
   group: { top: number; height: number; labels: string[] };
@@ -85,7 +87,7 @@ function RedactionGroup({
     setSaving(true);
     setError(null);
     try {
-      await resizeLibraryRedaction({
+      await onResize({
         recordingId: redaction.recordingId,
         redactionId: redaction.id,
         startOffsetMs: start,

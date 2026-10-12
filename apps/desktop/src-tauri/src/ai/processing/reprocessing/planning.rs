@@ -279,11 +279,21 @@ pub(super) fn plan(
             None
         }
     });
+    let cleanup_revision = if sections.iter().any(|section| {
+        section.operation == ReprocessingOperation::Transcription
+            && section.role.as_deref() == Some("microphone")
+    }) {
+        crate::library::audio_cleanup::active_manifest(connection, &input.recording_id)?
+            .map(|manifest| manifest.revision)
+    } else {
+        None
+    };
     let fingerprint = format!(
         "{:x}",
         Sha1::digest(
             serde_json::to_vec(&(
                 settings,
+                &cleanup_revision,
                 &scopes,
                 &sections,
                 &redactions

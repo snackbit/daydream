@@ -22,7 +22,7 @@ export function PlaybackSpeedControl({
   return (
     <div data-studio-preserve-selection>
       <Select value={String(value)} onValueChange={change}>
-        <SelectTrigger aria-label="Playback speed" className="w-24">
+        <SelectTrigger aria-label="Playback speed" className="w-20">
           <SelectValue />
         </SelectTrigger>
         <SelectContent data-studio-preserve-selection>

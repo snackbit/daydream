@@ -484,6 +484,7 @@ fn fragment_extraction_preserves_source_time_and_cancels_without_reading() {
     whisper_backend::vad::write_detection_samples(Path::new(&b.file_path), &vec![0.5; 8000])
         .unwrap();
     let run = SourceRun {
+        cleanup: None,
         start: 0,
         end: 1000,
         open: false,

@@ -18,6 +18,7 @@ export function usePlaybackMediaElements({
   playbackRate = 1,
 }: PlaybackMediaElementsInput) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const additionalVideoRefs = useRef(new Map<string, HTMLVideoElement>());
   const fullscreenElementRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const majorDrift = useRef(new Map<HTMLMediaElement, number | null>());
@@ -81,7 +82,9 @@ export function usePlaybackMediaElements({
       for (const element of [
         ...audioRefs.current.values(),
         ...(videoRef.current ? [videoRef.current] : []),
+        ...additionalVideoRefs.current.values(),
       ]) {
+        element.defaultPlaybackRate = playbackRate;
         if (force) {
           setMediaCurrentTime(element, time);
           element.playbackRate = playbackRate;
@@ -109,12 +112,14 @@ export function usePlaybackMediaElements({
     for (const audio of audioRefs.current.values()) {
       audio.pause();
     }
+    for (const video of additionalVideoRefs.current.values()) video.pause();
   }, []);
 
   const registerAudioElement = useCallback(
     (trackId: string, element: HTMLAudioElement | null) => {
       if (element) {
         audioRefs.current.set(trackId, element);
+        element.defaultPlaybackRate = playbackRate;
         element.playbackRate = playbackRate;
         element.preservesPitch = true;
         applyMediaSettings(element, trackId, redactedTrackIdsRef.current);
@@ -136,6 +141,7 @@ export function usePlaybackMediaElements({
       videoRef.current = element;
       if (element) {
         updateMediaSettings(element);
+        element.defaultPlaybackRate = playbackRate;
         element.playbackRate = playbackRate;
         element.preservesPitch = true;
       }
@@ -147,12 +153,29 @@ export function usePlaybackMediaElements({
     for (const element of [
       ...audioRefs.current.values(),
       ...(videoRef.current ? [videoRef.current] : []),
+      ...additionalVideoRefs.current.values(),
     ]) {
+      element.defaultPlaybackRate = playbackRate;
       element.playbackRate = playbackRate;
       element.preservesPitch = true;
     }
     majorDrift.current.clear();
   }, [playbackRate]);
+  const registerVideoElement = useCallback(
+    (trackId: string, element: HTMLVideoElement | null) => {
+      if (element) {
+        additionalVideoRefs.current.set(trackId, element);
+        element.muted = true;
+        element.defaultPlaybackRate = playbackRate;
+        element.playbackRate = playbackRate;
+      } else {
+        const previous = additionalVideoRefs.current.get(trackId);
+        if (previous) majorDrift.current.delete(previous);
+        additionalVideoRefs.current.delete(trackId);
+      }
+    },
+    [playbackRate],
+  );
 
   function requestFullscreen() {
     return fullscreenElementRef.current?.requestFullscreen?.();
@@ -177,6 +200,7 @@ export function usePlaybackMediaElements({
       clockTime,
       pauseMediaElements,
       registerAudioElement,
+      registerVideoElement,
       requestFullscreen,
       setFullscreenElement,
       setVideoElement,
@@ -186,6 +210,7 @@ export function usePlaybackMediaElements({
     refs: {
       audioRefs,
       videoRef,
+      additionalVideoRefs,
     },
   };
 }

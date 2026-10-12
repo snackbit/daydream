@@ -43,6 +43,37 @@ fn parser_reads_video_start_time() {
 }
 
 #[test]
+fn calendar_slice_requests_bound_both_video_and_audio_and_reject_invalid_limits() {
+    use super::http::output_duration_ms;
+    for suffix in ["video", "audio/desktop-audio-1"] {
+        let request=format!("GET /playback/session/token/segments/segment/{suffix}?startMs=1000&durationMs=500 HTTP/1.1\r\n");
+        match parse_request(&request).unwrap().2 {
+            PlaybackRequest::Video {
+                start_ms,
+                duration_ms,
+                ..
+            }
+            | PlaybackRequest::Audio {
+                start_ms,
+                duration_ms,
+                ..
+            } => {
+                assert_eq!(start_ms, 1000);
+                assert_eq!(duration_ms, Some(500));
+            }
+            _ => panic!("expected media slice"),
+        }
+        for invalid in ["0", "-1", "1.5", "invalid"] {
+            assert!(parse_request(&format!("GET /playback/session/token/segments/segment/{suffix}?durationMs={invalid} HTTP/1.1\r\n")).is_none());
+        }
+    }
+    assert_eq!(output_duration_ms(5000, 1000, None), 4000);
+    assert_eq!(output_duration_ms(5000, 1000, Some(500)), 500);
+    assert_eq!(output_duration_ms(5000, 1000, Some(9000)), 4000);
+    assert_eq!(output_duration_ms(5000, 6000, Some(1000)), 1);
+}
+
+#[test]
 fn thumbnails_cover_segment_from_start_at_fixed_interval() {
     assert_eq!(thumbnail_offsets(9_500), vec![0, 3_000, 6_000, 9_000]);
 }
@@ -192,6 +223,7 @@ fn video_encoder_args_force_clamped_output_fps() {
 #[test]
 fn thumbnail_args_select_visible_frame_and_write_one_bounded_jpeg() {
     let segment = PlaybackSegment {
+        microphone_fragments: vec![],
         fragments: vec![],
         duration_ms: 10_000,
         video_streams: Vec::new(),
@@ -241,6 +273,7 @@ fn thumbnail_job(key: ThumbnailKey) -> ThumbnailJob {
     ThumbnailJob {
         offset_ms: key.offset_ms,
         segment: PlaybackSegment {
+            microphone_fragments: vec![],
             fragments: vec![],
             duration_ms: 10_000,
             video_streams: Vec::new(),

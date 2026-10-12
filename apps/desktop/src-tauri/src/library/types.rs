@@ -33,6 +33,8 @@ pub struct LibraryRecordingSummary {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryRecordingDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) audio_cleanup: Option<super::audio_cleanup::AudioCleanupState>,
     pub(crate) availability: LibraryRecordingAvailability,
     pub(crate) duration_ms: Option<i64>,
     pub(crate) ended_at_ms: Option<i64>,

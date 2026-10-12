@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryRecordingDetail,
@@ -15,12 +15,14 @@ import { ocrFrameProcessingRevision } from '@/features/ai/ocr/ocr-processing-rev
 import { buildInspectorContent } from './inspector/content/inspector-content';
 import type { InspectorContentEntry } from './inspector/content/inspector-content';
 import { PlaybackInspectorFeed } from './inspector/content/playback-inspector-feed';
-import { OcrDocumentInspector } from './inspector/ocr/ocr-document-inspector';
 import { RecallEvidenceInspector } from './inspector/recall-evidence-inspector';
 import { RecordingInspectorSummary } from './inspector/recording-inspector-summary';
 import { SelectedSourceInspector } from './inspector/selected-source-inspector';
+import {
+  SourceLocationInspector,
+  type StudioSourceLocation,
+} from './inspector/source-location-inspector';
 import { TimelineSelectionInspector } from './inspector/timeline-selection-inspector';
-import { VisualSourceInspector } from './inspector/visual-source-inspector';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import { studioRecallEvidenceTrackIds } from './studio-recall-navigation';
 import { type StudioSidebarSegmentSelection } from './studio-sidebar-inspector-sections';
@@ -45,6 +47,11 @@ export interface StudioSidebarActions {
 }
 
 export interface StudioSidebarModel {
+  resolveSource?:
+    | ((trackId: string, time: number) => StudioSourceLocation | undefined)
+    | undefined;
+  summaryDetail?: LibraryRecordingDetail | undefined;
+  summaryProcessingState?: RecordingAiProcessingState | null | undefined;
   seekRevision?: number | undefined;
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
@@ -61,9 +68,16 @@ export interface StudioSidebarModel {
 export interface StudioSidebarProps {
   actions: StudioSidebarActions;
   model: StudioSidebarModel;
+  recordings?: ReactNode;
+  day?: ReactNode;
 }
 
-export function StudioSidebar({ actions, model }: StudioSidebarProps) {
+export function StudioSidebar({
+  actions,
+  model,
+  recordings,
+  day,
+}: StudioSidebarProps) {
   const content = useMemo(
     () =>
       buildInspectorContent({
@@ -86,7 +100,7 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
     timelineSelection: typeof timelineSelection;
     evidenceId: string | undefined;
     resetRevision: number | undefined;
-    mode: 'teleprompter' | 'inspector';
+    mode: 'teleprompter' | 'inspector' | 'recordings' | 'day';
   } | null>(null);
 
   const selectedLanes = timelineSelection.laneIds
@@ -129,9 +143,17 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
       ? choice.mode
       : model.recallEvidence || model.selection || hasTimelineSelection
         ? 'inspector'
-        : 'teleprompter';
+        : recordings
+          ? 'recordings'
+          : 'teleprompter';
   function changeMode(value: string) {
-    if (value !== 'teleprompter' && value !== 'inspector') return;
+    if (
+      value !== 'teleprompter' &&
+      value !== 'inspector' &&
+      value !== 'recordings' &&
+      value !== 'day'
+    )
+      return;
     setChoice({
       recordingId: model.detail.id,
       selection: model.selection,
@@ -168,13 +190,37 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
         className="min-h-0 flex-1 gap-0"
       >
         <div className="shrink-0 border-b px-6 py-5">
-          <TabsList aria-label="Studio sidebar">
+          <TabsList
+            aria-label="Studio sidebar"
+            className={
+              recordings || day
+                ? 'grid h-auto w-full grid-cols-2'
+                : 'flex h-auto flex-wrap'
+            }
+          >
+            {recordings ? (
+              <TabsTrigger value="recordings">Recordings</TabsTrigger>
+            ) : null}
+            {day ? <TabsTrigger value="day">Day</TabsTrigger> : null}
             <TabsTrigger value="teleprompter" disabled={!available}>
               Teleprompter
             </TabsTrigger>
             <TabsTrigger value="inspector">Inspector</TabsTrigger>
           </TabsList>
         </div>
+        {recordings ? (
+          <TabsContent
+            value="recordings"
+            className="min-h-0 flex-1 overflow-hidden"
+          >
+            <ScrollArea className="h-full">{recordings}</ScrollArea>
+          </TabsContent>
+        ) : null}
+        {day ? (
+          <TabsContent value="day" className="min-h-0 flex-1 overflow-hidden">
+            <ScrollArea className="h-full">{day}</ScrollArea>
+          </TabsContent>
+        ) : null}
         <TabsContent
           value="teleprompter"
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -209,7 +255,14 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                     debugEnabled={model.debugEnabled === true}
                   />
                   {model.recallEvidence.sourceKind === 'ocr' ? (
-                    <OcrDocumentInspector
+                    <SourceLocationInspector
+                      source={model.resolveSource?.(
+                        model.recallEvidence.sourceTrackId,
+                        model.recallEvidence.startOffsetMs,
+                      )}
+                      mappingRequired={model.resolveSource !== undefined}
+                      time={model.recallEvidence.startOffsetMs}
+                      onClear={actions.onClearActivitySelection}
                       context={{
                         recordingId: model.detail.id,
                         sourceTrackId: model.recallEvidence.sourceTrackId,
@@ -220,7 +273,6 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                           model.recallEvidence.contentRevision,
                         debugEnabled: model.debugEnabled === true,
                       }}
-                      timestampMs={model.recallEvidence.startOffsetMs}
                       documentId={model.recallEvidence.documentId}
                       onSeek={actions.onSeek}
                       key={model.recallEvidence.evidenceId}
@@ -263,7 +315,13 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                 />
               ) : selectedVisualFrames.length > 0 ? (
                 selectedVisualFrames.map((frame) => (
-                  <VisualSourceInspector
+                  <SourceLocationInspector
+                    mappingRequired={model.resolveSource !== undefined}
+                    source={model.resolveSource?.(
+                      frame.sourceTrackId ?? '',
+                      frame.frameTimestampMs,
+                    )}
+                    time={frame.frameTimestampMs}
                     context={{
                       recordingId: model.detail.id,
                       sourceTrackId:
@@ -281,7 +339,7 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                       debugEnabled: model.debugEnabled === true,
                     }}
                     frame={frame}
-                    sourceLabel={
+                    label={
                       model.detail.tracks.find(
                         (track) => track.id === frame.sourceTrackId,
                       )?.label ?? 'Screen'
@@ -297,7 +355,14 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                   {selectedLanes
                     .filter((lane) => lane.kind === 'video')
                     .map((lane) => (
-                      <OcrDocumentInspector
+                      <SourceLocationInspector
+                        mappingRequired={model.resolveSource !== undefined}
+                        source={model.resolveSource?.(
+                          lane.trackId,
+                          model.timelineOffsetMs ?? 0,
+                        )}
+                        time={Math.round(model.timelineOffsetMs ?? 0)}
+                        onClear={clearSelection}
                         context={{
                           recordingId: model.detail.id,
                           sourceTrackId: lane.trackId,
@@ -317,7 +382,6 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
                           model.detail.redactions,
                         ])}
                         onSeek={actions.onSeek}
-                        timestampMs={Math.round(model.timelineOffsetMs ?? 0)}
                       />
                     ))}
                 </>
@@ -327,8 +391,10 @@ export function StudioSidebar({ actions, model }: StudioSidebarProps) {
               model.selection === null &&
               !hasTimelineSelection ? (
                 <RecordingInspectorSummary
-                  aiProcessingState={model.aiProcessingState}
-                  detail={model.detail}
+                  aiProcessingState={
+                    model.summaryProcessingState ?? model.aiProcessingState
+                  }
+                  detail={model.summaryDetail ?? model.detail}
                   debugEnabled={model.debugEnabled === true}
                 />
               ) : null}

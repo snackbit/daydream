@@ -467,10 +467,11 @@ try {
         'recording',
       );
       let elapsed = 0;
-      const captureDurationMs = longPlayback ? 103_000 : 1500;
+      // Leave enough source time for measured 2x playback and a later resume.
+      const captureDurationMs = longPlayback ? 103_000 : 8000;
       for (
         let attempt = 0;
-        attempt < (longPlayback ? 1200 : 40) && elapsed < captureDurationMs;
+        attempt < (longPlayback ? 1200 : 120) && elapsed < captureDurationMs;
         attempt += 1
       ) {
         elapsed =
@@ -504,7 +505,7 @@ try {
       );
       await button('Stop');
       await native.wait(
-        'window.location.pathname.startsWith("/library/") && document.querySelector("video") !== null',
+        'window.location.pathname.startsWith("/day/") && document.querySelector("video") !== null',
         'durably saved recording opened in Studio',
       );
       await native.wait(
@@ -529,8 +530,7 @@ try {
         assert.ok((await stat(segment.filePath)).size > 0);
       }
       await navigate('Library', '/library');
-      await button('Recordings');
-      await click('button[aria-label^="Play "]');
+      await click('a[href^="/day/"]');
       await native.wait(
         'document.querySelector("video") !== null',
         'native Studio video',
@@ -543,7 +543,8 @@ try {
         await native.evaluate('document.querySelector("video").videoWidth > 0'),
       );
       stories.push('NATIVE-RECORDED-MEDIA-LIBRARY-STUDIO');
-      await checkStudioControls({ native, button, click });
+      await viewer.screenshot({ path: `${artifacts}/initial-studio.png` });
+      await checkStudioControls({ native, button, click, artifacts });
       stories.push('NATIVE-STUDIO-TABS-AND-SPEED');
       await click('button[aria-label="Play"]');
       await native.wait(

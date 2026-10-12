@@ -18,11 +18,13 @@ export function useWaveformTileQueue({
   requestRange,
   timelineWidthPx,
   totalDurationMs,
+  readTiles = getRecordingWaveformTiles,
 }: {
   detail: LibraryRecordingDetail;
   requestRange: WaveformRequestRange;
   timelineWidthPx: number;
   totalDurationMs: number;
+  readTiles?: typeof getRecordingWaveformTiles | undefined;
 }): {
   waveformStatus: 'error' | 'idle' | 'loading' | 'ready';
   waveformTiles: LibraryWaveformTiles | null;
@@ -101,7 +103,7 @@ export function useWaveformTileQueue({
             return;
           }
           try {
-            const nextWaveformTiles = await getRecordingWaveformTiles({
+            const nextWaveformTiles = await readTiles({
               endTimelineMs: Math.round(chunk.endTimelineMs),
               recordingId: detail.id,
               startTimelineMs: Math.round(chunk.startTimelineMs),
@@ -147,7 +149,14 @@ export function useWaveformTileQueue({
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [chunkRequests, detail.availability, detail.id, queueKey]);
+  }, [
+    chunkRequests,
+    detail.availability,
+    detail.id,
+    detail.audioCleanup?.revision,
+    queueKey,
+    readTiles,
+  ]);
 
   return {
     waveformStatus:

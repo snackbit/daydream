@@ -1,5 +1,127 @@
 # Refactoring Tasks
 
+## Implemented: reversible microphone speaker-bleed removal
+
+Add a Rust-owned local AEC pipeline and immutable audio revisions for Studio
+playback, waveforms and microphone transcription. Preserve captured media, pin
+transcription jobs to their admitted revision, and invalidate reference-dependent
+audio when privacy changes. Keep DSP, media tools, persistence, lifecycle and UI
+controls under separate owners.
+
+Studio's microphone actions now expose local cleanup for the active recording,
+including the Day Studio route. The native pipeline preserves original media,
+uses paired eligible reference audio, and publishes immutable revisions consumed
+by playback, waveforms and microphone VAD/transcription. Changing a recording's
+revision retires its playback session. Legacy processing-track redactions are
+resolved before decoding; privacy changes invalidate reference-dependent results.
+
+Verification: native format and all-target Clippy pass. The final native suite
+passes, including real authenticated AAC playback, timestamp gaps, changing echo
+delay, voice over music, canonical redactions, recovery, deletion and queued
+cancellation. The shared and FFmpeg tests and immutable Yarn install pass. The
+JavaScript gate passes lint/typechecks and 767 of 768 desktop tests; its only
+failure remains the previously documented Capture focus assertion at 768px.
+The new cleanup frontend has 93.67% V8 branch coverage across its measured
+client, dialog, comparison and controller owners. Day Studio's actual action,
+recording-local IPC and playback revision refresh are covered by browser tests.
+Both the light workflow and the 390px dark dialog were exercised; the dark
+dialog screenshot was inspected after making the footer stay visible.
+
+No Rust branch instrumentation, physical speaker/microphone check or final
+packaged Tauri journey is claimed. Fully hidden microphone audio requires channel
+metadata; cleanup fails safely if that metadata is unavailable. The capture
+records remain unchanged. Evidence: `/tmp/daydream-aec-{native-final,js-final,
+clippy,fmt,owned-final,playback-final,coverage,types}.log` and
+`/tmp/daydream-aec-coverage/coverage-summary.json`.
+
+Review follow-up: mapped-but-absent monitors no longer use a different monitor's
+legacy video URL or thumbnails. Explicit cleanup requests own dialog opening;
+ordinary playback renders cannot reopen it. Library's Recordings tab again exposes
+rename/delete for unavailable media, and days without playable spans retain their
+review panel and saved task controls. Playback preparation validates cleanup before
+allocation and closes partially prepared sessions on attachment failure.
+
+The development launcher checks Meson/Ninja before starting Tauri. Both tools were
+installed as isolated user tools on the existing PATH; the bundled WebRTC native
+build passed without the temporary build-tool PATH. README package lists include
+the prerequisites for Debian/Ubuntu and Arch/CachyOS.
+
+Review verification: 127 affected browser scenarios pass. V8 branch coverage is
+74/75 (98.66%) across the changed source-mapping, day-cleanup, Library and Day
+screen owners, with every instrumented owner above 90%; Library's composition has
+no instrumentable branches. The uncovered outcome is the existing initially
+ready manifest path in DayScreen. The native session test detects an omitted
+rollback (two retained sessions instead of one), and the temporary fault was
+restored. Twelve focused native cleanup tests and three development launcher/
+watcher scenarios pass. The final JavaScript gate passes lint/typechecks and
+774/775 desktop tests; the same pre-existing Capture focus assertion fails at
+390px in this run. Native format/all-target Clippy pass; the final suite passes
+672 tests (four ignored) and three resource-staging tests. The no-media review
+workflow also passes at 390px in dark mode, with its screenshot inspected in the
+actual full-height container. Shared and FFmpeg tests pass separately. Browser
+IPC fixtures replace Tauri; the session regression uses real SQLite, FFmpeg and
+loopback playback.
+No packaged/device journey or Rust branch instrumentation is claimed.
+Evidence: `/tmp/daydream-review-{browser-coverage,native,native-red,native-final,
+js-final,dev-watch,types,lint}.log` and `/tmp/daydream-review-coverage/`.
+The existing flat native command module remains 491 lines; the affected session
+preparation responsibility now belongs to the focused playback cleanup owner.
+Dense Studio/screen folders remain existing structure debt; no new files or
+source-structure budgets were introduced for these fixes.
+
+## Active: day Studio and shared playback transport
+
+Replace the intermediate day review page with one Studio timeline. Native day
+metadata retains recording-local provenance, hides unavailable media, and clips
+playable spans to local calendar boundaries. Frontend day mapping, navigation,
+resource ownership, result projection, privacy retries, and reprocessing remain
+separate owners; no synthetic recording ID reaches native recording commands.
+
+Playback preloads one upcoming media group and promotes its video/audio buffers.
+Monitor selection and the grid share transport, buffering, speed, and privacy
+masking. Ten-second controls and mouse/keyboard timing tooltips are explicit.
+
+Implementation is in place; verification remains incomplete. The full native
+format/Clippy/test gate passed 659 library tests and three resource-staging tests
+(four ignored). Real SQLite scenarios cover missing/protected/active recordings
+and partial playable media. The final focused FFmpeg slice test decodes two
+distinct monitor streams plus audio and checks calendar bounds; it passed after
+the full gate, with formatting and Clippy checked again. The capture writer's existing multi-source test checks separate
+MKV video streams and stable source mappings across rotation.
+
+The final JavaScript gate passed lint, all consumer typechecks and 742 of 743
+desktop tests. Its only failure is the previously recorded Capture focus case at
+768px; the task does not modify Capture. Shared tests (nine) and FFmpeg resolver
+tests (one) passed separately. Changed Studio/Recall workflows pass, including
+recording links, evidence/source navigation, gap pause/resume and buffer promotion,
+source selection, speed changes, rename/delete recovery, processing failure,
+privacy retries, stale OCR reads and subscription cleanup. The final instrumented
+run passed 69 scoped scenarios. V8 branch coverage is 489/569 (85.94%) for measured
+day/playback owners, below the required 90%; several source files also remain
+below that threshold. Privacy mutations have 100% branch coverage and playback
+session ownership has 90.47%. No Rust branch instrumentation is claimed.
+
+The current packaged Tauri/WebKit initial and restart phases passed, with measured
+2x media progress (2.001x), actual decoded video, pause/resume and persistence.
+The final keyboard phase could not start WebKitWebDriver because it could not bind
+its HTTP port; a focused attempt also failed to start. The earlier all-phase native
+run passed before the final layout/rate refinements, so it is not credited as the
+final full native UI gate. The final Studio landing and short-window screenshots
+were inspected; short windows scroll while retaining video and controls. Chromium
+workflows cover both themes and narrow layouts. Physical dual-monitor portal
+capture and live audio devices were not exercised; fixtures are synthetic.
+
+Evidence: `/tmp/day-studio-{js-final,native-final,coverage-final}.log`,
+`/tmp/day-studio-coverage-final/`, and native screenshots/rate measurements under
+`/tmp/daydream-native-e2e.nRHSeK/`. Native UI logs are
+`/tmp/day-studio-native-complete-final.log` and
+`/tmp/day-studio-keyboard-final.log`. The new day command and optional stream
+duration bound are additive. Multi-stream decoding evidence is in
+`/tmp/day-studio-multi-stream-final.log`. Existing recording links redirect to the local day;
+SQLite storage is unchanged. DayStudio is a composition owner (416 lines), with
+mapping, resource lifecycle, mutations, navigation and result projection split
+into focused modules. This cleanup stays active until the remaining gates pass.
+
 ## Implemented: Recall speech publication review fixes
 
 Cross-fragment utterances remain one citation anchored in their first media

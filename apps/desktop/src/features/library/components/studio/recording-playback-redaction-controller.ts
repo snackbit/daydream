@@ -20,7 +20,10 @@ interface PlaybackRedactionControllerInput {
   applyRedactedAudioSettings: (activeRedactedTrackIds: Set<string>) => void;
   clockTime: () => number;
   audioRefs: RefObject<Map<string, HTMLAudioElement>>;
-  currentSegment: { playbackOffsetMs: number } | null;
+  currentSegment: {
+    playbackOffsetMs: number;
+    videoTrackId?: string | undefined;
+  } | null;
   currentTimelineMs: number;
   detail: LibraryRecordingDetail;
   isPlaying: boolean;
@@ -58,10 +61,12 @@ export function usePlaybackRedactionController({
   });
   const videoTrackIds = useMemo(
     () =>
-      detail.tracks
-        .filter((track) => track.kind === 'video')
-        .map((track) => track.id),
-    [detail.tracks],
+      currentSegment?.videoTrackId
+        ? [currentSegment.videoTrackId]
+        : detail.tracks
+            .filter((track) => track.kind === 'video')
+            .map((track) => track.id),
+    [detail.tracks, currentSegment?.videoTrackId],
   );
   const redactedVideoActive = videoTrackIds.some((trackId) =>
     redactedTrackIds.has(trackId),
@@ -90,7 +95,7 @@ export function usePlaybackRedactionController({
       );
       // A follower can be ahead of the shared clock while its rate converges.
       // Protect its actual media position as well as the target position.
-      if (isPlaying && currentSegment) {
+      if (currentSegment) {
         const origin = currentSegment.playbackOffsetMs + streamStartMs;
         for (const [trackId, audio] of audioRefs.current) {
           if (

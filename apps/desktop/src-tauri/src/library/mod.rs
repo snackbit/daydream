@@ -28,7 +28,9 @@ mod waveforms;
 mod types;
 pub(crate) use types::*;
 
+pub(crate) mod audio_cleanup;
 pub(crate) mod commands;
+pub(crate) mod day;
 mod debug;
 pub(crate) mod frame_navigation;
 mod mapping;
@@ -40,6 +42,20 @@ use mapping::*;
 use playback::*;
 use redactions::*;
 use thumbnails::*;
+
+pub(crate) async fn close_cleanup_playback<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    id: &str,
+) -> Result<(), String> {
+    if let Some(server) = app.try_state::<PlaybackServer>() {
+        let server = server.inner().clone();
+        let id = id.to_string();
+        tauri::async_runtime::spawn_blocking(move || server.close_cleanup_recording(&id))
+            .await
+            .map_err(|_| "Cleanup playback could not stop.")??;
+    }
+    Ok(())
+}
 
 fn normalize_recording_title(title: Option<String>) -> Result<Option<String>, String> {
     let Some(title) = title else {

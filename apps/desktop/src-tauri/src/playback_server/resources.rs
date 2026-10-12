@@ -94,6 +94,31 @@ impl PlaybackResources {
             }
         }
     }
+    pub(super) fn drain_session(&self, session: &str, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        let mut state = self
+            .inner
+            .0
+            .lock()
+            .map_err(|_| "Playback resources unavailable.")?;
+        while state
+            .entries
+            .values()
+            .any(|entry| entry.session.as_deref() == Some(session))
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("Cleanup preview is still stopping. Retry this action.".into());
+            }
+            state = self
+                .inner
+                .1
+                .wait_timeout(state, remaining.min(Duration::from_millis(50)))
+                .map_err(|_| "Playback resources unavailable.")?
+                .0;
+        }
+        Ok(())
+    }
     pub(super) fn cancel_and_drain(&self, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;
         let mut state = self

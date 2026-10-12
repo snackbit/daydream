@@ -1,4 +1,6 @@
 import type { RecallTask } from '@daydream/shared';
+import { dayTimelineFixture } from '@/features/library/day-studio/day-timeline-fixtures';
+import syntheticMedia from '@/features/library/recording-studio-route/stories/fixtures/synthetic-player.webm?url';
 import {
   defaultSettingsState,
   scene,
@@ -39,10 +41,99 @@ export function createRecallJourneyBackend() {
     searchNext: structuredClone(recallSearchFixture),
     failures: new Set<string>(),
   };
+  const manifest = dayTimelineFixture();
+  const recording = manifest.recordings[0]!;
+  const segment = recording.segments[0]!;
+  const startedAtMs = state.day.coverage[0]!.startMs;
+  Object.assign(recording, {
+    id: 'recording-1',
+    startedAtMs,
+    endedAtMs: startedAtMs + 5000,
+    durationMs: 5000,
+    tracks: recording.tracks.filter((track) => track.kind === 'video'),
+  });
+  Object.assign(segment, {
+    id: 'segment-1',
+    startedAtMs,
+    endedAtMs: startedAtMs + 5000,
+    durationMs: 5000,
+    playbackOffsetMs: 0,
+    desktopAudioStreamIndex: null,
+    microphoneAudioStreamIndex: null,
+  });
+  Object.assign(manifest, {
+    dayId: state.day.day.dayId,
+    startMs: state.day.day.startMs,
+    endMs: state.day.day.endMs,
+    recordings: [recording],
+    spans: [
+      {
+        recordingId: recording.id,
+        segmentId: segment.id,
+        startMs: startedAtMs,
+        durationMs: 5000,
+        sourceStartMs: 0,
+        sourceOffsetMs: 0,
+      },
+    ],
+  });
   async function invoke(command: string, args?: unknown): Promise<unknown> {
     if (state.failures.delete(command))
       throw new Error('Synthetic local operation failed');
     switch (command) {
+      case 'getLibraryDayTimeline':
+        return structuredClone({
+          ...manifest,
+          privacyRevision: state.day.privacyRevision,
+        });
+      case 'createLibraryPlaybackSession':
+        return {
+          recordingId: recording.id,
+          sessionId: 'recall-journey-session',
+          error: null,
+          segments: [
+            {
+              segmentId: segment.id,
+              videoUrl: new URL(syntheticMedia, location.origin).href,
+              videos: [],
+              audio: [],
+              thumbnails: [],
+            },
+          ],
+        };
+      case 'closeLibraryPlaybackSession':
+      case 'log_frontend_failure':
+        return undefined;
+      case 'getRecordingAiProcessingState':
+        return {
+          recordingId: recording.id,
+          job: null,
+          chunks: [],
+          transcript: { recordingId: recording.id, tracks: [] },
+        };
+      case 'getRecordingActivity':
+        return {
+          recordingId: recording.id,
+          events: [],
+          intervals: [],
+          captureStates: [],
+          windowSnapshots: [],
+        };
+      case 'getRecordingVisualObservations':
+        return {
+          recordingId: recording.id,
+          ocrRegions: [],
+          vlmObservations: [],
+        };
+      case 'getOcrTimelineFrames':
+        return { recordingId: recording.id, frames: [], nextCursor: null };
+      case 'getRecordingWaveformTiles':
+        return {
+          recordingId: recording.id,
+          binMs: 10,
+          tracks: [],
+          error: null,
+        };
       case 'getRecallDay':
         return structuredClone(state.day);
       case 'getRecallStatus':

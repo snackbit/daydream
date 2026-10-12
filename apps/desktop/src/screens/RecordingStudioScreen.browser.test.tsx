@@ -268,7 +268,8 @@ test('independent source selection and grid keep stream URLs and redactions isol
       view.container.querySelector('video')?.getAttribute('src'),
     ).toContain('fixture=source-b'),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Video source' }));
+  await userEvent.click(screen.getByRole('option', { name: 'All monitors' }));
   await screen.findByLabelText('Screen A synchronized video');
   expect(screen.getByLabelText('Screen A redacted')).toBeTruthy();
   expect(screen.queryByLabelText('Screen B redacted')).toBeNull();
@@ -277,7 +278,9 @@ test('independent source selection and grid keep stream URLs and redactions isol
   );
   await userEvent.click(screen.getByRole('option', { name: '2x' }));
   await screen.findByRole('combobox', { name: 'Playback speed' });
-  for (const video of view.container.querySelectorAll('video'))
+  for (const video of [...view.container.querySelectorAll('video')].filter(
+    (video) => !video.closest('[hidden]'),
+  ))
     expect(video.playbackRate).toBe(2);
   expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   client.adjacentLibraryFrame.mockResolvedValue(500);
@@ -3096,7 +3099,7 @@ test('RecordingStudioScreen advances immediately across back-to-back segments', 
       playbackAssets.segments[1]!.videoUrl,
     ),
   );
-  expect(screen.queryByText(/Recording paused/i)).toBeNull();
+  expect(screen.queryByText(/Not recorded. Next recording at/i)).toBeNull();
 });
 
 test('RecordingStudioScreen fullscreen targets the player surface instead of the raw video', async () => {
@@ -3439,7 +3442,7 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
   vi.mocked(window.HTMLMediaElement.prototype.play).mockClear();
   fireEvent.ended(container.querySelector('video')!);
 
-  expect(screen.getByText(/Recording paused/i)).toBeTruthy();
+  expect(screen.getByText(/Not recorded. Next recording at/i)).toBeTruthy();
   expect(screen.getByRole('button', { name: /play now/i })).toBeTruthy();
   expect(container.querySelector('video')?.getAttribute('src')).toContain(
     playbackAssets.segments[0]!.videoUrl,
@@ -3462,7 +3465,7 @@ test('RecordingStudioScreen waits for the actual pause gap before advancing segm
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
   );
   await waitFor(() => {
-    expect(screen.queryByText(/Recording paused/i)).toBeNull();
+    expect(screen.queryByText(/Not recorded. Next recording at/i)).toBeNull();
   });
 });
 
@@ -3506,7 +3509,7 @@ test('RecordingStudioScreen play now skips the pause gap immediately', async () 
   await waitFor(() =>
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled(),
   );
-  expect(screen.queryByText(/Recording paused/i)).toBeNull();
+  expect(screen.queryByText(/Not recorded. Next recording at/i)).toBeNull();
 });
 
 test('RecordingStudioScreen shows disabled placeholders for missing files', async () => {
@@ -3799,7 +3802,7 @@ test('recall links resolve the exact source and seek once without autoplay, then
   );
   expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
   expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Skip forward' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Forward 10 seconds' }));
   const position = screen
     .getByRole('slider', { name: 'Playback position' })
     .getAttribute('aria-valuenow');

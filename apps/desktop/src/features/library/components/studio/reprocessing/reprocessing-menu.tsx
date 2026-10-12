@@ -1,6 +1,6 @@
 import { useCallback, type ReactNode } from 'react';
 import type { ReprocessingTarget } from '@daydream/shared';
-import { MoreHorizontal, RefreshCw } from 'lucide-react';
+import { MoreHorizontal, RefreshCw, AudioLines } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -21,12 +21,14 @@ export interface ReprocessingMenuProps {
   label: string;
   children?: ReactNode;
   onOpenChange?: ((open: boolean) => void) | undefined;
+  onAudioCleanup?: (() => void) | undefined;
 }
 export function ReprocessingDropdown({
   targets,
   onReprocess,
   label,
   onOpenChange,
+  onAudioCleanup,
 }: ReprocessingMenuProps) {
   const reprocess = useCallback(
     () => onReprocess(targets),
@@ -45,6 +47,12 @@ export function ReprocessingDropdown({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent data-studio-preserve-selection align="end">
+        {onAudioCleanup ? (
+          <DropdownMenuItem onSelect={onAudioCleanup}>
+            <AudioLines />
+            Remove speaker bleed…
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem onSelect={reprocess} disabled={targets.length === 0}>
           <RefreshCw />
           Reprocess {label.toLowerCase()}…
@@ -59,6 +67,7 @@ export function ReprocessingContextMenu({
   label,
   children,
   onOpenChange,
+  onAudioCleanup,
 }: ReprocessingMenuProps) {
   const reprocess = useCallback(
     () => onReprocess(targets),
@@ -68,6 +77,12 @@ export function ReprocessingContextMenu({
     <ContextMenu {...(onOpenChange ? { onOpenChange } : {})}>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent data-studio-preserve-selection className="z-70">
+        {onAudioCleanup ? (
+          <ContextMenuItem onSelect={onAudioCleanup}>
+            <AudioLines />
+            Remove speaker bleed…
+          </ContextMenuItem>
+        ) : null}
         <ContextMenuItem onSelect={reprocess} disabled={targets.length === 0}>
           <RefreshCw />
           Reprocess {label.toLowerCase()}…

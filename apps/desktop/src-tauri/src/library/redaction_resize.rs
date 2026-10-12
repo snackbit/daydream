@@ -57,6 +57,7 @@ pub(crate) async fn resize_library_redaction(
     crate::ai::cancel_recording_processing_for_privacy(&storage, &recording.id, now_ms())
         .map_err(|_| "Processing could not be stopped safely.")?;
     let _lease = crate::recording_privacy::mutation_lease(&recording.id).await;
+    close_cleanup_playback(&app, &recording.id).await?;
     storage
         .with_connection_mut(|connection| resize(connection, &input, duration))
         .map_err(|_| "The redaction changed or could not be saved. Refresh and try again.")?;

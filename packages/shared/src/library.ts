@@ -1,5 +1,6 @@
 import type { RecordingAiProcessingState } from './ai.js';
 import type { RecordingVisualObservations } from './ai/visual.js';
+import type { AudioCleanupState } from './audio-cleanup.js';
 import type { RecorderSegmentState } from './recorder.js';
 
 export type LibraryRecordingAvailability =
@@ -28,6 +29,10 @@ export interface LibraryRecordingSummary {
 }
 
 export interface LibraryRecordingSegment {
+  /** View-only trim into source media, used for calendar-day playback slices. */
+  mediaStartMs?: number;
+  /** Effective primary video source in a playback view. */
+  videoTrackId?: string | undefined;
   fragmentIds?: string[];
   captureRunId?: string | null;
   videoStreams?: SegmentVideoStream[];
@@ -78,6 +83,7 @@ export interface LibraryRecordingRedaction {
 }
 
 export interface LibraryRecordingDetail {
+  audioCleanup?: AudioCleanupState;
   availability: LibraryRecordingAvailability;
   durationMs: number | null;
   endedAtMs: number | null;
@@ -93,6 +99,30 @@ export interface LibraryRecordingDetail {
   thumbnailPath: string | null;
   title: string | null;
   tracks: LibraryRecordingTrack[];
+}
+
+export interface LibraryDayTimelineInput {
+  dayId: string;
+  timezone: string;
+}
+
+/** Original recording metadata and source-time slices; never a persisted recording. */
+export interface LibraryDayTimeline {
+  dayId: string;
+  startMs: number;
+  endMs: number;
+  privacyRevision: number;
+  recordings: LibraryRecordingDetail[];
+  spans: LibraryDayPlaybackSpan[];
+}
+
+export interface LibraryDayPlaybackSpan {
+  recordingId: string;
+  segmentId: string;
+  startMs: number;
+  durationMs: number;
+  sourceStartMs: number;
+  sourceOffsetMs: number;
 }
 
 export interface DeleteLibraryRecordingInput {

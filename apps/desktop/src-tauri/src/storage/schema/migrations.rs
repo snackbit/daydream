@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use rusqlite_migration::Migrations;
 
 mod ai_outputs;
+mod audio_cleanup;
 mod capture_runs;
 mod initial;
 mod live_processing;
@@ -56,5 +57,6 @@ pub(crate) fn migrations() -> Migrations<'static> {
     migrations.extend(transcript_languages::migrations());
     migrations.extend(speech_units::migrations());
     migrations.extend(recall_speech::migrations());
+    migrations.extend(audio_cleanup::migrations());
     Migrations::new(migrations)
 }

@@ -56,6 +56,8 @@ sha1 = "0.10.6"
 sha2 = "0.10.9"
 chrono = "0.4.45"
 chrono-tz = "0.10.4"
+webrtc-audio-processing = { version = "=2.1.0", features = ["bundled"] }
+hound = "=3.5.1"
 tokio = { version = "1", features = ["sync", "time", "process", "io-util", "macros", "net"] }
 tracing = "0.1"
 tracing-appender = "0.2"

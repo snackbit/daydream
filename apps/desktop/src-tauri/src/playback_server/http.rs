@@ -18,6 +18,10 @@ use super::{
 mod request;
 use request::read_request;
 pub(super) use request::{parse_request, PlaybackRequest};
+struct PlaybackRange {
+    start_ms: i64,
+    duration_ms: Option<i64>,
+}
 pub(super) fn handle_stream(
     mut stream: TcpStream,
     sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
@@ -53,8 +57,20 @@ pub(super) fn handle_stream(
 
     match playback_request {
         PlaybackRequest::Audio {
-            start_ms, track_id, ..
-        } => stream_audio(&mut stream, &segment, &track_id, start_ms, &resource),
+            start_ms,
+            track_id,
+            duration_ms,
+            ..
+        } => stream_audio(
+            &mut stream,
+            &segment,
+            &track_id,
+            PlaybackRange {
+                start_ms,
+                duration_ms,
+            },
+            &resource,
+        ),
         PlaybackRequest::Thumbnail {
             stream_index,
             offset_ms,
@@ -71,12 +87,16 @@ pub(super) fn handle_stream(
         PlaybackRequest::Video {
             start_ms,
             stream_index,
+            duration_ms,
             ..
         } => stream_video(
             &mut stream,
             &segment,
             &encoder,
-            start_ms,
+            PlaybackRange {
+                start_ms,
+                duration_ms,
+            },
             stream_index,
             &resource,
         ),
@@ -87,10 +107,11 @@ fn stream_video(
     stream: &mut TcpStream,
     segment: &PlaybackSegment,
     encoder: &VideoEncoder,
-    start_ms: i64,
+    range: PlaybackRange,
     requested_stream: Option<i64>,
     resource: &super::resources::ResourceLease,
 ) {
+    let start_ms = range.start_ms;
     let Some(video_stream_index) = selected_video_stream(segment, requested_stream) else {
         write_response(stream, 404, "text/plain", b"Segment has no video stream");
         return;
@@ -120,7 +141,7 @@ fn stream_video(
         "-t",
         &format!(
             "{:.3}",
-            segment.duration_ms.saturating_sub(start_ms).max(1) as f64 / 1000.
+            output_duration_ms(segment.duration_ms, start_ms, range.duration_ms) as f64 / 1000.
         ),
     ]);
     command
@@ -135,9 +156,10 @@ fn stream_audio(
     stream: &mut TcpStream,
     segment: &PlaybackSegment,
     track_id: &str,
-    start_ms: i64,
+    range: PlaybackRange,
     resource: &super::resources::ResourceLease,
 ) {
+    let start_ms = range.start_ms;
     let stream_index = if track_id.starts_with("desktop-audio-") {
         segment.desktop_audio_stream_index
     } else if track_id.starts_with("microphone-") {
@@ -155,7 +177,15 @@ fn stream_audio(
         return;
     };
 
-    let Ok(input) = playback_input_args(segment, start_ms, resource) else {
+    let cleaned = track_id.starts_with("microphone-") && !segment.microphone_fragments.is_empty();
+    let input = if cleaned {
+        let mut audio = segment.clone();
+        audio.fragments = segment.microphone_fragments.clone();
+        playback_input_args(&audio, start_ms, resource)
+    } else {
+        playback_input_args(segment, start_ms, resource)
+    };
+    let Ok(input) = input else {
         write_response(stream, 404, "text/plain", b"Playback media unavailable");
         return;
     };
@@ -163,12 +193,15 @@ fn stream_audio(
     command
         .args(["-hide_banner", "-v", "error"])
         .args(input)
-        .args(["-map", &format!("0:{stream_index}")])
+        .args([
+            "-map",
+            &format!("0:{}", if cleaned { 0 } else { stream_index }),
+        ])
         .args([
             "-t",
             &format!(
                 "{:.3}",
-                segment.duration_ms.saturating_sub(start_ms).max(1) as f64 / 1000.
+                output_duration_ms(segment.duration_ms, start_ms, range.duration_ms) as f64 / 1000.
             ),
         ])
         .args([
@@ -194,6 +227,11 @@ fn stream_audio(
 
     stream_ffmpeg_stdout(stream, command, "audio/mp4", resource);
 }
+pub(super) fn output_duration_ms(duration_ms: i64, start_ms: i64, requested: Option<i64>) -> i64 {
+    let remaining = duration_ms.saturating_sub(start_ms).max(1);
+    requested.unwrap_or(remaining).clamp(1, remaining)
+}
+
 pub(super) fn playback_input_args(
     segment: &PlaybackSegment,
     start_ms: i64,

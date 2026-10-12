@@ -178,6 +178,7 @@ fn enqueue_processing<R: tauri::Runtime>(
             };
             if new_job {
                 storage::enable_speech_strategy(connection, &job.id)?;
+                crate::library::audio_cleanup::pin_job(connection, &job.id, recording_id)?;
             }
             storage::save_processing_job_ocr_config(connection, &job.id, &ocr_config_json)?;
             let config =

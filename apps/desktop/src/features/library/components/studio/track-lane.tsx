@@ -43,6 +43,7 @@ import {
 } from './track-timeline-math';
 
 export interface TrackLaneProps {
+  onAudioCleanup?: (() => void) | undefined;
   plannedProcessingScopes?: readonly TimelinePlannedScope[] | undefined;
   onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
   visibleRange: { startTimelineMs: number; endTimelineMs: number };
@@ -100,6 +101,7 @@ export function TrackLane({
   waveformTiles,
   onSelectVisualFrame,
   onReprocess,
+  onAudioCleanup,
 }: TrackLaneProps) {
   const curtain = useMemo(
     () =>
@@ -209,6 +211,9 @@ export function TrackLane({
         onSelectLane={onSelectLane}
         onToggleTrackMuted={onToggleTrackMuted}
         onReprocess={onReprocess}
+        onAudioCleanup={
+          track.kind === 'microphone' ? onAudioCleanup : undefined
+        }
       />
       <div
         className={cn(

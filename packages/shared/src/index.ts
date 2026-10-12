@@ -169,6 +169,7 @@ export interface DaydreamDiagnostics {
 
 export * from './recorder.js';
 export * from './library.js';
+export * from './audio-cleanup.js';
 export * from './ai.js';
 export * from './settings.js';
 export * from './startup.js';

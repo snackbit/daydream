@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -34,11 +35,15 @@ export function useRecordingPlaybackController({
   mutedTrackIds,
   playbackAssets,
   autoSkipRedacted = true,
+  shortGaps = false,
+  skipOnlyWhenAllSources = false,
 }: {
   detail: LibraryRecordingDetail;
   mutedTrackIds: Set<string>;
   playbackAssets: LibraryPlaybackAssets | null;
   autoSkipRedacted?: boolean;
+  shortGaps?: boolean;
+  skipOnlyWhenAllSources?: boolean;
 }) {
   const playbackIntentRef = useRef(false);
   const redactedTrackIdsRef = useRef(new Set<string>());
@@ -58,10 +63,11 @@ export function useRecordingPlaybackController({
   const [pendingAutoplay, setPendingAutoplay] = useState(false);
   const [playbackRate, setPlaybackRate] = useState<PlaybackSpeed>(1);
   const [resumeProgress, setResumeProgress] = useState<number | null>(null);
-  const { clearResumeTimer, startResumeTimer } = usePlaybackResumeTimer({
-    setResumeProgress,
-    playbackRate,
-  });
+  const { clearResumeTimer, startResumeTimer, setResumeTimerPaused } =
+    usePlaybackResumeTimer({
+      setResumeProgress,
+      playbackRate: shortGaps ? 1 : playbackRate,
+    });
   const [scrubTimelineMs, setScrubTimelineMs] = useState<number | null>(null);
   const [seekRevision, setSeekRevision] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
@@ -150,6 +156,7 @@ export function useRecordingPlaybackController({
       currentPlaybackSegment?.audio.map((audio) => [audio.trackId, audio.url]),
       streamStartMs,
       streamRevision,
+      skipOnlyWhenAllSources,
     ]),
     resumeProgress,
     setIsPlaying,
@@ -196,7 +203,7 @@ export function useRecordingPlaybackController({
         setPlaybackEndedAtEnd(true);
         setPlaybackError(null);
         setResumeProgress(null);
-        setStreamStartMs(lastSegment.durationMs ?? 0);
+        setStreamStartMs(Math.max(0, (lastSegment.durationMs ?? 0) - 1000));
         updateRedactionStateForTimeline(totalDurationMs);
         setStreamRevision((revision) => revision + 1);
         setSeekRevision((revision) => revision + 1);
@@ -232,6 +239,10 @@ export function useRecordingPlaybackController({
   async function togglePlayback() {
     const video = videoRef.current;
     if (resumeProgress !== null) {
+      const wanted = !playbackIntentRef.current;
+      playbackIntentRef.current = wanted;
+      setResumeTimerPaused(!wanted);
+      replaceStream(wanted);
       return;
     }
     if (playbackEndedAtEnd) {
@@ -268,49 +279,103 @@ export function useRecordingPlaybackController({
     manualSkip: skipToNextUnredactedVideo,
   } = usePlaybackVideoRedactionSkip({
     recordingId: detail.id,
-    targetMs: autoSkipRedacted ? redactionSkipTargetMs : null,
+    targetMs:
+      autoSkipRedacted &&
+      (!skipOnlyWhenAllSources ||
+        (currentSegment?.videoStreams ?? []).every((source) =>
+          detail.redactions.some(
+            (cut) =>
+              cut.trackIds.includes(source.trackId) &&
+              currentTimelineMs >= cut.startOffsetMs &&
+              currentTimelineMs < cut.endOffsetMs,
+          ),
+        ))
+        ? redactionSkipTargetMs
+        : null,
     seek: seekTimeline,
     isPlaying,
     timelineMs: currentTimelineMs,
     seekRevision,
   });
 
-  const handleEnded = useCallback(
-    (event: SyntheticEvent<HTMLVideoElement>) => {
-      if (!currentSegment || !isCurrentMedia(event.currentTarget)) {
-        return;
-      }
+  const completedStream = useRef<string | null>(null);
+  const finishCurrentSegment = useCallback(() => {
+    if (!currentSegment || resumeProgress !== null) {
+      return;
+    }
+    const key = `${currentSegment.id}:${streamRevision}`;
+    if (completedStream.current === key) return;
+    completedStream.current = key;
 
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= playableSegments.length) {
-        setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
-        replaceStream(false);
-        setPlaybackEndedAtEnd(true);
-        return;
-      }
-      const shouldContinuePlayback = playbackIntentRef.current;
-      const advanceToNextSegment = () =>
-        advanceToSegment(nextIndex, shouldContinuePlayback);
-      const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
-      if (pauseGapMs === 0) {
-        advanceToNextSegment();
-        return;
-      }
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= playableSegments.length) {
+      setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
+      replaceStream(false);
+      setPlaybackEndedAtEnd(true);
+      return;
+    }
+    const advanceToNextSegment = () =>
+      advanceToSegment(nextIndex, playbackIntentRef.current);
+    const pauseGapMs = Math.max(0, currentSegment.pauseAfterMs);
+    if (pauseGapMs === 0) {
+      advanceToNextSegment();
+      return;
+    }
 
-      replaceStream(shouldContinuePlayback);
-      startResumeTimer(pauseGapMs, advanceToNextSegment);
-    },
-    [
-      advanceToSegment,
-      clearResumeTimer,
-      currentIndex,
-      currentSegment,
-      replaceStream,
-      isCurrentMedia,
-      playableSegments.length,
-      startResumeTimer,
-    ],
-  );
+    replaceStream(playbackIntentRef.current);
+    setCurrentTime((currentSegment.durationMs ?? 0) / 1000);
+    startResumeTimer(
+      shortGaps ? Math.min(3000, pauseGapMs) : pauseGapMs,
+      advanceToNextSegment,
+    );
+    setResumeTimerPaused(!playbackIntentRef.current);
+  }, [
+    advanceToSegment,
+    clearResumeTimer,
+    currentIndex,
+    currentSegment,
+    replaceStream,
+    isCurrentMedia,
+    playableSegments.length,
+    startResumeTimer,
+    shortGaps,
+    resumeProgress,
+    streamRevision,
+    setResumeTimerPaused,
+  ]);
+
+  function handleEnded(event: SyntheticEvent<HTMLVideoElement>) {
+    if (isCurrentMedia(event.currentTarget)) finishCurrentSegment();
+  }
+  // Calendar slices can end before their physical MKV stream ends.
+  useEffect(() => {
+    if (
+      !isPlaying ||
+      !currentSegment ||
+      currentSegment.mediaStartMs === undefined
+    )
+      return;
+    let timer = 0;
+    function check() {
+      const remaining =
+        (currentSegment?.durationMs ?? 0) - streamStartMs - clockTime() * 1000;
+      if (remaining <= 0) finishCurrentSegment();
+      else
+        timer = window.setTimeout(
+          check,
+          Math.min(100, remaining / playbackRate),
+        );
+    }
+    check();
+    return () => window.clearTimeout(timer);
+  }, [
+    isPlaying,
+    currentSegment,
+    streamStartMs,
+    clockTime,
+    playbackRate,
+    finishCurrentSegment,
+  ]);
 
   function playNowAfterPause() {
     const nextIndex = currentIndex + 1;
@@ -318,6 +383,10 @@ export function useRecordingPlaybackController({
       advanceToSegment(nextIndex, playbackIntentRef.current);
     }
   }
+  const pausePlayback = useCallback(() => {
+    setResumeTimerPaused(true);
+    requestPlayback(false);
+  }, [setResumeTimerPaused, requestPlayback]);
 
   const setVideoElement = useCallback(
     (element: HTMLVideoElement | null) => {
@@ -335,7 +404,7 @@ export function useRecordingPlaybackController({
 
   function handleVideoTimeUpdate(video: HTMLVideoElement) {
     if (!isCurrentMedia(video)) return;
-    setCurrentTime(streamStartSeconds + clockTime());
+    if (!playbackEndedAtEnd) setCurrentTime(streamStartSeconds + clockTime());
     updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime);
   }
@@ -353,7 +422,9 @@ export function useRecordingPlaybackController({
       handleVideoPlay,
       handleVideoTimeUpdate,
       playNowAfterPause,
+      pausePlayback,
       registerAudioElement,
+      registerVideoElement: media.actions.registerVideoElement,
       requestFullscreen,
       readPlaybackTimeMs,
       seekTimeline,

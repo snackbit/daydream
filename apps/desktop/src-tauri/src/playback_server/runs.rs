@@ -62,7 +62,7 @@ pub(super) fn groups<'a>(
     groups
 }
 
-pub(super) fn concat_manifest(fragments: &[(String, i64)]) -> Result<String, String> {
+pub(crate) fn concat_manifest(fragments: &[(String, i64)]) -> Result<String, String> {
     let mut manifest = String::from("ffconcat version 1.0\n");
     for (path, duration) in fragments {
         if *duration <= 0 {

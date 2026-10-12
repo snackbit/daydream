@@ -113,6 +113,23 @@ pub fn list_recordings(connection: &Connection) -> rusqlite::Result<Vec<Recordin
     rows.collect()
 }
 
+/// Select by authoritative segment clocks before doing filesystem or source reads.
+pub fn list_recordings_in_range(
+    connection: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+) -> rusqlite::Result<Vec<RecordingRow>> {
+    let mut statement=connection.prepare("SELECT DISTINCT s.recording_id FROM recording_segments s JOIN recordings r ON r.id=s.recording_id WHERE r.status != 'deleted' AND s.state='finalized' AND s.duration_ms>0 AND s.started_at_ms<?2 AND s.started_at_ms+s.duration_ms>?1")?;
+    let ids = statement
+        .query_map(rusqlite::params![start_ms, end_ms], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    ids.into_iter()
+        .map(|id| get_recording(connection, &id))
+        .collect()
+}
+
 pub fn delete_recording(connection: &Connection, id: &str) -> rusqlite::Result<()> {
     let status = connection
         .query_row("SELECT status FROM recordings WHERE id = ?1", [id], |row| {
