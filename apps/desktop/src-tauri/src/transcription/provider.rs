@@ -110,7 +110,7 @@ impl TranscriptionProviderManager {
                     api_key: &api_key,
                     audio_path: &request.audio_path,
                     cancel: Some(request.cancel),
-                    language: &app_settings.ai.transcription.language,
+                    language: &request.language,
                     model: &request.model,
                     timeout: request.timeout,
                     word_timestamps: request.word_timestamps,

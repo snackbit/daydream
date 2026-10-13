@@ -55,6 +55,7 @@ use notification_helpers::{
 };
 
 const MODEL_PROGRESS_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) use processing::ProcessingWorkerOwners;
 const MODEL_PROGRESS_UPDATE_BYTES: i64 = 4 * 1024 * 1024;
 const AI_PROCESSING_JOB_KIND: &str = "ai-processing";
 const MAX_TRANSCRIPTION_CHUNK_DURATION_MS: i64 = 30_000;

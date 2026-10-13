@@ -1,6 +1,7 @@
 import type * as TauriCore from '@tauri-apps/api/core';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { useStudioResultWindowStore as windows } from '../components/studio/studio-result-window-store';
 import { buildDayTimeline } from './day-timeline';
 import { dayTimelineFixture } from './day-timeline-fixtures';
 import { useDayMutations, type DayPrivacyOperation } from './use-day-mutations';
@@ -36,6 +37,7 @@ function reply(command: string, id: string): unknown {
   return undefined;
 }
 beforeEach(() => {
+  windows.setState(windows.getInitialState(), true);
   vi.resetAllMocks();
   native.listen.mockImplementation(
     async (_name: string, handler: (event: { payload: unknown }) => void) => {
@@ -50,7 +52,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-test('processing invalidation clears published reads immediately and rejects a late OCR page before recovering', async () => {
+test('recording processing refresh retains other published reads and rejects a late OCR page before recovering', async () => {
   let finishOld: (value: unknown) => void = () => {
     throw new Error('Old page was not requested');
   };
@@ -70,8 +72,8 @@ test('processing invalidation clears published reads immediately and rejects a l
   const model = buildDayTimeline(dayTimelineFixture());
   const view = renderHook(() => useDayResults(model));
   await waitFor(() => expect(view.result.current.results.has('b')).toBe(true));
-  act(() => changed({ payload: {} }));
-  expect(view.result.current.results.size).toBe(0);
+  act(() => changed({ payload: { recordingId: 'a' } }));
+  expect(view.result.current.results.has('b')).toBe(true);
   await act(async () => {
     finishOld(reply('getOcrTimelineFrames', 'a'));
   });
@@ -110,12 +112,185 @@ test('repeated OCR pagination fails visibly without publishing the broken record
   expect(view.result.current.error).toBe(false);
 });
 
-test('a missing invalidation subscription clears results and reports an error; a late subscription is cleaned up', async () => {
+test('coarse day reads request source overview ranges, skip OCR detail, and ignore waveform publications', async () => {
+  const model = buildDayTimeline(dayTimelineFixture());
+  windows.getState().setWindow(model.view.id, 0, 18_000, 0.0001);
+  windows.getState().setReview(model.view.id, 0);
+  const view = renderHook(() => useDayResults(model));
+  await waitFor(() => expect(view.result.current.results.size).toBe(2));
+  expect(
+    native.invoke.mock.calls.some(
+      ([command]) => command === 'getOcrTimelineFrames',
+    ),
+  ).toBe(false);
+  expect(native.invoke).toHaveBeenCalledWith('getRecordingAiProcessingState', {
+    input: {
+      recordingId: 'a',
+      startOffsetMs: 21_000,
+      endOffsetMs: 26_000,
+      reviewStartOffsetMs: 21_000,
+      reviewEndOffsetMs: 26_000,
+      bucketMs: 480_000,
+    },
+  });
+  const before = native.invoke.mock.calls.length;
+  const original = view.result.current.results.get('a');
+  act(() => changed({ payload: { recordingId: 'a', sourceKind: 'waveform' } }));
+  act(() => changed({ payload: { recordingId: 'unrelated' } }));
+  expect(native.invoke.mock.calls).toHaveLength(before);
+  act(() =>
+    windows.getState().setWindow(model.view.id, 60_000, 90_000, 0.0002),
+  );
+  await waitFor(() =>
+    expect(native.invoke.mock.calls.length).toBeGreaterThan(before),
+  );
+  expect(view.result.current.results.size).toBe(2);
+  const loaded = native.invoke.mock.calls.length;
+  act(() => windows.getState().setWindow(model.view.id, 0, 18_000, 0.0001));
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')).toBe(original),
+  );
+  expect(native.invoke.mock.calls).toHaveLength(loaded);
+  act(() => changed({ payload: { recordingId: 'a' } }));
+  await waitFor(() =>
+    expect(native.invoke.mock.calls.length).toBeGreaterThan(loaded),
+  );
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')).not.toBe(original),
+  );
+});
+
+test.each([
+  ['same source', ['a-screen-0'], 0],
+  ['all sources', [], 0],
+  ['other source', ['a-screen-1'], 1],
+] as const)(
+  'new source redactions on %s apply to cached screen details before replacement IPC completes',
+  async (_scope, trackIds, remaining) => {
+    const fixture = dayTimelineFixture();
+    native.invoke.mockImplementation(
+      async (command: string, args: { input: { recordingId: string } }) => {
+        const id = args.input.recordingId;
+        if (command === 'getOcrTimelineFrames' && id === 'a')
+          return {
+            recordingId: id,
+            nextCursor: null,
+            frames: [
+              {
+                id: 'frame',
+                recordingId: id,
+                documentId: 'doc',
+                segmentId: 'a-segment',
+                sourceTrackId: 'a-screen-0',
+                sourceFrameRef: 'synthetic',
+                frameTimestampMs: 21_000,
+                sampleEndMs: 22_000,
+                status: 'succeeded',
+                errorCode: null,
+                ocrOutputCount: 1,
+                textEmpty: false,
+              },
+            ],
+          };
+        return reply(command, id);
+      },
+    );
+    const view = renderHook(({ model }) => useDayResults(model), {
+      initialProps: { model: buildDayTimeline(fixture) },
+    });
+    await waitFor(() =>
+      expect(view.result.current.results.get('a')?.frames).toHaveLength(1),
+    );
+    native.invoke.mockImplementation(() => new Promise(() => undefined));
+    const protectedFixture = structuredClone(fixture);
+    protectedFixture.recordings[0]!.redactions = [
+      {
+        id: 'cut',
+        recordingId: 'a',
+        createdAtMs: 1,
+        startOffsetMs: 21_000,
+        endOffsetMs: 22_000,
+        trackIds: [...trackIds],
+        reason: null,
+      },
+    ];
+    view.rerender({ model: buildDayTimeline(protectedFixture) });
+    expect(view.result.current.results.get('a')?.frames).toHaveLength(
+      remaining,
+    );
+    expect(view.result.current.results.has('b')).toBe(true);
+  },
+);
+
+test('redacting earlier comparison context withholds its cached observation before a new read completes', async () => {
+  const fixture = dayTimelineFixture();
+  native.invoke.mockImplementation(
+    async (command: string, args: { input: { recordingId: string } }) => {
+      const id = args.input.recordingId;
+      if (command === 'getRecordingVisualObservations' && id === 'a')
+        return {
+          recordingId: id,
+          ocrRegions: [],
+          vlmObservations: [
+            {
+              id: 'observation',
+              jobId: 'job',
+              chunkId: 'chunk',
+              recordingId: id,
+              frameTimestampMs: 21_000,
+              contextStartMs: 20_000,
+              confirmedEndMs: 22_000,
+              sourceFrameRef: 'a-segment:stream:a-screen-0:21000',
+              region: { x: 0, y: 0, width: 640, height: 360 },
+              provider: 'openai-compatible',
+              model: 'synthetic',
+              confidence: null,
+              promptVersion: 'changes-v1',
+              observationKind: 'screen-observation',
+              text: 'Synthetic screen change',
+            },
+          ],
+        };
+      return reply(command, id);
+    },
+  );
+  const view = renderHook(({ model }) => useDayResults(model), {
+    initialProps: { model: buildDayTimeline(fixture) },
+  });
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')?.frames).toHaveLength(1),
+  );
+  native.invoke.mockImplementation(() => new Promise(() => undefined));
+  const protectedFixture = structuredClone(fixture);
+  protectedFixture.recordings[0]!.redactions = [
+    {
+      id: 'cut-context',
+      recordingId: 'a',
+      createdAtMs: 1,
+      startOffsetMs: 20_000,
+      endOffsetMs: 20_500,
+      trackIds: ['a-screen-0'],
+      reason: null,
+    },
+  ];
+  view.rerender({ model: buildDayTimeline(protectedFixture) });
+  expect(view.result.current.results.get('a')?.frames).toEqual([]);
+});
+
+test('a missing invalidation subscription preserves readable results, reports the degraded state and reconciles on focus; a late subscription is cleaned up', async () => {
   const model = buildDayTimeline(dayTimelineFixture());
   native.listen.mockRejectedValue(new Error('Synthetic subscription failed'));
   const view = renderHook(() => useDayResults(model));
   await waitFor(() => expect(view.result.current.error).toBe(true));
-  expect(view.result.current.results.size).toBe(0);
+  await waitFor(() =>
+    expect(view.result.current.results.size).toBeGreaterThan(0),
+  );
+  const previousReads = native.invoke.mock.calls.length;
+  window.dispatchEvent(new Event('focus'));
+  await waitFor(() =>
+    expect(native.invoke.mock.calls.length).toBeGreaterThan(previousReads),
+  );
+  expect(view.result.current.error).toBe(true);
   view.unmount();
   let finish: (cleanup: () => void) => void = () => {};
   native.listen.mockImplementation(

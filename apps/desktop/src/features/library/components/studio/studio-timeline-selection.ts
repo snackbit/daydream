@@ -191,7 +191,7 @@ export function pruneSelection(
   clipsById: Record<string, StudioClipDraft>,
   redactionIds: Set<string>,
 ): StudioSelection {
-  return normalizeSelection({
+  const next = normalizeSelection({
     clipIds: selection.clipIds.filter((clipId) => clipId in clipsById),
     laneIds: selection.laneIds.filter((laneId) => laneId in lanesById),
     redactionIds: selection.redactionIds.filter((id) => redactionIds.has(id)),
@@ -206,6 +206,7 @@ export function pruneSelection(
       .filter((range) => range.laneIds.length > 0),
     visualFrameIds: [...selection.visualFrameIds],
   });
+  return JSON.stringify(next) === JSON.stringify(selection) ? selection : next;
 }
 
 export function toggleId(ids: string[], id: string): string[] {

@@ -25,6 +25,7 @@ interface PlaybackRedactionControllerInput {
     videoTrackId?: string | undefined;
   } | null;
   currentTimelineMs: number;
+  onBoundary?: (() => void) | undefined;
   detail: LibraryRecordingDetail;
   isPlaying: boolean;
   redactedTrackIdsRef: RefObject<Set<string>>;
@@ -40,6 +41,7 @@ export function usePlaybackRedactionController({
   audioRefs,
   currentSegment,
   currentTimelineMs,
+  onBoundary,
   detail,
   isPlaying,
   redactedTrackIdsRef,
@@ -119,6 +121,7 @@ export function usePlaybackRedactionController({
         }
       }
       if (!setsEqual(redactedTrackIdsRef.current, nextRedactedTrackIds)) {
+        onBoundary?.();
         redactedTrackIdsRef.current = nextRedactedTrackIds;
         setRedactedTrackIds(nextRedactedTrackIds);
       }
@@ -150,6 +153,7 @@ export function usePlaybackRedactionController({
     },
     [
       applyRedactedAudioSettings,
+      onBoundary,
       audioRefs,
       currentSegment,
       isPlaying,

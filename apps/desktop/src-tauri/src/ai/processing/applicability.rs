@@ -9,6 +9,7 @@ pub(crate) fn source_applicability(
 ) -> rusqlite::Result<String> {
     let enabled = match kind {
         "audio" => settings.ai.transcription.provider != "disabled",
+        "waveform" => true,
         "ocr" => settings.ai.ocr.enabled,
         "vlm" => settings.ai.vision.observations_enabled,
         "activity" => {
@@ -27,7 +28,7 @@ pub(crate) fn source_applicability(
     let recording = storage::get_recording(connection, recording_id)?;
     let segments = storage::list_recording_segments(connection, recording_id)?;
     let has_source = segments.iter().any(|segment| match kind {
-        "audio" => {
+        "audio" | "waveform" => {
             segment.desktop_audio_stream_index.is_some()
                 || segment.microphone_audio_stream_index.is_some()
         }
@@ -46,7 +47,9 @@ pub(crate) fn source_applicability(
     }
     let redactions = storage::list_redactions(connection, recording_id)?;
     let eligible = match kind {
-        "audio" => !super::planning::audio_chunk_plans(&segments, &redactions).is_empty(),
+        "audio" | "waveform" => {
+            !super::planning::audio_chunk_plans(&segments, &redactions).is_empty()
+        }
         "activity" => {
             !super::planning::activity_chunk_plans(&segments, settings, &redactions).is_empty()
         }

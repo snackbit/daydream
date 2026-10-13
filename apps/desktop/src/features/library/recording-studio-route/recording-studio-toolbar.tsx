@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   LibraryRecordingDetail,
   RecordingAiProcessingState,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ProcessingError } from '@/features/processing/components/processing-error';
+import { StudioProcessingOverview } from '@/features/processing/components/studio-processing-overview';
 import { LibraryRecoveryAction } from '../components/library-recovery-action';
 import {
   availabilityLabel,
@@ -38,6 +40,8 @@ export function RecordingStudioToolbar({
   processingStartBusy,
   loadingStatus = null,
   title,
+  navigation,
+  processingRecordingIds,
 }: {
   aiProcessing: { state: RecordingAiProcessingState | null };
   debugEnabled: boolean;
@@ -51,6 +55,8 @@ export function RecordingStudioToolbar({
   processingStartBusy: boolean;
   loadingStatus?: string | null;
   title?: string;
+  navigation?: ReactNode;
+  processingRecordingIds?: readonly string[];
 }) {
   const processingJob = aiProcessing.state?.job ?? null;
   const hasActiveProcessingChunks =
@@ -101,6 +107,7 @@ export function RecordingStudioToolbar({
           <h1 className="text-[32px] font-light tracking-tight lg:text-4xl">
             {title ?? (detail ? recordingTitle(detail) : 'Recording')}
           </h1>
+          {navigation ? <div className="mt-3">{navigation}</div> : null}
           <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
             {detail ? (
               <>
@@ -132,6 +139,11 @@ export function RecordingStudioToolbar({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          {detail ? (
+            <StudioProcessingOverview
+              recordingIds={processingRecordingIds ?? [detail.id]}
+            />
+          ) : null}
           {detail ? (
             <LibraryRecoveryAction key={detail.id} detail={detail} />
           ) : null}

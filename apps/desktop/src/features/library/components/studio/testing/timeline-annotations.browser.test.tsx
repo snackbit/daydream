@@ -12,6 +12,7 @@ import { studioStoryRecording } from '../../../recording-studio-route/stories/st
 import { ActivityTrackLane } from '../activity-track-lane';
 import { SegmentTranscriptionLayer } from '../derived-ai-lane-strip';
 import { TrackLane } from '../track-lane';
+import { VisualFrameSegments } from '../track-lane-visual-markers';
 import { trackLaneHeightPxForKind } from '../track-timeline-math';
 
 afterEach(() => {
@@ -97,6 +98,145 @@ const processing: RecordingAiProcessingState = {
     },
   ],
 };
+
+test('retained overview spans do not suppress loaded transcripts on the same source lane', async () => {
+  const track = tracks[1]!;
+  const inspect = vi.fn();
+  render(
+    <TooltipProvider>
+      <div className="grid" style={{ gridTemplateColumns: '216px 1000px' }}>
+        <TrackLane
+          track={track}
+          lane={{
+            trackId: track.id,
+            kind: track.kind,
+            label: track.label,
+            description: '',
+            colorId: 'rose',
+          }}
+          detail={{ ...studioStoryRecording, tracks, segments: [segment] }}
+          visibleRange={{ startTimelineMs: 0, endTimelineMs: 10_000 }}
+          aiProcessingState={{
+            ...processing,
+            transcriptionTracks: [
+              {
+                ...processing.transcriptionTracks![0]!,
+                trackKey: 'earlier-recording',
+                chunks: [],
+                textSegmentCount: 0,
+              },
+              ...processing.transcriptionTracks!,
+            ],
+            timelineOverview: [
+              {
+                trackId: track.id,
+                kind: 'speech',
+                startOffsetMs: 9000,
+                endOffsetMs: 9500,
+                count: 4,
+              },
+            ],
+          }}
+          clipDrafts={{}}
+          dragHandleProps={{}}
+          mutedTrackIds={new Set()}
+          onSelectClip={vi.fn()}
+          onInspectTranscript={inspect}
+          onSelectLane={vi.fn()}
+          onSelectRedaction={vi.fn()}
+          onToggleTrackMuted={vi.fn()}
+          playbackAssets={null}
+          selectedClipIds={new Set()}
+          selectedLane={false}
+          selectedRedactionIds={new Set()}
+          selectedVisualFrameIds={new Set()}
+          thumbnailStatus="idle"
+          timelineWidthPx={1000}
+          timeRanges={[]}
+          totalDurationMs={10_000}
+          visualFrames={[]}
+          waveformTiles={null}
+          onSelectVisualFrame={vi.fn()}
+          onZoomRange={vi.fn()}
+        />
+      </div>
+    </TooltipProvider>,
+  );
+  await userEvent.click(
+    screen.getByRole('button', { name: /Inspect Microphone transcript/ }),
+  );
+  expect(inspect).toHaveBeenCalledWith(
+    expect.objectContaining({ text: transcript.text }),
+  );
+  expect(
+    screen.getByRole('button', { name: 'Zoom into 4 transcript entries' }),
+  ).toBeVisible();
+});
+
+test('zoomed-out speech and screen entries expose readable count actions with their original support range', async () => {
+  const zoom = vi.fn();
+  const chunk = processing.transcriptionTracks![0]!.chunks[0]!;
+  const entries = [
+    { ...transcript, startOffsetMs: 2000, endOffsetMs: 2100 },
+    { ...transcript, id: 'second', startOffsetMs: 2200, endOffsetMs: 2300 },
+  ];
+  render(
+    <TooltipProvider>
+      <div style={{ position: 'relative', width: 1000, height: 100 }}>
+        <SegmentTranscriptionLayer
+          color="var(--foreground)"
+          track={tracks[1]!}
+          segment={{ ...segment, durationMs: 28_800_000 }}
+          lane={{
+            description: '',
+            label: 'Speech',
+            status: 'complete',
+            statusLabel: 'Complete',
+            trackState: null,
+            chunks: [{ ...chunk, transcriptSegments: entries }],
+          }}
+          visibleRange={{ startTimelineMs: 0, endTimelineMs: 500_000 }}
+          timelineWidthPx={1000}
+          onInspectTranscript={vi.fn()}
+          onZoomRange={zoom}
+        />
+      </div>
+      <div style={{ position: 'relative', width: 1000, height: 100 }}>
+        <VisualFrameSegments
+          visualFrames={entries.map((entry) => ({
+            id: entry.id,
+            frameTimestampMs: entry.startOffsetMs,
+            endTimestampMs: entry.endOffsetMs,
+            sourceFrameRef: 'synthetic',
+            sourceFrameRefs: [],
+            ocrRegions: [],
+            vlmObservations: [],
+          }))}
+          visualFrameStates={[]}
+          selectedVisualFrameIds={new Set()}
+          timelineWidthPx={1000}
+          totalDurationMs={28_800_000}
+          onSelectVisualFrame={vi.fn()}
+          onZoomRange={zoom}
+        />
+      </div>
+    </TooltipProvider>,
+  );
+  const speechGroup = screen.getByRole('button', {
+    name: 'Zoom into 2 transcript entries',
+  });
+  await userEvent.hover(speechGroup);
+  await screen.findByRole('tooltip');
+  expect(screen.getByRole('tooltip')).toHaveTextContent(
+    transcript.text.slice(0, 240),
+  );
+  await userEvent.click(speechGroup);
+  expect(zoom).toHaveBeenLastCalledWith(2000, 2300);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Zoom into 2 screen entries' }),
+  );
+  expect(zoom).toHaveBeenLastCalledWith(2000, 2300);
+});
 
 test('scoped transcript actions remain reachable above retained historical chunk status', async () => {
   const chunk = processing.transcriptionTracks?.[0]?.chunks[0];

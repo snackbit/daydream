@@ -40,6 +40,10 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
     laneOrder: [],
     lanesById: {},
     selection: emptySelection,
+    selectionIntent: 0,
+    noteInspection() {
+      set((state) => ({ selectionIntent: state.selectionIntent + 1 }));
+    },
     clearSelection() {
       set({ selection: emptySelection });
     },
@@ -107,6 +111,7 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
     },
     selectClip(clipId, additive = false) {
       set((state) => ({
+        selectionIntent: state.selectionIntent + 1,
         selection: additive
           ? {
               clipIds: toggleId(state.selection.clipIds, clipId),
@@ -126,6 +131,7 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
     },
     selectLane(trackId, additive = false) {
       set((state) => ({
+        selectionIntent: state.selectionIntent + 1,
         selection: additive
           ? {
               clipIds: [],
@@ -145,6 +151,7 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
     },
     selectRedaction(redactionId, additive = false) {
       set((state) => ({
+        selectionIntent: state.selectionIntent + 1,
         selection: additive
           ? {
               clipIds: [],
@@ -164,6 +171,7 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
     },
     selectVisualFrame(visualFrameId, additive = false) {
       set((state) => ({
+        selectionIntent: state.selectionIntent + 1,
         selection: additive
           ? {
               clipIds: [],
@@ -203,11 +211,15 @@ export const useStudioTimelineStore = create<StudioTimelineState>(
       });
     },
     setSelection(selection) {
-      set({ selection: normalizeSelection(selection) });
+      set((state) => ({
+        selection: normalizeSelection(selection),
+        selectionIntent: state.selectionIntent + 1,
+      }));
     },
     setTimeRangeSelection(selection, additive = false) {
       const nextRange = normalizeTimeRangeSelection(selection);
       set((state) => ({
+        selectionIntent: state.selectionIntent + 1,
         selection: additive
           ? normalizeSelection({
               clipIds: [],

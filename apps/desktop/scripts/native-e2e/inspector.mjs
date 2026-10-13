@@ -3,10 +3,15 @@ import { setTimeout as delay } from 'node:timers/promises';
 // WebKit's inspector transports page commands inside Target envelopes. This
 // driver talks to the actual WebView; it never substitutes Tauri IPC or SQLite.
 export async function connectInspector() {
+  const port = Number(process.env.DAYDREAM_E2E_INSPECTOR_PORT ?? 39288);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error('DAYDREAM_E2E_INSPECTOR_PORT must be a valid port');
   let socketPath;
   for (let attempt = 0; attempt < 80 && !socketPath; attempt += 1) {
     try {
-      const index = await fetch('http://127.0.0.1:39288').then((r) => r.text());
+      const index = await fetch(`http://127.0.0.1:${port}`).then((r) =>
+        r.text(),
+      );
       socketPath = index.match(/\/socket\/\d+\/\d+\/WebPage/)?.[0];
     } catch {
       // Native startup and the inspector listener settle independently.
@@ -14,8 +19,9 @@ export async function connectInspector() {
     if (!socketPath) await delay(100);
   }
   if (!socketPath) throw new Error('Native WebKit inspector did not start');
-  const socket = new WebSocket(`ws://127.0.0.1:39288${socketPath}`);
+  const socket = new WebSocket(`ws://127.0.0.1:${port}${socketPath}`);
   const pending = new Map();
+  const events = [];
   let nextId = 1;
   let targetId;
   const target = new Promise((resolve, reject) => {
@@ -32,6 +38,11 @@ export async function connectInspector() {
       }
       if (envelope.method !== 'Target.dispatchMessageFromTarget') return;
       const message = JSON.parse(envelope.params.message);
+      if (
+        message.method?.startsWith('Timeline.') ||
+        message.method?.startsWith('ScriptProfiler.')
+      )
+        events.push(message);
       const request = pending.get(message.id);
       if (!request) return;
       pending.delete(message.id);
@@ -45,13 +56,16 @@ export async function connectInspector() {
     };
   });
   await target;
-  async function evaluate(expression) {
+  async function command(method, params = {}) {
     const id = nextId++;
     const response = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error('Native evaluation timed out'));
-      }, 8000);
+      const timeout = setTimeout(
+        () => {
+          pending.delete(id);
+          reject(new Error(`Native ${method} timed out`));
+        },
+        method.startsWith('ScriptProfiler.') ? 30_000 : 8000,
+      );
       pending.set(id, { resolve, reject, timeout });
     });
     socket.send(
@@ -62,13 +76,19 @@ export async function connectInspector() {
           targetId,
           message: JSON.stringify({
             id,
-            method: 'Runtime.evaluate',
-            params: { expression, returnByValue: true },
+            method,
+            params,
           }),
         },
       }),
     );
-    const result = await response;
+    return response;
+  }
+  async function evaluate(expression) {
+    const result = await command('Runtime.evaluate', {
+      expression,
+      returnByValue: true,
+    });
     if (result.wasThrown)
       throw new Error(result.result.description ?? 'WebView evaluation failed');
     return result.result.value;
@@ -83,7 +103,7 @@ export async function connectInspector() {
   async function invoke(command, args = {}) {
     const key = `__nativeE2e${nextId}`;
     await evaluate(
-      `window[${JSON.stringify(key)}] = { done: false }; window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)}).then(value => window[${JSON.stringify(key)}] = {done:true,value}, error => window[${JSON.stringify(key)}] = {done:true,error:String(error)}); true`,
+      `window[${JSON.stringify(key)}] = { done: false }; window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)}).then(value => window[${JSON.stringify(key)}] = {done:true,value}, error => window[${JSON.stringify(key)}] = {done:true,error:typeof error === 'object' && error !== null ? {code:error.code,field:error.field} : String(error)}); true`,
     );
     await wait(`window[${JSON.stringify(key)}].done`, `native ${command}`);
     const result = await evaluate(
@@ -91,8 +111,16 @@ export async function connectInspector() {
     );
     await evaluate(`delete window[${JSON.stringify(key)}]`);
     const decoded = JSON.parse(result);
-    if (decoded.error) throw new Error(`Native ${command}: ${decoded.error}`);
+    if (decoded.error)
+      throw new Error(`Native ${command}: ${JSON.stringify(decoded.error)}`);
     return decoded.value;
   }
-  return { evaluate, wait, invoke, close: () => socket.close() };
+  return {
+    evaluate,
+    wait,
+    invoke,
+    command,
+    events,
+    close: () => socket.close(),
+  };
 }

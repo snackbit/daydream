@@ -74,6 +74,7 @@ export default defineConfig(() => ({
           exclude: ['dist/**', 'src/**/*.browser.test.tsx'],
           include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
           name: 'unit',
+          maxWorkers: 2,
         },
       },
       {
@@ -88,6 +89,7 @@ export default defineConfig(() => ({
           exclude: ['dist/**'],
           include: ['src/**/*.browser.test.tsx'],
           name: 'browser',
+          maxWorkers: 2,
         },
       },
     ],

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type {
   RecordingProcessingGroup,
@@ -9,19 +9,37 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { formatElapsed, taskStatusLabel } from '../task-format';
 import { useRecordingProcessingActions } from '../use-recording-processing-actions';
+import { ProcessingActivityList } from './processing-activity-list';
 import { RecordingProcessingLaneRow } from './recording-processing-lane';
+import { RecordingProcessingPipeline } from './recording-processing-pipeline';
 
 export interface RecordingProcessingCardProps {
   group: RecordingProcessingGroup;
   onInspect: (recordingId: string, kind: RecordingProcessingLaneKind) => void;
+  onChanged?: () => Promise<void>;
+  now: number;
 }
 export function RecordingProcessingCard({
   group,
   onInspect,
+  onChanged,
+  now,
 }: RecordingProcessingCardProps) {
   const { pending, error, perform } = useRecordingProcessingActions(
     group.recordingId,
+    onChanged,
   );
+  const [selected, setSelected] = useState<RecordingProcessingLaneKind | null>(
+    () => group.lanes.find((lane) => lane.failed)?.kind ?? null,
+  );
+  const select = useCallback(
+    (kind: RecordingProcessingLaneKind) =>
+      setSelected((current) => (current === kind ? null : kind)),
+    [],
+  );
+  const selectedLane = group.lanes.find((lane) => lane.kind === selected);
+  const runningCount = group.lanes.reduce((sum, lane) => sum + lane.running, 0);
+  const queuedCount = group.lanes.reduce((sum, lane) => sum + lane.queued, 0);
   const pause = useCallback(() => void perform({ action: 'pause' }), [perform]);
   const resume = useCallback(
     () => void perform({ action: 'resume' }),
@@ -67,12 +85,13 @@ export function RecordingProcessingCard({
             <span>
               {group.inputOpen
                 ? 'Live recording · no fixed finish time'
-                : group.etaMs !== null
-                  ? `About ${formatElapsed(group.etaMs)} remaining`
-                  : running
-                    ? 'Estimating remaining time'
-                    : null}
+                : runningCount || queuedCount
+                  ? `${runningCount} running · ${queuedCount} queued`
+                  : 'Processing finished'}
             </span>
+            {group.etaMs !== null && !group.inputOpen ? (
+              <span>About {formatElapsed(group.etaMs)} remaining</span>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -123,22 +142,32 @@ export function RecordingProcessingCard({
           {error}
         </p>
       ) : null}
-      <ul
-        className="mt-3 divide-y"
-        aria-label={`${group.title} processing lanes`}
-      >
-        {group.lanes.map((lane) => (
-          <RecordingProcessingLaneRow
-            key={lane.kind}
-            lane={lane}
-            pending={pending}
-            onInspect={inspect}
-            onRetry={retry}
+      <RecordingProcessingPipeline
+        lanes={group.lanes}
+        selected={selected}
+        onSelect={select}
+      />
+      {selectedLane ? (
+        <div
+          className="bg-muted/40 mt-3 rounded-lg px-3"
+          aria-label="Selected stage details"
+        >
+          <ul aria-label={`${group.title} processing lanes`}>
+            <RecordingProcessingLaneRow
+              lane={selectedLane}
+              pending={pending}
+              onInspect={inspect}
+              onRetry={retry}
+            />
+          </ul>
+          <ProcessingActivityList
+            activity={selectedLane.activity ?? []}
+            now={now}
           />
-        ))}
-      </ul>
+        </div>
+      ) : null}
       <SharedDisclosure
-        label="Search index"
+        label="Search readiness"
         status={
           coverage.applicability === 'available'
             ? `${coverage.indexed}/${coverage.total} ready`

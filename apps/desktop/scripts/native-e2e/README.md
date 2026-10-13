@@ -28,9 +28,10 @@ Prerequisites: Linux native build prerequisites, `dbus-run-session`, GTK3
 `broadwayd`, a C compiler, installed Playwright Chromium, a WebKitWebDriver matching
 the installed WebKitGTK protocol version, and permission to bind loopback ports
 39188/39288/39289/39290. The driver is resolved from `DAYDREAM_WEBKIT_WEBDRIVER`
-or `PATH`; it is required and never downloaded by the runner. Run one instance at
-a time. The executable and
-packaged embedding/VAD resources are produced by the debug build. The runner
+or `PATH`. `DAYDREAM_E2E_INSPECTOR_PORT` overrides the HTTP inspector's default
+39288 when another process holds that port. The driver is required and never
+downloaded by the runner. Run one instance at a time. The executable and packaged
+embedding/VAD resources are produced by the debug build. The runner
 builds fresh frontend assets and the custom-protocol executable by default and
 does not download models. `--reuse-validated-build` skips builds for a coordinated
 QA iteration only when that exact source and artifact state was already checked.
@@ -102,3 +103,44 @@ visible state after user actions. Device permissions, live portals,
 microphones, live model authentication and populated Recall workflows require
 their separate native integration and browser stories; this suite does not claim
 those boundaries.
+
+The optional Studio workload uses an eight-hour synthetic day with 960 media
+fragments, four sources, 50,000 speech entries and 100,000 input intervals. It
+prepares actual local waveform jobs, plays actual media, verifies cache files stay
+unchanged during warm interaction, and samples 50 trusted control, zoom and pan
+interactions each. `studio-performance.json` records p95 input-to-second-frame
+latency against a 100 ms budget; cold preparation is measured separately.
+With `DAYDREAM_E2E_PROFILE=1`, `studio-render-profile.json` records native WebKit
+layout/paint call stacks for five zoom operations. The short
+`DAYDREAM_E2E_DIAGNOSTIC=1` run records viewport and lane dimensions separately;
+it does not claim workload acceptance. The inference journey runs real processing
+against an isolated local protocol fixture, including independently malformed OCR
+and valid observations; it does not establish live-provider model quality.
+The optional `language` phase requires installed `espeak-ng` and
+`gnome-keyring-daemon` with its Secret Service libraries. The runner unlocks an
+isolated synthetic wallet inside its private D-Bus session; it does not use the
+host wallet. `DAYDREAM_E2E_KEYRING_DAEMON` and `DAYDREAM_E2E_KEYRING_LIBS` may
+select an existing extracted executable and library directory. These tools are
+never downloaded by the runner. It generates isolated
+speech files, runs actual VAD and FFmpeg extraction, and exercises continued auto
+detection and retroactive publication against a local HTTP transcription fixture.
+It seeds recorded inputs only; speech boundaries and transcript results are
+produced by the app. This proves processing integration, not live-model accuracy.
+
+The `inference` phase also holds a synthetic provider response while inspecting
+native OCR activity, the observation dependency, the Processing pipeline and the
+scoped Studio sheet. It checks one continuous screen indicator per source before
+releasing the response for the existing validation/retry/publication journey.
+It then generates a day summary through the real recall queue: a held response
+proves visible running state, a synthetic authentication failure stays beside the
+action, and retry publishes a cited summary to SQLite. Reopening review retains
+completion feedback and keeps raw OCR hidden. Only the HTTP provider is simulated.
+
+```sh
+DAYDREAM_E2E_PHASES='bootstrap inference studio' COREPACK_HOME=/tmp/corepack corepack yarn test:e2e:native
+```
+
+For a warm rerun, `DAYDREAM_E2E_REUSE_DIR` may point to this runner's printed
+`/tmp/daydream-native-e2e.*` directory containing its synthetic Studio manifest.
+The runner rebuilds current assets unless `--reuse-validated-build` is explicitly
+passed. `ALSOFT_DRIVERS=null` isolates the synthetic audio output from ambient devices.

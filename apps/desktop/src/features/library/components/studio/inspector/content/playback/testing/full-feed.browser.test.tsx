@@ -26,7 +26,7 @@ test.each(['light', 'dark'] as const)(
     await page.viewport(390, 600);
     document.documentElement.dataset.theme = theme;
     const entries: InspectorContentEntry[] = Array.from(
-      { length: 70 },
+      { length: 700 },
       (_, i) => ({
         id: `long-speech-${i}`,
         kind: 'speech',
@@ -78,6 +78,10 @@ test.each(['light', 'dark'] as const)(
     if (!(viewport instanceof HTMLElement))
       throw new Error('Missing Teleprompter viewport');
     fireEvent.wheel(screen.getByRole('list'), { deltaY: 1 });
+    const reconciliation = vi.spyOn(viewport, 'scrollTo');
+    for (let burst = 0; burst < 20; burst++)
+      fireEvent.wheel(screen.getByRole('list'), { deltaY: 100 });
+    expect(reconciliation).not.toHaveBeenCalled();
     const top = viewport.scrollTop;
     clock = 61000;
     const next = await screen.findByText('Synthetic phrase 30.');

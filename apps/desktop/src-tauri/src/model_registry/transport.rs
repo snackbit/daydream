@@ -8,6 +8,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+use tracing::{instrument::WithSubscriber, Instrument};
 pub(crate) mod diagnostics;
 mod provider_error;
 mod response;
@@ -83,6 +84,8 @@ fn client(base: &str, key: Option<&str>, limit: usize) -> Result<Client<Configur
         .timeout(Duration::from_secs(90))
         .build()
         .map_err(|_| "model_client_failed")?;
+    let request_span = tracing::Span::current();
+    let request_dispatch = tracing::dispatcher::get_default(Clone::clone);
     let service = tower::service_fn(move |factory: HttpRequestFactory| {
         let http = http.clone();
         async move {
@@ -218,6 +221,8 @@ fn client(base: &str, key: Option<&str>, limit: usize) -> Result<Client<Configur
             }));
             result
         }
+        .instrument(request_span.clone())
+        .with_subscriber(request_dispatch.clone())
     });
     Ok(Client::with_config(Configuration {
         base: base.into(),

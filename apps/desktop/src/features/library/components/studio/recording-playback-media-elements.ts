@@ -3,6 +3,7 @@ import { driftCorrection } from './playback-clock';
 import type { PlaybackSpeed } from './playback/playback-speed';
 
 interface PlaybackMediaElementsInput {
+  canSeekInStream?: boolean;
   isMuted: boolean;
   mutedTrackIds: Set<string>;
   redactedTrackIdsRef: RefObject<Set<string>>;
@@ -16,6 +17,7 @@ export function usePlaybackMediaElements({
   redactedTrackIdsRef,
   volume,
   playbackRate = 1,
+  canSeekInStream = true,
 }: PlaybackMediaElementsInput) {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
   const additionalVideoRefs = useRef(new Map<string, HTMLVideoElement>());
@@ -25,13 +27,26 @@ export function usePlaybackMediaElements({
   const clockElement = useCallback((): HTMLMediaElement | null => {
     const available = [...audioRefs.current.entries()].filter(
       ([, audio]) =>
-        audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !audio.ended,
+        audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        audio.error === null &&
+        (!audio.ended || !audio.paused),
     );
-    return (
-      available.find(([id]) => id.startsWith('desktop-audio'))?.[1] ??
-      available.find(([id]) => id.startsWith('microphone'))?.[1] ??
-      videoRef.current
+    const preferred = (entries: typeof available) =>
+      entries.find(([id]) => id.startsWith('desktop-audio'))?.[1] ??
+      entries.find(([id]) => id.startsWith('microphone'))?.[1];
+    const playing = preferred(
+      available.filter(([, element]) => !element.paused),
     );
+    if (playing) return playing;
+    const video = videoRef.current;
+    if (
+      video &&
+      !video.paused &&
+      video.error === null &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    )
+      return video;
+    return preferred(available) ?? video;
   }, []);
   const clockTime = useCallback(
     () => clockElement()?.currentTime ?? 0,
@@ -86,13 +101,17 @@ export function usePlaybackMediaElements({
       ]) {
         element.defaultPlaybackRate = playbackRate;
         if (force) {
-          setMediaCurrentTime(element, time);
+          if (canSeekInStream) setMediaCurrentTime(element, time);
           element.playbackRate = playbackRate;
           majorDrift.current.delete(element);
         } else if (element === master) {
           element.playbackRate = playbackRate;
           majorDrift.current.delete(element);
-        } else if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        } else if (
+          element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+          canSeekInStream &&
+          element.seekable.length > 0
+        ) {
           const correction = driftCorrection(
             time - element.currentTime,
             performance.now(),
@@ -101,10 +120,16 @@ export function usePlaybackMediaElements({
           majorDrift.current.set(element, correction.majorSinceMs);
           element.playbackRate = playbackRate * correction.rate;
           if (correction.seek) setMediaCurrentTime(element, time);
+        } else {
+          // Live fragmented streams can expose no seekable range. GStreamer's
+          // rate correction requires a seek and can stall such a stream.
+          if (element.playbackRate !== playbackRate)
+            element.playbackRate = playbackRate;
+          majorDrift.current.delete(element);
         }
       }
     },
-    [clockElement, updateMediaSettings, playbackRate],
+    [clockElement, updateMediaSettings, playbackRate, canSeekInStream],
   );
 
   const pauseMediaElements = useCallback(() => {
@@ -218,6 +243,7 @@ export function usePlaybackMediaElements({
 function setMediaCurrentTime(media: HTMLMediaElement, seconds: number) {
   if (
     media.readyState === HTMLMediaElement.HAVE_NOTHING ||
+    media.seekable.length === 0 ||
     media.currentTime === seconds
   ) {
     return;

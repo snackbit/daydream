@@ -1,14 +1,8 @@
-import { useCallback, useState } from 'react';
-import type { OcrHistoryEntry } from '@daydream/shared';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useCallback } from 'react';
 import { useOcrDocument } from '@/features/ai/ocr/use-ocr-document';
-import { useOcrHistory } from '@/features/ai/ocr/use-ocr-history';
 import { formatTimelineOffset } from '../inspector-format';
-import { InspectorSection } from '../inspector-section';
-import { OcrDetailsPanel } from './ocr-details-panel';
+import { InspectorField, InspectorSection } from '../inspector-section';
 import { OcrDocumentState } from './ocr-document-state';
-import { OcrHistoryPanel } from './ocr-history-panel';
 
 export interface OcrInspectorContext {
   debugEnabled: boolean;
@@ -22,111 +16,59 @@ export interface OcrDocumentInspectorProps {
   timestampMs: number;
   onSeek: (timestampMs: number) => void;
   documentId?: string | null;
+  showSourceLocation?: boolean;
 }
 
+/** Recognition metadata and recovery remain available without exposing OCR. */
 export function OcrDocumentInspector({
   context,
   timestampMs,
-  onSeek,
   documentId = null,
+  showSourceLocation = true,
 }: OcrDocumentInspectorProps) {
-  const [tab, setTab] = useState('text');
-  const [revision, setRevision] = useState<OcrHistoryEntry | null>(null);
-  const selectedTimestamp = revision?.supportTimestampsMs[0] ?? timestampMs;
   const selected = useOcrDocument(
     {
       recordingId: context.recordingId,
       sourceTrackId: context.sourceTrackId,
-      timestampMs: selectedTimestamp,
-      documentId: revision?.id ?? documentId,
+      timestampMs,
+      documentId,
     },
     context.privacyRevision,
     context.processingRevision,
   );
-  const history = useOcrHistory({ ...context, enabled: tab === 'changes' });
-  const document = selected.document;
-  const reloadDocument = selected.reload;
-  const loadOlderRevisions = history.loadMore;
-  const reloadHistory = history.retry;
-  const selectRevision = useCallback(
-    (entry: OcrHistoryEntry) => {
-      const firstSample = entry.supportTimestampsMs[0];
-      if (firstSample === undefined || entry.status !== 'succeeded') return;
-      setRevision(entry);
-      onSeek(firstSample);
-    },
-    [onSeek],
-  );
-  const jump = useCallback(
-    () => onSeek(selectedTimestamp),
-    [onSeek, selectedTimestamp],
-  );
+  const reload = selected.reload;
   const retry = useCallback(() => {
-    void reloadDocument();
-  }, [reloadDocument]);
-  const loadMore = useCallback(() => {
-    void loadOlderRevisions();
-  }, [loadOlderRevisions]);
-  const retryHistory = useCallback(() => {
-    void reloadHistory();
-  }, [reloadHistory]);
+    void reload();
+  }, [reload]);
   return (
-    <InspectorSection title="OCR text">
-      <Tabs onValueChange={setTab} value={tab}>
-        <TabsList aria-label="OCR views" className="grid w-full grid-cols-3">
-          <TabsTrigger value="text">Text</TabsTrigger>
-          <TabsTrigger value="changes">Changes</TabsTrigger>
-          <TabsTrigger value="details">Details</TabsTrigger>
-        </TabsList>
-        {selected.updateError ? (
-          <p className="text-muted-foreground text-xs" role="status">
-            {selected.updateError}
-          </p>
-        ) : null}
-        {revision ? (
-          <div className="text-muted-foreground flex items-center justify-between gap-1 text-xs">
-            <span>Revision at {formatTimelineOffset(selectedTimestamp)}</span>
-            <Button onClick={jump} size="sm" variant="ghost">
-              Jump to revision
-            </Button>
-          </div>
-        ) : null}
-        <TabsContent value="text">
-          <OcrDocumentState
-            document={document}
-            job={selected.job}
-            error={selected.error}
-            loading={selected.status === 'loading'}
-            onRetryRead={retry}
-            recordingId={context.recordingId}
-          />
-        </TabsContent>
-        <TabsContent value="changes">
-          <OcrHistoryPanel
-            error={history.error}
-            hasMore={history.hasMore}
-            items={history.items}
-            loading={history.status === 'loading'}
-            onLoadMore={loadMore}
-            onRetry={retryHistory}
-            onSelect={selectRevision}
-            selectedId={revision?.id ?? document?.id ?? null}
-          />
-        </TabsContent>
-        <TabsContent value="details">
-          {document ? (
-            <OcrDetailsPanel
-              debugEnabled={context.debugEnabled}
-              document={document}
-              key={document.id}
+    <InspectorSection title="Screen recognition">
+      <dl className="space-y-1.5 text-xs">
+        {showSourceLocation ? (
+          <>
+            <InspectorField
+              label="Time"
+              value={formatTimelineOffset(timestampMs)}
             />
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Select a frame with available OCR text to inspect its details.
-            </p>
-          )}
-        </TabsContent>
-      </Tabs>
+            <InspectorField label="Source" value={context.sourceTrackId} />
+          </>
+        ) : null}
+        {context.debugEnabled && selected.document ? (
+          <InspectorField label="Engine" value={selected.document.engine} />
+        ) : null}
+      </dl>
+      {selected.updateError ? (
+        <p className="text-muted-foreground text-xs" role="status">
+          {selected.updateError}
+        </p>
+      ) : null}
+      <OcrDocumentState
+        document={selected.document}
+        job={selected.job}
+        error={selected.error}
+        loading={selected.status === 'loading'}
+        onRetryRead={retry}
+        recordingId={context.recordingId}
+      />
     </InspectorSection>
   );
 }

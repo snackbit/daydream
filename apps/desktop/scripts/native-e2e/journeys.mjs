@@ -9,11 +9,16 @@ import {
 } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { checkDayReview } from './day-review.mjs';
 import { connectInspector } from './inspector.mjs';
+import { checkLanguageContinuity } from './language.mjs';
 import { checkLongPlayback, longPlayback } from './long-playback.mjs';
 import { checkModelSettings } from './model-settings.mjs';
 import { createNativePointer } from './pointer.mjs';
+import { checkSearchKeyboard } from './search-keyboard.mjs';
 import { checkStudioControls } from './studio-controls.mjs';
+import { checkStudioInference } from './studio-inference.mjs';
+import { checkStudioLoad } from './studio-load.mjs';
 import { connectNativeKeyboard } from './webdriver.mjs';
 
 const phase = process.argv[2] ?? 'initial';
@@ -173,94 +178,64 @@ try {
     })()`);
     return selector;
   }
-  async function searchKeyboardStory() {
-    await viewer.evaluate(() => {
-      window.__broadwayE2eKeys = [];
-      for (const type of ['keydown', 'keypress', 'keyup'])
-        document.addEventListener(
-          type,
-          (event) => {
-            const entry = {
-              type: event.type,
-              key: event.key,
-              code: event.code,
-              keyCode: event.keyCode,
-              charCode: event.charCode,
-              ctrl: event.ctrlKey,
-              alt: event.altKey,
-              special: window.getKeysymSpecial?.(event),
-            };
-            window.__broadwayE2eKeys.push(entry);
-            queueMicrotask(() => (entry.prevented = event.defaultPrevented));
-          },
-          true,
-        );
+
+  if (phase === 'bootstrap') {
+    const settings = (await native.invoke('getAppSettings')).settings;
+    assert.equal(settings.ai.vision.provider, 'disabled');
+    stories.push('NATIVE-STUDIO-ISOLATED-SCHEMA-BOOTSTRAP');
+  } else if (phase === 'keyboard') {
+    await checkSearchKeyboard({
+      native,
+      viewer,
+      keyboard,
+      navigate,
+      click,
+      artifacts,
+      phase,
     });
-    await navigate('Search', '/search');
-    await native.wait(
-      'document.querySelector("main input") !== null',
-      'search ready',
-    );
-    await click('#recall-query');
-    await native.wait(
-      'document.activeElement?.id === "recall-query"',
-      'native search input focused',
-    );
-    await native.evaluate(`(() => {
-      window.__nativeE2eKeys = [];
-      for (const type of ['keydown','keypress','keyup','input']) {
-        document.addEventListener(type, event => {
-          if (event.target.id === 'recall-query') {
-            const entry = {type:event.type,key:event.key,value:event.target.value,trusted:event.isTrusted,ctrl:event.ctrlKey,alt:event.altKey,shift:event.shiftKey,meta:event.metaKey,composing:event.isComposing};
-            window.__nativeE2eKeys.push(entry);
-            queueMicrotask(() => entry.prevented = event.defaultPrevented);
-          }
-        }, true);
-      }
-      return true;
-    })()`);
-    await keyboard.type('synthetic unmatched query');
-    await native.wait(
-      `document.querySelector('#recall-query').value === 'synthetic unmatched query'`,
-      'native WebDriver text committed',
-    );
-    assert.equal(
-      await native.evaluate(
-        "window.__nativeE2eKeys.filter(event => event.type === 'keydown').length",
-      ),
-      'synthetic unmatched query'.length,
-    );
-    assert.ok(
-      await native.evaluate(
-        'window.__nativeE2eKeys.every(event => event.trusted)',
-      ),
-      'native automation emits trusted keyboard events',
-    );
-    await writeFile(
-      `${artifacts}/${phase}-keyboard-events.json`,
-      await native.evaluate('JSON.stringify(window.__nativeE2eKeys, null, 2)'),
-    );
-    await writeFile(
-      `${artifacts}/${phase}-viewer-keys.json`,
-      JSON.stringify(
-        await viewer.evaluate(() => window.__broadwayE2eKeys),
-        null,
-        2,
-      ),
-    );
-    await keyboard.enter();
-    await native.wait(
-      'new URLSearchParams(location.search).get("q") === "synthetic unmatched query"',
-      'typed query submitted',
-    );
-    await native.wait(
-      `document.querySelector('section[aria-label="Search results"]') !== null && document.body.textContent.includes("No eligible matches")`,
-      'real native empty search result',
-    );
     stories.push('NATIVE-SEARCH-TYPE-SUBMIT-EMPTY-RESULT');
-  }
-  if (phase === 'keyboard') {
-    await searchKeyboardStory();
+  } else if (phase === 'inference') {
+    const fixture = JSON.parse(
+      await readFile(`${artifacts}/studio-fixture.json`, 'utf8'),
+    );
+    await checkStudioInference({
+      native,
+      click,
+      button,
+      navigate,
+      viewer,
+      recordingId: fixture.visionId,
+      artifacts,
+    });
+    stories.push('NATIVE-STUDIO-SHARED-INFERENCE-PARTIAL-RETRY-CONTEXT');
+    stories.push('NATIVE-PROCESSING-PIPELINE-SCOPED-OVERVIEW-LIVE-DEPENDENCY');
+    await checkDayReview({
+      native,
+      click,
+      button,
+      navigate,
+      viewer,
+      recordingId: fixture.visionId,
+      artifacts,
+    });
+    stories.push('NATIVE-DAY-REVIEW-GENERATION-FAILURE-RETRY-PUBLICATION');
+  } else if (phase === 'language') {
+    await checkLanguageContinuity({ native, artifacts });
+    stories.push('NATIVE-AUTO-LANGUAGE-CONSENSUS-RETROACTIVE-CORRECTION');
+  } else if (phase === 'studio') {
+    const diagnostic = await checkStudioLoad({
+      native,
+      click,
+      button,
+      navigate,
+      viewer,
+      artifacts,
+    });
+    stories.push(
+      diagnostic === 'diagnostic'
+        ? 'NATIVE-STUDIO-LAYOUT-DIAGNOSTIC'
+        : 'NATIVE-STUDIO-EIGHT-HOUR-LOAD-REFRESH-CACHE-RESPONSIVENESS',
+    );
   } else {
     await navigate('Settings', '/settings');
     await native.wait(

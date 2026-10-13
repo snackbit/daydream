@@ -74,6 +74,32 @@ const segment = {
   text: 'synthetic private speech',
   words: [],
 };
+
+test('cached overview counts disappear immediately for newly redacted source ranges', () => {
+  const buckets = ['desktop-audio-1', 'microphone-2'].map((trackId) => ({
+    trackId,
+    kind: 'speech' as const,
+    startOffsetMs: 1000,
+    endOffsetMs: 1500,
+    count: 4,
+  }));
+  const state = {
+    recordingId: detail.id,
+    chunks: [],
+    job: null,
+    transcript: { recordingId: detail.id, tracks: [] },
+    timelineOverview: buckets,
+  };
+  expect(visibleAiProcessingState(detail, state)?.timelineOverview).toEqual([
+    buckets[1],
+  ]);
+  expect(
+    visibleAiProcessingState(
+      { ...detail, redactions: [{ ...detail.redactions[0]!, trackIds: [] }] },
+      state,
+    )?.timelineOverview,
+  ).toEqual([]);
+});
 test('cached transcript UUIDs map to Library source roles and partially overlapping chunk text is hidden', () => {
   const state: RecordingAiProcessingState = {
     chunks: [],

@@ -184,6 +184,7 @@ fn enqueue_processing<R: tauri::Runtime>(
             let config =
                 serde_json::to_string(&app_settings).map_err(|_| rusqlite::Error::InvalidQuery)?;
             storage::set_processing_job_runtime(connection, &job.id, input_open, &config)?;
+            if new_job { connection.execute("UPDATE processing_job_runtime SET visual_protocol='changes-v1' WHERE job_id=?1", [&job.id])?; }
             let desktop_track = ensure_audio_track(
                 connection,
                 recording_id,

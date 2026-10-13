@@ -86,11 +86,30 @@ pub fn list_capture_events(
     start_offset_ms: i64,
     end_offset_ms: i64,
 ) -> rusqlite::Result<Vec<CaptureEventRow>> {
+    list_capture_events_in_windows(
+        connection,
+        recording_id,
+        kinds,
+        (start_offset_ms, end_offset_ms),
+        None,
+    )
+}
+
+pub fn list_capture_events_in_windows(
+    connection: &Connection,
+    recording_id: &str,
+    kinds: &[&str],
+    range: (i64, i64),
+    review: Option<(i64, i64)>,
+) -> rusqlite::Result<Vec<CaptureEventRow>> {
+    let (start_offset_ms, end_offset_ms) = range;
+    let review_start = review.map(|r| r.0);
+    let review_end = review.map(|r| r.1);
     if kinds.is_empty() {
         return Ok(Vec::new());
     }
     let placeholders = (0..kinds.len())
-        .map(|index| format!("?{}", index + 4))
+        .map(|index| format!("?{}", index + 6))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
@@ -104,16 +123,18 @@ pub fn list_capture_events(
             payload_json
         FROM capture_events
         WHERE recording_id = ?1
-            AND offset_ms >= ?2
-            AND offset_ms <= ?3
+            AND ((offset_ms >= ?2 AND offset_ms <= ?3)
+                 OR (?4 IS NOT NULL AND offset_ms >= ?4 AND offset_ms <= ?5))
             AND kind IN ({placeholders})
         ORDER BY offset_ms ASC, kind ASC, id ASC
         "#
     );
-    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(kinds.len() + 3);
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(kinds.len() + 5);
     params.push(&recording_id);
     params.push(&start_offset_ms);
     params.push(&end_offset_ms);
+    params.push(&review_start);
+    params.push(&review_end);
     for kind in kinds {
         params.push(kind);
     }
@@ -302,6 +323,7 @@ pub fn claim_processing_chunk(
     }
 
     connection.execute("INSERT INTO processing_chunk_runtime(chunk_id,started_at_ms,phase) VALUES(?1,?2,'starting') ON CONFLICT(chunk_id) DO UPDATE SET started_at_ms=excluded.started_at_ms,next_retry_at_ms=NULL,phase='starting'", params![chunk_id,timestamp_ms])?;
+    connection.execute("UPDATE processing_chunk_runtime SET phase_started_at_ms=?2,last_progress_at_ms=NULL WHERE chunk_id=?1", params![chunk_id,timestamp_ms])?;
     connection.execute("UPDATE ocr_frame_occurrences SET attempt_count=(SELECT attempt_count FROM processing_chunks WHERE id=?1) WHERE chunk_id=?1 AND status='succeeded' AND EXISTS(SELECT 1 FROM processing_chunk_runtime WHERE chunk_id=?1 AND selection_json IS NOT NULL)",[chunk_id])?;
     get_processing_chunk(connection, chunk_id)
 }

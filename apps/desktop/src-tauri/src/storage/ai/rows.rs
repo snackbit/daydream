@@ -43,6 +43,8 @@ pub(super) fn ocr_region_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OcrReg
 
 pub(super) fn vlm_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VlmObservationRow> {
     Ok(VlmObservationRow {
+        context_start_ms: row.get(16)?,
+        confirmed_end_ms: row.get(17)?,
         id: row.get(0)?,
         recording_id: row.get(1)?,
         frame_timestamp_ms: row.get(2)?,

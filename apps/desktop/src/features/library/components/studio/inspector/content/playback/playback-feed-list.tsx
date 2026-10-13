@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -78,11 +79,15 @@ export function PlaybackFeedList({
     paddingStart: 12,
     paddingEnd: 12,
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = browsing
+    ? () => false
+    : undefined;
   const browse = useCallback(() => {
+    if (browsing) return;
     // Supersede pending scroll-to-index reconciliation when the user takes over.
     if (virtual && viewport) virtualizer.scrollToOffset(viewport.scrollTop);
     onBrowse();
-  }, [virtual, viewport, virtualizer, onBrowse]);
+  }, [browsing, virtual, viewport, virtualizer, onBrowse]);
   const keyDown = useCallback(
     (event: KeyboardEvent) => {
       if (
@@ -171,12 +176,13 @@ export function PlaybackFeedList({
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <ScrollArea
+        type="always"
         viewportRef={setViewport}
         onWheel={wheel}
         onTouchMove={browse}
         onKeyDown={keyDown}
         onPointerDown={pointerDown}
-        className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!"
+        className="[&_[data-slot=scroll-area-thumb]]:bg-muted-foreground/60 min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:block!"
       >
         <ol
           ref={list}
@@ -189,44 +195,30 @@ export function PlaybackFeedList({
             const entry = index.entries[item.index];
             if (!entry) return null;
             return (
-              <li
+              <PlaybackFeedRow
                 key={item.key}
-                data-index={item.index}
-                ref={virtual ? virtualizer.measureElement : undefined}
-                aria-posinset={item.index + 1}
-                aria-setsize={index.entries.length}
-                data-virtual={virtual}
-                className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] gap-2 data-[virtual=true]:absolute data-[virtual=true]:top-0 data-[virtual=true]:right-6 data-[virtual=true]:left-6"
-                style={
-                  virtual
-                    ? { transform: `translateY(${item.start}px)` }
-                    : undefined
+                entry={entry}
+                position={item.index}
+                count={index.entries.length}
+                virtual={virtual}
+                start={item.start}
+                measure={virtual ? virtualizer.measureElement : undefined}
+                showSourceHeading={playbackSpeechStartsGroup(
+                  entry,
+                  index.entries[item.index - 1],
+                )}
+                spans={index.spans.get(entry.id) ?? NO_SPANS}
+                activeWordId={frame.activeWords.get(entry.id)}
+                phase={
+                  entry.startMs > frame.time
+                    ? 'upcoming'
+                    : frame.activeEntries.has(entry.id)
+                      ? 'current'
+                      : 'past'
                 }
-              >
-                <PlaybackTimeTick
-                  entry={entry}
-                  onSeek={onSeek}
-                  onNavigateEntry={onNavigateEntry}
-                />
-                <PlaybackFeedEntry
-                  entry={entry}
-                  showSourceHeading={playbackSpeechStartsGroup(
-                    entry,
-                    index.entries[item.index - 1],
-                  )}
-                  spans={index.spans.get(entry.id) ?? NO_SPANS}
-                  activeWordId={frame.activeWords.get(entry.id)}
-                  phase={
-                    entry.startMs > frame.time
-                      ? 'upcoming'
-                      : frame.activeEntries.has(entry.id)
-                        ? 'current'
-                        : 'past'
-                  }
-                  onSeek={onSeek}
-                  onNavigateEntry={onNavigateEntry}
-                />
-              </li>
+                onSeek={onSeek}
+                onNavigateEntry={onNavigateEntry}
+              />
             );
           })}
         </ol>
@@ -243,3 +235,58 @@ export function PlaybackFeedList({
     </div>
   );
 }
+
+const PlaybackFeedRow = memo(function PlaybackFeedRow({
+  entry,
+  position,
+  count,
+  virtual,
+  start,
+  measure,
+  showSourceHeading,
+  spans,
+  activeWordId,
+  phase,
+  onSeek,
+  onNavigateEntry,
+}: {
+  entry: InspectorContentEntry;
+  position: number;
+  count: number;
+  virtual: boolean;
+  start: number;
+  measure: ((element: HTMLElement | null) => void) | undefined;
+  showSourceHeading: boolean;
+  spans: readonly PlaybackWordSpan[];
+  activeWordId: string | undefined;
+  phase: 'past' | 'current' | 'upcoming';
+  onSeek: (time: number) => void;
+  onNavigateEntry: ((entry: InspectorContentEntry) => void) | undefined;
+}) {
+  return (
+    <li
+      data-index={position}
+      ref={measure}
+      aria-posinset={position + 1}
+      aria-setsize={count}
+      data-virtual={virtual}
+      className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] gap-2 data-[virtual=true]:absolute data-[virtual=true]:top-0 data-[virtual=true]:right-6 data-[virtual=true]:left-6"
+      style={virtual ? { transform: `translateY(${start}px)` } : undefined}
+    >
+      <PlaybackTimeTick
+        entry={entry}
+        onSeek={onSeek}
+        onNavigateEntry={onNavigateEntry}
+      />
+      <PlaybackFeedEntry
+        entry={entry}
+        showSourceHeading={showSourceHeading}
+        spans={spans}
+        activeWordId={activeWordId}
+        phase={phase}
+        onSeek={onSeek}
+        onNavigateEntry={onNavigateEntry}
+      />
+    </li>
+  );
+});

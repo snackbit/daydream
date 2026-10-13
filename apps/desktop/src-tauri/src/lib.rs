@@ -93,6 +93,7 @@ pub fn run() {
             );
             app.manage(storage);
             app.manage(ai_model_manager);
+            app.manage(ai::ProcessingWorkerOwners::default());
             app.manage(transcription_provider_manager);
             app.manage(recorder_manager);
             app.manage(playback_server);
@@ -166,6 +167,7 @@ pub fn run() {
             ai::commands::result_commands::get_recording_activity,
             ai::commands::result_commands::get_recording_ai_processing_state,
             ai::commands::result_commands::get_recording_transcript,
+            ai::commands::result_commands::get_recording_transcript_preview,
             ai::commands::result_commands::get_recording_visual_observations,
             ai::commands::ocr_commands::get_ocr_document,
             ai::commands::ocr_commands::get_ocr_history,

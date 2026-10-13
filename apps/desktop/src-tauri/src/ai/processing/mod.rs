@@ -14,6 +14,7 @@ mod visual;
 mod worker;
 #[cfg(test)]
 pub(crate) use worker::cancel_job_if_inactive;
+pub(crate) use worker::{chunk_dependency_wait_reason, ProcessingWorkerOwners};
 pub(crate) use worker::{retry_processing_units_for_action, RetryProcessingUnitsInput};
 
 pub(in crate::ai) fn ensure_chunk_active(

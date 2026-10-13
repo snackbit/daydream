@@ -2,6 +2,116 @@ use super::super::{group_test_fixtures::*, groups::list, *};
 use crate::storage;
 
 #[test]
+fn completed_parent_does_not_hide_unfinished_sections_from_active_work() {
+    let storage = fixture();
+    storage
+        .with_connection(|connection| {
+            recording(connection, "a");
+            job(connection, "a", "ocr", 10, "ocr", "succeeded");
+            storage::update_processing_chunk_status(
+                connection,
+                &fixture_id("ocr-chunk"),
+                "queued",
+                0.,
+                None,
+                20,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let page = list(
+        ListRecordingProcessingGroupsInput {
+            filter: Some("active".into()),
+            ..Default::default()
+        },
+        &storage,
+    )
+    .unwrap();
+    assert_eq!(page.counts.active, 1);
+    assert_eq!(page.counts.queued, 1);
+    assert_eq!(page.groups[0].status, "queued");
+}
+
+#[test]
+fn failed_worker_remains_in_attention_when_its_unfinished_sections_are_cancelled() {
+    let storage = fixture();
+    storage
+        .with_connection(|connection| {
+            recording(connection, "a");
+            job(connection, "a", "audio", 10, "audio", "succeeded");
+            job(connection, "a", "ocr", 20, "ocr", "running");
+            connection.execute(
+                "UPDATE processing_chunks SET job_id=?1 WHERE source_kind='audio'",
+                [fixture_id("ocr")],
+            )?;
+            storage::cancel_processing_chunks(
+                connection,
+                &fixture_id("ocr"),
+                &["queued", "running"],
+                30,
+            )?;
+            storage::update_processing_job_status(
+                connection,
+                &fixture_id("ocr"),
+                "failed",
+                Some("ai_processing_job_worker_failed"),
+                30,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let page = list(
+        ListRecordingProcessingGroupsInput {
+            filter: Some("attention".into()),
+            ..Default::default()
+        },
+        &storage,
+    )
+    .unwrap();
+    assert_eq!(page.counts.attention, 1);
+    assert_eq!(page.counts.running, 0);
+    assert_eq!(page.groups[0].status, "failed");
+    assert_eq!(page.groups[0].lanes[0].completed, 1);
+    assert_eq!(page.groups[0].lanes[0].status.as_deref(), Some("succeeded"));
+    assert!(page.groups[0].lanes[0].error_code.is_none());
+    assert_eq!(page.groups[0].lanes[1].status.as_deref(), Some("failed"));
+    assert_eq!(
+        page.groups[0].lanes[1].error_code.as_deref(),
+        Some("ai_processing_job_worker_failed")
+    );
+}
+
+#[test]
+fn scoped_totals_include_all_work_before_pagination_and_do_not_reconcile_other_recordings() {
+    let storage = fixture();
+    storage
+        .with_connection(|connection| {
+            for id in ["a", "b", "c"] {
+                recording(connection, id);
+                job(connection, id, id, 10, "ocr", "queued");
+            }
+            Ok(())
+        })
+        .unwrap();
+    let page = list(
+        ListRecordingProcessingGroupsInput {
+            recording_ids: vec![fixture_id("a"), fixture_id("b")],
+            known_recording_ids: vec![fixture_id("c")],
+            limit: Some(1),
+            ..Default::default()
+        },
+        &storage,
+    )
+    .unwrap();
+    assert_eq!(page.groups.len(), 1);
+    assert!(page.next_cursor.is_some());
+    assert_eq!(page.counts.all, 2);
+    assert_eq!(page.counts.queued, 2);
+    assert_eq!(page.counts.running, 0);
+    assert!(page.reconciled_groups.is_empty());
+}
+
+#[test]
 fn large_history_counts_and_filters_do_not_project_or_probe_unrequested_recordings() {
     let storage = fixture();
     storage
@@ -78,7 +188,7 @@ fn large_history_counts_and_filters_do_not_project_or_probe_unrequested_recordin
     assert_eq!(page.counts.attention, 0);
     assert!(page.groups.iter().all(|group| group.lanes[1].total == 1
         && group.lanes[1].failed == 0
-        && group.lanes.len() == 4));
+        && group.lanes.len() == 5));
     storage
         .with_connection(|connection| {
             let probes: i64 =

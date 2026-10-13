@@ -40,6 +40,7 @@ export function useOcrDocument(
     let active = true;
     let unlisten: (() => void) | null = null;
     void listenToAiProcessingChanged((state) => {
+      if ('sourceKind' in state && state.sourceKind === 'waveform') return;
       if (active && state.recordingId === recordingId) refreshAfterProcessing();
     })
       .then((cleanup) => {

@@ -6,7 +6,8 @@ import type {
 } from '@daydream/shared';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { stageLabel, taskStatusLabel } from '../task-format';
+import { processingLaneLabel } from '../processing-activity';
+import { stageLabel } from '../task-format';
 import { ProcessingError } from './processing-error';
 
 export interface RecordingProcessingLaneProps {
@@ -17,30 +18,6 @@ export interface RecordingProcessingLaneProps {
     kind: RecordingProcessingLaneKind,
     useCurrentSettings: boolean,
   ) => void;
-}
-function laneState(lane: RecordingProcessingLane) {
-  switch (lane.applicability) {
-    case 'disabled':
-      return 'Disabled in settings';
-    case 'no-source':
-      return 'No source recorded';
-    case 'protected':
-      return 'Waiting for recording protection';
-    case 'no-eligible-input':
-      return 'No eligible source sections';
-    case 'waiting':
-      return 'Waiting for finalized recording segments';
-    case 'available':
-      if (
-        lane.inputOpen &&
-        lane.status !== 'paused' &&
-        lane.completed + lane.skipped === lane.total &&
-        !lane.failed &&
-        !lane.cancelled
-      )
-        return 'Caught up · live recording';
-      return lane.status ? taskStatusLabel(lane.status) : 'Not queued';
-  }
 }
 export function RecordingProcessingLaneRow({
   lane,
@@ -69,7 +46,7 @@ export function RecordingProcessingLaneRow({
         <div className="min-w-0">
           <p className="text-sm font-medium">{stageLabel(lane.kind)}</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {laneState(lane)}
+            {processingLaneLabel(lane)}
           </p>
         </div>
         <div className="flex flex-wrap gap-1">
@@ -88,14 +65,16 @@ export function RecordingProcessingLaneRow({
               >
                 Retry failed
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={pending}
-                onClick={retryCurrent}
-              >
-                Use current settings
-              </Button>
+              {lane.kind !== 'waveform' ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={retryCurrent}
+                >
+                  Use current settings
+                </Button>
+              ) : null}
             </>
           ) : null}
         </div>

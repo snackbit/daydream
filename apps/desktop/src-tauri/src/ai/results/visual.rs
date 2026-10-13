@@ -54,7 +54,7 @@ pub(crate) fn visible_visual_observation_rows_for_recording(
 ) -> Result<VisibleVisualObservationRows, AiError> {
     visible_visual_rows(storage, recording_id, true)
 }
-fn visible_visual_rows(
+pub(super) fn visible_visual_rows(
     storage: &AppStorage,
     recording_id: &str,
     include_ocr_regions: bool,
@@ -197,6 +197,21 @@ fn filter_visible_vlm_observations(
         .into_iter()
         .filter(|observation| {
             visible.is_visible(&observation.chunk_id, observation.frame_timestamp_ms)
+                && !redactions.iter().any(|cut| {
+                    let start = observation
+                        .context_start_ms
+                        .unwrap_or(observation.frame_timestamp_ms);
+                    let end = observation
+                        .confirmed_end_ms
+                        .unwrap_or(observation.frame_timestamp_ms + 1);
+                    start < cut.end_offset_ms
+                        && end > cut.start_offset_ms
+                        && visible.redaction_hides_visual_timestamp(
+                            cut,
+                            &observation.chunk_id,
+                            cut.start_offset_ms.max(start),
+                        )
+                })
         })
         .collect()
 }
@@ -324,6 +339,8 @@ fn ocr_region_from_row(row: OcrRegionRow) -> OcrRegion {
 
 fn vlm_observation_from_row(row: VlmObservationRow) -> VlmObservation {
     VlmObservation {
+        context_start_ms: row.context_start_ms,
+        confirmed_end_ms: row.confirmed_end_ms,
         chunk_id: row.chunk_id,
         confidence: row.confidence,
         frame_timestamp_ms: row.frame_timestamp_ms,

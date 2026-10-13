@@ -1,13 +1,13 @@
 use super::*;
 
-fn fixture() -> (AppStorage, ProcessingChunkRow, RecordingTrackRow) {
+pub(super) fn fixture() -> (AppStorage, ProcessingChunkRow, RecordingTrackRow) {
     let storage = storage::test_storage(PathBuf::new());
     let (chunk, track) = storage
         .with_connection(|c| Ok(crate::ai::tests::test_transcription_chunk(c)))
         .unwrap();
     (storage, chunk, track)
 }
-fn unit(
+pub(super) fn unit(
     chunk: &ProcessingChunkRow,
     track: &RecordingTrackRow,
     start: i64,
@@ -28,7 +28,7 @@ fn unit(
         output_json: None,
     }
 }
-fn stage(storage: &AppStorage, unit: &storage::SpeechUnit) {
+pub(super) fn stage(storage: &AppStorage, unit: &storage::SpeechUnit) {
     storage
         .with_connection(|c| {
             storage::enable_speech_strategy(c, &unit.job_id)?;
@@ -47,7 +47,7 @@ fn stage(storage: &AppStorage, unit: &storage::SpeechUnit) {
         })
         .unwrap();
 }
-fn publish(
+pub(super) fn publish(
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,
     track: &RecordingTrackRow,

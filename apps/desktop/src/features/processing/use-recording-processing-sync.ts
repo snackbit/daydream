@@ -1,13 +1,21 @@
 import { useEffect } from 'react';
 import { listenToBackgroundTasksChanged } from './processing-client';
-import { useRecordingProcessingStore } from './recording-processing-store';
+import {
+  useRecordingProcessingStore,
+  type RecordingProcessingStore,
+} from './recording-processing-store';
 
-export function useRecordingProcessingSync() {
-  const refresh = useRecordingProcessingStore((state) => state.refresh);
+export function useRecordingProcessingSync(
+  useStore: RecordingProcessingStore = useRecordingProcessingStore,
+  enabled = true,
+) {
+  const refresh = useStore((state) => state.refresh);
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
     let cleanup: (() => void) | null = null;
     let timer: number | null = null;
+    let eventsUnavailable = false;
     function reconcile() {
       if (active && timer === null)
         timer = window.setTimeout(() => {
@@ -21,13 +29,25 @@ export function useRecordingProcessingSync() {
         if (active) cleanup = unlisten;
         else unlisten();
       })
-      .catch(reconcile);
-    const fallback = window.setInterval(reconcile, 5000);
+      .catch(() => {
+        eventsUnavailable = true;
+        reconcile();
+      });
+    const fallback = window.setInterval(() => {
+      if (
+        eventsUnavailable ||
+        useStore.getState().counts.active ||
+        useStore.getState().status === 'error'
+      )
+        reconcile();
+    }, 5000);
+    window.addEventListener('focus', reconcile);
     return () => {
       active = false;
       cleanup?.();
       if (timer !== null) window.clearTimeout(timer);
       window.clearInterval(fallback);
+      window.removeEventListener('focus', reconcile);
     };
-  }, [refresh]);
+  }, [refresh, enabled, useStore]);
 }

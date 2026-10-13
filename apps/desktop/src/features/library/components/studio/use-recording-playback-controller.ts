@@ -81,6 +81,7 @@ export function useRecordingPlaybackController({
     : null;
   const totalDurationMs = timelineDurationMs(playableSegments);
   const media = usePlaybackMediaElements({
+    canSeekInStream: playbackAssets?.canSeekInStream === true,
     isMuted,
     mutedTrackIds,
     redactedTrackIdsRef,
@@ -107,7 +108,12 @@ export function useRecordingPlaybackController({
       pendingAutoplay,
       clockTime,
     });
+  const sampleBoundary = useCallback(
+    () => setCurrentTime(streamStartMs / 1000 + clockTime()),
+    [streamStartMs, clockTime],
+  );
   const redaction = usePlaybackRedactionController({
+    onBoundary: sampleBoundary,
     applyRedactedAudioSettings,
     clockTime,
     currentSegment,
@@ -128,7 +134,6 @@ export function useRecordingPlaybackController({
     videoTimelineMs,
     redactionSkipTargetMs,
   } = redaction;
-  const streamStartSeconds = streamStartMs / 1000;
   const snapshot: RecordingPlaybackSnapshot = {
     displayedTimelineMs,
     isPlaying,
@@ -160,6 +165,7 @@ export function useRecordingPlaybackController({
     ]),
     resumeProgress,
     setIsPlaying,
+    sampleClock: sampleBoundary,
     setPendingAutoplay,
     setPlaybackError,
   });
@@ -404,7 +410,6 @@ export function useRecordingPlaybackController({
 
   function handleVideoTimeUpdate(video: HTMLVideoElement) {
     if (!isCurrentMedia(video)) return;
-    if (!playbackEndedAtEnd) setCurrentTime(streamStartSeconds + clockTime());
     updateRedactionStateForTimeline(videoTimelineMs(video));
     syncAudioElements(video.currentTime);
   }

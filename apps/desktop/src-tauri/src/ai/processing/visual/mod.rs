@@ -10,6 +10,10 @@ pub(in crate::ai) use vlm::{
     vision_request_config as vision_request_config_for_ocr,
 };
 
+mod change_processing;
+mod change_protocol;
+#[cfg(test)]
+mod change_protocol_tests;
 mod concurrency;
 mod context;
 mod extraction;
@@ -18,6 +22,7 @@ mod image;
 mod ocr;
 mod persistence;
 mod provider_configuration;
+pub(in crate::ai) mod shared_inference;
 mod types;
 mod vlm;
 
@@ -95,6 +100,9 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
 ) -> Result<(), AiError> {
     if chunk.source_kind == "ocr" {
         return super::ocr_documents::process_ocr_document_chunk(app, chunk, cancel, lease).await;
+    }
+    if shared_inference::enabled(&app.state::<AppStorage>(), &chunk.job_id)? {
+        return change_processing::process(app, chunk, cancel, lease).await;
     }
     let started = Instant::now();
     let storage = app.state::<AppStorage>();

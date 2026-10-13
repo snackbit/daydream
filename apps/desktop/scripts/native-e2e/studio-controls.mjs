@@ -6,14 +6,14 @@ export async function checkStudioControls({
   click,
   artifacts,
 }) {
-  await button('Inspector');
+  await button('Details');
   await native.wait(
     'document.querySelector("[role=tabpanel][data-state=active]").textContent.includes("Recording details")',
     'Inspector summary',
   );
-  await button('Teleprompter');
+  await button('Review');
   await native.wait(
-    'document.querySelector("[role=tab][aria-selected=true]").textContent === "Teleprompter"',
+    'document.querySelector("[role=tab][aria-selected=true]").textContent === "Review"',
     'Teleprompter selected',
   );
   await click('[aria-label="Playback speed"]');

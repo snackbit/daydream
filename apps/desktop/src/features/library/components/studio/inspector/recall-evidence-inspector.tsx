@@ -57,9 +57,11 @@ export function RecallEvidenceInspector({
   );
   return (
     <InspectorSection title="Recall source">
-      <p className="leading-6 break-words whitespace-pre-wrap">
-        {evidence.text}
-      </p>
+      {evidence.sourceKind !== 'ocr' ? (
+        <p className="leading-6 break-words whitespace-pre-wrap">
+          {evidence.text}
+        </p>
+      ) : null}
       <dl className="space-y-3 text-xs">
         <InspectorField
           label="Source"

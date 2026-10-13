@@ -4,9 +4,9 @@ use crate::storage::{OcrContentInput, OcrFrameInput};
 use std::collections::BTreeSet;
 
 mod config;
-mod extraction;
+pub(in crate::ai) mod extraction;
 mod recognition;
-mod recognition_lease;
+pub(in crate::ai) mod recognition_lease;
 use recognition::{raw_word_inputs, run_frame};
 mod reprocess;
 mod tesseract;
@@ -144,7 +144,10 @@ pub(in crate::ai) async fn process_ocr_document_chunk(
         })
         .map_err(storage_error)?;
     let settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-    let parallel = if settings.ai.processing.resource_mode == "background" {
+    let parallel = if super::visual::shared_inference::enabled(&storage, &chunk.job_id)?
+        && config.engine == OcrEngine::Vision
+        || settings.ai.processing.resource_mode == "background"
+    {
         1
     } else if config.engine == OcrEngine::Vision {
         settings.ai.processing.max_parallel_vlm_jobs as usize

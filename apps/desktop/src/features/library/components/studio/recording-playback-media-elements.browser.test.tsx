@@ -3,6 +3,30 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { usePlaybackMediaElements } from './recording-playback-media-elements';
 
 afterEach(cleanup);
+test('a ready but paused audio source cannot freeze the running video clock', () => {
+  const view = renderHook(() =>
+    usePlaybackMediaElements({
+      isMuted: false,
+      mutedTrackIds: new Set<string>(),
+      redactedTrackIdsRef: { current: new Set<string>() },
+      volume: 1,
+    }),
+  );
+  const audio = document.createElement('audio'),
+    video = document.createElement('video');
+  for (const element of [audio, video])
+    Object.defineProperty(element, 'readyState', {
+      value: HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+  Object.defineProperty(audio, 'currentTime', { value: 2 });
+  Object.defineProperties(video, {
+    currentTime: { value: 10 },
+    paused: { value: false },
+  });
+  view.result.current.actions.registerAudioElement('desktop-audio-1', audio);
+  view.result.current.actions.setVideoElement(video);
+  expect(view.result.current.actions.clockTime()).toBe(10);
+});
 test('desktop audio owns the clock across rollover times and ordinary drift never seeks audio', () => {
   const media = <T extends 'audio' | 'video'>(tag: T) => {
     const element = document.createElement(tag);
@@ -13,6 +37,7 @@ test('desktop audio owns the clock across rollover times and ordinary drift neve
     Object.defineProperties(element, {
       readyState: { get: () => HTMLMediaElement.HAVE_ENOUGH_DATA },
       currentTime: { get: () => time, set: seek },
+      seekable: { value: { length: 1, start: () => 0, end: () => 1000 } },
     });
     return {
       element,
@@ -65,6 +90,35 @@ test('desktop audio owns the clock across rollover times and ordinary drift neve
   );
   expect(desktop.element.muted).toBe(true);
   expect(microphone.element.muted).toBe(false);
+});
+
+test('non-seekable streams retain their chosen speed without drift seeks or rate corrections', () => {
+  const view = renderHook(() =>
+    usePlaybackMediaElements({
+      isMuted: false,
+      mutedTrackIds: new Set(),
+      redactedTrackIdsRef: { current: new Set() },
+      volume: 1,
+    }),
+  );
+  const video = document.createElement('video'),
+    audio = document.createElement('audio');
+  const seek = vi.fn();
+  Object.defineProperties(video, {
+    readyState: { value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+    currentTime: { get: () => 1, set: seek },
+  });
+  Object.defineProperties(audio, {
+    readyState: { value: HTMLMediaElement.HAVE_ENOUGH_DATA },
+    currentTime: { value: 5 },
+  });
+  view.result.current.refs.videoRef.current = video;
+  view.result.current.refs.audioRefs.current.set('desktop-audio-1', audio);
+  view.result.current.actions.syncAudioElements(1);
+  view.result.current.actions.syncAudioElements(1, true);
+  expect(seek).not.toHaveBeenCalled();
+  expect(video.playbackRate).toBe(1);
+  expect(view.result.current.actions.clockTime()).toBe(5);
 });
 
 test('new media and monitor followers inherit the selected source-load speed and pause together', () => {

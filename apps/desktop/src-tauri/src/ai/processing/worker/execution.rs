@@ -9,6 +9,7 @@ use super::{
 pub(super) async fn process_recording_ai_job(
     app: AppHandle,
     job_id: String,
+    ownership: Arc<super::ownership::WorkerOwnership>,
 ) -> Result<(), AiError> {
     let started = Instant::now();
     let storage = app.state::<AppStorage>();
@@ -21,20 +22,26 @@ pub(super) async fn process_recording_ai_job(
         recording_id = %job.recording_id,
         "AI processing job started."
     );
-    save_job_running_notification(&storage, &job)?;
-    let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
-    let max_parallel_chunks = app_settings
-        .ai
-        .processing
-        .max_parallel_chunks_per_job
-        .max(1)
-        .min(
-            if app_settings.ai.processing.resource_mode == "background" {
-                2
-            } else {
-                u32::MAX
-            },
-        ) as usize;
+    if job.kind != "waveform" {
+        save_job_running_notification(&storage, &job)?;
+    }
+    let max_parallel_chunks = if job.kind == "waveform" {
+        1
+    } else {
+        let app_settings = settings::load_app_settings(&storage).map_err(settings_error)?;
+        app_settings
+            .ai
+            .processing
+            .max_parallel_chunks_per_job
+            .max(1)
+            .min(
+                if app_settings.ai.processing.resource_mode == "background" {
+                    2
+                } else {
+                    u32::MAX
+                },
+            ) as usize
+    };
     let mut active_chunks = futures_util::stream::FuturesUnordered::new();
 
     loop {
@@ -53,9 +60,10 @@ pub(super) async fn process_recording_ai_job(
 
             let app = app.clone();
             let job_id = job_id.clone();
+            let ownership = ownership.clone();
             active_chunks.push(async move {
                 let worker_app=app.clone();let worker_id=job_id.clone();let worker_chunk=chunk.clone();
-                match tauri::async_runtime::spawn(async move {process_processing_chunk(&worker_app,&worker_id,worker_chunk).await}).await {
+                match tauri::async_runtime::spawn(async move {let _ownership=ownership;process_processing_chunk(&worker_app,&worker_id,worker_chunk).await}).await {
                     Ok(result)=>result,
                     Err(_)=>{
                         super::chunk_context::ProcessingChunkContext::new(&app,&job_id,&chunk).mark_failed("ai_processing_chunk_worker_failed")?;
@@ -88,7 +96,11 @@ pub(super) async fn process_recording_ai_job(
                         )
                     })
                     .map_err(storage_error)?;
-                emit_processing_state(&app, &job.recording_id);
+                crate::ai::results::emit_processing_state_with_source(
+                    &app,
+                    &job.recording_id,
+                    (job.kind == "waveform").then_some("waveform"),
+                );
                 return Ok(());
             }
             tracing::info!(

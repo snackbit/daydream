@@ -25,6 +25,7 @@ import type {
 } from '@daydream/shared';
 import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
 import { listen } from '@/lib/diagnostics/listen';
+import { decodeStudioOverview } from './studio-overview-decoder';
 import { decodeTranscriptionProgress } from './transcription-progress-decoder';
 
 export {
@@ -125,10 +126,21 @@ export async function getRecordingAiProcessingState(
       input,
     },
   );
+  const decoded =
+    state.timelineOverview === undefined
+      ? state
+      : {
+          ...state,
+          timelineOverview: decodeResponse(
+            'getRecordingAiProcessingState',
+            state.timelineOverview,
+            decodeStudioOverview,
+          ),
+        };
   return state.transcriptionProgress === undefined
-    ? state
+    ? decoded
     : {
-        ...state,
+        ...decoded,
         transcriptionProgress: decodeResponse(
           'getRecordingAiProcessingState',
           state.transcriptionProgress,

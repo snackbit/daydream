@@ -29,7 +29,8 @@ function overlaps(
 ): boolean {
   return detail.redactions.some(
     (redaction) =>
-      redaction.trackIds.some((id) => ids.includes(id)) &&
+      (redaction.trackIds.length === 0 ||
+        redaction.trackIds.some((id) => ids.includes(id))) &&
       (start === null ||
         end === null ||
         (start < redaction.endOffsetMs && end > redaction.startOffsetMs)),
@@ -55,6 +56,19 @@ export function visibleAiProcessingState(
     .map((track) => track.id);
   return {
     ...state,
+    ...(state.timelineOverview === undefined
+      ? {}
+      : {
+          timelineOverview: state.timelineOverview.filter(
+            (bucket) =>
+              !overlaps(
+                detail,
+                [bucket.trackId],
+                bucket.startOffsetMs,
+                bucket.endOffsetMs,
+              ),
+          ),
+        }),
     transcript: {
       ...state.transcript,
       tracks: state.transcript.tracks.map((track) => ({
@@ -134,7 +148,13 @@ export function visibleVisualObservations(
       (region) => !contains(detail, ids, region.frameTimestampMs),
     ),
     vlmObservations: state.vlmObservations.filter(
-      (observation) => !contains(detail, ids, observation.frameTimestampMs),
+      (observation) =>
+        !overlaps(
+          detail,
+          ids,
+          observation.contextStartMs ?? observation.frameTimestampMs,
+          observation.confirmedEndMs ?? observation.frameTimestampMs + 1,
+        ),
     ),
   };
 }

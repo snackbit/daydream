@@ -221,7 +221,8 @@ beforeEach(() => {
     throw new Error('Missing synthetic subscription');
   };
   native.listen.mockImplementation(
-    async (_name: string, callback: typeof receive) => {
+    async (name: string, callback: typeof receive) => {
+      if (name !== 'recall-state-changed') return noAction;
       receive = callback;
       return unsubscribe;
     },
@@ -237,14 +238,47 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test('screen recall sources retain seeking and hiding in Debug without exposing recognized text', async () => {
+  const seek = vi.fn();
+  const hide = vi.fn().mockResolvedValue(undefined);
+  render(
+    <RecallEvidenceInspector
+      evidence={{
+        ...evidence,
+        sourceKind: 'ocr',
+        sourceTrackId: 'video-0',
+        text: 'Synthetic hidden OCR',
+      }}
+      debugEnabled
+      onSeek={seek}
+      onClear={vi.fn()}
+      onCreateRedactions={hide}
+    />,
+  );
+  expect(screen.queryByText('Synthetic hidden OCR')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Jump to source' }));
+  expect(seek).toHaveBeenCalledWith(evidence.startOffsetMs);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Hide source interval' }),
+  );
+  await waitFor(() =>
+    expect(hide).toHaveBeenCalledWith([
+      {
+        startOffsetMs: evidence.startOffsetMs,
+        endOffsetMs: evidence.endOffsetMs,
+        trackIds: ['video-0'],
+      },
+    ]),
+  );
+});
+
 test('Studio waits for a validated native subscription before reading, showing or seeking private evidence', async () => {
   const subscription = deferred<() => void>();
-  native.listen.mockImplementation(
-    (_name: string, callback: typeof receive) => {
-      receive = callback;
-      return subscription.promise;
-    },
-  );
+  native.listen.mockImplementation((name: string, callback: typeof receive) => {
+    if (name !== 'recall-state-changed') return Promise.resolve(noAction);
+    receive = callback;
+    return subscription.promise;
+  });
   render(<EvidenceStudio />);
   await screen.findByText('loading');
   expect(resolveCalls()).toHaveLength(0);
@@ -280,19 +314,25 @@ test('privacy events during subscription reconnection discard the old read befor
           tracks: [],
         }),
   );
-  native.listen
-    .mockImplementationOnce(async (_name: string, callback: typeof receive) => {
-      receive = callback;
-      return unsubscribe;
-    })
-    .mockImplementationOnce((_name: string, callback: typeof receive) => {
-      receive = callback;
-      return gap.promise;
-    });
+  native.listen.mockImplementation((name: string, callback: typeof receive) => {
+    if (name !== 'recall-state-changed') return Promise.resolve(noAction);
+    receive = callback;
+    return native.listen.mock.calls.filter(
+      ([event]) => event === 'recall-state-changed',
+    ).length === 1
+      ? Promise.resolve(unsubscribe)
+      : gap.promise;
+  });
   render(<EvidenceStudio />);
   await waitFor(() => expect(resolveCalls()).toHaveLength(1));
   act(() => dispatch({ dayId: null, privacyRevision: 1 }));
-  await waitFor(() => expect(native.listen).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(
+      native.listen.mock.calls.filter(
+        ([event]) => event === 'recall-state-changed',
+      ),
+    ).toHaveLength(2),
+  );
   act(() => dispatch({ dayId: null, privacyRevision: 2 }));
   await act(async () => {
     oldRead.resolve(evidence);

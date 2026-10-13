@@ -8,7 +8,7 @@ use crate::{
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeSet;
 
-pub(super) const LANES: [&str; 4] = ["audio", "ocr", "vlm", "activity"];
+pub(super) const LANES: [&str; 5] = ["audio", "ocr", "vlm", "activity", "waveform"];
 pub(super) fn failure() -> AiError {
     AiError {
         code: "ai_processing_storage_failed".into(),
@@ -63,6 +63,7 @@ pub(super) fn lane(
         input_open: false,
         error_code: None,
         next_retry_at_ms: None,
+        activity: Vec::new(),
     };
     let mut progress_sum = 0.0;
     let mut statuses = Vec::new();
@@ -104,11 +105,13 @@ pub(super) fn lane(
         statuses.push(
             if job.status == "paused" {
                 "paused"
+            } else if job.status == "failed" && failed + cancelled + running + queued > 0 {
+                "failed"
             } else if running > 0 {
                 "running"
             } else if queued > 0 {
                 "queued"
-            } else if failed > 0 {
+            } else if failed > 0 || job.status == "completed-with-errors" && cancelled > 0 {
                 "completed-with-errors"
             } else if cancelled > 0 {
                 "cancelled"
@@ -119,7 +122,12 @@ pub(super) fn lane(
         );
         let error: Option<String> = connection.query_row("SELECT error_code FROM processing_chunks WHERE job_id=?1 AND source_kind=?2 AND error_code IS NOT NULL ORDER BY updated_at_ms DESC,id DESC LIMIT 1", params![id,kind], |row| row.get(0)).optional()?.flatten();
         if lane.error_code.is_none() {
-            lane.error_code = error;
+            let stopped = job.status == "failed" && failed + cancelled + running + queued > 0;
+            lane.error_code = if stopped && error.as_deref() == Some("ai_processing_cancelled") {
+                job.error.clone().or(error)
+            } else {
+                error.or_else(|| stopped.then(|| job.error.clone()).flatten())
+            };
         }
         let next: Option<i64> = connection.query_row("SELECT MIN(r.next_retry_at_ms) FROM processing_chunk_runtime r JOIN processing_chunks c ON c.id=r.chunk_id WHERE c.job_id=?1 AND c.source_kind=?2 AND c.status IN('running','queued')",params![id,kind],|row|row.get(0))?;
         if let Some(next) = next {
@@ -137,6 +145,7 @@ pub(super) fn lane(
             connection, recording, kind, settings,
         )?;
     }
+    lane.activity = super::group_activity::read(connection, &lane)?;
     Ok(lane)
 }
 
@@ -241,6 +250,7 @@ pub(super) fn list(
     let filter = input.filter.as_deref().unwrap_or("all");
     if !["all", "active", "attention", "history"].contains(&filter)
         || input.known_recording_ids.len() > 2000
+        || input.recording_ids.len() > 2000
     {
         return Err(failure());
     }

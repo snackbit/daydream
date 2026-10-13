@@ -62,6 +62,7 @@
     "getRecordingAiProcessingState",
     "getRecordingProcessingLane",
     "getRecordingTranscript",
+    "getRecordingTranscriptPreview",
     "getRecordingVisualObservations",
     "getRecordingWaveformTiles",
     "getRecordingWaveforms",

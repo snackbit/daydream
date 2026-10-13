@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { AppWindow, Keyboard, Mic, Mouse, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { InspectorContentEntry } from '../inspector-content';
@@ -17,7 +18,7 @@ export interface PlaybackFeedEntryProps {
   onSeek: (time: number) => void;
   onNavigateEntry?: ((entry: InspectorContentEntry) => void) | undefined;
 }
-export function PlaybackFeedEntry({
+export const PlaybackFeedEntry = memo(function PlaybackFeedEntry({
   entry,
   showSourceHeading,
   spans,
@@ -104,4 +105,4 @@ export function PlaybackFeedEntry({
       </span>
     </Button>
   );
-}
+});

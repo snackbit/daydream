@@ -231,6 +231,7 @@ export interface LibraryWaveformTileTrack {
 }
 
 export interface LibraryWaveformTiles {
+  pending?: boolean;
   binMs: number;
   error: string | null;
   recordingId: string;
@@ -256,6 +257,8 @@ export interface LibraryRecordingThumbnail {
 }
 
 export interface LibraryPlaybackAssets {
+  /** Native streaming proxies seek by replacing the stream URL. */
+  canSeekInStream?: boolean;
   runs?: LibraryPlaybackRun[];
   error: string | null;
   recordingId: string;

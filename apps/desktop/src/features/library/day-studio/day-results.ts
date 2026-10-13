@@ -6,23 +6,19 @@ import type {
   RecordingTranscriptionProgress,
   VisualFrameProcessingState,
 } from '@daydream/shared';
+import type { StudioResultRange } from '../components/studio/studio-result-window-store';
 import type { StudioVisualFrame } from '../components/studio/studio-visual-observations';
-import { dayPosition, type DayTimelineModel } from './day-timeline';
+import {
+  dayPosition,
+  projectSourceRange as range,
+  type DayTimelineModel,
+} from './day-timeline';
 
 export interface DayRecordingResults {
   ai: RecordingAiProcessingState | null;
   activity: RecordingActivity | null;
   frames: StudioVisualFrame[];
-}
-function range(model: DayTimelineModel, id: string, from: number, to: number) {
-  return model.spans
-    .filter((s) => s.recordingId === id)
-    .flatMap((span) => {
-      const a = Math.max(from, span.sourceOffsetMs),
-        b = Math.min(to, span.sourceOffsetMs + span.durationMs);
-      const shift = span.startMs - model.originMs - span.sourceOffsetMs;
-      return b > a ? [{ start: a + shift, end: b + shift, shift }] : [];
-    });
+  request?: StudioResultRange;
 }
 function transcript(
   model: DayTimelineModel,
@@ -56,7 +52,35 @@ type DayProcessingView = RecordingAiProcessingState & {
 export function projectDayResults(
   model: DayTimelineModel,
   results: Map<string, DayRecordingResults>,
+  requestedRange?: StudioResultRange,
+  failedIds: ReadonlySet<string> = new Set(),
 ) {
+  const pendingRanges: { startOffsetMs: number; endOffsetMs: number }[] = [],
+    failedRanges: typeof pendingRanges = [];
+  if (requestedRange)
+    for (const span of model.spans) {
+      const startOffsetMs = Math.max(
+        span.startMs - model.originMs,
+        requestedRange.startOffsetMs,
+      );
+      const endOffsetMs = Math.min(
+        span.startMs - model.originMs + span.durationMs,
+        requestedRange.endOffsetMs,
+      );
+      if (endOffsetMs <= startOffsetMs) continue;
+      const request = results.get(span.recordingId)?.request;
+      if (
+        !request ||
+        request.startOffsetMs !== requestedRange.startOffsetMs ||
+        request.endOffsetMs !== requestedRange.endOffsetMs ||
+        request.bucketMs !== requestedRange.bucketMs
+      ) {
+        (failedIds.has(span.recordingId) ? failedRanges : pendingRanges).push({
+          startOffsetMs,
+          endOffsetMs,
+        });
+      }
+    }
   const ai: DayProcessingView = {
     recordingId: model.view.id,
     job: null,
@@ -78,6 +102,21 @@ export function projectDayResults(
     const ids = model.trackIds.get(id),
       track = (value: string) => ids?.get(value) ?? value;
     const state = result.ai;
+    ai.resultsRevision = `${ai.resultsRevision ?? ''}:${id}:${state?.resultsRevision ?? ''}`;
+    if (state?.timelineOverview !== undefined) {
+      ai.timelineOverview ??= [];
+      for (const bucket of state.timelineOverview)
+        ai.timelineOverview.push(
+          ...range(model, id, bucket.startOffsetMs, bucket.endOffsetMs).map(
+            (r) => ({
+              ...bucket,
+              trackId: track(bucket.trackId),
+              startOffsetMs: r.start,
+              endOffsetMs: r.end,
+            }),
+          ),
+        );
+    }
     for (const t of state?.transcript.tracks ?? [])
       ai.transcript.tracks.push({
         ...t,
@@ -177,6 +216,8 @@ export function projectDayResults(
   return {
     ai,
     activity,
+    pendingRanges,
+    failedRanges,
     frames: frames.sort((a, b) => a.frameTimestampMs - b.frameTimestampMs),
   };
 }

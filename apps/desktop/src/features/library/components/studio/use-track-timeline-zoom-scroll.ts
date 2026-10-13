@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import {
   clampScrollLeft,
@@ -14,6 +14,7 @@ export function useTrackTimelineZoomScroll({
   displayedTimelineMs,
   isPlaying,
   markProgrammaticScroll,
+  scrollLeft,
   setFollowPlayhead,
   setScrollLeft,
   setVisibleWindowMs,
@@ -26,7 +27,8 @@ export function useTrackTimelineZoomScroll({
   contentRef: RefObject<HTMLDivElement | null>;
   displayedTimelineMs: number;
   isPlaying: boolean;
-  markProgrammaticScroll: () => void;
+  markProgrammaticScroll: (target: number) => void;
+  scrollLeft: number;
   setFollowPlayhead: (follow: boolean) => void;
   setScrollLeft: (scrollLeft: number) => void;
   setVisibleWindowMs: Dispatch<SetStateAction<number>>;
@@ -36,6 +38,15 @@ export function useTrackTimelineZoomScroll({
   viewportRef: RefObject<HTMLDivElement | null>;
   visibleWindowMs: number;
 }) {
+  const pendingScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const target = pendingScroll.current;
+    pendingScroll.current = null;
+    const viewport = viewportRef.current;
+    if (target === null || !viewport) return;
+    markProgrammaticScroll(target);
+    viewport.scrollLeft = target;
+  }, [scrollLeft, visibleWindowMs, viewportRef, markProgrammaticScroll]);
   const zoomVisibleWindow = useCallback(
     (nextWindowMs: number, anchorClientX?: number) => {
       const viewport = viewportRef.current;
@@ -47,40 +58,45 @@ export function useTrackTimelineZoomScroll({
         return;
       }
 
-      const viewportRect = viewport?.getBoundingClientRect();
+      const viewportRect =
+        anchorClientX === undefined
+          ? undefined
+          : viewport?.getBoundingClientRect();
       const anchorX =
-        anchorClientX && viewportRect
+        anchorClientX !== undefined && viewportRect
           ? anchorClientX - viewportRect.left
           : TRACK_LABEL_WIDTH_PX + timelineViewportWidth / 2;
       const anchorTimelineMs =
-        timelineMsFromClientX(
-          anchorClientX ??
-            (viewportRect?.left ?? 0) +
-              TRACK_LABEL_WIDTH_PX +
-              timelineViewportWidth / 2,
-        ) ?? clampTimelineMs(displayedTimelineMs, totalDurationMs);
+        anchorClientX === undefined
+          ? clampTimelineMs(
+              (scrollLeft / timelineViewportWidth + 0.5) * visibleWindowMs,
+              totalDurationMs,
+            )
+          : (timelineMsFromClientX(anchorClientX) ??
+            clampTimelineMs(displayedTimelineMs, totalDurationMs));
       const nextTimelineWidthPx = Math.max(
         timelineViewportWidth,
         (totalDurationMs / nextVisibleWindowMs) * timelineViewportWidth,
       );
 
+      const nextScrollLeft = Math.max(
+        0,
+        Math.min(
+          Math.floor(nextTimelineWidthPx - timelineViewportWidth),
+          Math.round(
+            TRACK_LABEL_WIDTH_PX +
+              (anchorTimelineMs / totalDurationMs) * nextTimelineWidthPx -
+              anchorX,
+          ),
+        ),
+      );
+      pendingScroll.current = nextScrollLeft;
       setVisibleWindowMs(nextVisibleWindowMs);
-      window.requestAnimationFrame(() => {
-        if (!viewport) {
-          return;
-        }
-        const nextScrollLeft =
-          TRACK_LABEL_WIDTH_PX +
-          (anchorTimelineMs / totalDurationMs) * nextTimelineWidthPx -
-          anchorX;
-        viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
-        markProgrammaticScroll();
-        setScrollLeft(viewport.scrollLeft);
-      });
+      setScrollLeft(nextScrollLeft);
     },
     [
       displayedTimelineMs,
-      markProgrammaticScroll,
+      scrollLeft,
       setScrollLeft,
       setVisibleWindowMs,
       timelineMsFromClientX,
@@ -138,6 +154,37 @@ export function useTrackTimelineZoomScroll({
     ],
   );
 
+  const zoomRange = useCallback(
+    (startMs: number, endMs: number) => {
+      const from = Math.max(0, Math.min(startMs, endMs));
+      const to = Math.min(totalDurationMs, Math.max(startMs, endMs));
+      const padding = Math.max(1, to - from) * 0.05;
+      const start = Math.max(0, from - padding);
+      const end = Math.min(totalDurationMs, to + padding);
+      const windowMs = clampVisibleWindowMs(end - start, totalDurationMs);
+      setFollowPlayhead(false);
+      const center = (start + end) / 2;
+      const nextWidth = (totalDurationMs / windowMs) * timelineViewportWidth;
+      const nextScrollLeft = Math.max(
+        0,
+        Math.min(
+          Math.floor(nextWidth - timelineViewportWidth),
+          Math.round((center / windowMs - 0.5) * timelineViewportWidth),
+        ),
+      );
+      pendingScroll.current = nextScrollLeft;
+      setVisibleWindowMs(windowMs);
+      setScrollLeft(nextScrollLeft);
+    },
+    [
+      totalDurationMs,
+      setFollowPlayhead,
+      setVisibleWindowMs,
+      timelineViewportWidth,
+      setScrollLeft,
+    ],
+  );
+
   useEffect(() => {
     const content = contentRef.current;
     if (!content) {
@@ -148,5 +195,5 @@ export function useTrackTimelineZoomScroll({
     return () => content.removeEventListener('wheel', handleTimelineWheel);
   }, [contentRef, handleTimelineWheel]);
 
-  return { zoomVisibleWindow };
+  return { zoomVisibleWindow, zoomRange };
 }

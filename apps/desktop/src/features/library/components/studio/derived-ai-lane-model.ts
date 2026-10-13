@@ -34,12 +34,30 @@ export function buildDerivedLane({
     };
   }
 
-  const trackState =
-    aiProcessingState?.transcriptionTracks?.find(
+  const trackStates =
+    aiProcessingState?.transcriptionTracks?.filter(
       (candidate) =>
         candidate.libraryTrackId === track.id ||
         candidate.sourceRole === track.kind,
-    ) ?? null;
+    ) ?? [];
+  const firstTrackState = trackStates[0] ?? null;
+  // A day source lane can contain several recordings. Every projected chunk
+  // retains its source identity and clock; the first recording cannot own the
+  // entire lane or suppress later recordings' published speech.
+  const chunks = trackStates.flatMap((state) => state.chunks);
+  const trackState =
+    firstTrackState && trackStates.length > 1
+      ? {
+          ...firstTrackState,
+          chunks,
+          textSegmentCount: trackStates.reduce(
+            (count, state) => count + state.textSegmentCount,
+            0,
+          ),
+          status: legacyStatus(chunks),
+          statusLabel: legacyStatusLabel(chunks),
+        }
+      : firstTrackState;
   if (!trackState && aiProcessingState) {
     const chunks = legacyTranscriptionChunks(aiProcessingState, track);
 
@@ -67,12 +85,13 @@ function legacyTranscriptionChunks(
   aiProcessingState: RecordingAiProcessingState,
   track: LibraryRecordingTrack,
 ): RecordingTranscriptionChunkState[] {
-  const transcriptSegments =
-    aiProcessingState.transcript.tracks.find(
+  const transcriptSegments = aiProcessingState.transcript.tracks
+    .filter(
       (transcriptTrack) =>
         transcriptTrack.trackId === track.id ||
         transcriptTrack.sourceRole === track.kind,
-    )?.segments ?? [];
+    )
+    .flatMap((transcriptTrack) => transcriptTrack.segments);
 
   return aiProcessingState.chunks
     .filter(
@@ -121,7 +140,9 @@ function legacyTranscriptionChunk(
   };
 }
 
-function legacyStatus(chunks: RecordingTranscriptionChunkState[]): string {
+function legacyStatus(
+  chunks: RecordingTranscriptionChunkState[],
+): RecordingTranscriptionTrackState['status'] {
   if (chunks.length === 0) {
     return 'ready';
   }

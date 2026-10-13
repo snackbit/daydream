@@ -15,6 +15,7 @@ export interface DayTimelineModel {
   /** Render adapter only. Its ID must never be passed to recording IPC. */
   view: LibraryRecordingDetail;
   spans: LibraryDayPlaybackSpan[];
+  sourceSpans: Map<string, LibraryDayPlaybackSpan[]>;
   trackIds: Map<string, Map<string, string>>;
 }
 
@@ -160,7 +161,64 @@ export function buildDayTimeline(
     thumbnailPath: null,
     title: manifest.dayId,
   };
-  return { manifest, originMs, view, spans, trackIds };
+  const sourceSpans = new Map<string, LibraryDayPlaybackSpan[]>();
+  for (const span of spans) {
+    const source = sourceSpans.get(span.recordingId) ?? [];
+    source.push(span);
+    sourceSpans.set(span.recordingId, source);
+  }
+  for (const source of sourceSpans.values())
+    source.sort((a, b) => a.sourceOffsetMs - b.sourceOffsetMs);
+  return { manifest, originMs, view, spans, trackIds, sourceSpans };
+}
+
+function firstSourceSpanAfter(
+  spans: readonly LibraryDayPlaybackSpan[],
+  offset: number,
+) {
+  let left = 0,
+    right = spans.length;
+  while (left < right) {
+    const middle = (left + right) >>> 1;
+    const span = spans[middle];
+    if (span && span.sourceOffsetMs + span.durationMs <= offset)
+      left = middle + 1;
+    else right = middle;
+  }
+  return left;
+}
+
+/** Source spans are disjoint after the day adapter applies capture ownership. */
+export function projectSourceRange(
+  model: DayTimelineModel,
+  id: string,
+  from: number,
+  to: number,
+) {
+  const spans = model.sourceSpans.get(id) ?? [];
+  const output: { start: number; end: number; shift: number }[] = [];
+  for (
+    let index = firstSourceSpanAfter(spans, from);
+    index < spans.length;
+    index++
+  ) {
+    const span = spans[index];
+    if (!span || span.sourceOffsetMs >= to) break;
+    const start = Math.max(from, span.sourceOffsetMs),
+      end = Math.min(to, span.sourceOffsetMs + span.durationMs);
+    const shift = span.startMs - model.originMs - span.sourceOffsetMs;
+    if (end > start) {
+      const previous = output.at(-1);
+      if (
+        previous &&
+        previous.shift === shift &&
+        previous.end === start + shift
+      )
+        previous.end = end + shift;
+      else output.push({ start: start + shift, end: end + shift, shift });
+    }
+  }
+  return output;
 }
 
 export function dayPosition(
@@ -168,12 +226,10 @@ export function dayPosition(
   recordingId: string,
   offsetMs: number,
 ): number | null {
-  const span = model.spans.find(
-    (s) =>
-      s.recordingId === recordingId &&
-      offsetMs >= s.sourceOffsetMs &&
-      offsetMs < s.sourceOffsetMs + s.durationMs,
-  );
+  const spans = model.sourceSpans.get(recordingId) ?? [];
+  const candidate = spans[firstSourceSpanAfter(spans, offsetMs)];
+  const span =
+    candidate && offsetMs >= candidate.sourceOffsetMs ? candidate : undefined;
   return span
     ? span.startMs - model.originMs + offsetMs - span.sourceOffsetMs
     : null;
@@ -200,6 +256,9 @@ export function dayPlaybackAssets(
 ): LibraryPlaybackAssets {
   return {
     recordingId: model.view.id,
+    canSeekInStream: [...sessions.values()].every(
+      (session) => session.canSeekInStream === true,
+    ),
     sessionId: '',
     error: null,
     segments: model.spans.flatMap((span) => {

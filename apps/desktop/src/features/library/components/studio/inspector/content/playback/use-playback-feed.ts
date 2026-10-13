@@ -8,6 +8,7 @@ import {
 } from './playback-feed-model';
 
 export interface PlaybackFeedInput {
+  ownerId?: string | undefined;
   index: InspectorContentIndex;
   time: number;
   isPlaying: boolean;
@@ -29,14 +30,19 @@ export function usePlaybackFeed({
   isPlaying,
   seekRevision,
   readPlaybackTimeMs,
+  ownerId,
 }: PlaybackFeedInput) {
+  const ownerKey = ownerId ?? 'recording';
   const prepared = useMemo(() => buildPlaybackFeedIndex(index), [index]);
   const anchored = useMemo(
     () => playbackFeedFrame(prepared, time),
     [prepared, time],
   );
   const [sample, setSample] = useState<OwnedFrame | null>(null);
-  const [browsingOwner, setBrowsingOwner] = useState<FeedOwner | null>(null);
+  const [browsingOwner, setBrowsingOwner] = useState<{
+    ownerId: string;
+    seekRevision: number;
+  } | null>(null);
   const live =
     readPlaybackTimeMs &&
     sample?.index === prepared &&
@@ -45,23 +51,26 @@ export function usePlaybackFeed({
       ? sample.frame
       : anchored;
   const browsing =
-    browsingOwner?.index === prepared &&
+    (prepared.entries.length > 0 || ownerId !== undefined) &&
+    browsingOwner?.ownerId === ownerKey &&
     browsingOwner.seekRevision === seekRevision;
   const lastSample = useRef(-Infinity);
   useEffect(() => {
     if (!isPlaying || !readPlaybackTimeMs) return;
+    let signature: string | undefined;
     let handle = requestAnimationFrame(function tick(now) {
       if (now - lastSample.current >= 1000 / 30) {
         lastSample.current = now;
         const next = playbackFeedFrame(prepared, readPlaybackTimeMs());
-        setSample((current) =>
-          current?.index === prepared &&
-          current.seekRevision === seekRevision &&
-          current.anchorTime === time &&
-          current.frame.signature === next.signature
-            ? current
-            : { index: prepared, seekRevision, anchorTime: time, frame: next },
-        );
+        if (signature !== next.signature) {
+          signature = next.signature;
+          setSample({
+            index: prepared,
+            seekRevision,
+            anchorTime: time,
+            frame: next,
+          });
+        }
       }
       handle = requestAnimationFrame(tick);
     });
@@ -70,11 +79,11 @@ export function usePlaybackFeed({
   const browse = useCallback(
     () =>
       setBrowsingOwner((current) =>
-        current?.index === prepared && current.seekRevision === seekRevision
+        current?.ownerId === ownerKey && current.seekRevision === seekRevision
           ? current
-          : { index: prepared, seekRevision },
+          : { ownerId: ownerKey, seekRevision },
       ),
-    [prepared, seekRevision],
+    [ownerKey, seekRevision],
   );
   const resume = useCallback(() => {
     setSample(

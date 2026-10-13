@@ -1,6 +1,9 @@
 //! Versioned source-time speech processing. Legacy jobs keep their original cuts.
 mod execution;
 mod input;
+mod language;
+mod language_execution;
+mod language_history;
 mod planning;
 mod publication;
 mod reference;
@@ -8,6 +11,8 @@ mod stitching;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod language_history_tests;
 #[cfg(test)]
 mod recall_integration_tests;
 
@@ -60,6 +65,7 @@ pub(super) async fn process(
             config.as_slice(),
             whisper_backend::vad::MODEL_SHA256.as_bytes(),
             b"speech-units-v2",
+            b"language-consensus-v1",
             audio_revision.as_bytes(),
         ]
         .concat(),

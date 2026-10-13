@@ -67,6 +67,7 @@ export interface BackgroundTaskDetail {
   units: BackgroundTaskUnit[];
 }
 export interface BackgroundTasksChanged {
+  sourceKind?: string;
   recordingId: string | null;
   updatedAtMs: number;
 }
@@ -78,7 +79,8 @@ export interface RetryProcessingUnitsInput {
   useCurrentSettings?: boolean;
 }
 
-export type RecordingProcessingLaneKind = 'audio' | 'ocr' | 'vlm' | 'activity';
+export type RecordingProcessingLaneKind =
+  'audio' | 'ocr' | 'vlm' | 'activity' | 'waveform';
 export type RecordingProcessingFilter =
   'all' | 'active' | 'attention' | 'history';
 export type ProcessingApplicability =
@@ -88,6 +90,31 @@ export type ProcessingApplicability =
   | 'protected'
   | 'no-eligible-input'
   | 'waiting';
+export type ProcessingWaitingReason =
+  | 'ocr'
+  | 'previous-source'
+  | 'retry'
+  | 'live-input'
+  | 'protection'
+  | 'capacity'
+  | 'paused'
+  | 'unknown';
+export interface ProcessingLaneActivity {
+  chunkId: string;
+  jobId: string;
+  sourceTrackId: string | null;
+  sourceLabel: string | null;
+  startOffsetMs: number | null;
+  endOffsetMs: number | null;
+  status: 'running' | 'queued';
+  phase: string;
+  startedAtMs: number | null;
+  phaseStartedAtMs: number | null;
+  lastProgressAtMs: number | null;
+  nextRetryAtMs: number | null;
+  waitingReason: ProcessingWaitingReason | null;
+  workerActive: boolean | null;
+}
 export interface RecordingProcessingLane {
   kind: RecordingProcessingLaneKind;
   applicability: ProcessingApplicability;
@@ -104,6 +131,8 @@ export interface RecordingProcessingLane {
   inputOpen: boolean;
   errorCode: string | null;
   nextRetryAtMs: number | null;
+  /** Bounded current/next work, absent on older native versions. */
+  activity?: ProcessingLaneActivity[];
 }
 export interface RecordingIndexCoverage {
   applicability: ProcessingApplicability;
@@ -125,6 +154,7 @@ export interface RecordingProcessingGroup {
 }
 export interface ListRecordingProcessingGroupsInput {
   recordingId?: string | null;
+  recordingIds?: string[];
   filter?: RecordingProcessingFilter;
   limit?: number;
   cursor?: BackgroundTaskCursor | null;
@@ -134,7 +164,14 @@ export interface ListRecordingProcessingGroupsInput {
 export interface RecordingProcessingGroupPage {
   groups: RecordingProcessingGroup[];
   nextCursor: BackgroundTaskCursor | null;
-  counts: { all: number; active: number; attention: number; history: number };
+  counts: {
+    all: number;
+    active: number;
+    attention: number;
+    history: number;
+    running?: number;
+    queued?: number;
+  };
   reconciledGroups: RecordingProcessingGroup[];
 }
 export interface RecordingProcessingUnit extends BackgroundTaskUnit {

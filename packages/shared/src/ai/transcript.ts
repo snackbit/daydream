@@ -28,6 +28,28 @@ export interface GetRecordingTranscriptInput {
   recordingId: string;
 }
 
+export interface GetRecordingTranscriptPreviewInput {
+  recordingId: string;
+  sourceRole: TranscriptSourceRole;
+  startOffsetMs: number;
+  endOffsetMs: number;
+}
+
+export interface TranscriptPreviewEntry {
+  id: string;
+  segmentId: string;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  text: string;
+  truncated: boolean;
+}
+
+export interface RecordingTranscriptPreview {
+  recordingId: string;
+  sourceRole: TranscriptSourceRole;
+  entries: TranscriptPreviewEntry[];
+}
+
 /** Source-time coverage published atomically with the current transcript. */
 export interface RecordingTranscriptionProgress {
   jobId: string;

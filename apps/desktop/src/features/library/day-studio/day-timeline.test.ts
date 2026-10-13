@@ -6,11 +6,51 @@ import {
   dayPosition,
   sourcePosition,
   splitDayRanges,
+  projectSourceRange,
 } from './day-timeline';
 import { decodeDayTimeline } from './day-timeline-decoder';
 import { dayTimelineFixture } from './day-timeline-fixtures';
 
 describe('Day playback provenance', () => {
+  test('indexed source ranges keep gaps and clipping while navigating a dense eight-hour recording', () => {
+    const fixture = dayTimelineFixture();
+    const recording = fixture.recordings[0]!;
+    const base = fixture.startMs;
+    const segments = Array.from({ length: 960 }, (_, index) => ({
+      ...recording.segments[0]!,
+      id: `fragment-${index}`,
+      startedAtMs: base + index * 30_000,
+      endedAtMs: base + (index + 1) * 30_000,
+      durationMs: 30_000,
+      playbackOffsetMs: index * 30_000,
+      segmentIndex: index + 1,
+      pauseAfterMs: 0,
+    }));
+    fixture.recordings = [{ ...recording, segments }];
+    fixture.spans = segments.map((segment, index) => ({
+      recordingId: recording.id,
+      segmentId: segment.id,
+      startMs: segment.startedAtMs,
+      durationMs: 30_000,
+      sourceStartMs: 0,
+      sourceOffsetMs: index * 30_000,
+    }));
+    fixture.spans.splice(500, 1);
+    const model = buildDayTimeline(fixture);
+    expect(projectSourceRange(model, recording.id, 29_000, 31_000)).toEqual([
+      { start: 29_000, end: 31_000, shift: 0 },
+    ]);
+    expect(dayPosition(model, recording.id, 15_000_500)).toBeNull();
+    expect(dayPosition(model, recording.id, 15_030_500)).toBe(15_030_500);
+    expect(
+      projectSourceRange(model, recording.id, 14_999_000, 15_031_000),
+    ).toEqual([
+      { start: 14_999_000, end: 15_000_000, shift: 0 },
+      { start: 15_030_000, end: 15_031_000, shift: 0 },
+    ]);
+    expect(projectSourceRange(model, 'missing', 0, 1000)).toEqual([]);
+    expect(projectSourceRange(model, recording.id, 1000, 1000)).toEqual([]);
+  });
   test('monitor identity survives source reordering across recordings and exact clip ends seek forward', () => {
     const fixture = dayTimelineFixture();
     const next = fixture.recordings[1];

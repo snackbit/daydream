@@ -124,6 +124,56 @@ test('range inspection separates sources and emphasizes only the selected words,
   expect(screen.queryByText('Chunks')).toBeNull();
 });
 
+test.each(['screen-text', 'observation'] as const)(
+  'range inspection hides %s recognition output while retaining audio text',
+  (kind) => {
+    const entry: InspectorContentEntry = {
+      id: 'screen',
+      kind,
+      source: 'Screen',
+      trackId: 'video-0',
+      startMs: 1000,
+      endMs: 3000,
+      text: 'Synthetic internal recognition text',
+      boundary: false,
+      fragments: [],
+      words: [],
+      observationKind: 'corrected-ocr',
+    };
+    const spoken: InspectorContentEntry = {
+      ...entry,
+      id: 'speech',
+      kind: 'speech',
+      source: 'Microphone',
+      trackId: 'mic',
+      text: 'Synthetic spoken text',
+      observationKind: 'screen-observation',
+    };
+    const selected = selectInspectorEntries(
+      [entry, spoken],
+      [
+        {
+          id: 'range',
+          laneIds: ['video-0', 'mic'],
+          startMs: 1000,
+          endMs: 3000,
+        },
+      ],
+    );
+    render(
+      <ol>
+        {selected.map((item) => (
+          <InspectorContentEntryCard key={item.id} entry={item} />
+        ))}
+      </ol>,
+    );
+    expect(
+      screen.queryByText('Synthetic internal recognition text'),
+    ).toBeNull();
+    expect(screen.getByText('Synthetic spoken text')).toBeTruthy();
+  },
+);
+
 test.each([
   ['Zusammenfassung, bitte.', ['Zusammen', 'fassung', ',', ' bitte', '.']],
   ['Hello,  hello!\n世界', ['Hello', ',', ' hello', '!', '世界']],

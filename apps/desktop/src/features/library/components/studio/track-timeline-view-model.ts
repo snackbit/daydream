@@ -123,6 +123,18 @@ export function useTrackTimelineViewModel({
       startTimelineMs: Math.max(0, visibleStartMs - visibleRangeMs),
     };
   }, [scrollLeft, timelineViewportWidth, timelineWidthPx, totalDurationMs]);
+  // Read ahead for smooth panning, but keep painted nodes close to the viewport.
+  const paintRange = useMemo(() => {
+    const start = clampTimelineMs(
+      (scrollLeft / timelineWidthPx) * totalDurationMs,
+      totalDurationMs,
+    );
+    const span = (timelineViewportWidth / timelineWidthPx) * totalDurationMs;
+    return {
+      startTimelineMs: Math.max(0, start - span * 0.25),
+      endTimelineMs: Math.min(totalDurationMs, start + span * 1.25),
+    };
+  }, [scrollLeft, timelineViewportWidth, timelineWidthPx, totalDurationMs]);
   const rangesByLaneId = useMemo(
     () => groupRangesByLaneId(selection.ranges),
     [selection.ranges],
@@ -146,6 +158,7 @@ export function useTrackTimelineViewModel({
     timelineWidthPx,
     totalDurationMs,
     waveformRequestRange,
+    paintRange,
     zoomPercent,
   };
 }

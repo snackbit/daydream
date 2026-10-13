@@ -45,6 +45,45 @@ pub(super) async fn process_processing_chunk(
         ProcessingChunkSource::Audio => process_audio_chunk(app, job_id, chunk, _lease).await,
         ProcessingChunkSource::Activity => process_activity_chunk(app, job_id, chunk).await,
         ProcessingChunkSource::Visual => process_visual_chunk(app, job_id, chunk, _lease).await,
+        ProcessingChunkSource::Waveform => {
+            let context = ProcessingChunkContext::new(app, job_id, &chunk);
+            let result = run_with_cancel_monitor(app, job_id, |cancel| {
+                let app = app.clone();
+                let chunk = chunk.clone();
+                let lease = _lease.clone();
+                async move {
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let _lease = lease;
+                        crate::library::waveforms::jobs::prepare_chunk(
+                            &app.state::<AppStorage>(),
+                            &chunk,
+                            &cancel,
+                        )
+                        .map_err(|code| ai_error(&code, "Waveform preparation could not finish."))
+                    })
+                    .await
+                    .map_err(|_| {
+                        ai_error("ai_waveform_generation_failed", "Waveform worker stopped.")
+                    })?
+                }
+            })
+            .await;
+            match result {
+                Ok(()) => context.mark_succeeded(None)?,
+                Err(error) if error.code == "ai_processing_cancelled" => {
+                    return handle_processing_cancel_signal(
+                        &context, &chunk, job_id, error, "waveform",
+                    )
+                }
+                Err(error) => {
+                    context.mark_failed(&error.code)?;
+                    context.emit_processing_state();
+                    return Err(error);
+                }
+            }
+            context.emit_processing_state();
+            Ok(())
+        }
     }
 }
 

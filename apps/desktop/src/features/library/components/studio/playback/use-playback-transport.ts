@@ -42,6 +42,7 @@ interface PlaybackTransportInput {
   playbackIntentRef: RefObject<boolean>;
   resumeProgress: number | null;
   setIsPlaying: (playing: boolean) => void;
+  sampleClock?: (() => void) | undefined;
   setPendingAutoplay: (pending: boolean) => void;
   setPlaybackError: (error: string | null) => void;
 }
@@ -64,6 +65,7 @@ export function usePlaybackTransport({
   playbackIntentRef,
   resumeProgress,
   setIsPlaying,
+  sampleClock,
   setPendingAutoplay,
   setPlaybackError,
 }: PlaybackTransportInput) {
@@ -206,6 +208,7 @@ export function usePlaybackTransport({
   }, [streamIdentity]);
 
   function requestPlayback(wanted: boolean) {
+    if (!wanted && owner.current.phase === 'playing') sampleClock?.();
     invalidate();
     owner.current.phase = wanted ? 'waiting' : 'paused';
     playbackIntentRef.current = wanted;
@@ -230,6 +233,7 @@ export function usePlaybackTransport({
       resumeProgress !== null
     )
       return;
+    sampleClock?.();
     invalidate();
     owner.current.phase = 'waiting';
     setPendingAutoplay(true);

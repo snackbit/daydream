@@ -7,11 +7,17 @@ export function useRecordingResult<Result extends { recordingId: string }>({
   visibilityRevision,
   processingSignature,
   read,
+  range,
 }: {
   recordingId: string;
   visibilityRevision: string;
   processingSignature: string;
-  read: (input: { recordingId: string }) => Promise<Result>;
+  read: (input: {
+    recordingId: string;
+    startOffsetMs?: number;
+    endOffsetMs?: number;
+  }) => Promise<Result>;
+  range?: { startOffsetMs: number; endOffsetMs: number };
 }) {
   const requestRef = useRef(0);
   const [result, setResult] = useState<{
@@ -34,7 +40,7 @@ export function useRecordingResult<Result extends { recordingId: string }>({
     setStatus('loading');
     setError(null);
     try {
-      const data = await read({ recordingId });
+      const data = await read({ recordingId, ...range });
       if (requestRef.current !== request) return null;
       setResult(
         data.recordingId === recordingId
@@ -49,7 +55,7 @@ export function useRecordingResult<Result extends { recordingId: string }>({
       setStatus('error');
       return null;
     }
-  }, [read, recordingId, visibilityRevision]);
+  }, [read, recordingId, visibilityRevision, range]);
   useEffect(() => {
     void reload();
     return () => {

@@ -51,7 +51,11 @@ pub(in crate::ai) fn update_processing_job_for_action(
                 }
                 _ => {}
             }
-            storage::update_processing_job_status(connection, job_id, status, None, now_ms())
+            let job = storage::update_processing_job_status(connection, job_id, status, None, now_ms())?;
+            if job.kind == "waveform" && status == "queued" {
+                connection.execute("INSERT INTO waveform_admission(recording_id) VALUES(?1) ON CONFLICT(recording_id) DO UPDATE SET generation=generation+1",[&job.recording_id])?;
+            }
+            Ok(job)
         })
         .map_err(storage_error)
         .map(|row| processing_job_from_row_with_storage(storage, row))
@@ -70,7 +74,11 @@ pub(in crate::ai) fn retry_processing_job_for_action(
 
     storage
         .with_connection(|connection| {
-            storage::retry_processing_job_chunks(connection, job_id, now_ms())
+            let job = storage::retry_processing_job_chunks(connection, job_id, now_ms())?;
+            if job.kind == "waveform" {
+                connection.execute("INSERT INTO waveform_admission(recording_id) VALUES(?1) ON CONFLICT(recording_id) DO UPDATE SET generation=generation+1", [&job.recording_id])?;
+            }
+            Ok(job)
         })
         .map_err(storage_error)
         .map(|row| processing_job_from_row_with_storage(storage, row))

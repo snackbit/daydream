@@ -12,31 +12,54 @@ pub(in crate::ai) fn activity_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingActivity, AiError> {
+    activity_for_recording_in_range(storage, recording_id, None)
+}
+pub(crate) fn activity_for_recording_in_range(
+    storage: &AppStorage,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+) -> Result<RecordingActivity, AiError> {
+    activity_for_recording_in_windows(storage, recording_id, range, None)
+}
+
+pub(super) fn activity_for_recording_in_windows(
+    storage: &AppStorage,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> Result<RecordingActivity, AiError> {
+    let (start, end) = range.unwrap_or((0, i64::MAX));
+    let history_end = review.map_or(end, |(_, review_end)| end.max(review_end));
     let (intervals, focus_events, window_events, capture_state_events, segments, redactions) =
         storage
             .with_connection(|connection| {
                 Ok((
-                    storage::list_activity_intervals(connection, recording_id)?,
-                    storage::list_capture_events(
+                    storage::list_activity_intervals_in_windows(
+                        connection,
+                        recording_id,
+                        range,
+                        review,
+                    )?,
+                    storage::list_capture_events_in_windows(
                         connection,
                         recording_id,
                         &["focused-window"],
-                        0,
-                        i64::MAX,
+                        (start, end),
+                        review,
                     )?,
-                    storage::list_capture_events(
+                    storage::list_capture_events_in_windows(
                         connection,
                         recording_id,
                         &["open-windows"],
-                        0,
-                        i64::MAX,
+                        (start, end),
+                        review,
                     )?,
                     storage::list_capture_events(
                         connection,
                         recording_id,
                         &["capture-state"],
                         0,
-                        i64::MAX,
+                        history_end,
                     )?,
                     storage::list_recording_segments(connection, recording_id)?,
                     storage::list_redactions(connection, recording_id)?,

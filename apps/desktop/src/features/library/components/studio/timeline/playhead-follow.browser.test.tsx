@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   cleanup,
   render,
@@ -18,22 +18,30 @@ function Timeline({
   head,
   seek = 0,
   suspended = false,
+  liveHead,
 }: {
   head: number;
   seek?: number;
   suspended?: boolean;
+  liveHead?: number;
 }) {
   const {
     viewportRef,
     followPlayhead,
     keepPlayheadVisible,
     setFollowPlayhead,
+    setVisibleWindowMs,
+    visibleWindowMs,
+    viewportWidth,
   } = useTrackTimelineViewport({
     detailId: 'synthetic',
     isPlaying: true,
     totalDurationMs: 60000,
   });
+  useEffect(() => setVisibleWindowMs(10_000), [setVisibleWindowMs]);
+  const readLiveHead = useCallback(() => liveHead ?? head, [liveHead, head]);
   useTrackTimelinePlayheadFollow({
+    readPlayheadLeftPx: liveHead === undefined ? undefined : readLiveHead,
     followPlayhead,
     isPlaying: true,
     keepPlayheadVisible,
@@ -53,7 +61,12 @@ function Timeline({
         aria-label="Timeline viewport"
         style={{ width: 600, height: 120, overflow: 'auto' }}
       >
-        <div style={{ width: 2400, height: 200 }}>
+        <div
+          style={{
+            width: 216 + (60_000 / visibleWindowMs) * (viewportWidth - 216),
+            height: 200,
+          }}
+        >
           <span style={{ position: 'relative', left: head }}>Playhead</span>
         </div>
       </div>
@@ -67,13 +80,23 @@ function Timeline({
     </>
   );
 }
+test('viewport reconciliation follows the live media clock when the owner snapshot is older', async () => {
+  const view = render(<Timeline head={300} liveHead={1200} />);
+  const viewport = screen.getByLabelText('Timeline viewport');
+  await waitFor(() => expect(viewport.scrollLeft).toBeGreaterThan(600));
+  const current = viewport.scrollLeft;
+  view.rerender(<Timeline head={320} liveHead={1250} />);
+  expect(viewport.scrollLeft).toBe(current);
+});
 test('playback follows continuously, manual horizontal browsing detaches, and explicit follow or seek resumes', async () => {
   const view = render(<Timeline head={300} />);
   const viewport = screen.getByLabelText('Timeline viewport');
   view.rerender(<Timeline head={1200} />);
   await waitFor(() => expect(viewport.scrollLeft).toBeGreaterThan(600));
   const first = viewport.scrollLeft;
-  view.rerender(<Timeline head={1300} />);
+  view.rerender(<Timeline head={1250} />);
+  expect(viewport.scrollLeft).toBe(first);
+  view.rerender(<Timeline head={1600} />);
   await waitFor(() => expect(viewport.scrollLeft).toBeGreaterThan(first));
   // Scroll position is the owned visible contract of playback following.
   viewport.scrollLeft = 100;

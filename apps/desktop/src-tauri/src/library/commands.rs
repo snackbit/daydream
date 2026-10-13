@@ -1,32 +1,40 @@
 use super::*;
 
 #[tauri::command(rename = "listLibraryRecordings")]
-pub fn list_library_recordings(
+pub async fn list_library_recordings(
     storage: State<'_, AppStorage>,
 ) -> Result<Vec<LibraryRecordingSummary>, String> {
-    let recordings = storage
-        .with_connection(storage::list_recordings)
-        .map_err(|error| error.to_string())?;
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let recordings = storage
+            .with_connection(storage::list_recordings)
+            .map_err(|error| error.to_string())?;
 
-    recordings
-        .into_iter()
-        .map(|recording| {
-            let segments = storage
-                .with_connection(|connection| {
-                    storage::list_recording_segments(connection, &recording.id)
-                })
-                .map_err(|error| error.to_string())?;
-            Ok(summary_from_rows(&recording, &segments))
-        })
-        .collect()
+        recordings
+            .into_iter()
+            .map(|recording| {
+                let segments = storage
+                    .with_connection(|connection| {
+                        storage::list_recording_segments(connection, &recording.id)
+                    })
+                    .map_err(|error| error.to_string())?;
+                Ok(summary_from_rows(&recording, &segments))
+            })
+            .collect()
+    })
+    .await
+    .map_err(|_| "Recording list could not be loaded. Try again.".to_owned())?
 }
 
 #[tauri::command(rename = "getLibraryRecording")]
-pub fn get_library_recording(
+pub async fn get_library_recording(
     recording_id: String,
     storage: State<'_, AppStorage>,
 ) -> Result<LibraryRecordingDetail, String> {
-    detail_for_recording(storage.inner(), &recording_id)
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || detail_for_recording(&storage, &recording_id))
+        .await
+        .map_err(|_| "Recording could not be loaded. Try again.".to_owned())?
 }
 
 #[tauri::command(rename = "getLibraryRecordingDebug")]
@@ -311,35 +319,12 @@ pub async fn get_recording_waveform_tiles(
     input: LibraryWaveformTileRequest,
     app: tauri::AppHandle,
 ) -> Result<LibraryWaveformTiles, String> {
+    let lease = crate::recording_privacy::processing_lease(&input.recording_id).await;
     tauri::async_runtime::spawn_blocking(move || {
+        let _lease = lease;
         let _activity = crate::maintenance::runtime::admit(&app, "waveform-read")?;
-        let operation = crate::background_tasks::operations::Operation::start(
-            &app,
-            "waveforms",
-            &input.recording_id,
-            "Audio waveforms",
-        );
         let storage = app.state::<AppStorage>();
-        let recording = storage
-            .with_connection(|connection| storage::get_recording(connection, &input.recording_id))
-            .map_err(|error| error.to_string())?;
-        let segments = storage
-            .with_connection(|connection| {
-                storage::list_recording_segments(connection, &input.recording_id)
-            })
-            .map_err(|error| error.to_string())?;
-
-        let cleanup = storage
-            .with_connection(|c| audio_cleanup::active_manifest(c, &recording.id))
-            .map_err(|_| "Cleanup is unavailable. Retry cleanup or turn it off.")?;
-        let value =
-            waveforms::waveform_tiles_with_cleanup(&recording, &segments, &input, cleanup.as_ref());
-        operation.finish(
-            value
-                .error
-                .as_ref()
-                .map(|_| "ai_waveform_generation_failed"),
-        );
+        let value = waveforms::viewport::read(&storage, &input)?;
         Ok(value)
     })
     .await
@@ -378,6 +363,7 @@ pub async fn create_library_playback_session(
             })
         {
             return Ok(LibraryPlaybackAssets {
+                can_seek_in_stream: false,
                 runs: vec![],
                 error: Some("Recording is not available for playback.".to_string()),
                 recording_id: recording.id,

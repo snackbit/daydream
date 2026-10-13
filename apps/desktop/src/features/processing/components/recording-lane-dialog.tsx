@@ -13,7 +13,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { getRecordingProcessingLane } from '../processing-client';
+import {
+  getRecordingProcessingLane,
+  listenToBackgroundTasksChanged,
+} from '../processing-client';
 import { processingFailureSummary } from '../processing-errors';
 import { useRecordingProcessingStore } from '../recording-processing-store';
 import { stageLabel } from '../task-format';
@@ -23,10 +26,12 @@ import { TaskUnitRow } from './task-unit-row';
 export interface RecordingLaneDialogProps {
   selection: { recordingId: string; kind: RecordingProcessingLaneKind } | null;
   onClose: () => void;
+  onChanged?: () => Promise<void>;
 }
 export function RecordingLaneDialog({
   selection,
   onClose,
+  onChanged,
 }: RecordingLaneDialogProps) {
   const [detail, setDetail] = useState<RecordingProcessingLaneDetail | null>(
     null,
@@ -35,16 +40,42 @@ export function RecordingLaneDialog({
   const [loading, setLoading] = useState(selection !== null);
   const [revision, setRevision] = useState(0);
   const requestVersion = useRef({ version: 0 });
-  const refresh = useRecordingProcessingStore((state) => state.refresh);
+  const loadedUnitCount = useRef(0);
+  const globalRefresh = useRecordingProcessingStore((state) => state.refresh);
+  const refresh = onChanged ?? globalRefresh;
   const recordingId = selection?.recordingId;
   const kind = selection?.kind;
   useEffect(() => {
     if (!recordingId || !kind) return;
     const owner = requestVersion.current;
     const ownedRequest = ++owner.version;
-    void getRecordingProcessingLane({ recordingId, sourceKind: kind })
+    const source = { recordingId, sourceKind: kind };
+    async function readLoadedSections() {
+      const target = loadedUnitCount.current;
+      const input = {
+        ...source,
+        ...(target > 100 ? { limit: Math.min(200, target) } : {}),
+      };
+      let page = await getRecordingProcessingLane(input);
+      let units = page.units;
+      const cursors = new Set<string>();
+      while (page.nextCursor && units.length < target) {
+        if (owner.version !== ownedRequest) return null;
+        const key = JSON.stringify(page.nextCursor);
+        if (cursors.has(key))
+          throw new Error('Processing sections could not be refreshed.');
+        cursors.add(key);
+        page = await getRecordingProcessingLane({
+          ...input,
+          cursor: page.nextCursor,
+        });
+        units = [...units, ...page.units];
+      }
+      return { ...page, units };
+    }
+    void readLoadedSections()
       .then((detail) => {
-        if (owner.version === ownedRequest) setDetail(detail);
+        if (owner.version === ownedRequest && detail) setDetail(detail);
       })
       .catch((error) => {
         if (owner.version === ownedRequest)
@@ -57,6 +88,30 @@ export function RecordingLaneDialog({
       if (owner.version === ownedRequest) owner.version++;
     };
   }, [recordingId, kind, revision]);
+  useEffect(() => {
+    if (!recordingId || !kind) return;
+    let active = true,
+      cleanup: (() => void) | undefined;
+    const reconcile = () => {
+      if (active) setRevision((value) => value + 1);
+    };
+    const timer = window.setInterval(reconcile, 5000);
+    window.addEventListener('focus', reconcile);
+    void listenToBackgroundTasksChanged((event) => {
+      if (event.recordingId === recordingId) reconcile();
+    })
+      .then((unlisten) => {
+        if (active) cleanup = unlisten;
+        else unlisten();
+      })
+      .catch(reconcile);
+    return () => {
+      active = false;
+      cleanup?.();
+      window.clearInterval(timer);
+      window.removeEventListener('focus', reconcile);
+    };
+  }, [recordingId, kind]);
   const onRetried = useCallback(async () => {
     await refresh();
     setLoading(true);
@@ -87,8 +142,10 @@ export function RecordingLaneDialog({
         sourceKind: selection.kind,
         cursor: detail.nextCursor,
       });
-      if (owner.version === ownedRequest)
+      if (owner.version === ownedRequest) {
+        loadedUnitCount.current = detail.units.length + page.units.length;
         setDetail({ ...page, units: [...detail.units, ...page.units] });
+      }
     } catch (error) {
       if (owner.version === ownedRequest)
         setError(processingFailureSummary(error));
@@ -113,7 +170,11 @@ export function RecordingLaneDialog({
         </DialogHeader>
         {error ? (
           <div>
-            <p role="alert" className="text-destructive text-sm">
+            <p
+              role="alert"
+              aria-label="Processing sections error"
+              className="text-destructive text-sm"
+            >
               {error}
             </p>
             {!detail ? (

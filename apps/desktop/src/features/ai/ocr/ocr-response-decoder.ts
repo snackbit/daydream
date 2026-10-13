@@ -144,7 +144,8 @@ export function processingJob(value: unknown): ProcessingJob {
     kind !== 'frame-extraction' &&
     kind !== 'ocr' &&
     kind !== 'transcription' &&
-    kind !== 'vlm'
+    kind !== 'vlm' &&
+    kind !== 'waveform'
   )
     return invalid();
   const status = row.status;

@@ -91,7 +91,9 @@ async function open(path = '/day/2026-10-05') {
   return router;
 }
 async function openDayReview() {
-  await userEvent.click(await screen.findByRole('tab', { name: 'Day' }));
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Day review' }),
+  );
 }
 
 test('REC-01 session corrections survive real-route reloads and save recovery', async () => {
@@ -297,7 +299,9 @@ test('REC-03 generation blockers, explicit regeneration and review/unreview tran
         handler({ payload: { dayId: '2026-10-05', privacyRevision: 1 } }),
       ),
   );
-  await screen.findByText('Text and transcripts are not available yet.');
+  await screen.findByText(
+    'Recorded content is not available for a summary yet.',
+  );
   expect(screen.queryByRole('button', { name: 'Generate summary' })).toBeNull();
 });
 
@@ -309,13 +313,20 @@ test('NAV-01 root redirects to Days and actual shell navigation preserves a Sear
   await openDayReview();
   await screen.findByRole('button', { name: 'Mark reviewed' });
   expect(router.state.location.pathname).toBe('/day/2026-10-05');
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Day review' })).toBeNull(),
+  );
   await userEvent.click(screen.getByRole('link', { name: 'Search' }));
   await userEvent.fill(
     await screen.findByLabelText('Find a moment'),
     'keyboard planning',
   );
   await userEvent.click(screen.getByRole('button', { name: 'Search' }));
-  await screen.findByText('Synthetic keyboard accessibility research notes.');
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(
+    screen.queryByText('Synthetic keyboard accessibility research notes.'),
+  ).toBeNull();
   expect(router.state.location.search.q).toBe('keyboard planning');
   await userEvent.click(screen.getByRole('link', { name: 'Library' }));
   await screen.findByRole('link', { name: /today/i });
@@ -323,7 +334,10 @@ test('NAV-01 root redirects to Days and actual shell navigation preserves a Sear
     router.history.back();
     await router.load();
   });
-  await screen.findByText('Synthetic keyboard accessibility research notes.');
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(
+    screen.queryByText('Synthetic keyboard accessibility research notes.'),
+  ).toBeNull();
   expect(screen.getByLabelText('Find a moment')).toHaveValue(
     'keyboard planning',
   );
@@ -365,24 +379,45 @@ test('SRCH-04 previous results and mode changes reset the actual route query pag
     }),
   );
   await open('/search?q=keyboard');
-  await screen.findByText('Synthetic keyboard accessibility research notes.');
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(
+    screen.queryByText('Synthetic keyboard accessibility research notes.'),
+  ).toBeNull();
   expect(
     screen.getByRole('button', { name: 'Previous results' }),
   ).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: 'Next results' }));
-  await screen.findByText('Synthetic second-page source wording.');
+  await screen.findByText('Page 2');
+  expect(
+    screen.getByRole('link', { name: /screen text/i }).getAttribute('href'),
+  ).toContain('evidenceId=evidence-2');
+  expect(
+    screen.queryByText('Synthetic second-page source wording.'),
+  ).toBeNull();
   expect(screen.getByText('Page 2')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Next results' })).toBeDisabled();
   await userEvent.click(
     screen.getByRole('button', { name: 'Previous results' }),
   );
-  await screen.findByText('Synthetic keyboard accessibility research notes.');
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(
+    screen.queryByText('Synthetic keyboard accessibility research notes.'),
+  ).toBeNull();
   expect(screen.getByText('Page 1')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Next results' }));
-  await screen.findByText('Synthetic second-page source wording.');
+  await screen.findByText('Page 2');
+  expect(
+    screen.getByRole('link', { name: /screen text/i }).getAttribute('href'),
+  ).toContain('evidenceId=evidence-2');
+  expect(
+    screen.queryByText('Synthetic second-page source wording.'),
+  ).toBeNull();
   await userEvent.click(screen.getByRole('combobox', { name: 'Match' }));
   await userEvent.click(screen.getByRole('option', { name: 'Literal words' }));
-  await screen.findByText('Synthetic keyboard accessibility research notes.');
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(
+    screen.queryByText('Synthetic keyboard accessibility research notes.'),
+  ).toBeNull();
   expect(screen.getByText('Page 1')).toBeTruthy();
   expect(native.invoke).toHaveBeenCalledWith('searchRecallEvidence', {
     input: expect.objectContaining({

@@ -18,7 +18,12 @@ pub async fn list_recording_processing_groups(
     let lease = admission(&app, "processing-group-read")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
-        groups::list(input.unwrap_or_default(), &app.state::<AppStorage>())
+        let mut page = groups::list(input.unwrap_or_default(), &app.state::<AppStorage>())?;
+        annotate_activity(
+            &app,
+            page.groups.iter_mut().chain(&mut page.reconciled_groups),
+        );
+        Ok(page)
     })
     .await
     .map_err(|_| groups::failure())?
@@ -31,10 +36,52 @@ pub async fn get_recording_processing_lane(
     let lease = admission(&app, "processing-lane-read")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _lease = lease;
-        group_details::get(input, &app.state::<AppStorage>())
+        let mut detail = group_details::get(input, &app.state::<AppStorage>())?;
+        let owned = app.state::<crate::ai::ProcessingWorkerOwners>().snapshot();
+        for activity in &mut detail.lane.activity {
+            activity.worker_active = Some(owned.contains_key(&activity.job_id));
+        }
+        Ok(detail)
     })
     .await
     .map_err(|_| groups::failure())?
+}
+
+fn annotate_activity<'a>(
+    app: &AppHandle,
+    groups: impl Iterator<Item = &'a mut RecordingProcessingGroup>,
+) {
+    let owned = app.state::<crate::ai::ProcessingWorkerOwners>().snapshot();
+    let settings = crate::settings::load_app_settings(&app.state::<AppStorage>()).ok();
+    let capacity = settings
+        .map(|settings| {
+            if settings.ai.processing.resource_mode == "background" {
+                1
+            } else {
+                settings.ai.processing.max_parallel_jobs
+            }
+        })
+        .unwrap_or(1) as usize;
+    for group in groups {
+        for lane in &mut group.lanes {
+            for activity in &mut lane.activity {
+                let active = owned.contains_key(&activity.job_id);
+                activity.worker_active = Some(active);
+                let full = if lane.kind == "waveform" {
+                    owned.values().any(|kind| kind == "waveform")
+                } else {
+                    owned
+                        .values()
+                        .filter(|kind| kind.as_str() != "waveform")
+                        .count()
+                        >= capacity
+                };
+                if !active && full && activity.waiting_reason.as_deref() == Some("unknown") {
+                    activity.waiting_reason = Some("capacity".into());
+                }
+            }
+        }
+    }
 }
 #[tauri::command(rename = "controlRecordingProcessingGroups")]
 pub async fn control_recording_processing_groups(

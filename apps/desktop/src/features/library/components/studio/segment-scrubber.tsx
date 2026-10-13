@@ -12,9 +12,11 @@ import type {
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '../../library-format';
+import { useLivePlaybackTime } from './playback/use-live-playback-time';
 import { PlayerSeekbarRedactions } from './player-seekbar-redactions';
 import {
   buildTimelineRegions,
+  continuousTimelineRegions,
   previewForTimeline,
   resolvePlayableTimelineMs,
   timelineRegionLabel,
@@ -31,6 +33,8 @@ export function SegmentScrubber({
   segments,
   totalDurationMs,
   privacy,
+  isPlaying = false,
+  readPlaybackTimeMs,
 }: {
   currentTimelineMs: number;
   onCommit: (timelineMs: number) => void;
@@ -39,12 +43,24 @@ export function SegmentScrubber({
   segments: LibraryRecordingSegment[];
   totalDurationMs: number;
   privacy: Pick<LibraryRecordingDetail, 'redactions' | 'tracks'>;
+  isPlaying?: boolean;
+  readPlaybackTimeMs?: (() => number) | undefined;
 }) {
+  const readAnchor = () => currentTimelineMs;
+  const liveTime = useLivePlaybackTime(
+    currentTimelineMs,
+    isPlaying,
+    readPlaybackTimeMs ?? readAnchor,
+  );
   const scrubberRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null);
   const regions = useMemo(() => buildTimelineRegions(segments), [segments]);
-  const progressPercent = percentOf(currentTimelineMs, totalDurationMs);
+  const displayedRegions = useMemo(
+    () => continuousTimelineRegions(regions),
+    [regions],
+  );
+  const progressPercent = percentOf(liveTime, totalDurationMs);
 
   function timelineMsFromPointer(event: PointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -96,9 +112,9 @@ export function SegmentScrubber({
     const step = event.shiftKey ? 30_000 : 5_000;
     let nextTimelineMs: number | null = null;
     if (event.key === 'ArrowLeft') {
-      nextTimelineMs = currentTimelineMs - step;
+      nextTimelineMs = (readPlaybackTimeMs?.() ?? liveTime) - step;
     } else if (event.key === 'ArrowRight') {
-      nextTimelineMs = currentTimelineMs + step;
+      nextTimelineMs = (readPlaybackTimeMs?.() ?? liveTime) + step;
     } else if (event.key === 'Home') {
       nextTimelineMs = 0;
     } else if (event.key === 'End') {
@@ -129,12 +145,14 @@ export function SegmentScrubber({
             />
           ) : (
             <div className="bg-muted text-muted-foreground flex aspect-video w-full items-center justify-center text-xs">
-              {hoverPreview.title}
+              Preview unavailable
             </div>
           )}
           <div className="px-2 py-1 text-xs">
             <div className="font-medium">{hoverPreview.title}</div>
-            <div className="text-muted-foreground">{hoverPreview.label}</div>
+            {hoverPreview.label !== hoverPreview.title ? (
+              <div className="text-muted-foreground">{hoverPreview.label}</div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -143,8 +161,8 @@ export function SegmentScrubber({
         aria-label="Playback position"
         aria-valuemax={Math.round(totalDurationMs)}
         aria-valuemin={0}
-        aria-valuenow={Math.round(currentTimelineMs)}
-        aria-valuetext={`${formatDuration(currentTimelineMs)} of ${formatDuration(
+        aria-valuenow={Math.round(liveTime)}
+        aria-valuetext={`${formatDuration(liveTime)} of ${formatDuration(
           totalDurationMs,
         )}`}
         className="group focus-visible:ring-ring relative h-7 cursor-pointer rounded-md outline-none focus-visible:ring-2"
@@ -183,7 +201,7 @@ export function SegmentScrubber({
         onPointerUp={(event) => commitTimeline(timelineMsFromPointer(event))}
       >
         <div className="bg-muted-foreground/20 absolute top-1/2 right-0 left-0 h-2 -translate-y-1/2 overflow-hidden rounded-full transition-[height] group-hover:h-3">
-          {regions.map((region) => (
+          {displayedRegions.map((region) => (
             <div
               aria-label={timelineRegionLabel(region)}
               className={cn(
@@ -212,33 +230,6 @@ export function SegmentScrubber({
             totalDurationMs={totalDurationMs}
           />
         </div>
-        {segments.map((segment) => {
-          const startPercent = percentOf(
-            segment.playbackOffsetMs,
-            totalDurationMs,
-          );
-          const endPercent = percentOf(
-            segment.playbackOffsetMs + (segment.durationMs ?? 0),
-            totalDurationMs,
-          );
-
-          return (
-            <div key={segment.id}>
-              <div
-                aria-label={`Segment ${segment.segmentIndex} starts`}
-                className="bg-muted-foreground absolute top-1/2 h-4 w-px -translate-y-1/2"
-                data-segment-boundary="start"
-                style={{ left: `${startPercent}%` }}
-              />
-              <div
-                aria-label={`Segment ${segment.segmentIndex} ends`}
-                className="bg-muted-foreground/60 absolute top-1/2 h-4 w-px -translate-y-1/2"
-                data-segment-boundary="end"
-                style={{ left: `${endPercent}%` }}
-              />
-            </div>
-          );
-        })}
         <div
           className="border-primary bg-background absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm transition-transform group-hover:scale-110"
           style={{ left: `${progressPercent}%` }}

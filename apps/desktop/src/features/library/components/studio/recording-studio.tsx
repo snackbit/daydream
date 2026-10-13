@@ -51,6 +51,7 @@ export interface RecordingStudioProps {
   ocrFrames?: OcrTimelineFrame[];
   initialEvidence?: RecallEvidence | null;
   initialSeek?: number | null;
+  transcriptReadStatus?: 'loading' | 'error' | 'ready';
 }
 
 const EMPTY_OCR_FRAMES: OcrTimelineFrame[] = [];
@@ -70,6 +71,7 @@ export function RecordingStudio({
   ocrFrames = EMPTY_OCR_FRAMES,
   initialEvidence = null,
   initialSeek = null,
+  transcriptReadStatus = 'ready',
 }: RecordingStudioProps) {
   const reprocessing = useStudioReprocessing(
     detail.id,
@@ -203,6 +205,7 @@ export function RecordingStudio({
   useStudioSelectionDismissal(handleClearInspectorSelection);
   const handleInspectActivity = useCallback(
     (selection: StudioInspectorSelection) => {
+      useStudioTimelineStore.getState().noteInspection();
       setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
       setInspectorSelectionState({
         recordingId: detail.id,
@@ -214,6 +217,7 @@ export function RecordingStudio({
   );
   const handleInspectTranscript = useCallback(
     (selection: StudioInspectorSelection) => {
+      useStudioTimelineStore.getState().noteInspection();
       setDismissedEvidenceId(initialEvidence?.evidenceId ?? null);
       setInspectorSelectionState({
         recordingId: detail.id,
@@ -237,6 +241,7 @@ export function RecordingStudio({
     detail.segments.some((segment) => (segment.videoStreams?.length ?? 0) > 0)
       ? sources.selectedTrackId
       : undefined,
+    playback.actions.readPlaybackTimeMs,
   );
   const handleEntryNavigation = useStudioEntryNavigation(
     detail.id,
@@ -283,6 +288,7 @@ export function RecordingStudio({
   );
   const timeline = (
     <TrackTimeline
+      transcriptReadStatus={transcriptReadStatus}
       onRefreshRedactions={onRefreshPlayback}
       onReprocess={reprocessing.open}
       onAudioCleanup={openAudioCleanup}

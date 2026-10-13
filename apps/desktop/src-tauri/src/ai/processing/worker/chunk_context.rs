@@ -18,7 +18,15 @@ impl<'a> ProcessingChunkContext<'a> {
     }
 
     pub(super) fn emit_processing_state(&self) {
-        emit_processing_state(self.app, &self.chunk.recording_id);
+        if self.chunk.source_kind == "waveform" {
+            crate::ai::results::emit_processing_state_with_source(
+                self.app,
+                &self.chunk.recording_id,
+                Some("waveform"),
+            );
+        } else {
+            emit_processing_state(self.app, &self.chunk.recording_id);
+        }
     }
 
     pub(super) fn current_job(&self) -> Result<ProcessingJobRow, AiError> {
@@ -70,7 +78,7 @@ impl<'a> ProcessingChunkContext<'a> {
                 Ok(updated)
             })
             .map_err(storage_error)?;
-        if updated.status == "succeeded" {
+        if updated.status == "succeeded" && self.chunk.source_kind != "waveform" {
             save_job_progress_notification(&self.storage, self.job_id)?;
         }
         Ok(())

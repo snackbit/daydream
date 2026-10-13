@@ -7,6 +7,7 @@ export function useStudioFrameNavigation(
   seekRevision: number,
   seek: (timestamp: number, options: { resume: boolean }) => void,
   sourceTrackId?: string,
+  readTime?: () => number,
 ) {
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
@@ -24,12 +25,13 @@ export function useStudioFrameNavigation(
       const request = generation.current;
       setError(null);
       try {
+        const time = readTime?.() ?? timestampMs;
         const target =
           sourceTrackId === undefined
-            ? await adjacentLibraryFrame(recordingId, timestampMs, direction)
+            ? await adjacentLibraryFrame(recordingId, time, direction)
             : await adjacentLibraryFrame(
                 recordingId,
-                timestampMs,
+                time,
                 direction,
                 sourceTrackId,
               );
@@ -42,7 +44,7 @@ export function useStudioFrameNavigation(
         pending.current = false;
       }
     },
-    [recordingId, seek, timestampMs, sourceTrackId],
+    [recordingId, seek, timestampMs, sourceTrackId, readTime],
   );
   return { step, error };
 }

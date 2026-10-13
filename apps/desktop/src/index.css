@@ -206,7 +206,7 @@
   background-size: 24px 24px;
   border-color: color-mix(in oklch, var(--status-warning), transparent 45%);
 }
-.timeline-transcription-curtain:is([data-processing-status="planned"], [data-processing-status="queued"], [data-processing-status="running"]) {
+.timeline-transcription-curtain[data-processing-status="running"] {
   animation: ai-processing-construction-scroll 900ms linear infinite;
 }
 .timeline-transcription-curtain:is([data-processing-status="paused"], [data-processing-status="cancelled"]) { background-image: none; border-color: var(--muted-foreground); }
@@ -226,7 +226,7 @@
   animation: none;
 }
 
-.timeline-processing-progress:is([data-processing-status="planned"], [data-processing-status="queued"], [data-processing-status="running"]) > [data-slot="progress-indicator"] {
+.timeline-processing-progress[data-processing-status="running"] > [data-slot="progress-indicator"] {
   animation: ai-processing-construction-scroll 900ms linear infinite;
 }
 

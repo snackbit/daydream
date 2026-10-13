@@ -1,9 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { RefreshCw } from 'lucide-react';
-import { SharedDisclosure } from '@/components/shared-disclosure';
 import { Button } from '@/components/ui/button';
-import { EvidenceSourceLink } from '@/features/recall/components/evidence-source-link';
 import { RecallReadState } from '@/features/recall/components/recall-read-state';
 import { DayCoverage } from '@/features/recall/day/day-coverage';
 import { DaySession } from '@/features/recall/day/day-session';
@@ -12,16 +8,19 @@ import { DayTask } from '@/features/recall/day/day-task';
 import {
   getRecallDay,
   getRecallStatus,
-  regenerateRecallDay,
   setRecallDayReviewed,
 } from '@/features/recall/recall-client';
 import { recallTimezone } from '@/features/recall/recall-format';
 import { useRecallRead } from '@/features/recall/use-recall-read';
+import { DaySummaryAction } from './day-summary-action';
 
 export interface DayReviewPanelProps {
   date: string;
 }
 export function DayReviewPanel({ date }: DayReviewPanelProps) {
+  return <DayReviewContent key={date} date={date} />;
+}
+function DayReviewContent({ date }: DayReviewPanelProps) {
   const read = useCallback(async () => {
     const [day, status] = await Promise.all([
       getRecallDay({ dayId: date, timezone: recallTimezone }),
@@ -53,11 +52,6 @@ export function DayReviewPanel({ date }: DayReviewPanelProps) {
     },
     [refresh],
   );
-  function regenerate() {
-    perform(() =>
-      regenerateRecallDay({ dayId: date, timezone: recallTimezone }),
-    );
-  }
   function markReviewed() {
     if (state.status !== 'ready') return;
     const { day } = state.data.day;
@@ -99,28 +93,18 @@ export function DayReviewPanel({ date }: DayReviewPanelProps) {
                       : state.data.day.day.status === 'failed'
                         ? 'Summary failed. Check the provider settings and try again.'
                         : state.data.day.day.evidenceCount === 0
-                          ? 'Text and transcripts are not available yet.'
-                          : 'No summary yet. Generate one from your text and transcripts.'))}
+                          ? 'Recorded content is not available for a summary yet.'
+                          : 'No summary yet. Generate one from your recorded content.'))}
             </p>
             <p className="text-muted-foreground mt-4 text-xs">
-              Summaries use available text and transcripts.
+              Summaries use eligible recorded content.
             </p>
-            <div className="mt-5 flex flex-wrap gap-3">
-              {state.data.status.generationReady &&
-              state.data.day.day.evidenceCount > 0 ? (
-                <Button
-                  disabled={
-                    busy ||
-                    !state.data.status.generationReady ||
-                    state.data.day.day.evidenceCount === 0
-                  }
-                  onClick={regenerate}
-                  variant="outline"
-                >
-                  <RefreshCw aria-hidden="true" className="size-4" />
-                  Generate summary
-                </Button>
-              ) : null}
+            <DaySummaryAction
+              date={date}
+              status={state.data.status}
+              evidenceCount={state.data.day.day.evidenceCount}
+              refresh={refresh}
+            >
               {state.data.day.day.summary !== null ? (
                 <Button
                   disabled={
@@ -136,46 +120,16 @@ export function DayReviewPanel({ date }: DayReviewPanelProps) {
                     : 'Mark reviewed'}
                 </Button>
               ) : null}
-            </div>
-            {!state.data.status.generationReady ? (
-              <p className="text-muted-foreground mt-3 text-xs">
-                <Link
-                  to="/settings"
-                  search={{ tab: 'ai', focus: 'recall-generation' }}
-                  className="underline"
-                >
-                  Summary settings
-                </Link>
-              </p>
-            ) : null}
+            </DaySummaryAction>
           </section>
           <DayCoverage day={state.data.day} />
           <div className="grid gap-8">
-            {state.data.day.sessions.length > 0 ||
-            (state.data.day.evidence?.length ?? 0) > 0 ? (
+            {state.data.day.sessions.length > 0 ? (
               <section>
-                <h2 className="text-lg">Text and transcripts</h2>
-                {state.data.day.evidence?.length ? (
-                  <SharedDisclosure label="Recorded text and transcripts">
-                    <div className="grid gap-4 pt-4">
-                      {state.data.day.evidence.map((evidence) => (
-                        <article key={evidence.evidenceId}>
-                          <EvidenceSourceLink citation={evidence} />
-                          <p className="mt-2 text-sm whitespace-pre-wrap">
-                            {evidence.text}
-                          </p>
-                        </article>
-                      ))}
-                    </div>
-                  </SharedDisclosure>
-                ) : null}
+                <h2 className="text-lg">Sessions</h2>
                 {withheld ? (
                   <p className="text-muted-foreground mt-5 text-sm">
                     Sessions are withheld until current sources are reprocessed.
-                  </p>
-                ) : state.data.day.sessions.length === 0 ? (
-                  <p className="text-muted-foreground mt-5 text-sm">
-                    No interpreted sessions yet.
                   </p>
                 ) : (
                   state.data.day.sessions.map((session) => (

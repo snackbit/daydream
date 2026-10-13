@@ -12,6 +12,7 @@ export function useRecordingActivity(
   recordingId: string,
   aiProcessingState: RecordingAiProcessingState | null,
   redactionSignature = '',
+  range?: { startOffsetMs: number; endOffsetMs: number },
 ): {
   error: string | null;
   reload: () => Promise<RecordingActivity | null>;
@@ -28,6 +29,7 @@ export function useRecordingActivity(
     visibilityRevision: redactionSignature,
     processingSignature: activityChunkSignature,
     read: getRecordingActivity,
+    ...(range ? { range } : {}),
   });
 }
 

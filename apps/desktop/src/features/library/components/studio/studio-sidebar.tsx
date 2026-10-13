@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type {
   CreateLibraryRedactionRangeInput,
   LibraryRecordingDetail,
@@ -31,6 +31,7 @@ import {
   type StudioLaneDraft,
 } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
+import { useSelectedStudioFrames } from './use-selected-studio-frames';
 
 export interface StudioSidebarActions {
   readPlaybackTimeMs?: (() => number) | undefined;
@@ -68,16 +69,9 @@ export interface StudioSidebarModel {
 export interface StudioSidebarProps {
   actions: StudioSidebarActions;
   model: StudioSidebarModel;
-  recordings?: ReactNode;
-  day?: ReactNode;
 }
 
-export function StudioSidebar({
-  actions,
-  model,
-  recordings,
-  day,
-}: StudioSidebarProps) {
+export function StudioSidebar({ actions, model }: StudioSidebarProps) {
   const content = useMemo(
     () =>
       buildInspectorContent({
@@ -91,17 +85,12 @@ export function StudioSidebar({
   const clipsById = useStudioTimelineStore((state) => state.clipsById);
   const lanesById = useStudioTimelineStore((state) => state.lanesById);
   const timelineSelection = useStudioTimelineStore((state) => state.selection);
+  const selectionIntent = useStudioTimelineStore(
+    (state) => state.selectionIntent,
+  );
   const clearSelection = useStudioTimelineStore(
     (state) => state.clearSelection,
   );
-  const [choice, setChoice] = useState<{
-    recordingId: string;
-    selection: StudioInspectorSelection | null;
-    timelineSelection: typeof timelineSelection;
-    evidenceId: string | undefined;
-    resetRevision: number | undefined;
-    mode: 'teleprompter' | 'inspector' | 'recordings' | 'day';
-  } | null>(null);
 
   const selectedLanes = timelineSelection.laneIds
     .map((laneId) => lanesById[laneId])
@@ -121,9 +110,28 @@ export function StudioSidebar({
     .filter((redaction): redaction is LibraryRecordingRedaction =>
       Boolean(redaction),
     );
-  const selectedVisualFrames = timelineSelection.visualFrameIds
-    .map((frameId) => model.visualFrames.find((frame) => frame.id === frameId))
-    .filter((frame): frame is StudioVisualFrame => Boolean(frame));
+  const frameOwnership = useMemo(
+    () =>
+      JSON.stringify([
+        model.detail.redactions,
+        model.detail.startedAtMs,
+        model.detail.segments.map((segment) => [
+          segment.id,
+          segment.playbackOffsetMs,
+          segment.videoStreams?.map((stream) => [
+            stream.trackId,
+            stream.streamIndex,
+          ]),
+        ]),
+      ]),
+    [model.detail.redactions, model.detail.startedAtMs, model.detail.segments],
+  );
+  const selectedVisualFrames = useSelectedStudioFrames(
+    model.detail.id,
+    frameOwnership,
+    timelineSelection.visualFrameIds,
+    model.visualFrames,
+  );
   const hasTimelineSelection =
     selectedLanes.length > 0 ||
     selectedSegments.length > 0 ||
@@ -131,38 +139,39 @@ export function StudioSidebar({
     selectedVisualFrames.length > 0 ||
     timelineSelection.ranges.length > 0;
   const available = model.detail.availability === 'available';
-  const manual =
-    choice?.recordingId === model.detail.id &&
-    choice.selection === model.selection &&
-    choice.timelineSelection === timelineSelection &&
-    choice.evidenceId === model.recallEvidence?.evidenceId &&
-    choice.resetRevision === model.resetRevision;
-  const mode = !available
-    ? 'inspector'
-    : manual
-      ? choice.mode
-      : model.recallEvidence || model.selection || hasTimelineSelection
-        ? 'inspector'
-        : recordings
-          ? 'recordings'
-          : 'teleprompter';
-  function changeMode(value: string) {
-    if (
-      value !== 'teleprompter' &&
-      value !== 'inspector' &&
-      value !== 'recordings' &&
-      value !== 'day'
-    )
-      return;
+  // Data refreshes can recreate selection objects. Only a semantic selection
+  // change represents user navigation; clearing it must retain the chosen tab.
+  const selectionKey =
+    model.recallEvidence?.evidenceId ??
+    (model.selection
+      ? `${model.selection.kind}:${model.selection.trackId}:${model.selection.timelineOffsetMs}`
+      : hasTimelineSelection
+        ? JSON.stringify(timelineSelection)
+        : '');
+  const [choice, setChoice] = useState({
+    recordingId: model.detail.id,
+    selectionKey,
+    selectionIntent,
+    mode: selectionKey ? 'inspector' : 'teleprompter',
+  });
+  if (
+    choice.recordingId !== model.detail.id ||
+    choice.selectionKey !== selectionKey ||
+    choice.selectionIntent !== selectionIntent
+  ) {
     setChoice({
       recordingId: model.detail.id,
-      selection: model.selection,
-      timelineSelection,
-      evidenceId: model.recallEvidence?.evidenceId,
-      resetRevision: model.resetRevision,
-      mode: value,
+      selectionKey,
+      selectionIntent,
+      mode: selectionKey ? 'inspector' : choice.mode,
     });
   }
+  const mode = available ? choice.mode : 'inspector';
+  const changeMode = useCallback((value: string) => {
+    if (value === 'teleprompter' || value === 'inspector') {
+      setChoice((current) => ({ ...current, mode: value }));
+    }
+  }, []);
 
   const timelineContent = (
     <TimelineSelectionInspector
@@ -192,43 +201,27 @@ export function StudioSidebar({
         <div className="shrink-0 border-b px-6 py-5">
           <TabsList
             aria-label="Studio sidebar"
-            className={
-              recordings || day
-                ? 'grid h-auto w-full grid-cols-2'
-                : 'flex h-auto flex-wrap'
-            }
+            variant="underline"
+            className="w-full"
           >
-            {recordings ? (
-              <TabsTrigger value="recordings">Recordings</TabsTrigger>
-            ) : null}
-            {day ? <TabsTrigger value="day">Day</TabsTrigger> : null}
             <TabsTrigger value="teleprompter" disabled={!available}>
-              Teleprompter
+              Review
             </TabsTrigger>
-            <TabsTrigger value="inspector">Inspector</TabsTrigger>
+            <TabsTrigger value="inspector">Details</TabsTrigger>
           </TabsList>
         </div>
-        {recordings ? (
-          <TabsContent
-            value="recordings"
-            className="min-h-0 flex-1 overflow-hidden"
-          >
-            <ScrollArea className="h-full">{recordings}</ScrollArea>
-          </TabsContent>
-        ) : null}
-        {day ? (
-          <TabsContent value="day" className="min-h-0 flex-1 overflow-hidden">
-            <ScrollArea className="h-full">{day}</ScrollArea>
-          </TabsContent>
-        ) : null}
         <TabsContent
           value="teleprompter"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          forceMount
+          className="flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           <PlaybackInspectorFeed
+            active={mode === 'teleprompter'}
+            ownerId={model.detail.id}
+            durationMs={model.detail.durationMs ?? undefined}
             index={content}
             time={model.timelineOffsetMs ?? 0}
-            isPlaying={model.isPlaying === true}
+            isPlaying={mode === 'teleprompter' && model.isPlaying === true}
             onSeek={actions.onSeek}
             onNavigateEntry={actions.onNavigateEntry}
             readPlaybackTimeMs={actions.readPlaybackTimeMs}
@@ -237,7 +230,8 @@ export function StudioSidebar({
         </TabsContent>
         <TabsContent
           value="inspector"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+          forceMount
+          className="flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
         >
           <ScrollArea className="min-h-0 flex-1 overflow-hidden">
             <div className="text-sm">

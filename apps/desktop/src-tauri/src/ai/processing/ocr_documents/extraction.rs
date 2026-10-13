@@ -2,17 +2,18 @@ use super::super::super::*;
 use super::super::visual::decode_png_rgba_for_ocr;
 use sha2::Sha256;
 
-pub(super) struct FullFrame {
-    pub(super) path: PathBuf,
-    pub(super) timestamp_ms: i64,
-    pub(super) end_ms: i64,
-    pub(super) width: i64,
-    pub(super) height: i64,
-    pub(super) pixel_hash: String,
-    pub(super) source_ref: String,
+#[derive(Clone)]
+pub(in crate::ai) struct FullFrame {
+    pub(in crate::ai) path: PathBuf,
+    pub(in crate::ai) timestamp_ms: i64,
+    pub(in crate::ai) end_ms: i64,
+    pub(in crate::ai) width: i64,
+    pub(in crate::ai) height: i64,
+    pub(in crate::ai) pixel_hash: String,
+    pub(in crate::ai) source_ref: String,
 }
 
-pub(super) struct FullFrameSet {
+pub(in crate::ai) struct FullFrameSet {
     _directory: TempProcessingDirectory,
     paths: Vec<PathBuf>,
     segment_id: String,
@@ -22,13 +23,13 @@ pub(super) struct FullFrameSet {
     fps: f64,
 }
 impl FullFrameSet {
-    pub(super) fn len(&self) -> usize {
+    pub(in crate::ai) fn len(&self) -> usize {
         self.paths.len()
     }
-    pub(super) fn timestamp(&self, index: usize) -> i64 {
+    pub(in crate::ai) fn timestamp(&self, index: usize) -> i64 {
         self.chunk_start + sample_offset_ms(index, self.fps)
     }
-    pub(super) fn frame(&self, index: usize) -> Result<FullFrame, AiError> {
+    pub(in crate::ai) fn frame(&self, index: usize) -> Result<FullFrame, AiError> {
         let path = self.paths[index].clone();
         let image = decode_png_rgba_for_ocr(&path)?;
         let timestamp_ms = self.chunk_start + sample_offset_ms(index, self.fps);
@@ -53,12 +54,33 @@ impl FullFrameSet {
     }
 }
 
-pub(super) fn extract_full_frames(
+pub(in crate::ai) fn extract_full_frames(
     app: &AppHandle,
     chunk: &ProcessingChunkRow,
     segment: &RecordingSegmentRow,
     playback_offset: i64,
     fps: f64,
+    cancel: &AtomicBool,
+) -> Result<FullFrameSet, AiError> {
+    extract_frames(app, chunk, segment, playback_offset, Some(fps), cancel)
+}
+
+pub(in crate::ai) fn extract_context_frame(
+    app: &AppHandle,
+    chunk: &ProcessingChunkRow,
+    segment: &RecordingSegmentRow,
+    playback_offset: i64,
+    cancel: &AtomicBool,
+) -> Result<FullFrameSet, AiError> {
+    extract_frames(app, chunk, segment, playback_offset, None, cancel)
+}
+
+fn extract_frames(
+    app: &AppHandle,
+    chunk: &ProcessingChunkRow,
+    segment: &RecordingSegmentRow,
+    playback_offset: i64,
+    fps: Option<f64>,
     cancel: &AtomicBool,
 ) -> Result<FullFrameSet, AiError> {
     check_processing_cancel(cancel)?;
@@ -94,11 +116,9 @@ pub(super) fn extract_full_frames(
         .map(|entry| entry.map(|entry| entry.path()).map_err(file_error))
         .collect::<Result<Vec<_>, _>>()?;
     paths.sort();
-    paths.truncate(
-        paths
-            .len()
-            .min(((end - start) as f64 * fps / 1000.0).ceil() as usize),
-    );
+    paths.truncate(fps.map_or(1, |fps| {
+        ((end - start) as f64 * fps / 1000.0).ceil() as usize
+    }));
     Ok(FullFrameSet {
         _directory: directory,
         paths,
@@ -106,7 +126,7 @@ pub(super) fn extract_full_frames(
         track_id: chunk.track_id.clone(),
         chunk_start: start,
         chunk_end: end,
-        fps,
+        fps: fps.unwrap_or(1.0),
     })
 }
 
@@ -116,32 +136,29 @@ fn extract_to_directory(
     stream: i64,
     start: i64,
     duration: i64,
-    fps: f64,
+    fps: Option<f64>,
     cancel: &AtomicBool,
 ) -> Result<(), AiError> {
     let mut command = Command::new(ffmpeg::binary_path());
+    command.args(["-hide_banner", "-v", "error", "-ss", &format_seconds(start)]);
+    if fps.is_some() {
+        command.args(["-t", &format_seconds(duration)]);
+    }
+    command.args([
+        "-threads",
+        "2",
+        "-i",
+        source,
+        "-map",
+        &format!("0:{stream}"),
+    ]);
+    if let Some(fps) = fps {
+        command.args(["-vf", &format!("fps={fps:.6}")]);
+    } else {
+        command.args(["-frames:v", "1"]);
+    }
     command
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-ss",
-            &format_seconds(start),
-            "-t",
-            &format_seconds(duration),
-            "-threads",
-            "2",
-            "-i",
-            source,
-            "-map",
-            &format!("0:{stream}"),
-            "-vf",
-            &format!("fps={fps:.6}"),
-            "-fps_mode",
-            "passthrough",
-            "-threads",
-            "1",
-        ])
+        .args(["-fps_mode", "passthrough", "-threads", "1"])
         .arg(directory.join("frame-%06d.png"));
     let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(60), 1_000_000)
         .map_err(|error| {
@@ -193,6 +210,80 @@ mod tests {
         assert_eq!(sample_offset_ms(2, 3.0), 667);
     }
     #[test]
+    fn restored_context_uses_one_source_frame_at_fractional_and_whole_second_times() {
+        let root =
+            std::env::temp_dir().join(format!("daydream-context-restore-{}", Uuid::now_v7()));
+        fs::create_dir_all(&root).unwrap();
+        let video = root.join("synthetic.mkv");
+        let output = Command::new(ffmpeg::binary_path())
+            .args([
+                "-hide_banner",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:s=64x32:r=3:d=3",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=64x32:r=3:d=3",
+                "-map",
+                "0:v",
+                "-map",
+                "1:v",
+                "-c:v",
+                "ffv1",
+                "-threads",
+                "1",
+            ])
+            .arg(&video)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "synthetic video generation failed");
+        for time in [333, 667, 1000, 1667] {
+            let directory = root.join(time.to_string());
+            fs::create_dir_all(&directory).unwrap();
+            extract_to_directory(
+                &directory,
+                video.to_str().unwrap(),
+                1,
+                time,
+                1,
+                None,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let paths = fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            assert_eq!(paths.len(), 1, "one context frame at {time} ms");
+            let image = decode_png_rgba_for_ocr(&paths[0]).unwrap();
+            assert_eq!((image.width, image.height), (64, 32));
+            assert!(
+                image.pixels[2] > 240 && image.pixels[0] < 10,
+                "selected blue stream restored"
+            );
+        }
+        let cancelled = root.join("cancelled");
+        fs::create_dir_all(&cancelled).unwrap();
+        let error = extract_to_directory(
+            &cancelled,
+            video.to_str().unwrap(),
+            1,
+            333,
+            1,
+            None,
+            &AtomicBool::new(true),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ai_processing_cancelled");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn unchanged_video_still_yields_every_full_resolution_sample() {
         let root = std::env::temp_dir().join(format!("daydream-ocr-samples-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).unwrap();
@@ -222,7 +313,7 @@ mod tests {
             0,
             0,
             2000,
-            2.0,
+            Some(2.0),
             &AtomicBool::new(false),
         )
         .unwrap();

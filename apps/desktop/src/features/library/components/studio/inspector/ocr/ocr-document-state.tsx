@@ -8,7 +8,6 @@ import {
 import { reprocessRecordingOcr } from '@/features/ai/ocr/ocr-client';
 import { ProcessingError } from '@/features/processing/components/processing-error';
 import { processingFailureSummary } from '@/features/processing/processing-errors';
-import { OcrTextPanel } from './ocr-text-panel';
 
 export interface OcrDocumentStateProps {
   document: OcrDocument | null;
@@ -54,7 +53,7 @@ export function OcrDocumentState({
   if (loading && !document && !job)
     return (
       <p role="status" className="text-muted-foreground text-sm">
-        Loading OCR text…
+        Loading screen recognition status…
       </p>
     );
   if (error)
@@ -66,14 +65,13 @@ export function OcrDocumentState({
         </Button>
       </div>
     );
-  // The backend returns only eligible current documents. A mixed parent may fail
-  // on audio while this source's OCR succeeded; that literal text stays readable.
+  // A mixed parent may fail on audio while this source's recognition succeeded.
+  // Recognized text is retrieval input, never presentation content.
   if (document?.status === 'succeeded')
-    return document.text.trim() ? (
-      <OcrTextPanel document={document} key={document.id} />
-    ) : (
+    return (
       <p className="text-muted-foreground text-sm">
-        No text detected in this frame.
+        Screen recognition complete. Recognized text is used internally for
+        search.
       </p>
     );
   const failed =

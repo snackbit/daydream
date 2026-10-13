@@ -16,6 +16,7 @@ import {
   validateStudioSearch,
   validateDayStudioSearch,
 } from '@/features/navigation/recall-location';
+import { validateProcessingLocation } from '@/features/processing/processing-location';
 import { localDayId } from '@/features/recall/recall-format';
 import {
   validateSettingsLocation,
@@ -217,6 +218,7 @@ const notificationsRoute = createRoute({
 });
 
 const processingRoute = createRoute({
+  validateSearch: validateProcessingLocation,
   component: ProcessingScreen,
   getParentRoute: () => rootRoute,
   path: '/processing',

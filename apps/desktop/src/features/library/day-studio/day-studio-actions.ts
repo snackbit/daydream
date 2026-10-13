@@ -65,47 +65,86 @@ export async function readDayWaveformTiles(
     recordingId: model.view.id,
     binMs: 0,
     error: null,
+    pending: false,
     tracks: [],
   };
+  const groups = new Map<string, typeof model.spans>();
   for (const span of model.spans) {
-    const start = span.startMs - model.originMs,
-      from = Math.max(start, input.startTimelineMs),
-      to = Math.min(start + span.durationMs, input.endTimelineMs);
-    if (to <= from) continue;
-    const result = await getRecordingWaveformTiles({
-      ...input,
-      recordingId: span.recordingId,
-      startTimelineMs: Math.round(span.sourceOffsetMs + from - start),
-      endTimelineMs: Math.round(span.sourceOffsetMs + to - start),
-      viewportWidthPx: Math.max(
-        1,
-        (input.viewportWidthPx * (to - from)) /
-          Math.max(1, input.endTimelineMs - input.startTimelineMs),
-      ),
-    });
-    output.binMs = result.binMs;
-    output.error = result.error ?? output.error;
-    for (const track of result.tracks) {
-      const id =
-        track.kind === 'desktop-audio' ? 'desktop-audio-1' : 'microphone-2';
-      let target = output.tracks.find((t) => t.trackId === id);
-      if (!target) {
-        target = { ...track, trackId: id, tiles: [] };
-        output.tracks.push(target);
+    const start = span.startMs - model.originMs;
+    if (
+      start >= input.endTimelineMs ||
+      start + span.durationMs <= input.startTimelineMs
+    )
+      continue;
+    const spans = groups.get(span.recordingId) ?? [];
+    spans.push(span);
+    groups.set(span.recordingId, spans);
+  }
+  const entries = [...groups];
+  let index = 0;
+  async function worker() {
+    while (index < entries.length) {
+      const entry = entries[index++];
+      if (!entry) return;
+      const [recordingId, spans] = entry;
+      const ranges = spans.map((span) => {
+        const start = span.startMs - model.originMs;
+        return {
+          from:
+            span.sourceOffsetMs +
+            Math.max(start, input.startTimelineMs) -
+            start,
+          to:
+            span.sourceOffsetMs +
+            Math.min(start + span.durationMs, input.endTimelineMs) -
+            start,
+        };
+      });
+      const from = Math.min(...ranges.map((range) => range.from));
+      const to = Math.max(...ranges.map((range) => range.to));
+      const result = await getRecordingWaveformTiles({
+        ...input,
+        recordingId,
+        startTimelineMs: Math.round(from),
+        endTimelineMs: Math.round(to),
+        viewportWidthPx: Math.max(
+          1,
+          (input.viewportWidthPx * (to - from)) /
+            Math.max(1, input.endTimelineMs - input.startTimelineMs),
+        ),
+      });
+      output.binMs = result.binMs;
+      output.error = result.error ?? output.error;
+      output.pending ||= result.pending === true;
+      for (const track of result.tracks) {
+        const id =
+          track.kind === 'desktop-audio' ? 'desktop-audio-1' : 'microphone-2';
+        let target = output.tracks.find(
+          (candidate) => candidate.trackId === id,
+        );
+        if (!target) {
+          target = { ...track, trackId: id, tiles: [] };
+          output.tracks.push(target);
+        }
+        target.scaleAmplitude = Math.max(
+          target.scaleAmplitude,
+          track.scaleAmplitude,
+        );
+        for (const span of spans) {
+          const start = span.startMs - model.originMs;
+          target.tiles.push(
+            ...track.tiles
+              .filter((tile) => tile.segmentId === span.segmentId)
+              .map((tile) => ({
+                ...tile,
+                timelineStartMs:
+                  tile.timelineStartMs + start - span.sourceOffsetMs,
+              })),
+          );
+        }
       }
-      target.scaleAmplitude = Math.max(
-        target.scaleAmplitude,
-        track.scaleAmplitude,
-      );
-      target.tiles.push(
-        ...track.tiles
-          .filter((t) => t.segmentId === span.segmentId)
-          .map((t) => ({
-            ...t,
-            timelineStartMs: t.timelineStartMs + start - span.sourceOffsetMs,
-          })),
-      );
     }
   }
+  await Promise.all([worker(), worker()]);
   return output;
 }

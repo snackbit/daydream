@@ -37,7 +37,10 @@ function matchesFilter(
         )))
   );
 }
-export function createRecordingProcessingStore() {
+export function createRecordingProcessingStore(
+  recordingIds: readonly string[] = [],
+  initialFilter: RecordingProcessingFilter = 'active',
+) {
   let request = 0;
   let refreshQueued = false;
   let historyLoaded = false;
@@ -58,6 +61,7 @@ export function createRecordingProcessingStore() {
       });
       try {
         const page = await listRecordingProcessingGroups({
+          ...(recordingIds.length ? { recordingIds: [...recordingIds] } : {}),
           filter: current.filter,
           cursor: append ? current.nextCursor : null,
           knownRecordingIds: append
@@ -73,9 +77,14 @@ export function createRecordingProcessingStore() {
                 .map((group) => [group.recordingId, group]),
         );
         for (const group of page.groups) groups.set(group.recordingId, group);
+        const positions = new Map(
+          current.groups.map((group, index) => [group.recordingId, index]),
+        );
         set({
           groups: [...groups.values()].sort(
             (a, b) =>
+              (positions.get(a.recordingId) ?? Infinity) -
+                (positions.get(b.recordingId) ?? Infinity) ||
               b.updatedAtMs - a.updatedAtMs ||
               b.recordingId.localeCompare(a.recordingId),
           ),
@@ -105,7 +114,7 @@ export function createRecordingProcessingStore() {
       groups: [],
       nextCursor: null,
       counts: { all: 0, active: 0, attention: 0, history: 0 },
-      filter: 'all',
+      filter: initialFilter,
       loading: false,
       status: 'idle',
       error: null,
@@ -143,3 +152,6 @@ export function createRecordingProcessingStore() {
   });
 }
 export const useRecordingProcessingStore = createRecordingProcessingStore();
+export type RecordingProcessingStore = ReturnType<
+  typeof createRecordingProcessingStore
+>;

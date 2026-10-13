@@ -123,7 +123,13 @@ export function buildStudioVisualFrames(
       nextBySource.set(sourceKey, frame.frameTimestampMs);
       return {
         ...frame,
-        endTimestampMs,
+        endTimestampMs: Math.max(
+          endTimestampMs,
+          ...frame.vlmObservations.map(
+            (observation) =>
+              observation.confirmedEndMs ?? frame.frameTimestampMs + 1,
+          ),
+        ),
         ocrRegions: [...frame.ocrRegions].sort(compareOcrRegions),
         sourceFrameRefs: [...frame.sourceFrameRefs].sort(),
         vlmObservations: [...frame.vlmObservations].sort(

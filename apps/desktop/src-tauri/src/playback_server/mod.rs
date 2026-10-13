@@ -329,6 +329,7 @@ impl PlaybackServer {
             );
 
         Ok(LibraryPlaybackAssets {
+            can_seek_in_stream: false,
             runs: response_runs,
             error: None,
             recording_id: recording.id.clone(),

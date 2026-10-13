@@ -60,16 +60,18 @@ export function SearchResults({ result }: SearchResultsProps) {
                 { month: 'long', day: 'numeric', year: 'numeric' },
               )}
             </p>
-            <p className="text-sm leading-7 break-words whitespace-pre-wrap">
-              {evidence.text}
-            </p>
+            {evidence.sourceKind !== 'ocr' ? (
+              <p className="text-sm leading-7 break-words whitespace-pre-wrap">
+                {evidence.text}
+              </p>
+            ) : null}
             <EvidenceSourceLink citation={evidence} />
           </article>
         ))
       )}
       <p className="text-muted-foreground text-xs">
-        Results preserve source wording. Semantic matches may use different
-        words from your query. Opening a source does not start playback.
+        Screen matches lead to the recorded moment. Audio matches include
+        transcript excerpts. Opening a source does not start playback.
       </p>
     </section>
   );

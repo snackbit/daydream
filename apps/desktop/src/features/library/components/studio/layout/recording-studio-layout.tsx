@@ -84,7 +84,7 @@ export function RecordingStudioLayout({
               variant="outline"
               data-studio-preserve-selection
             >
-              Inspector
+              Review & details
             </Button>
           </SheetTrigger>
           <SheetContent
@@ -96,7 +96,7 @@ export function RecordingStudioLayout({
             className="w-full max-w-[28rem] gap-0 p-0 data-[state=closed]:hidden sm:max-w-[28rem]"
           >
             <SheetHeader className="p-6">
-              <SheetTitle>Recording inspector</SheetTitle>
+              <SheetTitle>Recording review</SheetTitle>
               <SheetDescription>
                 Inspect sources, edit annotations and manage redactions.
               </SheetDescription>

@@ -75,44 +75,7 @@ pub(super) fn waveform_from_ffmpeg(
     })
 }
 
-pub(super) fn stream_max_amplitude(
-    ffmpeg_path: &str,
-    segment: &RecordingSegmentRow,
-    stream_index: i64,
-) -> Result<f64, String> {
-    let output = Command::new(ffmpeg_path)
-        .args([
-            "-hide_banner",
-            "-v",
-            "info",
-            "-i",
-            &segment.file_path,
-            "-map",
-            &format!("0:{stream_index}"),
-            "-af",
-            "volumedetect",
-            "-f",
-            "null",
-            "-",
-        ])
-        .output()
-        .map_err(|error| {
-            format!(
-                "Unable to run FFmpeg at {ffmpeg_path}. Set DAYDREAM_FFMPEG_PATH or install ffmpeg: {error}"
-            )
-        })?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "FFmpeg failed while measuring waveform scale: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-
-    parse_volumedetect_max_amplitude(&String::from_utf8_lossy(&output.stderr))
-        .ok_or_else(|| "FFmpeg did not report waveform max volume.".to_string())
-}
-
+#[cfg(test)]
 pub(super) fn waveform_tile_samples_from_ffmpeg(
     ffmpeg_path: &str,
     segment: &RecordingSegmentRow,
@@ -166,6 +129,7 @@ pub(super) fn waveform_tile_samples_from_ffmpeg(
         .collect())
 }
 
+#[cfg(test)]
 pub(crate) fn parse_volumedetect_max_amplitude(output: &str) -> Option<f64> {
     let value = output.lines().find_map(|line| {
         line.split_once("max_volume:")

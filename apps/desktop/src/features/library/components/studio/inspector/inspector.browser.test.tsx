@@ -161,7 +161,7 @@ test('desktop no-speech status cannot become the microphone transcription status
   }
 
   expect(within(desktopSource).getByText('No speech detected')).toBeTruthy();
-  expect(within(desktopSource).getAllByText('0')).toHaveLength(2);
+  expect(within(desktopSource).getByText('0')).toBeTruthy();
   expect(
     within(microphoneSource).getByText('Transcription complete'),
   ).toBeTruthy();

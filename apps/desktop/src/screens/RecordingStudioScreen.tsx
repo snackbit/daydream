@@ -109,6 +109,13 @@ export function RecordingStudioScreen() {
           debugEnabled={debugEnabled}
           activity={state.activity.state}
           aiProcessingState={state.aiProcessing.state}
+          transcriptReadStatus={
+            state.aiProcessing.status === 'error'
+              ? 'error'
+              : state.aiProcessing.refreshing
+                ? 'loading'
+                : 'ready'
+          }
           detail={state.detail}
           onRefreshPlayback={actions.load}
           onCreateRedactions={actions.createRedactions}

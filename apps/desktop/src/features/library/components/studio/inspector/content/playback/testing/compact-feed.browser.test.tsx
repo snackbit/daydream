@@ -8,6 +8,7 @@ import {
 import { afterEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import '@/index.css';
+import { useStudioResultWindowStore as windows } from '../../../../studio-result-window-store';
 import type {
   InspectorContentEntry,
   InspectorContentIndex,
@@ -15,6 +16,7 @@ import type {
 import { PlaybackInspectorFeed } from '../../playback-inspector-feed';
 
 afterEach(() => {
+  windows.setState(windows.getInitialState(), true);
   cleanup();
   vi.restoreAllMocks();
   delete document.documentElement.dataset.theme;
@@ -64,6 +66,70 @@ const index: InspectorContentIndex = {
   speechBySource: new Map([['mic', [microphone]]]),
   focus: [],
 };
+
+test('Review filters preserve source categories and page browsing returns to the live playback window', async () => {
+  windows.setState(windows.getInitialState(), true);
+  const activity: InspectorContentEntry = {
+    ...microphone,
+    id: 'activity',
+    kind: 'activity',
+    source: 'Mouse',
+    trackId: 'mouse',
+    text: 'Synthetic mouse activity',
+    words: [],
+  };
+  render(
+    <PlaybackInspectorFeed
+      index={{ ...index, entries: [microphone, activity, annotation] }}
+      time={1100}
+      isPlaying={false}
+      ownerId="review-pages"
+      durationMs={1_200_000}
+      readPlaybackTimeMs={() => 1100}
+      onSeek={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review filters' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Speech' }));
+  await waitFor(() => expect(screen.queryByText('Hello,')).toBeNull());
+  expect(screen.getByText('Synthetic mouse activity')).toBeTruthy();
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Speech' }));
+  await waitFor(() => expect(screen.getByText('Hello,')).toBeTruthy());
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Activity' }));
+  await waitFor(() =>
+    expect(screen.queryByText('Synthetic mouse activity')).toBeNull(),
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Activity' }));
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: 'Screen changes' }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', {
+        name: 'Expand AI observation from Monitor at 0:01',
+      }),
+    ).toBeNull(),
+  );
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: 'Screen changes' }),
+  );
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(screen.getByRole('button', { name: 'Later' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Earlier' })).toBeEnabled(),
+  );
+  expect(
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Resume auto-scroll' }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Earlier' })).toBeDisabled(),
+  );
+  expect(screen.getByText('Hello,')).toBeTruthy();
+});
 
 test('live words continue during browsing, stop on pause, and invalidate on seeks and privacy changes', async () => {
   let clock = 1100;

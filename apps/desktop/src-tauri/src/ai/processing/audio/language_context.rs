@@ -4,14 +4,12 @@ mod persistence_tests;
 
 pub(super) fn request_language(
     configured: &str,
-    context: Option<&storage::TranscriptLanguageContext>,
+    _context: Option<&storage::TranscriptLanguageContext>,
 ) -> String {
     if configured != "auto" {
         return configured.into();
     }
-    context
-        .map(|context| context.language.clone())
-        .unwrap_or_else(|| "auto".into())
+    "auto".into()
 }
 
 pub(super) fn result_context(
@@ -65,7 +63,7 @@ mod tests {
         speech.language = Some("de".into());
         speech.language_confidence = Some(0.9);
         let trusted = result_context("auto", None, &speech, "config", 0, 1000).unwrap();
-        assert_eq!(request_language("auto", Some(&trusted)), "de");
+        assert_eq!(request_language("auto", Some(&trusted)), "auto");
         assert_eq!(request_language("en", Some(&trusted)), "en");
         assert_eq!(request_language("auto", None), "auto");
         for confidence in [0.59, f64::NAN, 1.1] {

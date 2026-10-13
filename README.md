@@ -32,20 +32,34 @@ then turns that evidence into a timeline you can review and process locally.
   typed text or pointer coordinates.
 - Resumable processing jobs for transcription, OCR, visual observations, and
   activity analysis.
+- A Processing page with recording pipelines, current source sections, waiting
+  reasons and scoped recovery. Studio opens an overview for its recording or day;
+  neighboring OCR and observation work shares one continuous timeline indicator.
 - Local transcription through vendored `whisper.cpp`.
+- Automatic transcription detects language for every speech window. Three
+  substantial matching detections confirm a change; bounded corrective passes
+  repair tentative transcripts without pinning later detection.
 - Full-frame OCR documents from local Tesseract (default) or explicitly configured
-  Vision OCR, with readable text, source-linked revision history and details.
+  Vision OCR. Recognized text stays internal to retrieval; source links open the
+  recorded screen moment. Audio transcript excerpts remain available in playback.
 - Optional OpenAI-compatible remote transcription and vision endpoints.
 - Atomic provider/settings saves, anonymous Vision endpoints and a generated-image
   Vision test. Studio can select a video source or show a synchronized grid.
 - A Days library that opens directly into Studio with one timeline across the
   day's playable recordings. Gaps remain visible and skip after a short countdown;
-  the next media group is preloaded. Recordings and day review have sidebar tabs.
+  the next media group is preloaded. A recording picker and day review sit above
+  continuous source tracks. Review and Details retain their state during processing;
+  dense annotations group when zoomed out, and selected ranges support padded zoom.
+- Durable local waveform jobs prepare reusable audio envelopes independently of AI.
+  Timeline reads use cached viewport tiles rather than decoding media on demand.
+- New visual-processing jobs describe material screen changes. Matching Vision OCR
+  and observations share one frame request when their provider and model agree;
+  each response section is validated independently. Existing jobs keep their protocol.
 - Factual capture coverage, cited AI interpretations, editable local tasks,
   corrections and review history. Broken recordings stay out of day playback;
   playable portions of partial recordings remain available.
 - Local text and semantic search over eligible OCR and both transcript tracks,
-  with links to the exact source in Studio.
+  with links to the exact source in Studio, without displaying raw OCR.
 - Managed multilingual E5 and English BGE embedding models on CPU or optional
   Vulkan, plus separately enabled OpenAI-compatible embedding and generation APIs.
 - A shared warm light/dark design system, responsive workspace controls and a
@@ -101,6 +115,7 @@ downstream cleanup path equally complete.
 - Some Linux capabilities depend on desktop portal, PipeWire, GStreamer,
   Tesseract, input-device permissions, and compositor support.
 - Full GPU composition and hardware encoding remain future work.
+- Playback speeds above 1x are not yet reliable in Linux's streaming WebKit path.
 - Optional remote model endpoints can receive private content when the user
   enables and configures them.
 
@@ -144,7 +159,8 @@ Exact-image reuse reduces repeated engine calls while retaining sampled occurren
 whitespace-only text grouping preserves source timestamps and splits at redactions.
 Settings select the OCR engine separately from screen observations. Retry keeps a
 job's pinned configuration; explicit OCR reprocessing uses current settings without
-rerunning audio. See [OCR document behavior](docs/ocr-documents-design.md) for schema,
+rerunning audio. Day review combines consecutive coverage spans and shows queued,
+running and failed summary jobs. See [OCR document behavior](docs/ocr-documents-design.md) for schema,
 legacy reconstruction, provider failure and privacy details.
 
 Recall indexes current available OCR and transcripts locally, combining

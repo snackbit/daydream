@@ -1,10 +1,4 @@
-import {
-  useRef,
-  useMemo,
-  type ButtonHTMLAttributes,
-  type MouseEvent,
-  type PointerEvent,
-} from 'react';
+import { useMemo, type ButtonHTMLAttributes } from 'react';
 import type {
   LibraryPlaybackAssets,
   LibraryRecordingDetail,
@@ -13,11 +7,15 @@ import type {
   RecordingAiProcessingState,
   ReprocessingTarget,
 } from '@daydream/shared';
+import { getRecordingTranscriptPreview } from '@/features/ai/transcript/preview-client';
 import { cn } from '@/lib/utils';
-import { buildDerivedLane } from './derived-ai-lane-strip';
+import {
+  buildDerivedLane,
+  SegmentTranscriptionLayer,
+} from './derived-ai-lane-strip';
+import { ContinuousTrackMedia } from './media/continuous-track-media';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
 import {
-  studioClipId,
   studioColorById,
   type StudioClipDraft,
   type StudioLaneDraft,
@@ -32,15 +30,13 @@ import {
 import { TranscriptionCurtain } from './timeline/processing/transcription-curtain';
 import { transcriptionCurtain } from './timeline/processing/transcription-curtain-model';
 import { useTranscriptionCurtainMotion } from './timeline/processing/use-transcription-curtain-motion';
-import { TrackClip } from './track-clip';
+import { SourceOverviewStrip } from './timeline/source-overview-strip';
+import { TimelineLaneWindow } from './timeline/timeline-lane-window';
+import type { TranscriptPreviewReader } from './timeline/transcripts/transcript-group-preview';
 import { TrackLaneHeader } from './track-lane-header';
-import { TrackClipMedia } from './track-lane-media';
 import { RedactionOverlay, TimeRangeOverlay } from './track-lane-overlays';
 import { VisualFrameSegments } from './track-lane-visual-markers';
-import {
-  trackLaneHeightPxForKind,
-  TRACK_SELECTION_DRAG_THRESHOLD_PX,
-} from './track-timeline-math';
+import { trackLaneHeightPxForKind } from './track-timeline-math';
 
 export interface TrackLaneProps {
   onAudioCleanup?: (() => void) | undefined;
@@ -71,27 +67,30 @@ export interface TrackLaneProps {
   visualFrames: StudioVisualFrame[];
   waveformTiles: LibraryWaveformTiles | null;
   onSelectVisualFrame: (frame: StudioVisualFrame, additive: boolean) => void;
+  onZoomRange?: ((start: number, end: number) => void) | undefined;
+  readTranscriptPreview?: TranscriptPreviewReader | undefined;
+  transcriptPreviewRevision?: string | undefined;
+  timelinePendingRanges?:
+    readonly { startOffsetMs: number; endOffsetMs: number }[] | undefined;
+  timelineFailedRanges?:
+    readonly { startOffsetMs: number; endOffsetMs: number }[] | undefined;
 }
 
 export function TrackLane({
   plannedProcessingScopes,
   visibleRange,
   aiProcessingState,
-  clipDrafts,
   detail,
   dragHandleProps,
   mutedTrackIds,
-  onSelectClip,
   onInspectTranscript,
   onSelectLane,
   onSelectRedaction,
   onToggleTrackMuted,
   playbackAssets,
-  selectedClipIds,
   selectedLane,
   selectedRedactionIds,
   selectedVisualFrameIds,
-  thumbnailStatus,
   timelineWidthPx,
   timeRanges,
   totalDurationMs,
@@ -102,6 +101,11 @@ export function TrackLane({
   onSelectVisualFrame,
   onReprocess,
   onAudioCleanup,
+  onZoomRange,
+  readTranscriptPreview = getRecordingTranscriptPreview,
+  transcriptPreviewRevision,
+  timelinePendingRanges,
+  timelineFailedRanges,
 }: TrackLaneProps) {
   const curtain = useMemo(
     () =>
@@ -131,9 +135,19 @@ export function TrackLane({
       }),
     [detail, track, aiProcessingState, plannedProcessingScopes],
   );
-  const waveformTrack = waveformTiles?.tracks.find(
-    (waveform) =>
-      waveform.trackId === track.kind || waveform.kind === track.kind,
+  const waveformTrack =
+    waveformTiles?.tracks.find((waveform) => waveform.trackId === track.id) ??
+    waveformTiles?.tracks.find((waveform) => waveform.trackId === track.kind);
+  const sourceSpan = useMemo(
+    () =>
+      detail.segments[0]
+        ? {
+            ...detail.segments[0],
+            playbackOffsetMs: 0,
+            durationMs: totalDurationMs,
+          }
+        : null,
+    [detail.segments, totalDurationMs],
   );
   const audioTrack = track.kind !== 'video';
   const muted = mutedTrackIds.has(track.id);
@@ -145,58 +159,24 @@ export function TrackLane({
     () => buildDerivedLane({ aiProcessingState, track }),
     [aiProcessingState, track],
   );
-  const laneContentClickRef = useRef<{
-    moved: boolean;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  function handleLaneContentPointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (
-      event.target instanceof Element &&
-      event.target.closest('[data-library-action]')
-    ) {
-      laneContentClickRef.current = null;
-      return;
-    }
-
-    laneContentClickRef.current = {
-      moved: false,
-      x: event.clientX,
-      y: event.clientY,
-    };
-  }
-
-  function handleLaneContentPointerMove(event: PointerEvent<HTMLDivElement>) {
-    const clickState = laneContentClickRef.current;
-    if (!clickState) {
-      return;
-    }
-
-    if (
-      Math.hypot(event.clientX - clickState.x, event.clientY - clickState.y) >
-      TRACK_SELECTION_DRAG_THRESHOLD_PX
-    ) {
-      clickState.moved = true;
-    }
-  }
-
-  function handleLaneContentClick(event: MouseEvent<HTMLDivElement>) {
-    if (
-      event.target instanceof Element &&
-      event.target.closest('[data-library-action]')
-    ) {
-      return;
-    }
-
-    const clickState = laneContentClickRef.current;
-    laneContentClickRef.current = null;
-    if (clickState?.moved) {
-      return;
-    }
-
-    onSelectLane(track.id, event.shiftKey || event.metaKey || event.ctrlKey);
-  }
+  const overviewRanges = useMemo(
+    () =>
+      (aiProcessingState?.timelineOverview ?? []).filter(
+        (bucket) => bucket.trackId === track.id && bucket.kind === 'speech',
+      ),
+    [aiProcessingState?.timelineOverview, track.id],
+  );
+  const previewRevision = `${transcriptPreviewRevision}:${aiProcessingState?.resultsRevision}:${JSON.stringify(detail.redactions)}`;
+  const pending = timelinePendingRanges?.some(
+    (r) =>
+      r.startOffsetMs < visibleRange.endTimelineMs &&
+      r.endOffsetMs > visibleRange.startTimelineMs,
+  );
+  const failed = timelineFailedRanges?.some(
+    (r) =>
+      r.startOffsetMs < visibleRange.endTimelineMs &&
+      r.endOffsetMs > visibleRange.startTimelineMs,
+  );
 
   return (
     <>
@@ -215,79 +195,64 @@ export function TrackLane({
           track.kind === 'microphone' ? onAudioCleanup : undefined
         }
       />
-      <div
+      <TimelineLaneWindow
         className={cn(
           'bg-muted/60 group-hover/lane:bg-muted/80 relative isolate z-0 cursor-pointer overflow-hidden border-b transition-colors',
           selectedLane && 'bg-accent/20',
         )}
-        data-lane-content
-        data-track-id={track.id}
-        style={{
-          height: trackLaneHeightPxForKind(track.kind),
-          width: timelineWidthPx,
-        }}
-        onClick={handleLaneContentClick}
-        onPointerDown={handleLaneContentPointerDown}
-        onPointerMove={handleLaneContentPointerMove}
+        trackId={track.id}
+        height={trackLaneHeightPxForKind(track.kind)}
+        width={timelineWidthPx}
+        duration={totalDurationMs}
+        range={visibleRange}
       >
-        {detail.segments
-          .filter(
-            (segment) =>
-              (track.kind !== 'video' ||
-                !segment.videoStreams?.length ||
-                segment.videoStreams.some(
-                  (source) => source.trackId === track.id,
-                )) &&
-              segment.playbackOffsetMs < visibleRange.endTimelineMs &&
-              segment.playbackOffsetMs + (segment.durationMs ?? 1) >
-                visibleRange.startTimelineMs,
-          )
-          .map((segment) => {
-            const clipId = studioClipId(track.id, segment.id);
-            const clip = clipDrafts[clipId];
-
-            return (
-              <TrackClip
-                clipId={clipId}
-                color={color}
-                key={clipId}
-                segment={segment}
-                selected={selectedClipIds.has(clipId)}
-                title={clip?.title ?? `Segment ${segment.segmentIndex}`}
-                timelineWidthPx={timelineWidthPx}
-                totalDurationMs={totalDurationMs}
-                track={track}
-                onSelectClip={onSelectClip}
-                onInspectTranscript={onInspectTranscript}
-                derivedLane={derivedLane}
-                hiddenTranscriptRanges={curtain?.pendingRanges ?? []}
-                publishedTranscriptRanges={curtain?.publishedRanges ?? []}
-                transcriptRevealOffsetMs={
-                  curtainMotion.visible ? curtainMotion.revealOffsetMs : null
-                }
-              >
-                <TrackClipMedia
-                  segment={segment}
-                  thumbnailStatus={thumbnailStatus}
-                  thumbnails={
-                    playbackAssets?.segments
-                      .find(
-                        (playbackSegment) =>
-                          playbackSegment.segmentId === segment.id,
-                      )
-                      ?.videos?.find((video) => video.trackId === track.id)
-                      ?.thumbnails ??
-                    playbackAssets?.segments.find(
-                      (segmentAsset) => segmentAsset.segmentId === segment.id,
-                    )?.thumbnails ??
-                    []
-                  }
-                  track={track}
-                  waveformTrack={waveformTrack}
-                />
-              </TrackClip>
-            );
-          })}
+        <ContinuousTrackMedia
+          detail={detail}
+          track={track}
+          assets={playbackAssets}
+          waveform={waveformTrack}
+          range={visibleRange}
+          width={timelineWidthPx}
+          duration={totalDurationMs}
+        />
+        {audioTrack && sourceSpan ? (
+          <SegmentTranscriptionLayer
+            lane={derivedLane}
+            segment={sourceSpan}
+            track={track}
+            color={color.strong}
+            onInspectTranscript={onInspectTranscript}
+            visibleRange={visibleRange}
+            timelineWidthPx={timelineWidthPx}
+            onZoomRange={onZoomRange}
+            overviewRanges={overviewRanges}
+            hiddenRanges={curtain?.pendingRanges ?? []}
+            publishedRanges={curtain?.publishedRanges ?? []}
+            revealOffsetMs={
+              curtainMotion.visible ? curtainMotion.revealOffsetMs : null
+            }
+          />
+        ) : null}
+        {(aiProcessingState?.timelineOverview !== undefined ||
+          (audioTrack && (pending || failed))) &&
+        onZoomRange ? (
+          <SourceOverviewStrip
+            key={previewRevision}
+            range={visibleRange}
+            buckets={aiProcessingState?.timelineOverview ?? []}
+            trackId={track.id}
+            width={timelineWidthPx}
+            duration={totalDurationMs}
+            onZoom={onZoomRange}
+            recordingId={detail.id}
+            trackLabel={track.label}
+            sourceRole={track.kind === 'video' ? undefined : track.kind}
+            readPreview={readTranscriptPreview}
+            previewRevision={previewRevision}
+            pending={pending}
+            error={failed}
+          />
+        ) : null}
         {timeRanges.map((range) => (
           <TimeRangeOverlay
             key={range.id}
@@ -307,10 +272,12 @@ export function TrackLane({
             onSelectRedaction={onSelectRedaction}
           />
         ))}
-        {track.kind === 'video' ? (
+        {track.kind === 'video' &&
+        aiProcessingState?.timelineOverview === undefined ? (
           <VisualFrameSegments
             visualFrameStates={(aiProcessingState?.visualFrames ?? []).filter(
               (frame) =>
+                frame.sourceKind === 'vlm' &&
                 (frame.sourceFrameRef.match(/:stream:([^:]+):/)?.[1] ??
                   detail.tracks.find((candidate) => candidate.kind === 'video')
                     ?.id) === track.id &&
@@ -323,6 +290,11 @@ export function TrackLane({
             visualFrames={visualFrames
               .filter(
                 (frame) =>
+                  frame.vlmObservations.length > 0 ||
+                  selectedVisualFrameIds.has(frame.id),
+              )
+              .filter(
+                (frame) =>
                   frame.sourceTrackId === undefined ||
                   frame.sourceTrackId === track.id,
               )
@@ -332,6 +304,7 @@ export function TrackLane({
                   frame.frameTimestampMs < visibleRange.endTimelineMs,
               )}
             onSelectVisualFrame={onSelectVisualFrame}
+            onZoomRange={onZoomRange}
           />
         ) : null}
         {track.kind === 'video' ? (
@@ -353,7 +326,7 @@ export function TrackLane({
             visibleRange={visibleRange}
           />
         ) : null}
-      </div>
+      </TimelineLaneWindow>
     </>
   );
 }

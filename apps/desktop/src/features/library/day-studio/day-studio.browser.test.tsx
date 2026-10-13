@@ -350,6 +350,16 @@ async function openStudio(location?: DayStudioLocation) {
   return view;
 }
 
+async function openRecordings() {
+  const trigger = await screen.findByRole('button', { name: 'Recordings' });
+  if (trigger.getAttribute('aria-expanded') !== 'true')
+    await userEvent.click(trigger);
+}
+async function findRecording(name: RegExp) {
+  await openRecordings();
+  return screen.findByRole('button', { name });
+}
+
 test('day microphone actions clean the active recording and reload its playback revision', async () => {
   await openStudio();
   const before = native.invoke.mock.calls.filter(
@@ -459,9 +469,7 @@ test('a missing selected monitor never displays another recording’s redacted m
   const view = await openStudio();
   await userEvent.click(screen.getByRole('combobox', { name: 'Video source' }));
   await userEvent.click(screen.getByRole('option', { name: 'Monitor 1' }));
-  await userEvent.click(
-    await screen.findByRole('button', { name: /Recording b/ }),
-  );
+  await userEvent.click(await findRecording(/Recording b/));
   await screen.findByText(/This monitor was not recorded in this segment/);
   expect(view.container.querySelector('video')).toBeNull();
 });
@@ -608,10 +616,11 @@ test.each(['light', 'dark'] as const)(
   async (theme) => {
     document.documentElement.dataset.theme = theme;
     const view = await openStudio();
-    expect(screen.getByRole('tab', { name: 'Recordings' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Review' })).toHaveAttribute(
       'aria-selected',
       'true',
     );
+    await userEvent.click(screen.getByRole('button', { name: 'Recordings' }));
     expect(screen.getByRole('button', { name: /Recording a/ })).toHaveAttribute(
       'aria-current',
       'true',
@@ -619,6 +628,7 @@ test.each(['light', 'dark'] as const)(
     expect(screen.getByRole('img', { name: /Not recorded/ })).toBeTruthy();
     expect(screen.getByLabelText('Monitor 2 synchronized video')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /Recording b/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Recordings' }));
     await waitFor(() =>
       expect(
         screen.getByRole('button', { name: /Recording b/ }),
@@ -628,9 +638,50 @@ test.each(['light', 'dark'] as const)(
       view.container.querySelector('video')?.getAttribute('src'),
     ).toContain('source=b-screen-0');
     expect(view.container.querySelector('video')?.paused).toBe(true);
-    await userEvent.click(screen.getByRole('tab', { name: 'Day' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Day review' }));
     await screen.findByText(recallDayFixture.day.summary ?? '');
     await page.screenshot({ path: `__screenshots__/day-studio-${theme}.png` });
+  },
+);
+
+test.each([
+  { theme: 'light', width: 1440 },
+  { theme: 'dark', width: 1440 },
+  { theme: 'light', width: 520 },
+  { theme: 'dark', width: 520 },
+])(
+  'Day review uses the wider pane and preserves focus at $width in $theme',
+  async ({ theme, width }) => {
+    document.documentElement.dataset.theme = theme;
+    await page.viewport(width, 960);
+    await openStudio();
+    const trigger = screen.getByRole('button', { name: 'Day review' });
+    await userEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'Day review' });
+    await within(dialog).findByRole('button', { name: 'Generate summary' });
+    await waitFor(() => {
+      const bounds = dialog.getBoundingClientRect();
+      expect(bounds.width).toBe(width === 1440 ? 896 : width);
+      expect(bounds.right).toBeLessThanOrEqual(width);
+    });
+    await userEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Inspect coverage intervals',
+      }),
+    );
+    expect(
+      within(dialog).queryByRole('button', {
+        name: 'Recorded text and transcripts',
+      }),
+    ).toBeNull();
+    await page.screenshot({
+      path: `__screenshots__/day-review-${theme}-${width}.png`,
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Day review' })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(trigger);
   },
 );
 
@@ -681,9 +732,16 @@ test('recording-local deep links select the owning day clip and keyboard frame s
       view.container.querySelector('video')?.getAttribute('src'),
     ).toContain('startMs=3000'),
   );
+  await openRecordings();
   expect(screen.getByRole('button', { name: /Recording b/ })).toHaveAttribute(
     'aria-current',
     'true',
+  );
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Recordings' }),
+    ),
   );
   await userEvent.keyboard('.');
   await waitFor(() =>
@@ -731,7 +789,7 @@ test('native evidence links select their monitor and preserve recording-local so
       view.container.querySelector('video')?.getAttribute('src'),
     ).toContain('startMs=3000'),
   );
-  expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute(
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -752,7 +810,8 @@ test('renaming a recording keeps its media buffers and processing actions stay s
   await userEvent.clear(field);
   await userEvent.type(field, 'Renamed recording');
   await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: /Renamed recording/ });
+  await findRecording(/Renamed recording/);
+  await userEvent.keyboard('{Escape}');
   expect(view.container.querySelector('video')).toBe(video);
   expect(
     native.invoke.mock.calls.filter(
@@ -796,7 +855,7 @@ test('failed deletion releases the player and a subsequent delete keeps the next
   await waitFor(() =>
     expect(screen.queryByRole('button', { name: /Recording a/ })).toBeNull(),
   );
-  await screen.findByRole('button', { name: /Recording b/ });
+  await findRecording(/Recording b/);
 });
 
 test('playback preparation and derived reads recover on Refresh without requiring a metadata change', async () => {
@@ -850,6 +909,7 @@ test('preloads the next recording and pauses its gap countdown without playing p
   const prepared = view.container.querySelector('div[hidden] video');
   expect(prepared).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Play now' }));
+  await openRecordings();
   await waitFor(() =>
     expect(screen.getByRole('button', { name: /Recording b/ })).toHaveAttribute(
       'aria-current',
@@ -996,8 +1056,10 @@ test('empty days offer capture and narrow Studio preserves monitor and recording
   manifest = dayTimelineFixture();
   await page.viewport(800, 900);
   await openStudio();
-  await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
-  await screen.findByRole('tab', { name: 'Recordings' });
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Review & details' }),
+  );
+  await screen.findByRole('tab', { name: 'Review' });
   expect(screen.getByRole('combobox', { name: 'Video source' })).toBeTruthy();
   await page.screenshot({ path: '__screenshots__/day-studio-narrow.png' });
 });

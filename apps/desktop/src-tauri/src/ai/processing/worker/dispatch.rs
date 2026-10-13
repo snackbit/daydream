@@ -1,10 +1,12 @@
 use super::super::super::*;
+use rusqlite::OptionalExtension;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ProcessingChunkSource {
     Activity,
     Audio,
     Visual,
+    Waveform,
 }
 
 impl ProcessingChunkSource {
@@ -13,6 +15,7 @@ impl ProcessingChunkSource {
             "activity" => Ok(Self::Activity),
             "audio" => Ok(Self::Audio),
             "ocr" | "vlm" => Ok(Self::Visual),
+            "waveform" => Ok(Self::Waveform),
             _ => Err(ai_error(
                 "ai_processing_chunk_source_unsupported",
                 "Processing chunk source is not supported.",
@@ -28,6 +31,7 @@ pub(in crate::ai) fn claim_next_processing_chunk(
     let next_chunk = storage
         .with_connection(|connection| {
             let mut chunks = storage::list_processing_chunks(connection, job_id)?;
+            let chronological_visual = connection.query_row("SELECT visual_protocol='changes-v1' FROM processing_job_runtime WHERE job_id=?1", [job_id], |row| row.get::<_,bool>(0)).optional()?.unwrap_or(false);
             if let Some(chunk)=chunks.first() {
                 let recording=storage::get_recording(connection,&chunk.recording_id)?;
                 if !matches!(recording.status.as_str(),"recording"|"paused")&&!crate::recording_privacy::protection_ready(connection,&chunk.recording_id)?{return Err(rusqlite::Error::InvalidQuery);}
@@ -84,7 +88,7 @@ pub(in crate::ai) fn claim_next_processing_chunk(
                     chunks[index].status = "succeeded".to_string();
                     continue;
                 }
-                if chunk_ready_to_claim(chunk, &chunks) {
+                if chunk_ready_to_claim(chunk, &chunks, chronological_visual) {
                     return storage::claim_processing_chunk(connection, &chunk.id, 0.05, now_ms());
                 }
             }
@@ -110,28 +114,50 @@ pub(in crate::ai) fn claim_next_processing_chunk(
     Ok(next_chunk)
 }
 
-fn chunk_ready_to_claim(chunk: &ProcessingChunkRow, chunks: &[ProcessingChunkRow]) -> bool {
-    if chunk.source_kind == "audio" {
-        return !chunks.iter().any(|candidate| {
+fn chunk_ready_to_claim(
+    chunk: &ProcessingChunkRow,
+    chunks: &[ProcessingChunkRow],
+    chronological_visual: bool,
+) -> bool {
+    chunk_dependency_wait_reason(chunk, chunks, chronological_visual).is_none()
+}
+
+pub(crate) fn chunk_dependency_wait_reason(
+    chunk: &ProcessingChunkRow,
+    chunks: &[ProcessingChunkRow],
+    chronological_visual: bool,
+) -> Option<&'static str> {
+    if (chunk.source_kind == "audio"
+        || chronological_visual && matches!(chunk.source_kind.as_str(), "ocr" | "vlm"))
+        && chunks.iter().any(|candidate| {
             candidate.id != chunk.id
-                && candidate.source_kind == "audio"
+                && candidate.source_kind == chunk.source_kind
                 && candidate.track_id == chunk.track_id
                 && (candidate.status == "running"
-                    || (candidate.status == "queued"
+                    || candidate.status == "queued"
                         && (candidate.start_offset_ms, &candidate.id)
-                            < (chunk.start_offset_ms, &chunk.id)))
-        });
+                            < (chunk.start_offset_ms, &chunk.id))
+        })
+    {
+        return Some("previous-source");
+    }
+    if chunk.source_kind == "audio" {
+        return None;
     }
     if chunk.source_kind != "vlm" {
-        return true;
+        return None;
     }
 
-    !chunks.iter().any(|candidate| {
-        candidate.source_kind == "ocr"
-            && matches!(candidate.status.as_str(), "queued" | "running")
-            && candidate.segment_id == chunk.segment_id
-            && chunks_overlap(candidate, chunk)
-    })
+    chunks
+        .iter()
+        .any(|candidate| {
+            candidate.source_kind == "ocr"
+                && matches!(candidate.status.as_str(), "queued" | "running")
+                && candidate.segment_id == chunk.segment_id
+                && (!chronological_visual || candidate.track_id == chunk.track_id)
+                && chunks_overlap(candidate, chunk)
+        })
+        .then_some("ocr")
 }
 
 fn chunks_overlap(left: &ProcessingChunkRow, right: &ProcessingChunkRow) -> bool {
@@ -159,17 +185,26 @@ mod tests {
             end_offset_ms: Some(2000),
             ..first.clone()
         };
-        assert!(!chunk_ready_to_claim(&next, &[first.clone(), next.clone()]));
+        assert!(!chunk_ready_to_claim(
+            &next,
+            &[first.clone(), next.clone()],
+            false
+        ));
         let mut desktop = next.clone();
         desktop.track_id = Some("desktop".into());
         assert!(chunk_ready_to_claim(
             &desktop,
-            &[first.clone(), desktop.clone()]
+            &[first.clone(), desktop.clone()],
+            false
         ));
         first.status = "queued".into();
-        assert!(!chunk_ready_to_claim(&next, &[next.clone(), first.clone()]));
+        assert!(!chunk_ready_to_claim(
+            &next,
+            &[next.clone(), first.clone()],
+            false
+        ));
         first.status = "failed".into();
-        assert!(chunk_ready_to_claim(&next, &[first, next.clone()]));
+        assert!(chunk_ready_to_claim(&next, &[first, next.clone()], false));
     }
 
     #[test]
@@ -178,13 +213,21 @@ mod tests {
         let ocr = test_chunk("ocr", "running", 0, 1_000, &segment_id);
         let vlm = test_chunk("vlm", "queued", 0, 1_000, &segment_id);
 
-        assert!(!chunk_ready_to_claim(&vlm, &[ocr.clone(), vlm.clone()]));
+        assert!(!chunk_ready_to_claim(
+            &vlm,
+            &[ocr.clone(), vlm.clone()],
+            false
+        ));
 
         let succeeded_ocr = ProcessingChunkRow {
             status: "succeeded".to_string(),
             ..ocr
         };
-        assert!(chunk_ready_to_claim(&vlm, &[succeeded_ocr, vlm.clone()]));
+        assert!(chunk_ready_to_claim(
+            &vlm,
+            &[succeeded_ocr, vlm.clone()],
+            false
+        ));
     }
 
     #[test]
@@ -192,7 +235,42 @@ mod tests {
         let segment_id = Uuid::now_v7().to_string();
         let ocr = test_chunk("ocr", "failed", 0, 1_000, &segment_id);
         let vlm = test_chunk("vlm", "queued", 0, 1_000, &segment_id);
-        assert!(chunk_ready_to_claim(&vlm, &[ocr, vlm.clone()]));
+        assert!(chunk_ready_to_claim(&vlm, &[ocr, vlm.clone()], false));
+    }
+
+    #[test]
+    fn studio_comparison_orders_each_source_without_blocking_other_sources_or_legacy_work() {
+        let first = test_chunk("vlm", "running", 0, 1000, "first");
+        let next = test_chunk("vlm", "queued", 1000, 2000, "next");
+        assert!(!chunk_ready_to_claim(
+            &next,
+            &[first.clone(), next.clone()],
+            true
+        ));
+        assert!(chunk_ready_to_claim(
+            &next,
+            &[first.clone(), next.clone()],
+            false
+        ));
+        let independent = ProcessingChunkRow {
+            track_id: Some("other-screen".into()),
+            ..next.clone()
+        };
+        assert!(chunk_ready_to_claim(
+            &independent,
+            &[first, independent.clone()],
+            true
+        ));
+        let ocr = ProcessingChunkRow {
+            track_id: Some("other-screen".into()),
+            ..test_chunk("ocr", "running", 1000, 2000, "next")
+        };
+        assert!(chunk_ready_to_claim(
+            &next,
+            &[ocr.clone(), next.clone()],
+            true
+        ));
+        assert!(!chunk_ready_to_claim(&next, &[ocr, next.clone()], false));
     }
 
     fn test_chunk(

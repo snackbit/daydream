@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
@@ -39,11 +40,14 @@ import { ReprocessingDropdown } from './reprocessing/reprocessing-menu';
 import { reprocessingTargets } from './reprocessing/reprocessing-targets';
 import { TimelineReprocessingContextMenu } from './reprocessing/timeline-reprocessing-context-menu';
 import type { StudioInspectorSelection } from './studio-inspector-selection';
+import { useStudioResultWindowStore } from './studio-result-window-store';
 import { useStudioTimelineStore } from './studio-timeline-store';
 import type { StudioVisualFrame } from './studio-visual-observations';
 import type { TimelinePlannedScope } from './timeline/processing/timeline-processing-ranges';
 import { TimelineGaps } from './timeline/timeline-gaps';
+import { TimelinePlayhead } from './timeline/timeline-playhead';
 import { TrackTimelineLanes } from './timeline/track-timeline-lanes';
+import type { TranscriptPreviewReader } from './timeline/transcripts/transcript-group-preview';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
@@ -88,6 +92,11 @@ export function TrackTimeline({
   onReprocess,
   onAudioCleanup,
   suspendFollow = false,
+  readTranscriptPreview,
+  transcriptPreviewRevision,
+  timelinePendingRanges,
+  timelineFailedRanges,
+  transcriptReadStatus = 'ready',
 }: {
   onAudioCleanup?: (() => void) | undefined;
   timelineOriginMs?: number | undefined;
@@ -115,6 +124,13 @@ export function TrackTimeline({
   onRefreshRedactions: () => void;
   onReprocess?: ((targets: ReprocessingTarget[]) => void) | undefined;
   suspendFollow?: boolean;
+  readTranscriptPreview?: TranscriptPreviewReader | undefined;
+  transcriptPreviewRevision?: string | undefined;
+  timelinePendingRanges?:
+    readonly { startOffsetMs: number; endOffsetMs: number }[] | undefined;
+  timelineFailedRanges?:
+    readonly { startOffsetMs: number; endOffsetMs: number }[] | undefined;
+  transcriptReadStatus?: 'loading' | 'error' | 'ready';
 }) {
   const { actions, state } = playback;
   const clipsById = useStudioTimelineStore((store) => store.clipsById);
@@ -169,6 +185,21 @@ export function TrackTimeline({
     visibleWindowMs,
   });
   const hasTimeRangeSelection = selection.ranges.length > 0;
+  const publishWindow = useStudioResultWindowStore((store) => store.setWindow);
+  useEffect(() => {
+    publishWindow(
+      detail.id,
+      viewModel.waveformRequestRange.startTimelineMs,
+      viewModel.waveformRequestRange.endTimelineMs,
+      viewModel.timelineWidthPx / totalDurationMs,
+    );
+  }, [
+    detail.id,
+    viewModel.waveformRequestRange,
+    viewModel.timelineWidthPx,
+    totalDurationMs,
+    publishWindow,
+  ]);
   const targets = reprocessingTargets(
     selection.ranges,
     new Set(detail.tracks.map((track) => track.id)),
@@ -211,7 +242,15 @@ export function TrackTimeline({
     timelineWidthPx: viewModel.timelineWidthPx,
     totalDurationMs: viewModel.totalDurationMs,
   });
+  const readPlaybackTimeMs = actions.readPlaybackTimeMs;
+  const readPlayheadLeftPx = useCallback(
+    () =>
+      TRACK_LABEL_WIDTH_PX +
+      (readPlaybackTimeMs() / totalDurationMs) * viewModel.timelineWidthPx,
+    [readPlaybackTimeMs, totalDurationMs, viewModel.timelineWidthPx],
+  );
   useTrackTimelinePlayheadFollow({
+    readPlayheadLeftPx,
     suspended: suspendFollow || menuIsOpen,
     followPlayhead,
     isPlaying: state.snapshot.isPlaying,
@@ -220,7 +259,8 @@ export function TrackTimeline({
     seekRevision: state.snapshot.seekRevision,
     setFollowPlayhead,
   });
-  const { zoomVisibleWindow } = useTrackTimelineZoomScroll({
+  const { zoomVisibleWindow, zoomRange } = useTrackTimelineZoomScroll({
+    scrollLeft,
     contentRef,
     displayedTimelineMs: state.snapshot.displayedTimelineMs,
     isPlaying: state.snapshot.isPlaying,
@@ -234,6 +274,21 @@ export function TrackTimeline({
     viewportRef,
     visibleWindowMs,
   });
+  const zoomSelection = useCallback(() => {
+    if (!selection.ranges.length) return;
+    zoomRange(
+      Math.min(...selection.ranges.map((range) => range.startMs)),
+      Math.max(...selection.ranges.map((range) => range.endMs)),
+    );
+  }, [selection.ranges, zoomRange]);
+  const zoomIn = useCallback(
+    () => zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP),
+    [visibleWindowMs, zoomVisibleWindow],
+  );
+  const zoomOut = useCallback(
+    () => zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP),
+    [visibleWindowMs, zoomVisibleWindow],
+  );
 
   function handleDragEnd(event: DragEndEvent) {
     if (!event.over) {
@@ -306,13 +361,20 @@ export function TrackTimeline({
           ) : null
         }
         selectionActions={
-          hasTimeRangeSelection && onReprocess ? (
-            <ReprocessingDropdown
-              label="Selection"
-              targets={targets}
-              onReprocess={onReprocess}
-              onOpenChange={menuOpen}
-            />
+          hasTimeRangeSelection ? (
+            <>
+              <Button size="sm" variant="outline" onClick={zoomSelection}>
+                Zoom In
+              </Button>
+              {onReprocess ? (
+                <ReprocessingDropdown
+                  label="Selection"
+                  targets={targets}
+                  onReprocess={onReprocess}
+                  onOpenChange={menuOpen}
+                />
+              ) : null}
+            </>
           ) : null
         }
         canZoomIn={viewModel.canZoomIn}
@@ -321,13 +383,15 @@ export function TrackTimeline({
         selectedRangeRedactionCount={viewModel.selectedRangeRedactions.length}
         statusText={
           waveformTiles?.error ??
-          (waveformStatus === 'loading'
-            ? 'Loading waveforms...'
-            : 'Video and audio timeline')
+          (waveformStatus === 'error'
+            ? 'Waveforms unavailable. Retry in Processing.'
+            : waveformStatus === 'loading'
+              ? 'Preparing waveforms…'
+              : 'Video and audio timeline')
         }
         zoomPercent={viewModel.zoomPercent}
-        onZoomIn={() => zoomVisibleWindow(visibleWindowMs / TRACK_ZOOM_STEP)}
-        onZoomOut={() => zoomVisibleWindow(visibleWindowMs * TRACK_ZOOM_STEP)}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
         onRedactSelection={redactionMutation.redact}
         onUnredactSelection={redactionMutation.unredact}
         redactionPending={redactionMutation.pending}
@@ -343,7 +407,7 @@ export function TrackTimeline({
         </p>
       ) : null}
       <ScrollArea
-        className="min-h-0 flex-1"
+        className="isolate min-h-0 flex-1"
         scrollbars="both"
         viewportRef={viewportRef}
       >
@@ -355,11 +419,12 @@ export function TrackTimeline({
           totalDurationMs={viewModel.totalDurationMs}
           onReprocess={onReprocess}
           onOpenChange={menuOpen}
+          onZoomSelection={zoomSelection}
         >
           <div
             ref={contentRef}
             aria-label="Track timeline"
-            className="relative isolate cursor-crosshair"
+            className="relative cursor-crosshair"
             role="group"
             style={{
               width: TRACK_LABEL_WIDTH_PX + viewModel.timelineWidthPx,
@@ -370,10 +435,14 @@ export function TrackTimeline({
             onPointerMove={handleTimelinePointerMove}
             onPointerUp={handleTimelinePointerEnd}
           >
-            <div
-              aria-hidden="true"
-              className="bg-primary pointer-events-none absolute top-0 bottom-0 z-30 w-px"
-              style={{ left: viewModel.playheadLeftPx }}
+            <TimelinePlayhead
+              time={state.snapshot.displayedTimelineMs}
+              readTime={actions.readPlaybackTimeMs}
+              playing={state.snapshot.isPlaying}
+              width={viewModel.timelineWidthPx}
+              duration={totalDurationMs}
+              follow={followPlayhead && !suspendFollow && !menuIsOpen}
+              keepVisible={keepPlayheadVisible}
             />
             <TimelineRangeLabels
               ranges={selection.ranges}
@@ -424,7 +493,31 @@ export function TrackTimeline({
                   view={viewModel}
                   lanesById={lanesById}
                   media={{
-                    visibleRange: viewModel.waveformRequestRange,
+                    readTranscriptPreview,
+                    transcriptPreviewRevision,
+                    timelinePendingRanges:
+                      timelinePendingRanges ??
+                      (transcriptReadStatus === 'loading'
+                        ? [
+                            {
+                              startOffsetMs:
+                                viewModel.paintRange.startTimelineMs,
+                              endOffsetMs: viewModel.paintRange.endTimelineMs,
+                            },
+                          ]
+                        : []),
+                    timelineFailedRanges:
+                      timelineFailedRanges ??
+                      (transcriptReadStatus === 'error'
+                        ? [
+                            {
+                              startOffsetMs:
+                                viewModel.paintRange.startTimelineMs,
+                              endOffsetMs: viewModel.paintRange.endTimelineMs,
+                            },
+                          ]
+                        : []),
+                    visibleRange: viewModel.paintRange,
                     aiProcessingState,
                     plannedProcessingScopes,
                     clipDrafts: clipsById,
@@ -447,8 +540,12 @@ export function TrackTimeline({
                     onToggleTrackMuted,
                     onReprocess,
                     onAudioCleanup,
+                    onZoomRange: zoomRange,
                   }}
                   activity={{
+                    overview: aiProcessingState?.timelineOverview,
+                    visibleRange: viewModel.paintRange,
+                    onZoomRange: zoomRange,
                     activity,
                     segments: detail.segments,
                     redactions: detail.redactions,

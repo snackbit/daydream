@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 
 export type PlaybackRulerPosition =
   { kind: 'visible'; top: number } | { kind: 'above' | 'below' };
@@ -21,7 +21,7 @@ export function usePlaybackRuler({
   boundary,
 }: PlaybackRulerInput) {
   const [position, setPosition] = useState<PlaybackRulerPosition | null>(null);
-  useLayoutEffect(() => {
+  useEffect(() => {
     const element = list.current;
     if (!viewport || !element) return;
     let handle: number | null = null;
@@ -80,7 +80,7 @@ export function usePlaybackRuler({
     const mutations = new MutationObserver(schedule);
     mutations.observe(element, { childList: true, subtree: true });
     viewport.addEventListener('scroll', schedule, { passive: true });
-    measure();
+    schedule();
     return () => {
       if (handle !== null) cancelAnimationFrame(handle);
       resize.disconnect();

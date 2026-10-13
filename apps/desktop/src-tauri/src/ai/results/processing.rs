@@ -4,6 +4,21 @@ pub(crate) fn processing_state_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<RecordingAiProcessingState, AiError> {
+    processing_state_in_range(storage, recording_id, None)
+}
+pub(crate) fn processing_state_in_range(
+    storage: &AppStorage,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+) -> Result<RecordingAiProcessingState, AiError> {
+    processing_state_with_review(storage, recording_id, range, None)
+}
+pub(crate) fn processing_state_with_review(
+    storage: &AppStorage,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> Result<RecordingAiProcessingState, AiError> {
     storage
         .with_connection(|connection| {
             let tx = connection.unchecked_transaction()?;
@@ -18,7 +33,12 @@ pub(crate) fn processing_state_for_recording(
                 Vec::new()
             };
             let visual = storage::list_visual_frame_processing_states(&tx, recording_id)?;
-            let transcript = super::transcript::transcript_from_connection(&tx, recording_id)?;
+            let transcript = super::transcript::transcript_from_connection_in_windows(
+                &tx,
+                recording_id,
+                range,
+                review,
+            )?;
             let segments = storage::list_recording_segments(&tx, recording_id)?;
             let tracks = storage::list_recording_tracks(&tx, recording_id)?;
             let chunks = chunk_rows
@@ -67,7 +87,8 @@ pub(crate) fn processing_state_for_recording(
                 None
             };
             tx.commit()?;
-            Ok(RecordingAiProcessingState {
+            let mut state = RecordingAiProcessingState {
+                timeline_overview: None,
                 transcription_progress,
                 reprocessing_scopes,
                 results_revision,
@@ -80,7 +101,32 @@ pub(crate) fn processing_state_for_recording(
                     .into_iter()
                     .map(visual_frame_processing_state_from_row)
                     .collect(),
-            })
+            };
+            if let Some((start, end)) = range {
+                let overlaps = |from: i64, to: i64| {
+                    (from < end && to > start)
+                        || review.is_some_and(|(left, right)| from < right && to > left)
+                };
+                let chunk_visible = |from: Option<i64>, to: Option<i64>| match (from, to) {
+                    (Some(from), Some(to)) => overlaps(from, to),
+                    _ => true,
+                };
+                state
+                    .chunks
+                    .retain(|chunk| chunk_visible(chunk.start_offset_ms, chunk.end_offset_ms));
+                for track in &mut state.transcription_tracks {
+                    track
+                        .chunks
+                        .retain(|chunk| chunk_visible(chunk.start_offset_ms, chunk.end_offset_ms));
+                }
+                state.visual_frames.retain(|frame| {
+                    overlaps(
+                        frame.frame_timestamp_ms,
+                        frame.frame_timestamp_ms.saturating_add(1),
+                    )
+                });
+            }
+            Ok(state)
         })
         .map_err(storage_error)
 }
@@ -185,15 +231,25 @@ pub(in crate::ai) fn processing_job_from_row_with_storage(
 }
 
 pub(crate) fn emit_processing_state<R: tauri::Runtime>(app: &AppHandle<R>, recording_id: &str) {
+    emit_processing_state_with_source(app, recording_id, None);
+}
+pub(crate) fn emit_processing_state_with_source<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    recording_id: &str,
+    source: Option<&str>,
+) {
     // Invalidate the selected recording's read model instead of rebuilding and
     // broadcasting every transcript/word/frame to unrelated screens.
     let changed = crate::background_tasks::BackgroundTasksChanged {
+        source_kind: source.map(str::to_owned),
         recording_id: Some(recording_id.into()),
         updated_at_ms: now_ms(),
     };
     let _ = app.emit(AI_PROCESSING_CHANGED_EVENT, &changed);
     crate::background_tasks::emit_changed(app, Some(recording_id));
-    crate::recall::mutations::emit_changed(app, None);
+    if source != Some("waveform") {
+        crate::recall::mutations::emit_changed(app, None);
+    }
 }
 
 pub(in crate::ai) fn processing_chunk_status_counts(chunks: &[ProcessingChunkRow]) -> String {

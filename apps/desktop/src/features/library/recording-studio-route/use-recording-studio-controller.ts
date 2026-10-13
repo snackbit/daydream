@@ -19,6 +19,7 @@ import {
 import { useRecordingActivity } from '@/features/ai/use-recording-activity';
 import { useRecordingAiProcessingState } from '@/features/ai/use-recording-ai-processing-state';
 import { useRecordingVisualObservations } from '@/features/ai/use-recording-visual-observations';
+import { useStudioResultRange } from '../components/studio/studio-result-window-store';
 import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
@@ -53,24 +54,29 @@ export function useRecordingStudioController({
     () => recordingRedactionSignature(detail),
     [detail],
   );
+  const resultRange = useStudioResultRange(recordingId);
   const aiProcessing = useRecordingAiProcessingState(
     recordingId,
     redactionSignature,
+    resultRange,
   );
   const activity = useRecordingActivity(
     recordingId,
     aiProcessing.state,
     redactionSignature,
+    resultRange,
   );
   const visualObservations = useRecordingVisualObservations(
     recordingId,
     aiProcessing.state,
     redactionSignature,
+    resultRange,
   );
   const ocrTimeline = useOcrTimelineFrames(
     recordingId,
     redactionSignature,
     aiProcessing.state,
+    resultRange,
   );
   const visibleOcrFrames = useMemo(
     () => (detail ? visibleOcrTimelineFrames(detail, ocrTimeline.frames) : []),

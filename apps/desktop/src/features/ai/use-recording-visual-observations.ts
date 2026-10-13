@@ -6,8 +6,11 @@ import type {
 import { getRecordingVisualObservations } from './ai-client';
 import { useRecordingResult } from './results/use-recording-result';
 
-const readStudioVisualObservations = (input: { recordingId: string }) =>
-  getRecordingVisualObservations({ ...input, includeOcrRegions: false });
+const readStudioVisualObservations = (input: {
+  recordingId: string;
+  startOffsetMs?: number;
+  endOffsetMs?: number;
+}) => getRecordingVisualObservations({ ...input, includeOcrRegions: false });
 
 type VisualObservationsStatus = 'error' | 'idle' | 'loading' | 'ready';
 
@@ -15,6 +18,7 @@ export function useRecordingVisualObservations(
   recordingId: string,
   aiProcessingState: RecordingAiProcessingState | null,
   redactionSignature = '',
+  range?: { startOffsetMs: number; endOffsetMs: number },
 ): {
   error: string | null;
   reload: () => Promise<RecordingVisualObservations | null>;
@@ -31,6 +35,7 @@ export function useRecordingVisualObservations(
     visibilityRevision: redactionSignature,
     processingSignature: visualChunkSignature,
     read: readStudioVisualObservations,
+    ...(range ? { range } : {}),
   });
 }
 

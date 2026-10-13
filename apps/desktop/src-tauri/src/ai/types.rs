@@ -230,6 +230,11 @@ pub struct GetRecordingTranscriptInput {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiResultInput {
     pub recording_id: String,
+    pub start_offset_ms: Option<i64>,
+    pub end_offset_ms: Option<i64>,
+    pub bucket_ms: Option<i64>,
+    pub review_start_offset_ms: Option<i64>,
+    pub review_end_offset_ms: Option<i64>,
     #[serde(default)]
     pub include_ocr_regions: Option<bool>,
 }
@@ -237,6 +242,8 @@ pub struct RecordingAiResultInput {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingAiProcessingState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline_overview: Option<Vec<StudioTimelineBucket>>,
     #[serde(default)]
     pub transcription_progress:
         Vec<super::results::transcription_progress::RecordingTranscriptionProgress>,
@@ -250,6 +257,16 @@ pub struct RecordingAiProcessingState {
     pub transcript: RecordingTranscript,
     pub transcription_tracks: Vec<RecordingTranscriptionTrackState>,
     pub visual_frames: Vec<VisualFrameProcessingState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioTimelineBucket {
+    pub track_id: String,
+    pub kind: String,
+    pub start_offset_ms: i64,
+    pub end_offset_ms: i64,
+    pub count: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -419,6 +436,8 @@ pub struct OcrRegion {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VlmObservation {
+    pub context_start_ms: Option<i64>,
+    pub confirmed_end_ms: Option<i64>,
     pub chunk_id: String,
     pub confidence: Option<f64>,
     pub frame_timestamp_ms: i64,

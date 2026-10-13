@@ -283,6 +283,11 @@ test.each([
       await page.screenshot({ element: output });
       await page.screenshot({ element: shared });
       await userEvent.keyboard('{Escape}');
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole('button', { name: 'Source output' }),
+        ),
+      );
       const interval = screen.getByRole('spinbutton', {
         name: 'Frame interval (seconds)',
       });

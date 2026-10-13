@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, Weak};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
-pub(super) async fn acquire(
+pub(in crate::ai) async fn acquire(
     recording: &str,
     source: &str,
     pixels: &str,

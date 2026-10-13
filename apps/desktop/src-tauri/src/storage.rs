@@ -11,7 +11,8 @@ use tauri::Manager;
 mod ai;
 pub use ai::{
     enable_speech_strategy, fail_speech_unit, publish_speech_unit, save_speech_unit,
-    speech_strategy, speech_unit_error, speech_units, stage_speech_unit, SpeechUnit,
+    speech_strategy, speech_unit, speech_unit_error, speech_units, stage_speech_unit,
+    transcript_preview_entries, SpeechUnit, TranscriptPreviewRow,
 };
 mod diagnostics;
 pub(crate) mod maintenance;
@@ -51,21 +52,22 @@ pub use ai::{
     delete_ai_model_asset, delete_transcript_output_for_chunks, delete_visual_output_for_chunks,
     get_ai_model_asset, get_latest_processing_job_for_recording, get_processing_chunk,
     get_processing_job, get_recording_track, get_recording_track_by_kind, get_transcript_segment,
-    list_activity_intervals, list_ai_model_assets, list_capture_events, list_ocr_regions,
+    list_activity_intervals, list_activity_intervals_in_range, list_activity_intervals_in_windows,
+    list_ai_model_assets, list_capture_events, list_capture_events_in_windows, list_ocr_regions,
     list_processing_chunks, list_processing_chunks_by_status, list_processing_jobs,
     list_processing_jobs_by_status, list_recording_tracks, list_transcript_segments,
-    list_transcript_words, list_visual_frame_processing_states, list_vlm_observations,
-    processing_job_chunk_progress, recording_has_redactions, requeue_processing_chunks,
-    retry_processing_job_chunks, save_ai_model_asset, update_processing_chunk_progress,
-    update_processing_chunk_result_code, update_processing_chunk_status,
-    update_processing_chunk_status_if_active, update_processing_job_status,
-    update_visual_frame_processing_state_status, upsert_recording_track,
-    upsert_visual_frame_processing_state, ActivityIntervalRow, AiModelAssetRow, CaptureEventRow,
-    CreateActivityIntervalInput, CreateCaptureEventInput, CreateFrameSimilarityEntryInput,
-    CreateProcessingChunkInput, CreateProcessingJobInput, CreateTranscriptSegmentInput,
-    CreateTranscriptWordInput, CreateVisualFrameProcessingStateInput, CreateVisualRegionInput,
-    OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow, SaveAiModelAssetInput,
-    TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
+    list_transcript_segments_in_range, list_transcript_segments_in_windows, list_transcript_words,
+    list_visual_frame_processing_states, list_vlm_observations, processing_job_chunk_progress,
+    recording_has_redactions, requeue_processing_chunks, retry_processing_job_chunks,
+    save_ai_model_asset, update_processing_chunk_progress, update_processing_chunk_result_code,
+    update_processing_chunk_status, update_processing_chunk_status_if_active,
+    update_processing_job_status, update_visual_frame_processing_state_status,
+    upsert_recording_track, upsert_visual_frame_processing_state, ActivityIntervalRow,
+    AiModelAssetRow, CaptureEventRow, CreateActivityIntervalInput, CreateCaptureEventInput,
+    CreateFrameSimilarityEntryInput, CreateProcessingChunkInput, CreateProcessingJobInput,
+    CreateTranscriptSegmentInput, CreateTranscriptWordInput, CreateVisualFrameProcessingStateInput,
+    CreateVisualRegionInput, OcrRegionRow, ProcessingChunkRow, ProcessingJobRow, RecordingTrackRow,
+    SaveAiModelAssetInput, TranscriptSegmentRow, TranscriptWordRow, UpsertRecordingTrackInput,
     VisualFrameProcessingStateRow, VlmObservationRow,
 };
 pub use ai::{delete_ocr_documents_for_chunks, load_cached_ocr_document};

@@ -13,8 +13,23 @@ pub(super) fn transcript_from_connection(
     connection: &rusqlite::Connection,
     recording_id: &str,
 ) -> rusqlite::Result<RecordingTranscript> {
+    transcript_from_connection_in_range(connection, recording_id, None)
+}
+pub(super) fn transcript_from_connection_in_range(
+    connection: &rusqlite::Connection,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+) -> rusqlite::Result<RecordingTranscript> {
+    transcript_from_connection_in_windows(connection, recording_id, range, None)
+}
+pub(super) fn transcript_from_connection_in_windows(
+    connection: &rusqlite::Connection,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> rusqlite::Result<RecordingTranscript> {
     let segments = filter_visible_transcript_segments(
-        storage::list_transcript_segments(connection, recording_id)?,
+        storage::list_transcript_segments_in_windows(connection, recording_id, range, review)?,
         &storage::list_redactions(connection, recording_id)?,
         &storage::list_recording_segments(connection, recording_id)?,
     );
@@ -193,7 +208,10 @@ fn audio_source_roles_from_segments(segments: &[RecordingSegmentRow]) -> BTreeSe
     roles
 }
 
-fn library_audio_track_id(segments: &[RecordingSegmentRow], source_role: &str) -> Option<String> {
+pub(super) fn library_audio_track_id(
+    segments: &[RecordingSegmentRow],
+    source_role: &str,
+) -> Option<String> {
     let stream_index = segments.iter().find_map(|segment| match source_role {
         "desktop-audio" => segment.desktop_audio_stream_index,
         "microphone" => segment.microphone_audio_stream_index,

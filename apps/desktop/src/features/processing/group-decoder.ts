@@ -7,6 +7,8 @@ import type {
   RecordingProcessingLaneDetail,
   RecordingProcessingLaneKind,
   RecordingProcessingUnit,
+  ProcessingLaneActivity,
+  ProcessingWaitingReason,
 } from '@daydream/shared';
 import {
   array,
@@ -26,7 +28,8 @@ function laneKind(value: unknown): RecordingProcessingLaneKind {
   return value === 'audio' ||
     value === 'ocr' ||
     value === 'vlm' ||
-    value === 'activity'
+    value === 'activity' ||
+    value === 'waveform'
     ? value
     : invalid();
 }
@@ -58,6 +61,9 @@ function lane(value: unknown): RecordingProcessingLane {
     inputOpen: boolean(r.inputOpen),
     errorCode: nullable(r.errorCode, string),
     nextRetryAtMs: nullable(r.nextRetryAtMs, count),
+    ...(r.activity === undefined
+      ? {}
+      : { activity: array(r.activity, activity) }),
   };
   if (
     result.completed +
@@ -71,11 +77,63 @@ function lane(value: unknown): RecordingProcessingLane {
     return invalid();
   return result;
 }
+function activity(value: unknown): ProcessingLaneActivity {
+  const r = record(value);
+  if (r.status !== 'running' && r.status !== 'queued') return invalid();
+  const waitingReasons: readonly ProcessingWaitingReason[] = [
+    'ocr',
+    'previous-source',
+    'retry',
+    'live-input',
+    'protection',
+    'capacity',
+    'paused',
+    'unknown',
+  ];
+  const waitingReason = nullable(
+    r.waitingReason,
+    (value): ProcessingWaitingReason => {
+      const reason = waitingReasons.find((reason) => reason === value);
+      return reason ?? invalid();
+    },
+  );
+  const startOffsetMs = nullable(r.startOffsetMs, count),
+    endOffsetMs = nullable(r.endOffsetMs, count);
+  if (
+    startOffsetMs !== null &&
+    endOffsetMs !== null &&
+    endOffsetMs <= startOffsetMs
+  )
+    return invalid();
+  return {
+    chunkId: string(r.chunkId),
+    jobId: string(r.jobId),
+    sourceTrackId: nullable(r.sourceTrackId, string),
+    sourceLabel: nullable(r.sourceLabel, string),
+    startOffsetMs,
+    endOffsetMs,
+    status: r.status,
+    phase: string(r.phase),
+    startedAtMs: nullable(r.startedAtMs, count),
+    phaseStartedAtMs: nullable(r.phaseStartedAtMs, count),
+    lastProgressAtMs: nullable(r.lastProgressAtMs, count),
+    nextRetryAtMs: nullable(r.nextRetryAtMs, count),
+    waitingReason,
+    workerActive: nullable(r.workerActive, boolean),
+  };
+}
 function group(value: unknown): RecordingProcessingGroup {
   const r = record(value);
   const index = record(r.indexCoverage);
   const lanes = array(r.lanes, lane);
-  if (lanes.length !== 4 || new Set(lanes.map((lane) => lane.kind)).size !== 4)
+  const kinds = new Set(lanes.map((lane) => lane.kind));
+  // Waveform preparation is additive; older responses retain the four AI lanes.
+  if (
+    kinds.size !== lanes.length ||
+    !(['audio', 'ocr', 'vlm', 'activity'] as const).every((kind) =>
+      kinds.has(kind),
+    )
+  )
     return invalid();
   const indexCoverage = {
     applicability: applicability(index.applicability),
@@ -113,6 +171,10 @@ export function decodeRecordingGroupPage(
       active: count(counts.active),
       attention: count(counts.attention),
       history: count(counts.history),
+      ...(counts.running === undefined
+        ? {}
+        : { running: count(counts.running) }),
+      ...(counts.queued === undefined ? {} : { queued: count(counts.queued) }),
     },
     reconciledGroups: array(r.reconciledGroups, group),
   };

@@ -9,7 +9,7 @@ import type {
   LibraryRecordingTrack,
   ReprocessingTarget,
 } from '@daydream/shared';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ZoomIn } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -29,6 +29,7 @@ export interface TimelineReprocessingContextMenuProps {
   totalDurationMs: number;
   onReprocess: ((targets: ReprocessingTarget[]) => void) | undefined;
   onOpenChange: (open: boolean) => void;
+  onZoomSelection?: (() => void) | undefined;
 }
 export function TimelineReprocessingContextMenu({
   children,
@@ -39,6 +40,7 @@ export function TimelineReprocessingContextMenu({
   totalDurationMs,
   onReprocess,
   onOpenChange,
+  onZoomSelection,
 }: TimelineReprocessingContextMenuProps) {
   const [target, setTarget] = useState<{
     label: string;
@@ -46,7 +48,7 @@ export function TimelineReprocessingContextMenu({
   }>({ label: 'selection', targets: [] });
   const prepare = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
-      if (!onReprocess || !(event.target instanceof Element)) return;
+      if (!(event.target instanceof Element)) return;
       const content = contentRef.current;
       if (!content) return;
       const trackId = event.target
@@ -78,12 +80,11 @@ export function TimelineReprocessingContextMenu({
         targets,
       });
     },
-    [onReprocess, contentRef, ranges, tracks, timelineWidthPx, totalDurationMs],
+    [contentRef, ranges, tracks, timelineWidthPx, totalDurationMs],
   );
   const reprocess = useCallback(() => {
     onReprocess?.(target.targets);
   }, [onReprocess, target.targets]);
-  if (!onReprocess) return children;
   return (
     <ContextMenu onOpenChange={onOpenChange}>
       <ContextMenuTrigger asChild>
@@ -92,13 +93,24 @@ export function TimelineReprocessingContextMenu({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent data-studio-preserve-selection className="z-70">
-        <ContextMenuItem
-          onSelect={reprocess}
-          disabled={target.targets.length === 0}
-        >
-          <RefreshCw />
-          Reprocess {target.label}…
-        </ContextMenuItem>
+        {onZoomSelection ? (
+          <ContextMenuItem
+            onSelect={onZoomSelection}
+            disabled={ranges.length === 0}
+          >
+            <ZoomIn />
+            Zoom In
+          </ContextMenuItem>
+        ) : null}
+        {onReprocess ? (
+          <ContextMenuItem
+            onSelect={reprocess}
+            disabled={target.targets.length === 0}
+          >
+            <RefreshCw />
+            Reprocess {target.label}…
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuContent>
     </ContextMenu>
   );

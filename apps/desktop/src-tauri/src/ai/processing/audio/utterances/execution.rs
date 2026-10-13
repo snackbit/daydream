@@ -60,7 +60,9 @@ impl SpeechWorker<'_> {
                 unit.fingerprint = self.fingerprint.into();
                 unit.output_json = None;
                 storage.with_connection(|c|{
-                c.execute("UPDATE processing_speech_units SET config_fingerprint=?2,output_json=NULL,status='queued',error_code=NULL WHERE id=?1 AND status!='published'",rusqlite::params![unit.id,unit.fingerprint])?;Ok(())
+                c.execute("UPDATE processing_speech_units SET config_fingerprint=?2,output_json=NULL,status='queued',error_code=NULL WHERE id=?1 AND status!='published'",rusqlite::params![unit.id,unit.fingerprint])?;
+                c.execute("DELETE FROM processing_speech_languages WHERE unit_id=?1", [&unit.id])?;
+                c.execute("DELETE FROM processing_speech_language_support WHERE unit_id=?1", [&unit.id])?; Ok(())
             }).map_err(storage_error)?;
             }
             let mut value = if let Some(json) = &unit.output_json {
@@ -73,20 +75,7 @@ impl SpeechWorker<'_> {
             } else if unit.submitted_end_ms == unit.submitted_start_ms {
                 empty_transcription()
             } else {
-                let staged_language = previous.as_ref().and_then(|(before, value)| {
-                    if before.fingerprint != unit.fingerprint {
-                        return None;
-                    }
-                    language_context::result_context(
-                        &settings.ai.transcription.language,
-                        None,
-                        value,
-                        &before.fingerprint,
-                        before.submitted_start_ms,
-                        before.submitted_end_ms,
-                    )
-                });
-                match self.transcribe_unit(&unit, staged_language).await {
+                match self.transcribe_unit(&unit, None).await {
                     Ok(value) => value,
                     Err(error) => {
                         storage
@@ -98,6 +87,26 @@ impl SpeechWorker<'_> {
                     }
                 }
             };
+            if settings.ai.transcription.language == "auto" {
+                let stabilized = self.stabilize_language(&unit, value).await;
+                let (corrected, mut staged_repairs) = match stabilized {
+                    Ok(result) => result,
+                    Err(error) => {
+                        storage
+                            .with_connection(|connection| {
+                                storage::fail_speech_unit(connection, &unit.id, &error.code)
+                            })
+                            .map_err(storage_error)?;
+                        return Err(error);
+                    }
+                };
+                value = corrected;
+                if let Some((before, left)) = &mut previous {
+                    if let Some(corrected) = staged_repairs.remove(&before.id) {
+                        *left = corrected;
+                    }
+                }
+            }
             if let Some((before, mut left)) = previous.take() {
                 stitching::reconcile(
                     &mut left,
@@ -137,10 +146,10 @@ impl SpeechWorker<'_> {
         Ok(())
     }
 
-    async fn transcribe_unit(
+    pub(super) async fn transcribe_unit(
         &self,
         unit: &storage::SpeechUnit,
-        staged_language: Option<storage::TranscriptLanguageContext>,
+        correction_language: Option<&str>,
     ) -> Result<transcription::VerboseTranscription, AiError> {
         let (app, chunk, track, run, settings, cancel, lease) = (
             self.app,
@@ -152,6 +161,19 @@ impl SpeechWorker<'_> {
             &self.lease,
         );
         let storage = app.state::<AppStorage>();
+        check_atomic_cancel(cancel)?;
+        ensure_chunk_active(&storage, chunk)?;
+        if !storage
+            .with_connection(|connection| {
+                publication::unit_eligible(connection, &chunk.recording_id, track, unit)
+            })
+            .map_err(storage_error)?
+        {
+            return Err(ai_error(
+                "ai_processing_cancelled",
+                "The speech window is no longer eligible.",
+            ));
+        }
         let temp = TempAudioFile::new(processing_temp_audio_path(app, &chunk.job_id, &unit.id)?);
         let path = temp.path().to_path_buf();
         let start = unit.submitted_start_ms;
@@ -199,24 +221,9 @@ impl SpeechWorker<'_> {
             }
         }
         super::super::super::worker::check_transcription_readiness(app, &storage, settings)?;
+        check_atomic_cancel(cancel)?;
+        ensure_chunk_active(&storage, chunk)?;
         let model = selected_transcription_model(settings)?;
-        let language = if staged_language.is_some() {
-            staged_language
-        } else {
-            storage
-                .with_connection(|c| {
-                    storage::preceding_transcript_language(
-                        c,
-                        chunk,
-                        &track.id,
-                        unit.start_ms,
-                        &unit.fingerprint,
-                        &settings.ai.transcription.provider,
-                        &model,
-                    )
-                })
-                .map_err(storage_error)?
-        };
         storage
             .with_connection(|c| storage::set_processing_chunk_phase(c, &chunk.id, "transcribing"))
             .map_err(storage_error)?;
@@ -229,10 +236,12 @@ impl SpeechWorker<'_> {
                     processing_lease: Some(lease.clone()),
                     audio_path: temp.path().to_path_buf(),
                     cancel: cancel.clone(),
-                    language: language_context::request_language(
-                        &settings.ai.transcription.language,
-                        language.as_ref(),
-                    ),
+                    language: correction_language.map(str::to_owned).unwrap_or_else(|| {
+                        language_context::request_language(
+                            &settings.ai.transcription.language,
+                            None,
+                        )
+                    }),
                     max_initial_timestamp_seconds: settings
                         .ai
                         .transcription

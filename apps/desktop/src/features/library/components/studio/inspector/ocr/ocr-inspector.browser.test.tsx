@@ -1,24 +1,19 @@
 import type {
   OcrDocument,
   OcrHistoryPage,
-  OcrHistoryCursor,
-  OcrDocumentSelection,
   ProcessingJob,
 } from '@daydream/shared';
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-  waitFor,
-} from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { useSettingsStore } from '@/features/settings/settings-store';
-import { defaultSettingsState } from '@/features/settings/testing/settings-browser-fixtures';
+import {
+  defaultSettingsState,
+  scene,
+} from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { VisualSourceInspector } from '../visual-source-inspector';
+import { OcrDocumentInspector } from './ocr-document-inspector';
 
 const ipc = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -127,19 +122,21 @@ beforeEach(async () => {
   ipc.invoke.mockImplementation((command: string) =>
     command === 'getAppSettings'
       ? Promise.resolve(structuredClone(defaultSettingsState))
-      : command === 'getOcrDocument'
-        ? Promise.resolve({
-            document,
-            recordingId: context.recordingId,
-            job: null,
-            sourceTrackId: context.sourceTrackId,
-          })
-        : command === 'getOcrHistory'
+      : command === 'getRecorderScene'
+        ? Promise.resolve(structuredClone(scene))
+        : command === 'getOcrDocument'
           ? Promise.resolve({
-              items: [document],
-              nextCursor: null,
-            } satisfies OcrHistoryPage)
-          : Promise.reject(new Error(`Unexpected command ${command}`)),
+              document,
+              recordingId: context.recordingId,
+              job: null,
+              sourceTrackId: context.sourceTrackId,
+            })
+          : command === 'getOcrHistory'
+            ? Promise.resolve({
+                items: [document],
+                nextCursor: null,
+              } satisfies OcrHistoryPage)
+            : Promise.reject(new Error(`Unexpected command ${command}`)),
   );
 });
 afterEach(() => {
@@ -147,266 +144,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('a dense OCR frame is readable, searchable, copyable and source linked without a metadata dump', async () => {
-  await page.viewport(620, 960);
-  const seek = vi.fn();
-  render(
-    <VisualSourceInspector
-      context={context}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={seek}
-    />,
-  );
-  const text = await screen.findByRole('tabpanel', { name: 'Text' });
-  await within(text).findByRole('button', { name: 'Copy OCR text' });
-  expect(screen.queryByLabelText('Recognized text')).toBeNull();
-  expect(screen.queryByText('Chunk ID')).toBeNull();
-  expect(screen.queryByText('Frame reference')).toBeNull();
-  expect(screen.getByText(/1 uncertain word/i)).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Copy OCR text' }));
-  await waitFor(() => expect(ipc.copy).toHaveBeenCalledWith(document.text));
-  fireEvent.click(screen.getByRole('button', { name: 'Jump to frame' }));
-  expect(seek).toHaveBeenCalledWith(500);
-  await userEvent.click(screen.getByRole('button', { name: 'Read OCR text' }));
-  expect(
-    await screen.findByRole('dialog', { name: 'OCR reading view' }),
-  ).toBeTruthy();
-  const readingText = screen.getByLabelText('OCR reading text');
-  await waitFor(() => expect(window.document.activeElement).toBe(readingText));
-  expect(screen.queryByRole('tooltip')).toBeNull();
-  expect(screen.getByLabelText('Recognized text').textContent).toContain(
-    'Word0 Word1 Word2',
-  );
-  fireEvent.change(screen.getByRole('textbox', { name: 'Find OCR text' }), {
-    target: { value: 'Word499' },
-  });
-  expect(await screen.findByText(/1 match/i)).toBeTruthy();
-  await userEvent.click(
-    within(screen.getByRole('dialog')).getByRole('button', {
-      name: 'Copy OCR text',
-    }),
-  );
-  await waitFor(() =>
-    expect(ipc.copy).toHaveBeenNthCalledWith(2, document.text),
-  );
-  const dialog = screen.getByRole('dialog', { name: 'OCR reading view' });
-  const lastWord = within(dialog).getByText('Word499', { selector: 'mark' });
-  await expect.element(lastWord).not.toBeInViewport();
-  await userEvent.wheel(within(dialog).getByTestId('ocr-reading-scroll'), {
-    direction: 'down',
-    times: 20,
-  });
-  await expect.element(lastWord).toBeInViewport();
-  await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(window.document.activeElement).toBe(
-    screen.getByRole('button', { name: 'Read OCR text' }),
-  );
-  expect(screen.queryByLabelText('Recognized text')).toBeNull();
-  const uncertain = screen.getByRole('button', { name: 'Uncertain OCR words' });
-  uncertain.focus();
-  expect(await screen.findByRole('tooltip')).toBeTruthy();
-});
+test.each([false, true])(
+  'dense OCR stays internal with debug=%s while frame navigation works',
+  async (debugEnabled) => {
+    await page.viewport(620, 960);
+    const seek = vi.fn();
+    render(
+      <VisualSourceInspector
+        context={{ ...context, debugEnabled }}
+        frame={frame}
+        onClear={vi.fn()}
+        onSeek={seek}
+      />,
+    );
+    await screen.findByText(/Screen recognition complete/);
+    expect(screen.queryByText(/Word42/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy OCR text' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Changes' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Show raw OCR details' }),
+    ).toBeNull();
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Jump to frame' }),
+    );
+    expect(seek).toHaveBeenCalledWith(500);
+    expect(
+      ipc.invoke.mock.calls.some(([command]) => command === 'getOcrHistory'),
+    ).toBe(false);
+    expect(ipc.copy).not.toHaveBeenCalled();
+  },
+);
 
-function openTab(name: string) {
-  const tab = screen.getByRole('tab', { name });
-  fireEvent.mouseDown(tab, { button: 0 });
-  fireEvent.click(tab);
-}
-function textDocument(
-  text: string,
-  overrides: Partial<OcrDocument> = {},
-): OcrDocument {
-  return {
-    ...document,
-    blocks: [
-      {
-        confidence: null,
-        id: 'literal-block',
-        order: 0,
-        rawRegionIds: [],
-        region: null,
-        text,
-        words: [],
-      },
-    ],
-    text,
-    ...overrides,
+test('privacy invalidation discards late recognition metadata and exposes a failed read', async () => {
+  let resolve: (value: unknown) => void = () => {
+    throw new Error('Not initialized');
   };
-}
-function deferred<T>() {
-  let resolve: (value: T) => void = () => {
-    throw new Error('Promise not initialized');
-  };
-  let reject: (failure: Error) => void = () => {
-    throw new Error('Promise not initialized');
-  };
-  const promise = new Promise<T>((nextResolve, nextReject) => {
-    resolve = nextResolve;
-    reject = nextReject;
-  });
-  return { promise, resolve, reject };
-}
-
-test('Changes preserves a changed digit, groups supporting samples and selects source-linked paginated revisions', async () => {
-  const current = textDocument('Meeting 18: Alice agreed.', {
-    id: 'current',
-    frameTimestampMs: 2_500,
-    observedStartMs: 2_500,
-    observedEndMs: 4_500,
-    supportTimestampsMs: [2_500, 3_500, 4_500],
-    occurrenceCount: 3,
-  });
-  const previous = textDocument('Meeting 17: Alice agreed.', {
-    id: 'previous',
-    frameTimestampMs: 100,
-    observedStartMs: 100,
-    observedEndMs: 100,
-    supportTimestampsMs: [100],
-    occurrenceCount: 1,
-    provenance: 'reconstructed',
-    engine: 'legacy',
-  });
-  const comparablePrevious = {
-    ...previous,
-    engine: current.engine,
-    provenance: current.provenance,
-  };
-  const older = textDocument('Meeting 16: Alice agreed.', {
-    id: 'older',
-    frameTimestampMs: 50,
-    observedStartMs: 50,
-    observedEndMs: 50,
-    supportTimestampsMs: [50],
-    occurrenceCount: 1,
-  });
-  const seek = vi.fn();
-  ipc.invoke.mockImplementation(
-    (
-      command: string,
-      args: {
-        input: { documentId?: string | null; cursor?: OcrHistoryCursor | null };
-      },
-    ) =>
-      command === 'getOcrDocument'
-        ? Promise.resolve({
-            document:
-              args.input.documentId === previous.id ? previous : current,
-            recordingId: context.recordingId,
-            job: null,
-            sourceTrackId: context.sourceTrackId,
-          })
-        : Promise.resolve(
-            args.input.cursor
-              ? { items: [older], nextCursor: null }
-              : {
-                  items: [current, comparablePrevious],
-                  nextCursor: { id: previous.id, timestampMs: 100 },
-                },
-          ),
-  );
-  render(
-    <VisualSourceInspector
-      context={context}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={seek}
-    />,
-  );
-  await screen.findByRole('button', { name: 'Read OCR text' });
-  expect(
-    ipc.invoke.mock.calls.filter(([command]) => command === 'getOcrHistory'),
-  ).toHaveLength(0);
-  openTab('Changes');
-  const changes = await screen.findByRole('tabpanel', { name: 'Changes' });
-  expect(await within(changes).findByText(/3 supporting samples/)).toBeTruthy();
-  expect(within(changes).getByText('7', { selector: 'del' })).toBeTruthy();
-  expect(within(changes).getByText('8', { selector: 'ins' })).toBeTruthy();
-  fireEvent.click(within(changes).getByRole('button', { name: /Meeting 17/ }));
-  expect(seek).toHaveBeenCalledWith(100);
-  openTab('Text');
-  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  await waitFor(() =>
-    expect(screen.getByLabelText('Recognized text').textContent).toBe(
-      previous.text,
-    ),
-  );
-  await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(screen.getByText(/Reconstructed from legacy OCR/)).toBeTruthy();
-  openTab('Changes');
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Load older revisions' }),
-  );
-  expect(
-    await screen.findByRole('button', { name: /Meeting 16/ }),
-  ).toBeTruthy();
-});
-
-test('literal Vision OCR keeps unknown confidence honest and exposes raw details only through explicit Debug', async () => {
-  const vision = textDocument('Invoice 123.50 — Alice', {
-    engine: 'vision',
-    provider: 'openai-compatible',
-    model: 'synthetic-vision-model',
-  });
-  ipc.invoke.mockResolvedValue({
-    document: vision,
-    recordingId: context.recordingId,
-    job: {
-      createdAtMs: 0,
-      errorCode: 'ai_transcription_provider_failed',
-      id: 'mixed-parent',
-      kind: 'ai-processing',
-      progress: 1,
-      recordingId: context.recordingId,
-      status: 'failed',
-      updatedAtMs: 1,
-    } satisfies ProcessingJob,
-    sourceTrackId: context.sourceTrackId,
-  });
-  const { rerender } = render(
-    <VisualSourceInspector
-      context={context}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={vi.fn()}
-    />,
-  );
-  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  expect((await screen.findByLabelText('Recognized text')).textContent).toBe(
-    vision.text,
-  );
-  await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-  expect(screen.getByText('Confidence unknown')).toBeTruthy();
-  expect(screen.queryByText(/OCR processing failed/)).toBeNull();
-  expect(screen.queryByText('Provider')).toBeNull();
-  openTab('Details');
-  expect(screen.getAllByText('Provider')).toHaveLength(1);
-  expect(
-    screen.queryByRole('button', { name: 'Show raw OCR details' }),
-  ).toBeNull();
-  rerender(
-    <VisualSourceInspector
-      context={{ ...context, debugEnabled: true }}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={vi.fn()}
-    />,
-  );
-  expect(screen.queryByText('Frame reference')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Show raw OCR details' }));
-  expect(screen.getByText('Frame reference')).toBeTruthy();
-  expect(screen.getByText('opaque-frame-reference')).toBeTruthy();
-});
-
-test('changing privacy hides open reading text immediately and late reads or failed reloads cannot restore it', async () => {
-  const stale = deferred<OcrDocumentSelection>();
   ipc.invoke
-    .mockImplementationOnce(() => stale.promise)
-    .mockRejectedValue(new Error('Reload unavailable'));
-  const { rerender } = render(
+    .mockImplementationOnce(
+      () =>
+        new Promise((next) => {
+          resolve = next;
+        }),
+    )
+    .mockRejectedValue(new Error('Synthetic withheld source'));
+  const view = render(
     <VisualSourceInspector
       context={context}
       frame={frame}
@@ -415,7 +197,7 @@ test('changing privacy hides open reading text immediately and late reads or fai
     />,
   );
   await waitFor(() => expect(ipc.invoke).toHaveBeenCalledTimes(1));
-  rerender(
+  view.rerender(
     <VisualSourceInspector
       context={{ ...context, privacyRevision: 'cut' }}
       frame={frame}
@@ -423,37 +205,39 @@ test('changing privacy hides open reading text immediately and late reads or fai
       onSeek={vi.fn()}
     />,
   );
-  stale.resolve({
+  resolve({
     document,
-    recordingId: context.recordingId,
     job: null,
+    recordingId: context.recordingId,
     sourceTrackId: context.sourceTrackId,
   });
-  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
-  expect(screen.queryByLabelText('Recognized text')).toBeNull();
+  await screen.findByRole('alert');
+  expect(screen.queryByText(/Screen recognition complete/)).toBeNull();
   expect(screen.queryByText(/Word42/)).toBeNull();
 });
 
-test('a failed Vision document retries real processing and preserves the blocked setup instead of showing an empty success', async () => {
-  const failed = textDocument('', {
-    engine: 'vision',
-    status: 'failed',
-    errorCode: 'ai_ocr_vision_unconfigured',
-  });
+test('a failed Vision document retries processing and preserves safe setup guidance', async () => {
   ipc.invoke.mockImplementation((command: string) =>
     command === 'getAppSettings'
       ? Promise.resolve(structuredClone(defaultSettingsState))
-      : command === 'reprocessRecordingOcr'
-        ? Promise.reject({
-            message: 'Private synthetic provider diagnostic body.',
-            code: 'ai_ocr_vision_unconfigured',
-          })
-        : Promise.resolve({
-            document: failed,
-            recordingId: context.recordingId,
-            job: null,
-            sourceTrackId: context.sourceTrackId,
-          }),
+      : command === 'getRecorderScene'
+        ? Promise.resolve(structuredClone(scene))
+        : command === 'reprocessRecordingOcr'
+          ? Promise.reject({
+              code: 'ai_ocr_vision_unconfigured',
+              message: 'Synthetic private provider body',
+            })
+          : Promise.resolve({
+              document: {
+                ...document,
+                status: 'failed',
+                engine: 'vision',
+                errorCode: 'ai_ocr_vision_unconfigured',
+              },
+              job: null,
+              recordingId: context.recordingId,
+              sourceTrackId: context.sourceTrackId,
+            }),
   );
   render(
     <VisualSourceInspector
@@ -463,164 +247,68 @@ test('a failed Vision document retries real processing and preserves the blocked
       onSeek={vi.fn()}
     />,
   );
-  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
-  expect(screen.queryByLabelText('Recognized text')).toBeNull();
+  await screen.findAllByRole('alert');
   await userEvent.click(
     screen.getByRole('button', { name: 'Retry processing' }),
   );
   await waitFor(() =>
     expect(
-      screen
-        .getByRole('button', { name: 'Retry processing' })
-        .hasAttribute('disabled'),
-    ).toBe(false),
+      screen.getByRole('button', { name: 'Retry processing' }),
+    ).toBeEnabled(),
   );
-  expect(
-    screen
-      .getAllByRole('alert')
-      .some((alert) =>
-        alert.textContent?.includes(
-          'valid provider, endpoint, and model configuration',
-        ),
-      ),
-  ).toBe(true);
   expect(
     screen.getByRole('link', { name: 'Review vision settings' }),
   ).toBeTruthy();
-  expect(
-    screen.queryByText('Private synthetic provider diagnostic body.'),
-  ).toBeNull();
+  expect(screen.queryByText('Synthetic private provider body')).toBeNull();
   expect(screen.queryByText('ai_ocr_vision_unconfigured')).toBeNull();
   expect(ipc.invoke).toHaveBeenCalledWith('reprocessRecordingOcr', {
     input: { recordingId: context.recordingId },
   });
-  expect(screen.queryByText('No text detected in this frame.')).toBeNull();
 });
 
-test('successful empty OCR and processing gaps are distinct visible states', async () => {
-  ipc.invoke
-    .mockResolvedValueOnce({
-      document: textDocument(''),
-      recordingId: context.recordingId,
+test.each(['gap', 'succeeded'] as const)(
+  'recognition %s metadata stays distinct without showing raw text',
+  async (status) => {
+    ipc.invoke.mockResolvedValue({
+      document: { ...document, status, text: '' },
       job: null,
-      sourceTrackId: context.sourceTrackId,
-    })
-    .mockResolvedValue({
-      document: textDocument('', { status: 'gap' }),
       recordingId: context.recordingId,
-      job: null,
       sourceTrackId: context.sourceTrackId,
     });
-  const { rerender } = render(
-    <VisualSourceInspector
+    render(
+      <VisualSourceInspector
+        context={context}
+        frame={frame}
+        onClear={vi.fn()}
+        onSeek={vi.fn()}
+      />,
+    );
+    await screen.findByText(
+      status === 'gap'
+        ? /OCR is unavailable for this sample/
+        : /Screen recognition complete/,
+    );
+    expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
+    expect(screen.queryByText(/Word42/)).toBeNull();
+  },
+);
+
+test('selecting a screen source without a frame keeps its timestamp and recognition metadata', async () => {
+  render(
+    <OcrDocumentInspector
       context={context}
-      frame={frame}
-      onClear={vi.fn()}
+      timestampMs={500}
       onSeek={vi.fn()}
     />,
   );
-  expect(
-    await screen.findByText('No text detected in this frame.'),
-  ).toBeTruthy();
-  rerender(
-    <VisualSourceInspector
-      context={context}
-      frame={{ ...frame, frameTimestampMs: 1_500 }}
-      onClear={vi.fn()}
-      onSeek={vi.fn()}
-    />,
-  );
-  expect(
-    await screen.findByText(/OCR is unavailable for this sample/),
-  ).toBeTruthy();
-  expect(screen.queryByText('No text detected in this frame.')).toBeNull();
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.getByText('0:00.500')).toBeTruthy();
+  expect(screen.getByText('video-0')).toBeTruthy();
+  expect(screen.queryByText(/Word42/)).toBeNull();
 });
 
-test('a privacy change closes copied reading content and clears selected history and diffs before failed native reloads', async () => {
-  const current = textDocument('Private meeting 18', { id: 'private-current' });
-  const previous = textDocument('Private meeting 17', {
-    id: 'private-previous',
-  });
-  ipc.invoke.mockImplementation((command: string) =>
-    command === 'getOcrHistory'
-      ? Promise.resolve({ items: [current, previous], nextCursor: null })
-      : Promise.resolve({
-          document: current,
-          job: null,
-          recordingId: context.recordingId,
-          sourceTrackId: context.sourceTrackId,
-        }),
-  );
-  const { rerender } = render(
-    <VisualSourceInspector
-      context={context}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={vi.fn()}
-    />,
-  );
-  await screen.findByRole('button', { name: 'Read OCR text' });
-  openTab('Changes');
-  fireEvent.click(
-    await screen.findByRole('button', { name: /Private meeting 17/ }),
-  );
-  expect(await screen.findByText(/Revision at/)).toBeTruthy();
-  openTab('Text');
-  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  expect(await screen.findByRole('dialog')).toBeTruthy();
-  ipc.invoke.mockRejectedValue(new Error('Private results unavailable'));
-  rerender(
-    <VisualSourceInspector
-      context={{ ...context, privacyRevision: 'cut' }}
-      frame={frame}
-      onClear={vi.fn()}
-      onSeek={vi.fn()}
-    />,
-  );
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(screen.queryByText(/Private meeting/)).toBeNull();
-  expect(screen.queryByText(/Revision at/)).toBeNull();
-  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
-});
-
-test('pre-frame OCR job phases refresh from processing events and retry the actual failed job without changing engines', async () => {
-  const job: ProcessingJob = {
-    createdAtMs: 0,
-    errorCode: null,
-    id: 'scoped-ocr-job',
-    kind: 'ocr',
-    progress: 0,
-    recordingId: context.recordingId,
-    status: 'running',
-    updatedAtMs: 1,
-  };
-  let currentJob = job;
-  let processingChanged: (event: {
-    payload: { recordingId: string };
-  }) => void = () => {
-    throw new Error('Listener missing');
-  };
-  ipc.listen.mockImplementation(
-    (_event: string, callback: typeof processingChanged) => {
-      processingChanged = callback;
-      return Promise.resolve(() => undefined);
-    },
-  );
-  ipc.invoke.mockImplementation((command: string) =>
-    command === 'getAppSettings'
-      ? Promise.resolve(structuredClone(defaultSettingsState))
-      : command === 'retryProcessingJob'
-        ? Promise.reject({
-            message: 'Private synthetic saved provider diagnostic body.',
-            code: 'ai_ocr_vision_unconfigured',
-          })
-        : Promise.resolve({
-            document: null,
-            job: currentJob,
-            recordingId: context.recordingId,
-            sourceTrackId: context.sourceTrackId,
-          }),
-  );
+test('live update failure remains visible beside eligible recognition metadata', async () => {
+  ipc.listen.mockRejectedValue(new Error('Synthetic subscription unavailable'));
   render(
     <VisualSourceInspector
       context={context}
@@ -629,48 +317,129 @@ test('pre-frame OCR job phases refresh from processing events and retry the actu
       onSeek={vi.fn()}
     />,
   );
-  expect(await screen.findByText(/OCR processing is running/)).toBeTruthy();
-  expect(screen.queryByText('No text detected in this frame.')).toBeNull();
-  currentJob = {
-    ...job,
-    errorCode: 'ai_ocr_vision_unconfigured',
-    status: 'failed',
-    updatedAtMs: 2,
-  };
-  processingChanged({ payload: { recordingId: context.recordingId } });
-  expect((await screen.findAllByRole('alert')).length).toBeGreaterThan(0);
-  await userEvent.click(
-    screen.getByRole('button', { name: 'Retry processing' }),
-  );
-  await waitFor(() =>
+  await screen.findByText(/Live OCR updates are unavailable/);
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.queryByText(/Word42/)).toBeNull();
+});
+
+test.each(['queued', 'running'] as const)(
+  'recognition %s is visible while the document is pending',
+  async (status) => {
+    const job: ProcessingJob = {
+      id: 'recognition-job',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      kind: 'ocr',
+      progress: 0,
+      recordingId: context.recordingId,
+      status,
+      errorCode: null,
+    };
+    ipc.invoke.mockResolvedValue({
+      document: null,
+      job,
+      recordingId: context.recordingId,
+      sourceTrackId: context.sourceTrackId,
+    });
+    render(
+      <VisualSourceInspector
+        context={context}
+        frame={frame}
+        onClear={vi.fn()}
+        onSeek={vi.fn()}
+      />,
+    );
+    await screen.findByText(
+      status === 'queued'
+        ? /OCR processing is queued/
+        : /OCR processing is running/,
+    );
+    expect(screen.queryByText(/Screen recognition complete/)).toBeNull();
+  },
+);
+
+test.each(['paused', 'cancelled', 'failed', 'completed-with-errors'] as const)(
+  'recognition %s recovers through its existing job and refreshes the source',
+  async (status) => {
+    const job: ProcessingJob = {
+      id: 'recognition-job',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      kind: 'ocr',
+      progress: 0,
+      recordingId: context.recordingId,
+      status,
+      errorCode: status === 'failed' ? 'ai_processing_failed' : null,
+    };
+    let release: () => void = () => {
+      throw new Error('Not initialized');
+    };
+    const operation = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let resumed = false;
+    ipc.invoke.mockImplementation(async (command: string) => {
+      if (command === 'getAppSettings')
+        return structuredClone(defaultSettingsState);
+      if (command === 'getRecorderScene') return structuredClone(scene);
+      if (command === 'getOcrDocument')
+        return {
+          document: null,
+          job: resumed ? { ...job, status: 'queued' } : job,
+          recordingId: context.recordingId,
+          sourceTrackId: context.sourceTrackId,
+        };
+      if (
+        command === 'resumeProcessingJob' ||
+        command === 'retryProcessingJob'
+      ) {
+        await operation;
+        resumed = true;
+        return { ...job, status: 'queued' };
+      }
+      if (command === 'reportFrontendFailure') return undefined;
+      throw new Error('Unexpected synthetic command');
+    });
+    render(
+      <VisualSourceInspector
+        context={context}
+        frame={frame}
+        onClear={vi.fn()}
+        onSeek={vi.fn()}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole('button', {
+        name: status === 'paused' ? 'Resume processing' : 'Retry processing',
+      }),
+    );
     expect(
-      screen
-        .getByRole('button', { name: 'Retry processing' })
-        .hasAttribute('disabled'),
-    ).toBe(false),
+      screen.getByRole('button', { name: 'Starting OCR…' }),
+    ).toBeDisabled();
+    release();
+    await screen.findByText(/OCR processing is queued/);
+    expect(ipc.invoke).toHaveBeenCalledWith(
+      status === 'paused' ? 'resumeProcessingJob' : 'retryProcessingJob',
+      { input: { jobId: job.id } },
+    );
+    expect(screen.queryByText(/Word42/)).toBeNull();
+  },
+);
+
+test('a failed recognition read retries and recovers without exposing OCR', async () => {
+  ipc.invoke.mockRejectedValueOnce(new Error('Synthetic read failure'));
+  render(
+    <VisualSourceInspector
+      context={context}
+      frame={frame}
+      onClear={vi.fn()}
+      onSeek={vi.fn()}
+    />,
   );
-  expect(
-    screen
-      .getAllByRole('alert')
-      .some((alert) =>
-        alert.textContent?.includes(
-          'valid provider, endpoint, and model configuration',
-        ),
-      ),
-  ).toBe(true);
-  expect(
-    screen.getByRole('link', { name: 'Review vision settings' }),
-  ).toBeTruthy();
-  expect(
-    screen.queryByText('Private synthetic saved provider diagnostic body.'),
-  ).toBeNull();
-  expect(screen.queryByText('ai_ocr_vision_unconfigured')).toBeNull();
-  expect(ipc.invoke).toHaveBeenCalledWith('retryProcessingJob', {
-    input: { jobId: job.id },
-  });
-  expect(
-    ipc.invoke.mock.calls.some(
-      ([command]) => command === 'reprocessRecordingOcr',
-    ),
-  ).toBe(false);
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Retry loading OCR' }),
+  );
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(/Word42/)).toBeNull();
 });

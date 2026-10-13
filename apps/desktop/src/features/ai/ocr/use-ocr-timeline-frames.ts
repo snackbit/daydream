@@ -10,12 +10,21 @@ export function useOcrTimelineFrames(
   recordingId: string,
   privacyRevision: string,
   processingState: RecordingAiProcessingState | null,
+  range?: { startOffsetMs: number; endOffsetMs: number; bucketMs?: number },
 ) {
   const key = JSON.stringify([recordingId, privacyRevision]);
+  const revision = JSON.stringify([
+    processingState?.chunks
+      .filter((chunk) => chunk.sourceKind === 'ocr')
+      .map((chunk) => [chunk.id, chunk.status, chunk.updatedAtMs]),
+    processingState?.visualFrames
+      ?.filter((frame) => frame.sourceKind === 'ocr')
+      .map((frame) => [frame.id, frame.status, frame.updatedAtMs]),
+    processingState?.reprocessingScopes,
+  ]);
   const requestRef = useRef(0);
   const [result, setResult] = useState<{
     key: string;
-    processingState: RecordingAiProcessingState | null;
     frames: OcrTimelineFrame[];
   } | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
@@ -24,13 +33,14 @@ export function useOcrTimelineFrames(
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     const request = ++requestRef.current;
+    if (range?.bucketMs) {
+      setResult({ key, frames: [] });
+      setStatus('ready');
+      return;
+    }
     setStatus('loading');
     setError(null);
-    setResult((current) =>
-      current?.key === key && current.processingState === processingState
-        ? current
-        : null,
-    );
+    setResult((current) => (current?.key === key ? current : null));
     let cursor: OcrHistoryCursor | null = null;
     const frames = new Map<string, OcrTimelineFrame>();
     const seenCursors = new Set<string>();
@@ -40,10 +50,15 @@ export function useOcrTimelineFrames(
           recordingId,
           cursor,
           limit: 1_000,
+          ...(range
+            ? {
+                startTimestampMs: range.startOffsetMs,
+                endTimestampMs: range.endOffsetMs,
+              }
+            : {}),
         });
         if (request !== requestRef.current) return;
         for (const frame of page.frames) frames.set(frame.id, frame);
-        setResult({ key, processingState, frames: [...frames.values()] });
         cursor = page.nextCursor;
         if (cursor !== null) {
           const cursorKey = JSON.stringify(cursor);
@@ -54,6 +69,7 @@ export function useOcrTimelineFrames(
           seenCursors.add(cursorKey);
         }
       } while (cursor !== null);
+      setResult({ key, frames: [...frames.values()] });
       setStatus('ready');
     } catch (failure) {
       if (request !== requestRef.current) return;
@@ -64,18 +80,15 @@ export function useOcrTimelineFrames(
       );
       setStatus('error');
     }
-  }, [key, processingState, recordingId]);
+  }, [key, recordingId, range]);
   useEffect(() => {
     void reload();
     return () => {
       requestRef.current += 1;
     };
-  }, [reload]);
+  }, [reload, revision]);
   return {
-    frames:
-      result?.key === key && result.processingState === processingState
-        ? result.frames
-        : [],
+    frames: result?.key === key ? result.frames : [],
     error,
     reload,
     status,

@@ -39,6 +39,8 @@ export interface StudioTimelineState {
   laneOrder: string[];
   lanesById: Record<string, StudioLaneDraft>;
   selection: StudioSelection;
+  selectionIntent: number;
+  noteInspection: () => void;
   clearSelection: () => void;
   initializeFromDetail: (detail: LibraryRecordingDetail) => void;
   moveLane: (activeId: string, overId: string) => void;

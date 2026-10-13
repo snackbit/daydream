@@ -1,4 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
+mod preview;
+pub use preview::*;
 
 use super::{
     rows::{transcript_segment_row, transcript_word_row},
@@ -84,6 +86,21 @@ pub fn list_transcript_segments(
     connection: &Connection,
     recording_id: &str,
 ) -> rusqlite::Result<Vec<TranscriptSegmentRow>> {
+    list_transcript_segments_in_range(connection, recording_id, None)
+}
+pub fn list_transcript_segments_in_range(
+    connection: &Connection,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+) -> rusqlite::Result<Vec<TranscriptSegmentRow>> {
+    list_transcript_segments_in_windows(connection, recording_id, range, None)
+}
+pub fn list_transcript_segments_in_windows(
+    connection: &Connection,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> rusqlite::Result<Vec<TranscriptSegmentRow>> {
     let mut statement = connection.prepare(
         r#"
         SELECT
@@ -103,10 +120,20 @@ pub fn list_transcript_segments(
             created_at_ms
         FROM published_transcript_segments
         WHERE recording_id = ?1
+          AND (?2 IS NULL OR (end_offset_ms>?2 AND start_offset_ms<?3) OR (?4 IS NOT NULL AND end_offset_ms>?4 AND start_offset_ms<?5))
         ORDER BY track_id ASC, start_offset_ms ASC, end_offset_ms ASC, id ASC
         "#,
     )?;
-    let rows = statement.query_map([recording_id], transcript_segment_row)?;
+    let rows = statement.query_map(
+        params![
+            recording_id,
+            range.map(|range| range.0),
+            range.map(|range| range.1),
+            review.map(|range| range.0),
+            review.map(|range| range.1)
+        ],
+        transcript_segment_row,
+    )?;
 
     rows.collect()
 }

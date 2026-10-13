@@ -1,6 +1,11 @@
-import type { CSSProperties } from 'react';
+import { useMemo } from 'react';
 import { Progress } from '@/components/ui/progress';
 import { formatDuration } from '../../../../library-format';
+import {
+  combinedProcessingStatus,
+  groupTimelineProcessingRanges,
+  type TimelineProcessingGroup,
+} from './timeline-processing-groups';
 import type {
   TimelineProcessingRange,
   TimelineProcessingStatus,
@@ -19,6 +24,11 @@ const labels = {
   ocr: 'OCR',
   'screen-observations': 'Screen observations',
 };
+const operations: readonly TimelineProcessingRange['operation'][] = [
+  'transcription',
+  'ocr',
+  'screen-observations',
+];
 const statuses: Record<TimelineProcessingStatus, string> = {
   planned: 'Preparing',
   queued: 'Queued',
@@ -36,12 +46,13 @@ export function TimelineProcessingOverlay({
   totalDurationMs,
   visibleRange,
 }: TimelineProcessingOverlayProps) {
+  const groups = useMemo(() => groupTimelineProcessingRanges(ranges), [ranges]);
   return (
     <div
       className="pointer-events-none absolute inset-x-0 top-6 bottom-13 z-30"
       data-timeline-processing
     >
-      {ranges
+      {groups
         .filter(
           (range) =>
             range.startOffsetMs < visibleRange.endTimelineMs &&
@@ -65,7 +76,7 @@ interface ProcessingRangeBarProps extends Pick<
   TimelineProcessingOverlayProps,
   'trackLabel' | 'video' | 'timelineWidthPx' | 'totalDurationMs'
 > {
-  range: TimelineProcessingRange;
+  range: TimelineProcessingGroup;
 }
 function ProcessingRangeBar({
   range,
@@ -74,17 +85,21 @@ function ProcessingRangeBar({
   timelineWidthPx,
   totalDurationMs,
 }: ProcessingRangeBarProps) {
-  const label = `${trackLabel} · ${labels[range.operation]} · ${statuses[range.status]}`;
-  const measuring = range.progress > 0;
-  const percentage = Math.round(range.progress * 100);
-  const progressStyle: CSSProperties & {
-    '--timeline-processing-complete': string;
-  } = { '--timeline-processing-complete': `${percentage}%` };
+  const descriptions = operations.flatMap((operation) => {
+    const states = range.operations[operation];
+    if (!states) return [];
+    const status = combinedProcessingStatus(states);
+    return [
+      `${labels[operation]} · ${statuses[status]}${states.includes('failed') && status !== 'failed' ? ' · Needs attention' : ''}`,
+    ];
+  });
+  const description = descriptions.join(' · ');
+  const label = `${trackLabel} · ${description}`;
   return (
     <div
       className="absolute overflow-hidden"
       data-processing-range
-      data-operation={range.operation}
+      data-operation={Object.keys(range.operations).join(' ')}
       style={{
         left: (range.startOffsetMs / totalDurationMs) * timelineWidthPx,
         width: Math.max(
@@ -92,7 +107,7 @@ function ProcessingRangeBar({
           ((range.endOffsetMs - range.startOffsetMs) / totalDurationMs) *
             timelineWidthPx,
         ),
-        top: video && range.operation === 'screen-observations' ? '50%' : 0,
+        top: video ? '25%' : 0,
         height: video ? '50%' : '100%',
       }}
       title={`${label} · ${formatDuration(range.startOffsetMs)}–${formatDuration(range.endOffsetMs)}`}
@@ -100,21 +115,15 @@ function ProcessingRangeBar({
       <Progress
         className="timeline-processing-progress h-full rounded-sm border"
         data-processing-status={range.status}
-        value={measuring ? percentage : null}
+        value={null}
         aria-label={label}
-        aria-valuetext={
-          measuring
-            ? `${statuses[range.status]} · ${percentage}%`
-            : statuses[range.status]
-        }
-        style={progressStyle}
+        aria-valuetext={description}
       />
       <span
         aria-hidden="true"
         className="bg-background/85 text-foreground absolute inset-x-1 top-1/2 -translate-y-1/2 truncate rounded-sm px-1 text-xs leading-4"
       >
-        {labels[range.operation]} · {statuses[range.status]}
-        {measuring ? ` · ${percentage}%` : ''}
+        {description}
       </span>
     </div>
   );

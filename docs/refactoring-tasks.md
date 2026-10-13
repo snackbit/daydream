@@ -1,5 +1,121 @@
 # Refactoring Tasks
 
+## Implemented: review findings in visual context and Studio reads
+
+Preserve transitive visual dependency ranges, restore pruned images without FPS
+resampling, retain waveform publications during tile reads, and include detached
+Review pages in activity reads. A conservative migration expands old visual
+lineage before reuse; recordings and OCR remain intact. Regression evidence covers
+SQLite eligibility/windows, pinned FFmpeg frame restoration and the browser tile
+publication race. The JS gate, native formatting, all-target Clippy, 182 focused
+native AI tests and 14 migration tests passed. Eight waveform browser scenarios
+passed with 91.52% measured branch coverage. Native bootstrap and inference passed;
+the Studio workload timed out before entry. The pinned-FFmpeg full run exposed a
+separate audio-cleanup playback failure; the standard native gate passed 699 tests
+and three resource-staging tests with the default system FFmpeg (four ignored).
+Details and compatibility effects are recorded in
+[Review findings verification](review-findings-validation.md).
+
+## Implemented: Day review feedback and internal OCR
+
+Widen Day review, combine capture/interpretation coverage into contiguous display
+spans, track summary requests through persisted job completion, and remove raw OCR
+presentation while retaining retrieval and source navigation. Keep IPC/storage
+contracts and collaborators' edits intact. Risks: false coverage merging (unit),
+summary failure/recovery and stale-date responses (browser), OCR exposure and
+privacy invalidation (browser), responsive sheet sizing (rendered checks), and
+native queue/provider integration (separate runtime evidence).
+
+Verification: the JS gate passed 997 desktop, nine shared and one FFmpeg test;
+99 focused scenarios passed with 243/254 measured frontend branches covered
+(95.66%), each measured owner above 90%. The isolated native summary journey
+passed queue/running feedback, authentication failure, retry, SQLite publication
+and completion after reopening. Desktop/narrow layouts and focus restoration
+passed in both themes; rendered screenshots were inspected. No production Rust,
+IPC, schema or dependency contract changed. Reports, console diagnostics and
+verification limits are recorded in [Day review verification](day-review-validation.md).
+
+## Implemented: processing overview and continuous screen indicators
+
+Replace chunk-by-chunk screen overlays with eligible contiguous ranges and one
+combined OCR/observations row. Processing and recording/day Studio share selectable
+pipelines, bounded current/next work, source provenance, explicit waiting reasons
+and scoped recovery. Keep queues native-owned and reconcile lost events without
+discarding review state. Track worker slots until source work stops; supervise
+unexpected exits and preserve failed-job visibility alongside successful siblings.
+
+Schema v38 adds nullable phase/progress timestamps without inventing historical
+measurements. Verification covers range grouping, IPC validation, scoped counts,
+privacy masking, worker ownership, migration, refresh recovery and responsive UI.
+The final JS gate passed 937 desktop, nine shared and one FFmpeg test. Native
+formatting, all-target Clippy, 694 tests and three resource-staging tests passed.
+The final focused run passed 113 scenarios with 426/435 measured frontend branches
+covered (97.93%); every measured owner exceeds 90%. The isolated Tauri/WebKit
+processing journey passed with a local fixture provider, and light/dark desktop
+and narrow screenshots were inspected. Rust branch instrumentation is unavailable.
+Interfaces, evidence and limitations are recorded in
+[Processing overview verification](processing-overview-validation.md).
+
+## Implemented: transcript group previews and zoom handoff
+
+Render detailed speech alongside retained overview spans; keep pending counts
+visible, expose read failure/recovery, and preview at most three eligible local
+excerpts on hover/focus. Transcript item presentation now owns its focused module
+under `timeline/transcripts`; storage preview queries live with transcript storage.
+The 567-line timeline and 482-line day Studio remain composition owners: this
+change adds narrow wiring there, with query and presentation behavior elsewhere.
+Their broader composition split and the existing flat Studio/day folder density
+remain follow-up debt. Day lanes now include every matching recording, including
+legacy transcript tracks; retained overview spans cannot suppress loaded text.
+
+Verification: root JS gate passed 857 desktop, nine shared, and one FFmpeg test;
+the subsequent source aggregation change passed the three owning browser
+regressions, 15 lane-model tests, scoped lint, and desktop typecheck. Native format,
+all-target Clippy, 684 Rust tests and three resource-staging tests passed; the
+final preview query also passed its focused test after adding all-source redaction
+coverage for legacy rows without stream metadata. No migration or dependency
+change was needed. Light/dark tooltip screenshots were inspected.
+
+Preview/grouping modules have 97/100 measured frontend branches covered, each at
+least 90%; the lane model covers 60/61 branches. Reports are in
+`/tmp/transcript-coverage` and `/tmp/transcript-lane-coverage`. Broader orchestration
+and Rust branch coverage were not measured. The synthetic WebKit journey remains
+unverified: bootstrap and current-asset identity passed, but Library stayed at
+“Loading local text and transcripts…” before Studio could open. Evidence:
+`/tmp/transcript-webkit.log` and `/tmp/daydream-native-e2e.lfA4uD`.
+
+## Implemented: continuous, responsive Studio
+
+Implement the approved Studio rework: stable Review/Details navigation, continuous
+source tracks, bounded timeline detail and padded selection zoom; isolate playback
+clock updates; reconcile recording-scoped processing results; prepare durable local
+waveforms; and version change-focused, shared Vision inference.
+
+Acceptance covers an eight-hour synthetic day during processing updates: p95
+control and warm pan/zoom response below 100 ms, no Studio-wide clock renders and
+no viewport-triggered waveform decoding. Risk/proof matrix: navigation/selection
+and incremental refresh (browser); zoom/grouping/indexing (unit and browser);
+waveform restart, cleanup, failure and deletion (native); combined inference,
+chronological context and privacy invalidation (native with synthetic providers).
+Native WebKit evidence and changed-branch coverage are required separately from
+mocked browser IPC. The settled scoped desktop gate passed 428 tests, with changed
+frontend branch coverage 579/640 (90.47%). Implementation, native runtime evidence
+and remaining verification limitations are tracked in
+[Studio verification](studio-rework-validation.md); this entry does not claim
+unmeasured Rust branch coverage or live-provider model accuracy.
+
+Follow-up QA: keep Review clock highlights urgent, avoid repeated wheel
+reconciliation, memoize stable rows, expose a persistent scrollbar, and remove
+duplicate scrubber timestamps. Auto transcription must detect every window;
+three substantial matching detections confirm a language change. Pending
+language decisions and bounded retroactive corrections must survive restart,
+remain scoped to the same job/source/configuration, and recheck privacy before
+inference and publication. The final native eight-hour workload passed: control,
+zoom and pan p95 were 24, 92 and 82 ms over 50 interactions each. The language
+journey verified corrective publication and continued automatic detection through
+public commands. Linux streaming WebKit speed above 1x remains a separate runtime
+limitation; Rust branch instrumentation is unavailable on the validation host.
+
 ## Implemented: reversible microphone speaker-bleed removal
 
 Add a Rust-owned local AEC pipeline and immutable audio revisions for Studio
@@ -454,6 +570,10 @@ dependency rebuilds with the running app. Live ChatGPT inference remains a manua
 service check.
 
 ## Completed: teleprompter entry navigation and audio language continuity
+
+The automatic-language pinning described in this historical entry is superseded
+by the continuous Studio follow-up above. Auto mode now detects every window and
+uses repeated evidence for source-scoped corrections.
 
 Transcript, activity and AI observation entries use consistent source icons and
 accessible seek actions. Selecting text does not seek; annotation expansion stays

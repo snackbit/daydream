@@ -7,8 +7,12 @@ import {
 } from './processing-errors';
 import { useRecordingProcessingStore } from './recording-processing-store';
 
-export function useRecordingProcessingActions(recordingId: string) {
-  const refresh = useRecordingProcessingStore((state) => state.refresh);
+export function useRecordingProcessingActions(
+  recordingId: string,
+  onChanged?: () => Promise<void>,
+) {
+  const globalRefresh = useRecordingProcessingStore((state) => state.refresh);
+  const refresh = onChanged ?? globalRefresh;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const admission = useRef(false);

@@ -69,7 +69,9 @@ test('the ruler and word highlights sample live playback while browsing and time
   expect(
     screen.getByRole('timer', { name: 'Playback position' }).textContent,
   ).toBe('0:01');
-  expect(screen.getByLabelText('Current playback position')).toBeTruthy();
+  expect(
+    await screen.findByLabelText('Current playback position'),
+  ).toBeTruthy();
   fireEvent.wheel(screen.getByRole('list'), { deltaY: 100 });
   clock = 2200;
   await waitFor(() =>
@@ -264,9 +266,9 @@ test('the playhead anchors to microphone words, holds the previous word in silen
     </div>,
   );
   expect(
-    screen
-      .getByLabelText('Current playback position')
-      .getAttribute('data-entry-id'),
+    (await screen.findByLabelText('Current playback position')).getAttribute(
+      'data-entry-id',
+    ),
   ).toBe('mic');
   expect(
     screen
@@ -315,5 +317,5 @@ test('the playhead anchors to microphone words, holds the previous word in silen
   ).toBe('desktop');
   expect(
     screen.queryByRole('button', { name: 'Resume auto-scroll' }),
-  ).toBeNull();
+  ).toBeTruthy();
 });

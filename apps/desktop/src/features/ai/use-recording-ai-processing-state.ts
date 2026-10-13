@@ -10,12 +10,14 @@ type AiProcessingStateStatus = 'error' | 'idle' | 'loading' | 'ready';
 export function useRecordingAiProcessingState(
   recordingId: string,
   visibilityRevision = '',
+  range?: { startOffsetMs: number; endOffsetMs: number },
 ): {
   applyState: (state: RecordingAiProcessingState) => void;
   error: string | null;
   reload: () => Promise<RecordingAiProcessingState | null>;
   state: RecordingAiProcessingState | null;
   status: AiProcessingStateStatus;
+  refreshing: boolean;
 } {
   const loadRunRef = useRef(0);
   const [state, setState] = useState<{
@@ -24,6 +26,8 @@ export function useRecordingAiProcessingState(
   } | null>(null);
   const [status, setStatus] = useState<AiProcessingStateStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [eventsUnavailable, setEventsUnavailable] = useState(false);
 
   const applyState = useCallback(
     (nextState: RecordingAiProcessingState) => {
@@ -33,6 +37,7 @@ export function useRecordingAiProcessingState(
       loadRunRef.current += 1;
       setState({ data: nextState, revision: visibilityRevision });
       setStatus('ready');
+      setRefreshing(false);
       setError(null);
     },
     [recordingId, visibilityRevision],
@@ -41,6 +46,7 @@ export function useRecordingAiProcessingState(
   const reload = useCallback(async () => {
     const loadRunId = loadRunRef.current + 1;
     loadRunRef.current = loadRunId;
+    setRefreshing(true);
     setState((current) =>
       current?.data.recordingId === recordingId &&
       current.revision === visibilityRevision
@@ -50,7 +56,10 @@ export function useRecordingAiProcessingState(
     setStatus((current) => (current === 'ready' ? current : 'loading'));
     setError(null);
     try {
-      const nextState = await getRecordingAiProcessingState({ recordingId });
+      const nextState = await getRecordingAiProcessingState({
+        recordingId,
+        ...range,
+      });
       if (loadRunRef.current !== loadRunId) {
         return null;
       }
@@ -62,9 +71,10 @@ export function useRecordingAiProcessingState(
       }
       setError(errorMessage(loadError));
       setStatus('error');
+      setRefreshing(false);
       return null;
     }
-  }, [applyState, recordingId, visibilityRevision]);
+  }, [applyState, recordingId, visibilityRevision, range]);
 
   useEffect(() => {
     void reload();
@@ -75,6 +85,8 @@ export function useRecordingAiProcessingState(
     let unlisten: (() => void) | null = null;
     let refreshTimer: number | null = null;
     void listenToAiProcessingChanged((nextState) => {
+      if ('sourceKind' in nextState && nextState.sourceKind === 'waveform')
+        return;
       if (active && 'chunks' in nextState) {
         applyState(nextState);
       } else if (active && nextState.recordingId === recordingId) {
@@ -84,13 +96,19 @@ export function useRecordingAiProcessingState(
             void reload();
           }, 500);
       }
-    }).then((nextUnlisten) => {
-      if (active) {
-        unlisten = nextUnlisten;
-      } else {
-        nextUnlisten();
-      }
-    });
+    })
+      .then((nextUnlisten) => {
+        if (active) {
+          setEventsUnavailable(false);
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
+        }
+      })
+      .catch(() => {
+        // Reconciliation remains available if event delivery is unavailable.
+        if (active) setEventsUnavailable(true);
+      });
 
     return () => {
       active = false;
@@ -105,8 +123,38 @@ export function useRecordingAiProcessingState(
     state.revision === visibilityRevision
       ? state.data
       : null;
+  const hasPendingWork =
+    visibleState?.job?.status === 'queued' ||
+    visibleState?.job?.status === 'running' ||
+    visibleState?.chunks.some(
+      (chunk) => chunk.status === 'queued' || chunk.status === 'running',
+    );
+  useEffect(() => {
+    let busy = false;
+    async function reconcile() {
+      if (busy) return;
+      busy = true;
+      try {
+        await reload();
+      } finally {
+        busy = false;
+      }
+    }
+    const focus = () => {
+      void reconcile();
+    };
+    const timer =
+      hasPendingWork || eventsUnavailable
+        ? window.setInterval(focus, 5000)
+        : undefined;
+    window.addEventListener('focus', focus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', focus);
+    };
+  }, [hasPendingWork, eventsUnavailable, reload]);
 
-  return { applyState, error, reload, state: visibleState, status };
+  return { applyState, error, reload, state: visibleState, status, refreshing };
 }
 
 function errorMessage(error: unknown): string {

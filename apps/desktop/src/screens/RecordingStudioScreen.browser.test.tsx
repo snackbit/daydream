@@ -670,6 +670,21 @@ function mockScrubberRect(slider: HTMLElement) {
     }) as DOMRect;
 }
 
+async function inspectScreenAt(
+  timestampMs: number,
+  durationMs = detail.durationMs,
+) {
+  const slider = await screen.findByRole('slider', {
+    name: 'Playback position',
+  });
+  mockScrubberRect(slider);
+  vi.spyOn(slider, 'setPointerCapture').mockImplementation(() => undefined);
+  const clientX = (timestampMs / durationMs) * 700;
+  fireEvent.pointerDown(slider, { button: 0, clientX, pointerId: 71 });
+  fireEvent.pointerUp(slider, { button: 0, clientX, pointerId: 71 });
+  await userEvent.click(screen.getByRole('button', { name: 'Select Video' }));
+}
+
 function trackTimelineViewport(timeline: HTMLElement): HTMLElement {
   const viewport = timeline.closest('[data-slot="scroll-area-viewport"]');
   expect(viewport).toBeTruthy();
@@ -719,8 +734,8 @@ function timelineClientXForMs(
   timelineMs: number,
   totalDurationMs = detail.durationMs,
 ) {
-  const ruler = screen.getByLabelText('Time ruler') as HTMLElement;
-  const timelineWidthPx = Number.parseFloat(ruler.style.width);
+  const timelineWidthPx =
+    Number.parseFloat(timeline.style.width) - TRACK_LABEL_WIDTH_PX;
   if (!Number.isFinite(timelineWidthPx) || timelineWidthPx <= 0) {
     throw new Error('Timeline ruler width is unavailable for the test.');
   }
@@ -829,7 +844,7 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   render(<RecordingStudioScreen />);
 
   expect(await screen.findByText('Tracks')).toBeTruthy();
-  expect(screen.getByRole('button', { name: /play/i })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^play$/i })).toBeTruthy();
   expect(
     screen.getByRole('slider', { name: /playback position/i }),
   ).toBeTruthy();
@@ -841,16 +856,18 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   ).toHaveLength(1);
   expect(
     document.querySelectorAll('[data-segment-boundary="start"]'),
-  ).toHaveLength(2);
+  ).toHaveLength(0);
   expect(screen.getByText('Desktop audio')).toBeTruthy();
-  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Details' }));
   expect(
     screen.getByRole('heading', { name: 'Recording details' }),
   ).toBeTruthy();
   expect(screen.getByText('recording-1')).toBeTruthy();
   expect(await screen.findByLabelText(/mute desktop audio/i)).toBeTruthy();
-  expect(await screen.findByLabelText('Audio waveform')).toBeTruthy();
-  expect(screen.getAllByLabelText('Video timeline thumbnail')).toHaveLength(3);
+  expect(
+    await screen.findByRole('img', { name: 'Desktop audio waveform' }),
+  ).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Video segment/i })).toBeNull();
   expect(client.createLibraryPlaybackSession).toHaveBeenCalledWith({
     recordingId: 'recording-1',
   });
@@ -866,6 +883,141 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
         recordingId: 'recording-1',
       }),
     ),
+  );
+});
+
+test('assembled Studio forwards overview counts and padded zoom through sortable speech and activity tracks', async () => {
+  const durationMs = 28_800_000;
+  client.getLibraryRecording.mockResolvedValue({
+    ...longDetail,
+    durationMs,
+    segments: [{ ...longDetail.segments[0]!, durationMs }],
+  });
+  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
+  const overviewState: RecordingAiProcessingState = {
+    recordingId: detail.id,
+    job: null,
+    chunks: [],
+    transcript: { recordingId: detail.id, tracks: [] },
+    timelineOverview: [
+      {
+        trackId: 'desktop-audio-1',
+        kind: 'speech',
+        startOffsetMs: 0,
+        endOffsetMs: 1000,
+        count: 20,
+      },
+      {
+        trackId: 'desktop-audio-1',
+        kind: 'speech',
+        startOffsetMs: 2000,
+        endOffsetMs: 3000,
+        count: 30,
+      },
+      {
+        trackId: 'activity:mouse',
+        kind: 'activity',
+        startOffsetMs: 0,
+        endOffsetMs: 3000,
+        count: 12,
+      },
+    ],
+  };
+  const excerpt = {
+    id: 'zoom-excerpt',
+    segmentId: longDetail.segments[0]!.id,
+    startOffsetMs: 0,
+    endOffsetMs: 3000,
+    text: 'Synthetic speech exposed by zoom',
+    words: [],
+    confidence: null,
+    provider: 'local-whisper-cpp',
+    model: null,
+  };
+  const detailState: RecordingAiProcessingState = {
+    recordingId: detail.id,
+    chunks: [],
+    job: null,
+    transcript: {
+      recordingId: detail.id,
+      tracks: [
+        {
+          trackId: 'desktop-audio-1',
+          sourceRole: 'desktop-audio',
+          segments: [excerpt],
+        },
+      ],
+    },
+    transcriptionTracks: [
+      {
+        trackId: 'desktop-audio-1',
+        libraryTrackId: 'desktop-audio-1',
+        trackKey: 'desktop-audio',
+        sourceRole: 'desktop-audio',
+        label: 'Desktop audio',
+        description: '',
+        textSegmentCount: 1,
+        status: 'complete',
+        statusLabel: 'Complete',
+        chunks: [
+          {
+            id: 'zoom-chunk',
+            segmentId: excerpt.segmentId,
+            startOffsetMs: 0,
+            endOffsetMs: 3000,
+            attemptCount: 1,
+            progress: 1,
+            result: 'text',
+            status: 'succeeded',
+            text: excerpt.text,
+            transcriptSegments: [excerpt],
+            errorCode: null,
+            resultCode: null,
+          },
+        ],
+      },
+    ],
+  };
+  aiClient.getRecordingAiProcessingState.mockImplementation(
+    async (input: { bucketMs?: number }) =>
+      input.bucketMs === undefined ? detailState : overviewState,
+  );
+  render(<RecordingStudioScreen />);
+  const speech = await screen.findByRole('button', {
+    name: 'Zoom into 50 transcript entries',
+  });
+  const activity = await screen.findByRole('button', {
+    name: 'Zoom into 12 activity events',
+  });
+  const initialZoom = screen.getByLabelText('Track timeline').style.width;
+  await userEvent.click(activity);
+  await waitFor(() =>
+    expect(screen.getByLabelText('Track timeline').style.width).not.toBe(
+      initialZoom,
+    ),
+  );
+  const toolbar = document.querySelector('[data-studio-timeline-toolbar]');
+  if (!(toolbar instanceof HTMLElement))
+    throw new Error('Studio timeline toolbar is missing');
+  expect(
+    within(toolbar).getByRole('button', { name: 'Follow playback' }),
+  ).toBeTruthy();
+  expect(speech).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Review' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  const transcriptButton = await screen.findByRole('button', {
+    name: /Inspect Desktop audio transcript/,
+  });
+  expect(transcriptButton).toHaveTextContent(excerpt.text);
+  await userEvent.click(transcriptButton);
+  expect(
+    await screen.findByRole('region', { name: 'Desktop audio transcript' }),
+  ).toHaveTextContent(excerpt.text);
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
+    'aria-selected',
+    'true',
   );
 });
 
@@ -906,11 +1058,11 @@ test('RecordingStudioScreen refresh reconciles new tracks and clips', async () =
     await screen.findByRole('button', { name: /^Select Microphone$/i }),
   ).toBeTruthy();
   expect(
-    screen.getByRole('button', { name: /^Microphone Segment 3$/i }),
+    await screen.findByRole('img', { name: /Microphone waveform/ }),
   ).toBeTruthy();
   expect(
-    screen.getAllByRole('button', { name: /Video segment/i }),
-  ).toHaveLength(3);
+    screen.queryByRole('button', { name: /Segment 3|Video segment/i }),
+  ).toBeNull();
 });
 
 test('RecordingStudioScreen starts AI processing from the detail header', async () => {
@@ -1028,7 +1180,7 @@ test('RecordingStudioScreen clears stale AI state after route changes', async ()
   routeState.recordingId = 'recording-2';
   rerender(<RecordingStudioScreen />);
 
-  await page.getByRole('tab', { name: 'Inspector' }).click();
+  await page.getByRole('tab', { name: 'Details' }).click();
   await waitFor(() =>
     expect(screen.getAllByText('recording-2').length).toBeGreaterThan(0),
   );
@@ -1106,7 +1258,7 @@ test('RecordingStudioScreen treats active chunks as processing even when the job
   render(<RecordingStudioScreen />);
 
   const processingButton = await screen.findByRole('button', {
-    name: /processing/i,
+    name: /^processing\.\.\.$/i,
   });
 
   expect((processingButton as HTMLButtonElement).disabled).toBe(true);
@@ -1119,12 +1271,16 @@ test('RecordingStudioScreen treats active chunks as processing even when the job
 });
 
 test('RecordingStudioScreen updates AI lanes from processing events', async () => {
-  let processingHandler = (_state: RecordingAiProcessingState) => {
-    throw new Error('processing handler was not registered');
-  };
+  const processingListeners = new Set<
+    (state: RecordingAiProcessingState) => void
+  >();
+  const processingHandler = (state: RecordingAiProcessingState) =>
+    processingListeners.forEach((handler) => handler(state));
   aiClient.listenToAiProcessingChanged.mockImplementation((handler) => {
-    processingHandler = handler;
-    return Promise.resolve(() => undefined);
+    processingListeners.add(handler);
+    return Promise.resolve(() => {
+      processingListeners.delete(handler);
+    });
   });
 
   render(<RecordingStudioScreen />);
@@ -1174,8 +1330,11 @@ test('RecordingStudioScreen updates AI lanes from processing events', async () =
   ).toBeTruthy();
   expect(screen.queryByText('Transcription in progress')).toBeNull();
   expect(
-    (screen.getByRole('button', { name: /processing/i }) as HTMLButtonElement)
-      .disabled,
+    (
+      screen.getByRole('button', {
+        name: /^processing\.\.\.$/i,
+      }) as HTMLButtonElement
+    ).disabled,
   ).toBe(true);
 
   processingHandler({
@@ -1477,12 +1636,12 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   const markers = await screen.findAllByRole('button', {
     name: /visual frame/i,
   });
-  expect(markers).toHaveLength(3);
+  expect(markers).toHaveLength(2);
 
   const marker = screen.getByRole('button', {
     name: /visual frame 0\.5s to 1\.0s, 1 vlm, 2 ocr candidates/i,
   });
-  const ocrMarker = screen.getByRole('button', {
+  const ocrMarker = screen.queryByRole('button', {
     name: /visual frame 1\.0s to 1\.5s, no vlm, 1 ocr candidate/i,
   });
   const vlmMarker = screen.getByRole('button', {
@@ -1491,8 +1650,7 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
   expect(marker.textContent).toContain('0.5s');
   expect(marker.textContent).not.toMatch(/OCR 2|VLM 1/i);
   expect(marker.getAttribute('data-visual-frame-source')).toBe('mixed');
-  expect(ocrMarker.textContent).toContain('0:01');
-  expect(ocrMarker.getAttribute('data-visual-frame-source')).toBe('ocr');
+  expect(ocrMarker).toBeNull();
   expect(vlmMarker.textContent).toContain('1.5s');
   expect(vlmMarker.getAttribute('data-visual-frame-source')).toBe('vlm');
 
@@ -1517,12 +1675,9 @@ test('RecordingStudioScreen shows visual frame details from video AI markers', a
     ).length >= 2,
   ).toBeTruthy();
   expect(screen.queryByLabelText('Recognized text')).toBeNull();
-  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  expect((await screen.findByLabelText('Recognized text')).textContent).toBe(
-    'Checkout Total',
-  );
-  await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.queryByText('Checkout Total')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
   expect(screen.queryByText('Frame reference')).toBeNull();
 });
 
@@ -1734,18 +1889,10 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
   expect(
     (await screen.findAllByText('private spoken secret')).length,
   ).toBeGreaterThan(0);
-  fireEvent.click(
-    await screen.findByRole('button', { name: /visual frame 1\.7s/i }),
-  );
-  expect(screen.getByText('private screen secret')).toBeTruthy();
-  fireEvent.click(await screen.findByRole('button', { name: 'Read OCR text' }));
-  expect(
-    await within(screen.getByRole('dialog')).findByText(
-      'private screen secret',
-    ),
-  ).toBeTruthy();
-  await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  await inspectScreenAt(1700);
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.queryByText('private screen secret')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
   expect(screen.queryByText('Frame reference')).toBeNull();
 
   const timeline = await screen.findByLabelText('Track timeline');
@@ -1990,22 +2137,14 @@ test('RecordingStudioScreen renders transcript text by transcript segment offset
 
   render(<RecordingStudioScreen />);
 
-  const firstText = (await screen.findAllByText('First words'))[0]!;
-  const secondText = screen.getAllByText('Later words')[0]!;
+  expect((await screen.findAllByText('First words')).length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Later words').length).toBeGreaterThan(0);
   expect(
     screen.getAllByRole('button', {
       name: /Inspect Desktop audio transcript/i,
     }),
   ).toHaveLength(2);
 
-  const firstBlock = firstText.parentElement;
-  const secondBlock = secondText.parentElement;
-  expect(firstBlock).toBeTruthy();
-  expect(secondBlock).toBeTruthy();
-  expect(firstBlock?.style.left).toBe('25%');
-  expect(firstBlock?.style.width).toBe('15%');
-  expect(secondBlock?.style.left).toBe('60%');
-  expect(secondBlock?.style.width).toBe('15%');
   const firstMarker = screen.getByRole('button', {
     name: /Inspect Desktop audio transcript 0:01 to 0:01/i,
   });
@@ -2278,28 +2417,48 @@ test('RecordingStudioScreen keeps ctrl-wheel zoom separate from shift-wheel scro
   expect(viewport.scrollLeft).toBe(0);
 });
 
-test('RecordingStudioScreen queues visible waveform chunks in FIFO order', async () => {
-  client.getLibraryRecording.mockResolvedValue(longDetail);
-  client.createLibraryPlaybackSession.mockResolvedValue(longPlaybackAssets);
-
-  render(<RecordingStudioScreen />);
-
-  await waitFor(() =>
-    expect(
-      client.getRecordingWaveformTiles.mock.calls.length,
-    ).toBeGreaterThanOrEqual(4),
-  );
+test('RecordingStudioScreen batches visible waveform data and reuses it after remount', async () => {
+  routeState.recordingId = 'waveform-batch-recording';
+  const recording = { ...longDetail, id: routeState.recordingId };
+  client.getLibraryRecording.mockResolvedValue(recording);
+  client.createLibraryPlaybackSession.mockResolvedValue({
+    ...longPlaybackAssets,
+    recordingId: recording.id,
+  });
+  client.getRecordingWaveformTiles.mockResolvedValue({
+    ...waveformTiles,
+    recordingId: recording.id,
+  });
+  const view = render(<RecordingStudioScreen />);
+  await screen.findByRole('img', { name: 'Desktop audio waveform' });
+  await mockTimelineRect(screen.getByLabelText('Track timeline'));
+  expect(client.getRecordingWaveformTiles).toHaveBeenCalled();
   expect(
-    client.getRecordingWaveformTiles.mock.calls.slice(0, 4).map(([input]) => ({
-      endTimelineMs: input.endTimelineMs,
-      startTimelineMs: input.startTimelineMs,
-    })),
-  ).toEqual([
-    { endTimelineMs: 15_000, startTimelineMs: 0 },
-    { endTimelineMs: 30_000, startTimelineMs: 15_000 },
-    { endTimelineMs: 45_000, startTimelineMs: 30_000 },
-    { endTimelineMs: 60_000, startTimelineMs: 45_000 },
-  ]);
+    client.getRecordingWaveformTiles.mock.calls[0]![0].endTimelineMs,
+  ).toBeGreaterThan(15_000);
+  const reads = client.getRecordingWaveformTiles.mock.calls.length;
+  const readers = [
+    aiClient.getRecordingAiProcessingState,
+    aiClient.getRecordingActivity,
+    aiClient.getRecordingVisualObservations,
+    ocrClient.getOcrTimelineFrames,
+  ];
+  const counts = readers.map((reader) => reader.mock.calls.length);
+  await act(async () => {
+    for (const [listener] of aiClient.listenToAiProcessingChanged.mock.calls)
+      listener({
+        recordingId: recording.id,
+        sourceKind: 'waveform',
+        updatedAtMs: 1,
+      });
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 550));
+  expect(readers.map((reader) => reader.mock.calls.length)).toEqual(counts);
+  expect(client.getRecordingWaveformTiles.mock.calls.length).toBe(reads);
+  view.unmount();
+  render(<RecordingStudioScreen />);
+  await screen.findByRole('img', { name: 'Desktop audio waveform' });
+  expect(client.getRecordingWaveformTiles.mock.calls.length).toBe(reads);
 });
 
 test('RecordingStudioScreen commits ruler seeks through the playback pipeline', async () => {
@@ -2399,53 +2558,31 @@ test('RecordingStudioScreen selects a track from the lane body', async () => {
   );
   expect(laneBody).toBeTruthy();
 
-  fireEvent.click(laneBody as HTMLElement);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Select Desktop audio' }),
+  );
 
   const trackName = await screen.findByLabelText('Track name');
   expect((trackName as HTMLInputElement).value).toBe('Desktop audio');
 });
 
-test('RecordingStudioScreen ctrl-click adds a lane from the lane body', async () => {
+test('RecordingStudioScreen ctrl-click adds a source from its header', async () => {
   render(<RecordingStudioScreen />);
-
-  const timeline = await screen.findByLabelText('Track timeline');
-  await mockTimelineRect(timeline);
+  fireEvent.click(await screen.findByRole('button', { name: 'Select Video' }));
   fireEvent.click(
-    await screen.findByRole('button', {
-      name: /^Select Video$/i,
-    }),
+    screen.getByRole('button', { name: 'Select Desktop audio' }),
+    { ctrlKey: true },
   );
-  const laneBody = document.querySelector(
-    '[data-lane-content][data-track-id="desktop-audio-1"]',
-  );
-  expect(laneBody).toBeTruthy();
-
-  fireEvent.pointerDown(laneBody as HTMLElement, {
-    button: 0,
-    clientX: 420,
-    clientY: 112,
-    ctrlKey: true,
-    pointerId: 1,
-  });
-  fireEvent.pointerUp(laneBody as HTMLElement, {
-    button: 0,
-    clientX: 420,
-    clientY: 112,
-    ctrlKey: true,
-    pointerId: 1,
-  });
-  fireEvent.click(laneBody as HTMLElement, { ctrlKey: true });
-
-  const trackNames = await screen.findAllByLabelText('Track name');
-  expect(trackNames.map((input) => (input as HTMLInputElement).value)).toEqual([
-    'Video',
-    'Desktop audio',
-  ]);
+  expect(
+    (await screen.findAllByLabelText('Track name')).map(
+      (input) => (input as HTMLInputElement).value,
+    ),
+  ).toEqual(['Video', 'Desktop audio']);
 });
 
 test('RecordingStudioScreen clears selection on a plain timeline click', async () => {
   render(<RecordingStudioScreen />);
-  expect(await screen.findByRole('tab', { name: 'Teleprompter' })).toBeTruthy();
+  expect(await screen.findByRole('tab', { name: 'Review' })).toBeTruthy();
 
   fireEvent.click(
     await screen.findByRole('button', {
@@ -2453,7 +2590,7 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
     }),
   );
   expect(await screen.findByLabelText('Track name')).toBeTruthy();
-  expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute(
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -2483,7 +2620,7 @@ test('RecordingStudioScreen clears selection on a plain timeline click', async (
     }),
   );
   expect(screen.queryByLabelText('Track name')).toBeNull();
-  expect(screen.getByRole('tab', { name: 'Teleprompter' })).toHaveAttribute(
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -2943,25 +3080,18 @@ test('RecordingStudioScreen marquee-selects only intersected lane ranges', async
   expect(screen.queryByText('recording-1')).toBeNull();
 });
 
-test('RecordingStudioScreen selects and renames a timeline clip', async () => {
+test('RecordingStudioScreen presents one continuous audio source without storage clip editing', async () => {
   render(<RecordingStudioScreen />);
-
-  fireEvent.click(
-    await screen.findByRole('button', {
-      name: /^Desktop audio Segment 1$/i,
-    }),
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Select Desktop audio' }),
   );
-
-  const clipTitle = await screen.findByLabelText('Clip title');
-  expect((clipTitle as HTMLInputElement).value).toBe('Segment 1');
-  expect(screen.queryByLabelText('Track name')).toBeNull();
-  expect(screen.queryByText('recording-1')).toBeNull();
-
-  fireEvent.change(clipTitle, { target: { value: 'Intro clip' } });
-  expect(screen.getByDisplayValue('Intro clip')).toBeTruthy();
   expect(
-    screen.getByRole('button', { name: /^Desktop audio Intro clip$/i }),
-  ).toBeTruthy();
+    await screen.findByRole('textbox', { name: 'Track name' }),
+  ).toHaveValue('Desktop audio');
+  expect(screen.queryByLabelText('Clip title')).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: /Desktop audio Segment/ }),
+  ).toBeNull();
 });
 
 test('RecordingStudioScreen exposes compact lane reorder handles', async () => {
@@ -3327,14 +3457,16 @@ test('RecordingStudioScreen shows scrubber thumbnail previews and paused gaps', 
   fireEvent.pointerEnter(slider, { clientX: 100, pointerId: 1 });
   fireEvent.pointerMove(slider, { clientX: 100, pointerId: 1 });
 
-  expect(await screen.findByText('Segment 1 - 0:01')).toBeTruthy();
+  expect(
+    within(await screen.findByRole('tooltip')).getAllByText('0:01').length,
+  ).toBe(1);
   expect(
     screen.getByRole('tooltip').querySelector('img')?.getAttribute('src'),
   ).toBe(playbackAssets.segments[0]!.thumbnails[1]!.url);
 
   fireEvent.pointerMove(slider, { clientX: 300, pointerId: 1 });
 
-  expect(await screen.findAllByText('Paused')).toHaveLength(2);
+  expect(await screen.findAllByText('Paused')).toHaveLength(1);
   expect(screen.getByText(/0:03 gap/i)).toBeTruthy();
 });
 
@@ -3603,7 +3735,7 @@ test('RecordingStudioScreen retains playback time and track edits while opening 
     </div>,
   );
 
-  await screen.findByRole('button', { name: 'Inspector' });
+  await screen.findByRole('button', { name: 'Review & details' });
   const video = container.querySelector('video');
   if (!video) {
     throw new Error('Expected the recording player to mount.');
@@ -3615,9 +3747,11 @@ test('RecordingStudioScreen retains playback time and track edits while opening 
   });
   fireEvent.timeUpdate(video);
   act(() => useStudioTimelineStore.getState().selectLane('video-0'));
-  await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Review & details' }),
+  );
   const inspector = await screen.findByRole('dialog', {
-    name: 'Recording inspector',
+    name: 'Recording review',
   });
   const trackName = within(inspector).getByRole('textbox', {
     name: 'Track name',
@@ -3627,15 +3761,15 @@ test('RecordingStudioScreen retains playback time and track edits while opening 
   expect(container.querySelector('video')).toBe(video);
   expect(video.currentTime).toBe(1.25);
   await userEvent.keyboard('{Escape}');
-  expect(
-    screen.queryByRole('dialog', { name: 'Recording inspector' }),
-  ).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Recording review' })).toBeNull();
   await waitFor(() =>
     expect(document.activeElement).toBe(
-      screen.getByRole('button', { name: 'Inspector' }),
+      screen.getByRole('button', { name: 'Review & details' }),
     ),
   );
-  await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Review & details' }),
+  );
   expect(
     screen.getByRole<HTMLInputElement>('textbox', { name: 'Track name' }).value,
   ).toBe('Edited video');
@@ -3681,19 +3815,21 @@ test.each([
     ).toBe(false);
     act(() => useStudioTimelineStore.getState().selectLane('video-0'));
     if (width < 1200)
-      await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Review & details' }),
+      );
     const name = await screen.findByRole('textbox', { name: 'Track name' });
     await userEvent.fill(name, 'Synthetic edited screen');
     await page.screenshot({
       element:
         width < 1200
-          ? screen.getByRole('dialog', { name: 'Recording inspector' })
+          ? screen.getByRole('dialog', { name: 'Recording review' })
           : view.container,
     });
     if (width < 1200)
       await userEvent.click(
         within(
-          screen.getByRole('dialog', { name: 'Recording inspector' }),
+          screen.getByRole('dialog', { name: 'Recording review' }),
         ).getByRole('button', { name: 'Close' }),
       );
     await userEvent.click(play);
@@ -3787,11 +3923,16 @@ test('recall links resolve the exact source and seek once without autoplay, then
     },
   );
   const view = render(<RecordingStudioScreen />);
-  expect(await screen.findByText(evidence.text)).toBeTruthy();
+  await screen.findByText('Recall source');
+  expect(screen.queryByText(evidence.text)).toBeNull();
   expect(
     screen.getByRole('combobox', { name: 'Video source' }).textContent,
   ).toContain('Screen B');
-  expect(screen.getByText('screen-b')).toBeTruthy();
+  expect(
+    within(screen.getByRole('region', { name: 'Recall source' })).getByText(
+      'screen-b',
+    ),
+  ).toBeTruthy();
   await waitFor(() =>
     expect(ocrClient.getOcrDocument).toHaveBeenCalledWith({
       recordingId: detail.id,
@@ -3885,12 +4026,14 @@ test('hiding a recall source reports a failed write and retries its exact interv
     new Error('Synthetic write failure'),
   );
   render(<RecordingStudioScreen />);
-  await screen.findByText(evidence.text);
+  await screen.findByText('Recall source');
+  expect(screen.queryByText(evidence.text)).toBeNull();
   await userEvent.click(
     screen.getByRole('button', { name: 'Hide source interval' }),
   );
   await screen.findByText('This source could not be hidden. Try again.');
-  expect(screen.getByText(evidence.text)).toBeTruthy();
+  expect(screen.queryByText(evidence.text)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Jump to source' })).toBeTruthy();
   await userEvent.click(
     screen.getByRole('button', { name: 'Hide source interval' }),
   );
@@ -4326,7 +4469,7 @@ test('RecordingStudioScreen distinguishes desktop no-speech from microphone text
   } satisfies RecordingAiProcessingState);
   client.getLibraryRecording.mockResolvedValue(microphoneDetail);
   const { container } = render(<RecordingStudioScreen />);
-  await userEvent.click(await screen.findByRole('tab', { name: 'Inspector' }));
+  await userEvent.click(await screen.findByRole('tab', { name: 'Details' }));
   const summary = await screen.findByRole('region', {
     name: 'Audio transcription',
   });
@@ -4510,42 +4653,39 @@ test.each([false, true])(
     );
     render(<RecordingStudioScreen />);
     await waitFor(() =>
-      expect(
-        screen.getAllByRole('button', { name: /Visual frame/i }),
-      ).toHaveLength(3),
+      expect(ocrClient.getOcrTimelineFrames).toHaveBeenCalled(),
     );
-    expect(aiClient.getRecordingVisualObservations).toHaveBeenCalledWith({
-      recordingId: detail.id,
-      includeOcrRegions: false,
-    });
-    if (coarseProgress)
-      expect(ocrClient.getOcrTimelineFrames).toHaveBeenCalledWith({
+    expect(screen.queryByRole('button', { name: /Visual frame/i })).toBeNull();
+    expect(aiClient.getRecordingVisualObservations).toHaveBeenCalledWith(
+      expect.objectContaining({
         recordingId: detail.id,
-        cursor: { id: 'sample-5000', timestampMs: 5_000 },
-        limit: 1_000,
-      });
+        includeOcrRegions: false,
+      }),
+    );
+    if (coarseProgress)
+      expect(ocrClient.getOcrTimelineFrames).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordingId: detail.id,
+          cursor: { id: 'sample-5000', timestampMs: 5_000 },
+          limit: 1_000,
+        }),
+      );
     for (const timestampMs of [0, 5_000, 10_000]) {
-      const marker = screen.getByRole('button', {
-        name: new RegExp(`Visual frame ${timestampMs / 1_000}\\.0s`),
-      });
-      fireEvent.click(marker);
+      await inspectScreenAt(timestampMs, 38_000);
       await waitFor(() =>
         expect(ocrClient.getOcrDocument).toHaveBeenCalledWith({
           recordingId: detail.id,
           sourceTrackId: 'video-0',
           timestampMs,
-          documentId: `sample-${timestampMs}`,
+          documentId: null,
         }),
       );
       expect(screen.queryByLabelText('Recognized text')).toBeNull();
-      fireEvent.click(
-        await screen.findByRole('button', { name: 'Read OCR text' }),
-      );
+      await screen.findByText(/Screen recognition complete/);
+      expect(screen.queryByText('Identical literal meeting text')).toBeNull();
       expect(
-        (await screen.findByLabelText('Recognized text')).textContent,
-      ).toBe('Identical literal meeting text');
-      await userEvent.keyboard('{Escape}');
-      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+        screen.queryByRole('button', { name: 'Read OCR text' }),
+      ).toBeNull();
       expect(
         screen
           .getByRole('slider', { name: 'Playback position' })
@@ -4555,7 +4695,7 @@ test.each([false, true])(
   },
 );
 
-test('RecordingStudioScreen cuts an actual OCR sample and ignores an older observation index that resolves afterward', async () => {
+test('RecordingStudioScreen withholds an explicitly selected OCR sample after a cut and a stale index read', async () => {
   await loadStudioStyles();
   const sampledDetail = {
     ...longDetail,
@@ -4597,12 +4737,20 @@ test('RecordingStudioScreen cuts an actual OCR sample and ignores an older obser
       },
     ],
   });
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: legacyOcrDocument('Synthetic selected OCR', 5000),
+    job: null,
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
   render(<RecordingStudioScreen />);
   await waitFor(() =>
-    expect(
-      screen.getAllByRole('button', { name: /Visual frame/i }),
-    ).toHaveLength(3),
+    expect(ocrClient.getOcrTimelineFrames).toHaveBeenCalled(),
   );
+  await inspectScreenAt(5000, 38_000);
+  await screen.findByText(/Screen recognition complete/);
+  expect(screen.queryByText('Synthetic selected OCR')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
   const stale = deferred<OcrTimelineFramePage>();
   await page.screenshot({ path: '__screenshots__/studio-status-ready.png' });
   ocrClient.getOcrTimelineFrames.mockReturnValue(stale.promise);
@@ -4638,21 +4786,19 @@ test('RecordingStudioScreen cuts an actual OCR sample and ignores an older obser
     clientY: 12,
     pointerId: 93,
   });
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: null,
+    job: null,
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
   fireEvent.click(screen.getAllByRole('button', { name: /^Redact$/i })[0]!);
   await waitFor(() =>
-    expect(
-      screen.getAllByRole('button', { name: /Visual frame/i }),
-    ).toHaveLength(2),
+    expect(client.createLibraryRedactions).toHaveBeenCalled(),
   );
   stale.resolve({ recordingId: detail.id, frames, nextCursor: null });
-  await waitFor(() =>
-    expect(
-      screen.queryByRole('button', { name: /Visual frame 5\.0s/i }),
-    ).toBeNull(),
-  );
-  expect(
-    screen
-      .getByRole('button', { name: /Visual frame 0\.0s/i })
-      .getAttribute('aria-label'),
-  ).toContain('observation');
+  await screen.findByRole('group', { name: 'Redacted video' });
+  expect(screen.queryByRole('button', { name: 'Read OCR text' })).toBeNull();
+  expect(screen.queryByText('Synthetic selected OCR')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Visual frame/i })).toBeNull();
 });

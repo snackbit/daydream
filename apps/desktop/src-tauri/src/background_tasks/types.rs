@@ -88,6 +88,8 @@ pub struct BackgroundTaskDetail {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackgroundTasksChanged {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
     pub recording_id: Option<String>,
     pub updated_at_ms: i64,
 }

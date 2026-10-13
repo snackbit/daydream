@@ -123,6 +123,43 @@ test('ai client uses typed camelCase command names', async () => {
   );
 });
 
+test.each([undefined, []])(
+  'scoped Studio overviews retain optional speech progress %s',
+  async (transcriptionProgress) => {
+    const bucket = {
+      trackId: 'microphone-2',
+      kind: 'speech',
+      startOffsetMs: 1000,
+      endOffsetMs: 2000,
+      count: 3,
+    };
+    const state = {
+      recordingId: 'recording-1',
+      chunks: [],
+      job: null,
+      transcript: { recordingId: 'recording-1', tracks: [] },
+      timelineOverview: [bucket],
+      ...(transcriptionProgress ? { transcriptionProgress } : {}),
+    };
+    invokeMock.mockResolvedValue(state);
+    const input = {
+      recordingId: 'recording-1',
+      startOffsetMs: 1000,
+      endOffsetMs: 2000,
+      bucketMs: 5000,
+    };
+    await expect(getRecordingAiProcessingState(input)).resolves.toEqual(state);
+    expect(invokeMock).toHaveBeenCalledWith('getRecordingAiProcessingState', {
+      input,
+    });
+    invokeMock.mockResolvedValue({
+      ...state,
+      timelineOverview: [{ ...bucket, count: 0 }],
+    });
+    await expect(getRecordingAiProcessingState(input)).rejects.toThrow();
+  },
+);
+
 test('ai client listens for full model list updates', async () => {
   const unlisten = vi.fn();
   const handler = vi.fn();

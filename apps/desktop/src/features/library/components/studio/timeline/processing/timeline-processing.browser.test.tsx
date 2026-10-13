@@ -20,6 +20,7 @@ import {
   monitor,
   state,
 } from './processing-test-fixtures';
+import { TimelineProcessingOverlay } from './timeline-processing-overlay';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 afterEach(() => {
@@ -391,8 +392,10 @@ test('video sample completion clears only its own work while the other visual op
     <Lane processing={{ ...processing, visualFrames: frames }} video />,
   );
   expect(
-    screen.getAllByRole('progressbar', { name: 'Monitor · OCR · Queued' }),
-  ).toHaveLength(2);
+    screen.getAllByRole('progressbar', {
+      name: 'Monitor · OCR · Queued · Screen observations · Queued',
+    }),
+  ).toHaveLength(1);
   view.rerender(
     <Lane
       processing={{
@@ -409,7 +412,9 @@ test('video sample completion clears only its own work while the other visual op
     screen.queryByRole('progressbar', { name: 'Monitor · OCR · Queued' }),
   ).toBeNull();
   expect(
-    screen.getByRole('progressbar', { name: 'Monitor · OCR · Processing' }),
+    screen.getByRole('progressbar', {
+      name: 'Monitor · OCR · Processing · Screen observations · Queued',
+    }),
   ).toBeTruthy();
   view.rerender(
     <Lane
@@ -431,6 +436,68 @@ test('video sample completion clears only its own work while the other visual op
       name: 'Monitor · Screen observations · Queued',
     }),
   ).toBeTruthy();
+});
+
+test('a failed screen section stays discoverable in one bar while its adjacent section continues', () => {
+  render(
+    <Lane
+      video
+      processing={state([
+        chunk({
+          id: 'failed',
+          sourceKind: 'ocr',
+          trackId: 'screen-a',
+          status: 'failed',
+          endOffsetMs: 2500,
+        }),
+        chunk({
+          id: 'running',
+          sourceKind: 'ocr',
+          trackId: 'screen-a',
+          status: 'running',
+          startOffsetMs: 2500,
+        }),
+      ])}
+    />,
+  );
+  expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+  expect(
+    screen.getByRole('progressbar', {
+      name: 'Monitor · OCR · Processing · Needs attention',
+    }),
+  ).toBeTruthy();
+});
+
+test('the legacy transcription overlay fills its available row and reports queued work without a percentage', () => {
+  const view = render(
+    <div style={{ position: 'relative', height: 200 }}>
+      <TimelineProcessingOverlay
+        ranges={[
+          {
+            id: 'legacy',
+            operation: 'transcription',
+            status: 'queued',
+            startOffsetMs: 0,
+            endOffsetMs: 5000,
+            progress: 0,
+          },
+        ]}
+        trackLabel="Legacy audio"
+        video={false}
+        timelineWidthPx={1000}
+        totalDurationMs={12000}
+        visibleRange={{ startTimelineMs: 0, endTimelineMs: 12000 }}
+      />
+    </div>,
+  );
+  const bar = screen.getByRole('progressbar', {
+    name: 'Legacy audio · Transcription · Queued',
+  });
+  expect(bar.getAttribute('aria-valuenow')).toBeNull();
+  const overlay = view.container.querySelector('[data-timeline-processing]');
+  expect(bar.getBoundingClientRect().height).toBe(
+    overlay?.getBoundingClientRect().height,
+  );
 });
 
 test.each(
@@ -462,13 +529,11 @@ test.each(
       </div>,
     );
     expect(
-      screen.getByRole('progressbar', { name: 'Monitor · OCR · Queued' }),
-    ).toBeTruthy();
-    expect(
       screen.getByRole('progressbar', {
-        name: 'Monitor · Screen observations · Processing',
+        name: 'Monitor · OCR · Queued · Screen observations · Processing',
       }),
     ).toBeTruthy();
+    expect(screen.getAllByRole('progressbar')).toHaveLength(2);
     const viewport = screen.getByLabelText('Timeline viewport');
     viewport.scrollLeft = 120;
     await page.screenshot({

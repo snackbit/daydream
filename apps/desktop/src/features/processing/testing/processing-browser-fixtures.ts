@@ -4,7 +4,30 @@ import type {
   RecordingProcessingGroupPage,
   RecordingProcessingLane,
   RecordingProcessingLaneKind,
+  ProcessingLaneActivity,
 } from '@daydream/shared';
+
+export function activity(
+  patch: Partial<ProcessingLaneActivity> = {},
+): ProcessingLaneActivity {
+  return {
+    chunkId: 'chunk',
+    jobId: 'job',
+    sourceTrackId: 'screen',
+    sourceLabel: 'Monitor',
+    startOffsetMs: 0,
+    endOffsetMs: 1000,
+    status: 'running',
+    phase: 'recognizing-text',
+    startedAtMs: 1000,
+    phaseStartedAtMs: 1100,
+    lastProgressAtMs: null,
+    nextRetryAtMs: null,
+    waitingReason: null,
+    workerActive: true,
+    ...patch,
+  };
+}
 
 export function lane(
   kind: RecordingProcessingLaneKind,
@@ -55,6 +78,7 @@ export function group(
         applicability: 'disabled',
       }),
       lane('activity'),
+      lane('waveform'),
     ],
     indexCoverage: {
       applicability: 'available',

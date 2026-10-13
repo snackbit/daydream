@@ -195,6 +195,7 @@ pub fn list_vlm_observations(
             observation_kind,
             job_id,
             chunk_id
+            ,context_start_ms, confirmed_end_ms
         FROM vlm_observations
         WHERE recording_id = ?1
         AND (NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=vlm_observations.chunk_id AND rg.committed=0) OR EXISTS(SELECT 1 FROM processing_replacement_frames rf WHERE rf.chunk_id=vlm_observations.chunk_id AND rf.frame_ms=vlm_observations.frame_timestamp_ms))

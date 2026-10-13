@@ -8,13 +8,12 @@ is ordinary feature work, not a new milestone. The final UI verification record 
 
 ## User workflow
 
-Selecting a recognized visual frame opens a compact OCR summary in the Inspector.
-Full text is hidden until the user chooses Read OCR text; the reader provides
-search, copying and bounded scrolling. The OCR surface separates Text, Changes
-and Details. Text follows document reading order; Changes shows source-linked
-temporal revisions; Details keeps provenance,
-engine and available confidence/geometry. A raw word dump is not the primary view.
-Retain uncertain words and label uncertainty instead of silently deleting them.
+Recognized text is internal retrieval input. Day review, search results and Studio
+do not display OCR text, revision diffs or raw word details, including in Debug.
+Screen matches open the recorded source moment; selecting a frame retains its
+timestamp, source, recognition status and processing recovery controls. Audio
+transcripts remain visible in playback. Preserve recognized words and their
+provenance internally rather than deleting uncertain retrieval input.
 
 Users choose local Tesseract (default) or configured VLM OCR. VLM OCR reuses the
 existing Vision endpoint, model and backend-held key reference, but is independent
@@ -38,12 +37,17 @@ make remote requests.
   five-second cadence or turn recording FPS into an implicit OCR schedule.
 - Tesseract keeps TSV block/paragraph/line/word hierarchy and geometry for reading
   order. The document boundary retains the full recognized text and uncertain words.
-- Literal VLM OCR uses a separate adapter from descriptive visual observations.
+- Literal VLM OCR has a separately validated output section from descriptive observations.
   Send an original-size full PNG with high detail; no 1600px resize, OCR-history
   context, interpretation hints or previous-frame text. Validate model output
   before persistence. Protocol `literal-ocr-v1` accepts only ordered text blocks and
   rejects added geometry/confidence fields. Its boxes and confidence stay null;
   original image dimensions are native facts, not model estimates.
+  New general-processing jobs may share a request with material-change observations
+  when source, frame, sampling and provider/model configuration match. The OCR
+  section still reads only the current full frame; up to three eligible earlier
+  same-source frames provide observation context. Invalid sections retry independently.
+  Legacy and OCR-only jobs retain their existing request protocol.
 - Cache only exact decoded-image identity within a compatible engine/request
   configuration. Reuse avoids repeated recognition requests; it does not skip
   sampled occurrences or fabricate timestamp provenance.
@@ -71,7 +75,7 @@ summary, audio or capture changes.
 ## Durable boundaries and compatibility
 
 Rust/SQLite owns documents, ordered blocks/content, sampled occurrences and temporal
-history. React uses typed commands to query the selected frame and paginated history,
+history. React uses typed commands to query selected-frame recognition metadata,
 not raw SQLite or a whole-recording word payload. Shared types are in
 `packages/shared/src/ai/ocr.ts`; Rust DTOs are in `ai/ocr_types.rs`.
 
@@ -135,9 +139,9 @@ still need their normal distribution validation.
 | --- | --- |
 | Native storage/contracts | Explicit migration, selected-frame/history queries, ordered document/occurrence mapping, legacy reconstruction, deletion and redaction eligibility tests. |
 | Processing | Full-frame runners, literal VLM validation, exact-image reuse, whitespace-only revisions, pinned jobs, retry/reprocess and failure/recovery tests. |
-| Frontend | Readable Text/Changes/Details, provenance and uncertainty, selected-frame/history loading, empty/error/retry and keyboard/browser workflows. |
+| Frontend | Source-linked recognition metadata, no raw OCR presentation, loading/error/retry and keyboard/browser workflows. |
 | Settings | Engine selection, independent OCR/observations controls, remote disclosure, dirty/save and unavailable-provider states. |
-| Independent review | Actual desktop/narrow workflows in both themes, source/history navigation and failure recovery, with synthetic media and visible assertions. |
+| Independent review | Actual desktop/narrow workflows in both themes, source navigation and failure recovery, with synthetic media and visible assertions. |
 
 Final gates run once after the coherent source batch settles: coordinated native
 full tests, formatting and strict all-target Clippy with two build jobs; root

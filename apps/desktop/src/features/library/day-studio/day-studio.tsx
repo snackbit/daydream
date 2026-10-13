@@ -5,10 +5,10 @@ import type {
   ResizeLibraryRedactionInput,
   LibraryWaveformTileRequest,
 } from '@daydream/shared';
+import type { GetRecordingTranscriptPreviewInput } from '@daydream/shared';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
-import { DayReviewPanel } from '@/features/recall/day/day-review-panel';
 import { recallDateLabel } from '@/features/recall/recall-format';
 import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
 import { useStudioSelectionDismissal } from '../components/studio/interactions/use-studio-selection-dismissal';
@@ -30,18 +30,19 @@ import { RecordingDeleteDialog } from '../recording-studio-route/recording-delet
 import { RecordingRenameDialog } from '../recording-studio-route/recording-rename-dialog';
 import { RecordingStudioToolbar } from '../recording-studio-route/recording-studio-toolbar';
 import { DayRecordingAudioCleanup } from './day-recording-audio-cleanup';
-import { DayRecordingsPanel } from './day-recordings-panel';
 import { projectDayResults } from './day-results';
 import {
   sourceRedaction,
   readDayWaveformTiles,
   prepareDayRedactionResize,
 } from './day-studio-actions';
+import { DayStudioNavigation } from './day-studio-navigation';
 import {
   dayPlaybackAssets,
   splitDayRanges,
   type DayTimelineModel,
 } from './day-timeline';
+import { readDayTranscriptPreview } from './transcripts/read-day-transcript-preview';
 import type {
   DayMutationController,
   DayPrivacyOperation,
@@ -72,8 +73,19 @@ export function DayStudio({
   const sessions = useDayPlaybackSessions(model),
     derived = useDayResults(model);
   const projected = useMemo(
-    () => projectDayResults(model, derived.results),
-    [model, derived.results],
+    () =>
+      projectDayResults(
+        model,
+        derived.results,
+        derived.resultRange,
+        derived.failedIds,
+      ),
+    [model, derived.results, derived.resultRange, derived.failedIds],
+  );
+  const readTranscriptPreview = useCallback(
+    (input: GetRecordingTranscriptPreviewInput) =>
+      readDayTranscriptPreview(model, input),
+    [model],
   );
   const assets = useMemo(
     () => dayPlaybackAssets(model, sessions.sessions),
@@ -203,6 +215,7 @@ export function DayStudio({
   }, []);
   useStudioSelectionDismissal(clear);
   const inspect = useCallback((value: StudioInspectorSelection) => {
+    useStudioTimelineStore.getState().noteInspection();
     setSelection(value);
     setEvidenceDismissed(true);
   }, []);
@@ -323,6 +336,9 @@ export function DayStudio({
   );
   const timeline = (
     <TrackTimeline
+      readTranscriptPreview={readTranscriptPreview}
+      timelinePendingRanges={projected.pendingRanges}
+      timelineFailedRanges={projected.failedRanges}
       timelineOriginMs={model.originMs}
       detail={model.view}
       activity={projected.activity}
@@ -348,14 +364,6 @@ export function DayStudio({
   );
   const inspector = (
     <StudioSidebar
-      recordings={
-        <DayRecordingsPanel
-          model={model}
-          activeId={active?.id ?? null}
-          onSelect={selectRecording}
-        />
-      }
-      day={<DayReviewPanel date={model.manifest.dayId} />}
       actions={{
         readPlaybackTimeMs: playback.actions.readPlaybackTimeMs,
         onClearActivitySelection: clear,
@@ -387,6 +395,16 @@ export function DayStudio({
   return (
     <TooltipProvider delayDuration={300}>
       <RecordingStudioToolbar
+        processingRecordingIds={model.manifest.recordings.map(
+          (recording) => recording.id,
+        )}
+        navigation={
+          <DayStudioNavigation
+            model={model}
+            activeId={active?.id ?? null}
+            onSelect={selectRecording}
+          />
+        }
         title={recallDateLabel(model.manifest.dayId)}
         detail={active}
         aiProcessing={{

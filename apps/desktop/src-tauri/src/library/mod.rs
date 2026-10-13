@@ -23,7 +23,7 @@ use crate::{
 
 const RECORDING_TITLE_MAX_CHARS: usize = 120;
 
-mod waveforms;
+pub(crate) mod waveforms;
 
 mod types;
 pub(crate) use types::*;

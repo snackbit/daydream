@@ -22,17 +22,25 @@ if [ "${DAYDREAM_E2E_PRIVATE_BUS:-}" != 1 ]; then
 fi
 ulimit -c 0
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright}"
-DAYDREAM_E2E_DIR=$(mktemp -d /tmp/daydream-native-e2e.XXXXXX)
+if [ -n "${DAYDREAM_E2E_REUSE_DIR:-}" ]; then
+  case "$DAYDREAM_E2E_REUSE_DIR" in /tmp/daydream-native-e2e.*) ;; *) printf '%s\n' 'Only an isolated native journey fixture can be reused.' >&2; exit 1 ;; esac
+  test -f "$DAYDREAM_E2E_REUSE_DIR/studio-fixture.json"
+  DAYDREAM_E2E_DIR="$DAYDREAM_E2E_REUSE_DIR"
+else
+  DAYDREAM_E2E_DIR=$(mktemp -d /tmp/daydream-native-e2e.XXXXXX)
+fi
 export DAYDREAM_E2E_DIR
 export XDG_DATA_HOME="$DAYDREAM_E2E_DIR/data" XDG_CONFIG_HOME="$DAYDREAM_E2E_DIR/config"
 export XDG_CACHE_HOME="$DAYDREAM_E2E_DIR/cache" XDG_STATE_HOME="$DAYDREAM_E2E_DIR/state"
 export XDG_RUNTIME_DIR="$DAYDREAM_E2E_DIR/runtime"
 export GDK_BACKEND=broadway BROADWAY_DISPLAY=:188 TZ=UTC GDK_SCALE=1 GDK_DPI_SCALE=1
 export GTK_IM_MODULE=gtk-im-context-simple LC_ALL=C.UTF-8
-export WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:39288
+export DAYDREAM_E2E_INSPECTOR_PORT="${DAYDREAM_E2E_INSPECTOR_PORT:-39288}"
+export WEBKIT_INSPECTOR_HTTP_SERVER="127.0.0.1:$DAYDREAM_E2E_INSPECTOR_PORT"
 export XDG_CURRENT_DESKTOP=synthetic XDG_SESSION_TYPE=broadway DESKTOP_SESSION=synthetic
 export DISPLAY= WAYLAND_DISPLAY=
 export DAYDREAM_RECORDER_BACKEND=fake COREPACK_HOME=/tmp/corepack
+export ALSOFT_DRIVERS=null
 DAYDREAM_FFMPEG_PATH=$(corepack yarn workspace @daydream/desktop exec node --input-type=module -e 'import ffmpeg from "ffmpeg-static"; process.stdout.write(ffmpeg)')
 export DAYDREAM_FFMPEG_PATH
 mkdir -m 700 -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" "$DAYDREAM_E2E_DIR/package/embedding" "$DAYDREAM_E2E_DIR/package/vad"
@@ -42,6 +50,7 @@ cp apps/desktop/src-tauri/resources/embedding/daydream-embedding-worker "$DAYDRE
 cp apps/desktop/src-tauri/resources/vad/ggml-silero-v6.2.0.bin "$DAYDREAM_E2E_DIR/package/vad/"
 printf 'Native E2E artifacts: %s\n' "$DAYDREAM_E2E_DIR"
 DAYDREAM_E2E_BROADWAY_PID=
+DAYDREAM_E2E_KEYRING_PID=
 DAYDREAM_E2E_WEBDRIVER_PID=
 DAYDREAM_E2E_APP_PID=
 cleanup() {
@@ -57,9 +66,34 @@ cleanup() {
     kill "$DAYDREAM_E2E_BROADWAY_PID" 2>/dev/null || true
     wait "$DAYDREAM_E2E_BROADWAY_PID" 2>/dev/null || true
   fi
+  if [ -n "$DAYDREAM_E2E_KEYRING_PID" ]; then
+    kill "$DAYDREAM_E2E_KEYRING_PID" 2>/dev/null || true
+    wait "$DAYDREAM_E2E_KEYRING_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
+case " ${DAYDREAM_E2E_PHASES:-initial restart keyboard} " in
+  *" language "*)
+    DAYDREAM_E2E_KEYRING_DAEMON=${DAYDREAM_E2E_KEYRING_DAEMON:-$(command -v gnome-keyring-daemon || true)}
+    if [ ! -x "$DAYDREAM_E2E_KEYRING_DAEMON" ]; then
+      printf '%s\n' 'Language validation needs gnome-keyring-daemon or DAYDREAM_E2E_KEYRING_DAEMON for its isolated Secret Service.' >&2
+      exit 1
+    fi
+    mkdir -m 700 -p "$DAYDREAM_E2E_DIR/keyring-control"
+    printf '%s' 'synthetic-native-fixture-only' | env LD_LIBRARY_PATH="${DAYDREAM_E2E_KEYRING_LIBS:-${LD_LIBRARY_PATH:-}}" "$DAYDREAM_E2E_KEYRING_DAEMON" --foreground --unlock --components=secrets --control-directory="$DAYDREAM_E2E_DIR/keyring-control" > "$DAYDREAM_E2E_DIR/keyring.log" 2>&1 &
+    DAYDREAM_E2E_KEYRING_PID=$!
+    gdbus wait --session --timeout 10 org.freedesktop.secrets
+    ;;
+esac
 for DAYDREAM_E2E_PHASE in ${DAYDREAM_E2E_PHASES:-initial restart keyboard}; do
+  if [ "$DAYDREAM_E2E_PHASE" = language ]; then
+    corepack yarn workspace @daydream/desktop exec node scripts/native-e2e/language-fixture.mjs
+  fi
+  if [ "$DAYDREAM_E2E_PHASE" = studio ] || [ "$DAYDREAM_E2E_PHASE" = inference ]; then
+    if [ -z "${DAYDREAM_E2E_REUSE_DIR:-}" ]; then
+      corepack yarn workspace @daydream/desktop exec node scripts/native-e2e/studio-fixture.mjs "$DAYDREAM_E2E_PHASE"
+    fi
+  fi
   export XDG_RUNTIME_DIR="$DAYDREAM_E2E_DIR/runtime/$DAYDREAM_E2E_PHASE"
   mkdir -m 700 -p "$XDG_RUNTIME_DIR"
   broadwayd -a 127.0.0.1 -p 39188 :188 > "$DAYDREAM_E2E_DIR/broadway-$DAYDREAM_E2E_PHASE.log" 2>&1 &
@@ -71,7 +105,7 @@ for DAYDREAM_E2E_PHASE in ${DAYDREAM_E2E_PHASES:-initial restart keyboard}; do
     DAYDREAM_E2E_WEBDRIVER_PID=$!
   else
     unset TAURI_WEBVIEW_AUTOMATION WEBKIT_INSPECTOR_SERVER
-    export WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:39288
+    export WEBKIT_INSPECTOR_HTTP_SERVER="127.0.0.1:$DAYDREAM_E2E_INSPECTOR_PORT"
   fi
   LD_PRELOAD="$DAYDREAM_E2E_DIR/broadway-dpi.so" "$DAYDREAM_E2E_DIR/package/daydream-desktop" > "$DAYDREAM_E2E_DIR/app-$DAYDREAM_E2E_PHASE.log" 2>&1 &
   DAYDREAM_E2E_APP_PID=$!

@@ -19,6 +19,25 @@ pub struct RecordingProcessingLane {
     pub input_open: bool,
     pub error_code: Option<String>,
     pub next_retry_at_ms: Option<i64>,
+    pub activity: Vec<ProcessingLaneActivity>,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessingLaneActivity {
+    pub chunk_id: String,
+    pub job_id: String,
+    pub source_track_id: Option<String>,
+    pub source_label: Option<String>,
+    pub start_offset_ms: Option<i64>,
+    pub end_offset_ms: Option<i64>,
+    pub status: String,
+    pub phase: String,
+    pub started_at_ms: Option<i64>,
+    pub phase_started_at_ms: Option<i64>,
+    pub last_progress_at_ms: Option<i64>,
+    pub next_retry_at_ms: Option<i64>,
+    pub waiting_reason: Option<String>,
+    pub worker_active: Option<bool>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +65,8 @@ pub struct RecordingProcessingGroup {
 #[serde(rename_all = "camelCase")]
 pub struct ListRecordingProcessingGroupsInput {
     pub recording_id: Option<String>,
+    #[serde(default)]
+    pub recording_ids: Vec<String>,
     pub filter: Option<String>,
     pub limit: Option<usize>,
     pub cursor: Option<BackgroundTaskCursor>,
@@ -58,6 +79,8 @@ pub struct RecordingProcessingCounts {
     pub active: usize,
     pub attention: usize,
     pub history: usize,
+    pub running: usize,
+    pub queued: usize,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

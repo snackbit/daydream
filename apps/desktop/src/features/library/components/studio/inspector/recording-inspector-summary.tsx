@@ -45,10 +45,12 @@ export function RecordingInspectorSummary({
             label="Duration"
             value={formatDuration(detail.durationMs)}
           />
-          <InspectorField
-            label="Segments"
-            value={String(detail.segments.length)}
-          />
+          {debugEnabled ? (
+            <InspectorField
+              label="Storage fragments"
+              value={String(detail.segments.length)}
+            />
+          ) : null}
           <InspectorField
             label="Stored locally"
             value={formatFileSize(detail.sizeBytes)}
@@ -73,10 +75,12 @@ export function RecordingInspectorSummary({
               label="Job status"
               value={aiProcessingState.job.status}
             />
-            <InspectorField
-              label="Processing chunks"
-              value={String(aiProcessingState.chunks.length)}
-            />
+            {debugEnabled ? (
+              <InspectorField
+                label="Processing chunks"
+                value={String(aiProcessingState.chunks.length)}
+              />
+            ) : null}
           </dl>
         ) : (
           <p className="text-muted-foreground text-xs">
@@ -142,9 +146,11 @@ function TranscriptionSourceSummary({
             }
           />
         ) : null}
-        <InspectorField label="Chunks" value={String(track.chunks.length)} />
+        {debugEnabled ? (
+          <InspectorField label="Chunks" value={String(track.chunks.length)} />
+        ) : null}
         <InspectorField
-          label="Text segments"
+          label="Speech entries"
           value={String(track.textSegmentCount)}
         />
       </dl>

@@ -1,4 +1,5 @@
 mod group_actions;
+mod group_activity;
 mod group_candidates;
 pub(crate) mod group_commands;
 mod group_details;
@@ -56,6 +57,7 @@ pub(crate) fn emit_changed<R: Runtime>(app: &tauri::AppHandle<R>, recording_id: 
     let _ = app.emit(
         "background-tasks-changed",
         BackgroundTasksChanged {
+            source_kind: None,
             recording_id: recording_id.map(str::to_owned),
             updated_at_ms: now_ms(),
         },

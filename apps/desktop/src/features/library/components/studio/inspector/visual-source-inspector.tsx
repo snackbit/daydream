@@ -23,6 +23,9 @@ export function VisualSourceInspector({
   onSeek,
   sourceLabel = 'Screen',
 }: VisualSourceInspectorProps) {
+  const observations = frame.vlmObservations.filter(
+    (item) => item.observationKind !== 'corrected-ocr',
+  );
   const handleSeek = useCallback(() => {
     onSeek(frame.frameTimestampMs);
   }, [frame.frameTimestampMs, onSeek]);
@@ -61,6 +64,7 @@ export function VisualSourceInspector({
         </div>
       </InspectorSection>
       <OcrDocumentInspector
+        showSourceLocation={false}
         context={context}
         key={JSON.stringify([
           context.recordingId,
@@ -73,17 +77,15 @@ export function VisualSourceInspector({
         documentId={frame.ocrDocumentId ?? null}
       />
       <InspectorSection title="Screen observations">
-        {frame.vlmObservations.length > 0 ? (
+        {observations.length > 0 ? (
           <div className="divide-y">
-            {frame.vlmObservations.map((observation) => (
+            {observations.map((observation) => (
               <div className="space-y-1 py-2" key={observation.id}>
                 <p className="text-sm leading-5 break-words whitespace-pre-wrap">
                   {observation.text}
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  {observation.observationKind === 'corrected-ocr'
-                    ? 'Visual-model OCR correction observation'
-                    : 'Visual-model screen observation'}{' '}
+                  Visual-model screen observation{' '}
                   {context.debugEnabled
                     ? ` · ${observation.model ?? observation.provider}`
                     : null}

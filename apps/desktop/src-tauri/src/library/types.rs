@@ -211,6 +211,7 @@ pub struct LibraryRecordingDebugData {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackAssets {
+    pub(crate) can_seek_in_stream: bool,
     pub(crate) runs: Vec<LibraryPlaybackRun>,
     pub(crate) error: Option<String>,
     pub(crate) recording_id: String,
@@ -291,6 +292,7 @@ pub struct LibraryWaveformSegment {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryWaveformTiles {
+    pub(crate) pending: bool,
     pub(crate) bin_ms: i64,
     pub(crate) error: Option<String>,
     pub(crate) recording_id: String,

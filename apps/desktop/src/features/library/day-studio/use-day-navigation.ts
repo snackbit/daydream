@@ -71,7 +71,7 @@ export function useDayNavigation({
         playback.state.currentSegment?.videoTrackId ??
           sources.selectedTrackId ??
           '',
-        playback.state.displayedTimelineMs,
+        playback.actions.readPlaybackTimeMs(),
       );
       if (!source) return;
       const request = generation.current;
@@ -97,7 +97,7 @@ export function useDayNavigation({
     [
       resolveSource,
       playback.state.currentSegment,
-      playback.state.displayedTimelineMs,
+      playback.actions,
       sources.selectedTrackId,
       seek,
       onError,

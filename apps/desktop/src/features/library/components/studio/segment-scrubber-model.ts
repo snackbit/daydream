@@ -56,6 +56,20 @@ export function buildTimelineRegions(
   });
 }
 
+/** Draw continuous recorded spans; fragment boundaries are only hover lookup data. */
+export function continuousTimelineRegions(
+  regions: TimelineRegion[],
+): TimelineRegion[] {
+  const spans: TimelineRegion[] = [];
+  for (const region of regions) {
+    const previous = spans.at(-1);
+    if (previous?.kind === region.kind && region.startMs <= previous.endMs) {
+      previous.endMs = Math.max(previous.endMs, region.endMs);
+    } else spans.push({ ...region });
+  }
+  return spans;
+}
+
 export function previewForTimeline(
   timelineMs: number,
   totalDurationMs: number,
@@ -86,7 +100,7 @@ export function previewForTimeline(
   const thumbnail = nearestThumbnail(playbackSegment, offsetMs);
 
   return {
-    label: `Segment ${region.segment.segmentIndex} - ${formatDuration(offsetMs)}`,
+    label: formatDuration(timelineMs),
     leftPercent,
     thumbnailUrl: thumbnail?.url ?? null,
     title: formatDuration(clampedTimelineMs),
@@ -153,10 +167,10 @@ function nextSegmentStart(
 
 export function timelineRegionLabel(region: TimelineRegion): string {
   if (region.kind === 'pause') {
-    return `Paused after segment ${region.segment.segmentIndex}`;
+    return 'Recording paused';
   }
 
-  return `Segment ${region.segment.segmentIndex}`;
+  return 'Recording';
 }
 
 export function clampTimelineMs(

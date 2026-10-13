@@ -161,7 +161,7 @@ export function buildInspectorContent({
         source,
         trackId,
         startMs: frame.frameTimestampMs,
-        endMs: frame.frameTimestampMs + 1,
+        endMs: observation.confirmedEndMs ?? frame.frameTimestampMs + 1,
         text: observation.text,
         words: [],
         fragments: [],

@@ -14,7 +14,8 @@ export type ProcessingJobKind =
   | 'frame-extraction'
   | 'ocr'
   | 'transcription'
-  | 'vlm';
+  | 'vlm'
+  | 'waveform';
 
 export type ProcessingJobStatus =
   | 'cancelled'
@@ -26,7 +27,7 @@ export type ProcessingJobStatus =
   | 'succeeded';
 
 export type ProcessingChunkSourceKind =
-  'activity' | 'audio' | 'frame' | 'ocr' | 'vlm';
+  'activity' | 'audio' | 'frame' | 'ocr' | 'vlm' | 'waveform';
 
 export type ProcessingChunkStatus =
   | 'cancelled'
@@ -106,9 +107,23 @@ export interface StartRecordingAiProcessingInput {
 
 export interface GetRecordingAiProcessingStateInput {
   recordingId: string;
+  startOffsetMs?: number;
+  endOffsetMs?: number;
+  bucketMs?: number;
+  reviewStartOffsetMs?: number;
+  reviewEndOffsetMs?: number;
+}
+
+export interface StudioTimelineBucket {
+  trackId: string;
+  kind: 'speech' | 'observation' | 'activity';
+  startOffsetMs: number;
+  endOffsetMs: number;
+  count: number;
 }
 
 export interface RecordingAiProcessingState {
+  timelineOverview?: StudioTimelineBucket[];
   transcriptionProgress?: RecordingTranscriptionProgress[];
   reprocessingScopes?: RecordingReprocessingProgress[];
   resultsRevision?: string;

@@ -44,7 +44,7 @@ pub(crate) fn retry_processing_units_for_action(
     if input
         .source_kind
         .as_deref()
-        .is_some_and(|kind| !matches!(kind, "audio" | "ocr" | "vlm" | "activity"))
+        .is_some_and(|kind| !matches!(kind, "audio" | "ocr" | "vlm" | "activity" | "waveform"))
     {
         return Err(ai_error(
             "ai_processing_selection_invalid",

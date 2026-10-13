@@ -1,14 +1,10 @@
-import {
-  useRef,
-  type ButtonHTMLAttributes,
-  type MouseEvent,
-  type PointerEvent,
-} from 'react';
+import { useMemo, type ButtonHTMLAttributes } from 'react';
 import type {
   ActivityCaptureState,
   ActivityInterval,
   LibraryRecordingRedaction,
   RecordingActivity,
+  StudioTimelineBucket,
   LibraryRecordingSegment,
 } from '@daydream/shared';
 import { cn } from '@/lib/utils';
@@ -22,12 +18,15 @@ import type {
   StudioLaneDraft,
   StudioTimeRangeSelection,
 } from './studio-timeline-store';
+import { SourceOverviewStrip } from './timeline/source-overview-strip';
+import {
+  groupTimelineEntries,
+  TimelineEntryGroupButton,
+} from './timeline/timeline-entry-groups';
+import { TimelineLaneWindow } from './timeline/timeline-lane-window';
 import { TrackLaneHeader } from './track-lane-header';
 import { RedactionOverlay, TimeRangeOverlay } from './track-lane-overlays';
-import {
-  trackLaneHeightPxForKind,
-  TRACK_SELECTION_DRAG_THRESHOLD_PX,
-} from './track-timeline-math';
+import { trackLaneHeightPxForKind } from './track-timeline-math';
 
 export interface ActivityTrackLaneProps {
   activity: RecordingActivity | null;
@@ -43,6 +42,9 @@ export interface ActivityTrackLaneProps {
   timeRanges: StudioTimeRangeSelection[];
   totalDurationMs: number;
   segments: LibraryRecordingSegment[];
+  visibleRange?: { startTimelineMs: number; endTimelineMs: number } | undefined;
+  onZoomRange?: ((start: number, end: number) => void) | undefined;
+  overview?: StudioTimelineBucket[] | undefined;
 }
 
 export function ActivityTrackLane({
@@ -59,65 +61,13 @@ export function ActivityTrackLane({
   timeRanges,
   totalDurationMs,
   segments,
+  visibleRange,
+  onZoomRange,
+  overview,
 }: ActivityTrackLaneProps) {
-  const laneContentClickRef = useRef<{
-    moved: boolean;
-    x: number;
-    y: number;
-  } | null>(null);
   const laneRedactions = redactions.filter((redaction) =>
     redaction.trackIds.includes(lane.trackId),
   );
-
-  function handleLaneContentPointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (
-      event.target instanceof Element &&
-      event.target.closest('[data-library-action]')
-    ) {
-      laneContentClickRef.current = null;
-      return;
-    }
-
-    laneContentClickRef.current = {
-      moved: false,
-      x: event.clientX,
-      y: event.clientY,
-    };
-  }
-
-  function handleLaneContentPointerMove(event: PointerEvent<HTMLDivElement>) {
-    const clickState = laneContentClickRef.current;
-    if (!clickState) {
-      return;
-    }
-
-    if (
-      Math.hypot(event.clientX - clickState.x, event.clientY - clickState.y) >
-      TRACK_SELECTION_DRAG_THRESHOLD_PX
-    ) {
-      clickState.moved = true;
-    }
-  }
-
-  function handleLaneContentClick(event: MouseEvent<HTMLDivElement>) {
-    if (
-      event.target instanceof Element &&
-      event.target.closest('[data-library-action]')
-    ) {
-      return;
-    }
-
-    const clickState = laneContentClickRef.current;
-    laneContentClickRef.current = null;
-    if (clickState?.moved) {
-      return;
-    }
-
-    onSelectLane(
-      lane.trackId,
-      event.shiftKey || event.metaKey || event.ctrlKey,
-    );
-  }
 
   return (
     <>
@@ -132,30 +82,39 @@ export function ActivityTrackLane({
         onSelectLane={onSelectLane}
         onToggleTrackMuted={() => undefined}
       />
-      <div
+      <TimelineLaneWindow
         className={cn(
           'bg-muted/30 group-hover/lane:bg-muted/50 relative isolate z-0 cursor-pointer overflow-hidden border-b transition-colors',
           selectedLane && 'bg-accent/20',
         )}
-        data-lane-content
-        data-track-id={lane.trackId}
-        style={{
-          height: trackLaneHeightPxForKind(lane.kind),
-          width: timelineWidthPx,
-        }}
-        onClick={handleLaneContentClick}
-        onPointerDown={handleLaneContentPointerDown}
-        onPointerMove={handleLaneContentPointerMove}
+        trackId={lane.trackId}
+        height={trackLaneHeightPxForKind(lane.kind)}
+        width={timelineWidthPx}
+        duration={totalDurationMs}
+        range={visibleRange}
       >
-        <ActivityLaneContent
-          activity={activity}
-          lane={lane}
-          redactions={laneRedactions}
-          timelineWidthPx={timelineWidthPx}
-          totalDurationMs={totalDurationMs}
-          onInspectActivity={onInspectActivity}
-          segments={segments}
-        />
+        {overview !== undefined && onZoomRange ? (
+          <SourceOverviewStrip
+            range={visibleRange}
+            buckets={overview}
+            trackId={lane.trackId}
+            width={timelineWidthPx}
+            duration={totalDurationMs}
+            onZoom={onZoomRange}
+          />
+        ) : (
+          <ActivityLaneContent
+            activity={activity}
+            lane={lane}
+            redactions={laneRedactions}
+            timelineWidthPx={timelineWidthPx}
+            totalDurationMs={totalDurationMs}
+            onInspectActivity={onInspectActivity}
+            segments={segments}
+            visibleRange={visibleRange}
+            onZoomRange={onZoomRange}
+          />
+        )}
         {timeRanges.map((range) => (
           <TimeRangeOverlay
             key={range.id}
@@ -175,7 +134,7 @@ export function ActivityTrackLane({
             onSelectRedaction={onSelectRedaction}
           />
         ))}
-      </div>
+      </TimelineLaneWindow>
     </>
   );
 }
@@ -188,6 +147,8 @@ function ActivityLaneContent({
   timelineWidthPx,
   totalDurationMs,
   segments,
+  visibleRange,
+  onZoomRange,
 }: {
   activity: RecordingActivity | null;
   lane: StudioLaneDraft;
@@ -196,11 +157,50 @@ function ActivityLaneContent({
   timelineWidthPx: number;
   totalDurationMs: number;
   segments: LibraryRecordingSegment[];
+  visibleRange?: { startTimelineMs: number; endTimelineMs: number } | undefined;
+  onZoomRange?: ((start: number, end: number) => void) | undefined;
 }) {
+  const content = useMemo(() => {
+    const from = visibleRange?.startTimelineMs ?? 0;
+    const to = visibleRange?.endTimelineMs ?? totalDurationMs;
+    return {
+      events: (activity?.events ?? []).filter(
+        (event) => event.offsetMs >= from && event.offsetMs < to,
+      ),
+      intervals: (activity?.intervals ?? []).filter(
+        (interval) =>
+          interval.startOffsetMs < to && interval.endOffsetMs > from,
+      ),
+    };
+  }, [activity, visibleRange, totalDurationMs]);
+  const pixelsPerMs = timelineWidthPx / totalDurationMs;
   if (lane.kind === 'activity-focus') {
+    if (onZoomRange && pixelsPerMs * 30_000 < 24) {
+      const groups = groupTimelineEntries(
+        content.events.map((event) => ({
+          id: event.id,
+          startMs: event.offsetMs,
+          endMs: event.offsetMs + 1,
+        })),
+        pixelsPerMs,
+      );
+      return (
+        <div className="absolute inset-0">
+          {groups.map((group) => (
+            <TimelineEntryGroupButton
+              key={group.id}
+              group={group}
+              label="window changes"
+              pixelsPerMs={pixelsPerMs}
+              onZoom={onZoomRange}
+            />
+          ))}
+        </div>
+      );
+    }
     return (
       <div className="relative h-6">
-        {activity?.events
+        {content.events
           .filter((event) => event.kind === 'focused-window')
           .map((event) => (
             <FocusActivityMarker
@@ -213,7 +213,7 @@ function ActivityLaneContent({
             />
           ))}
         <FocusAnnotationStrip
-          events={activity?.events ?? []}
+          events={content.events}
           lane={lane}
           redactions={redactions}
           segments={segments}
@@ -227,7 +227,7 @@ function ActivityLaneContent({
 
   const sourceKind = lane.kind === 'activity-mouse' ? 'mouse' : 'keyboard';
   const intervals =
-    activity?.intervals.filter(
+    content.intervals.filter(
       (interval) =>
         interval.sourceKind === sourceKind && interval.state === 'active',
     ) ?? [];
@@ -262,16 +262,35 @@ function ActivityLaneContent({
           lane={lane}
         />
       ) : null}
-      {intervals.map((interval) => (
-        <ActivityIntervalSpan
-          interval={interval}
-          key={`${interval.id}:${interval.startOffsetMs}:${interval.endOffsetMs}`}
-          lane={lane}
-          timelineWidthPx={timelineWidthPx}
-          totalDurationMs={totalDurationMs}
-          onInspect={handleInspectInterval}
-        />
-      ))}
+      {groupTimelineEntries(
+        intervals.map((interval) => ({
+          ...interval,
+          startMs: interval.startOffsetMs,
+          endMs: interval.endOffsetMs,
+        })),
+        pixelsPerMs,
+      ).map((group) =>
+        group.id.startsWith('group:') && onZoomRange ? (
+          <TimelineEntryGroupButton
+            key={group.id}
+            group={group}
+            label={`${sourceKind} activity intervals`}
+            pixelsPerMs={pixelsPerMs}
+            onZoom={onZoomRange}
+          />
+        ) : (
+          group.items.map((interval) => (
+            <ActivityIntervalSpan
+              interval={interval}
+              key={`${interval.id}:${interval.startOffsetMs}:${interval.endOffsetMs}`}
+              lane={lane}
+              timelineWidthPx={timelineWidthPx}
+              totalDurationMs={totalDurationMs}
+              onInspect={handleInspectInterval}
+            />
+          ))
+        ),
+      )}
     </>
   );
 }

@@ -27,6 +27,8 @@ export function InspectorContentEntryCard({
     () => onSeek?.(entry.startMs),
     [entry.startMs, onSeek],
   );
+  if (entry.kind === 'screen-text' || entry.observationKind === 'corrected-ocr')
+    return null;
   const Icon =
     entry.kind === 'focus'
       ? AppWindow
@@ -50,11 +52,7 @@ export function InspectorContentEntryCard({
         <span className="flex min-w-0 items-center gap-2 font-medium">
           <Icon aria-hidden="true" className="size-3.5 shrink-0" />
           {entry.source}
-          {entry.kind === 'observation'
-            ? ' · Observation'
-            : entry.kind === 'screen-text'
-              ? ' · Screen text'
-              : null}
+          {entry.kind === 'observation' ? ' · Observation' : null}
         </span>
         {onSeek ? (
           <Button

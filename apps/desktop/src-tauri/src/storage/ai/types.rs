@@ -267,6 +267,8 @@ pub struct OcrRegionRow {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VlmObservationRow {
+    pub context_start_ms: Option<i64>,
+    pub confirmed_end_ms: Option<i64>,
     pub chunk_id: String,
     pub confidence: Option<f64>,
     pub frame_timestamp_ms: i64,

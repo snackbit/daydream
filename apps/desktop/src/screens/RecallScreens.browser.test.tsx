@@ -223,7 +223,8 @@ test('Search submits typed words and literal mode, exposes source links, and pag
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
   await userEvent.click(screen.getByRole('textbox', { name: 'Find a moment' }));
   await userEvent.keyboard('{Enter}');
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   expect(native.invoke).toHaveBeenCalledWith('searchRecallEvidence', {
     input: expect.objectContaining({
       query: 'focus',
@@ -235,6 +236,42 @@ test('Search submits typed words and literal mode, exposes source links, and pag
   expect(
     screen.getByRole('link', { name: /screen text/i }).getAttribute('href'),
   ).toContain('evidenceId=evidence-1');
+});
+
+test('audio search retains transcript excerpts while screen matches keep source links without OCR', async () => {
+  native.invoke.mockImplementation(async (command: string) => {
+    if (command === 'getRecallStatus') return recallStatusFixture;
+    if (command === 'cancelRecallSearch') return undefined;
+    if (command === 'searchRecallEvidence')
+      return {
+        ...recallSearchFixture,
+        hits: [
+          { evidence: recallEvidenceFixture, score: 1 },
+          {
+            evidence: {
+              ...recallEvidenceFixture,
+              evidenceId: 'audio-evidence',
+              sourceKind: 'microphone',
+              text: 'Synthetic spoken excerpt',
+            },
+            score: 0.9,
+          },
+        ],
+      };
+    throw new Error('Unexpected synthetic command');
+  });
+  render(
+    <SearchScreen
+      query="focus"
+      source="all"
+      date={null}
+      onSearchChange={vi.fn()}
+    />,
+  );
+  await screen.findByText('Synthetic spoken excerpt');
+  expect(screen.getByRole('link', { name: /screen text/i })).toBeTruthy();
+  expect(screen.getByRole('link', { name: /microphone/i })).toBeTruthy();
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
 });
 
 test('A privacy change clears private results immediately and rejects a late search response', async () => {
@@ -260,18 +297,19 @@ test('A privacy change clears private results immediately and rejects a late sea
       onSearchChange={vi.fn()}
     />,
   );
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   act(() => {
     native.changed?.({ payload: { dayId: null, privacyRevision: 2 } });
   });
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
   await waitFor(() => expect(calls).toBe(2));
   act(() => {
     native.changed?.({ payload: { dayId: null, privacyRevision: 3 } });
     resolveLate?.(recallSearchFixture);
   });
   await waitFor(() => expect(calls).toBe(3));
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
 });
 
 test('Malformed eligibility metadata withholds private results until explicit recovery', async () => {
@@ -283,19 +321,21 @@ test('Malformed eligibility metadata withholds private results until explicit re
       onSearchChange={vi.fn()}
     />,
   );
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   act(() => {
     native.changed?.({ payload: { dayId: null, privacyRevision: 'invalid' } });
   });
   await screen.findByRole('alert');
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
   expect(
     native.invoke.mock.calls.filter(
       ([command]) => command === 'searchRecallEvidence',
     ),
   ).toHaveLength(1);
   await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
 });
 
 test('Progress bursts preserve an in-flight search and coalesce one trailing refresh while privacy still cancels immediately', async () => {
@@ -329,19 +369,20 @@ test('Progress bursts preserve an in-flight search and coalesce one trailing ref
   await act(async () => {
     complete[0]?.(recallSearchFixture);
   });
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   await waitFor(() => expect(complete).toHaveLength(2));
   expect(native.invoke).not.toHaveBeenCalledWith('cancelRecallSearch');
   act(() => {
     native.changed?.({ payload: { dayId: null, privacyRevision: 2 } });
   });
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
   expect(native.invoke).toHaveBeenCalledWith('cancelRecallSearch');
   await act(async () => {
     complete[1]?.(recallSearchFixture);
   });
   await waitFor(() => expect(complete).toHaveLength(3));
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
 });
 
 test('A changed query cancels its previous scope independently of progress refreshes', async () => {
@@ -382,11 +423,12 @@ test('A changed query cancels its previous scope independently of progress refre
   await act(async () => {
     complete[0]?.(recallSearchFixture);
   });
-  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
+  expect(screen.queryByRole('link', { name: /screen text/i })).toBeNull();
   await act(async () => {
     complete[1]?.(recallSearchFixture);
   });
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   expect(native.invoke).toHaveBeenCalledWith('searchRecallEvidence', {
     input: expect.objectContaining({
       query: 'new query',
@@ -424,7 +466,8 @@ test('Hybrid search preserves paraphrased evidence and sends source, day, and cu
   await userEvent.click(screen.getByRole('option', { name: 'Screen text' }));
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
   await userEvent.click(screen.getByRole('button', { name: 'Search' }));
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   expect(
     within(screen.getByRole('region', { name: 'Search results' })).getByText(
       'Semantic + literal',
@@ -452,7 +495,8 @@ test('Hybrid search preserves paraphrased evidence and sends source, day, and cu
   await userEvent.click(
     screen.getByRole('button', { name: 'Previous results' }),
   );
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
 });
 
 test('Day retains review controls without feedback forms and invalidated days withhold accepted task text', async () => {
@@ -549,7 +593,8 @@ test('Search retries a failed read and reports incomplete literal coverage witho
   );
   await screen.findByRole('alert');
   await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  await screen.findByText(recallEvidenceFixture.text);
+  await screen.findByRole('link', { name: /screen text/i });
+  expect(screen.queryByText(recallEvidenceFixture.text)).toBeNull();
   expect(screen.getByText('Literal matches')).toBeTruthy();
   expect(
     within(screen.getByRole('region', { name: 'Search results' })).queryByText(

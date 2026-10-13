@@ -22,6 +22,8 @@ export interface OcrRegion {
 }
 
 export interface VlmObservation {
+  contextStartMs?: number | null;
+  confirmedEndMs?: number | null;
   chunkId: string;
   confidence: number | null;
   frameTimestampMs: number;

@@ -63,35 +63,8 @@ pub(super) fn publish(
     )];
     let value = transcription::constrain_owned_transcription(value, duration, &owned);
     let model = selected_transcription_model(settings)?;
-    let (eligible_start, eligible_end) = if duration == 0 {
-        (unit.start_ms, unit.end_ms)
-    } else {
-        (unit.submitted_start_ms, unit.submitted_end_ms)
-    };
     checkpoint(storage, chunk, |tx| {
-        let redactions = storage::list_redactions(tx, &chunk.recording_id)?;
-        let segments = storage::list_recording_segments(tx, &chunk.recording_id)?;
-        let bases = storage::segment_playback_bases(&segments);
-        for (source, base) in segments.iter().zip(bases) {
-            let start = eligible_start.max(base);
-            let end = eligible_end.min(base + source.duration_ms.unwrap_or(0));
-            if end <= start {
-                continue;
-            }
-            let mut ids = vec![track.id.clone()];
-            if let Some(id) = crate::recording_privacy::source_track_id(source, &track.kind) {
-                ids.push(id);
-            }
-            if crate::recording_privacy::range_redacted(&redactions, &ids, start, end) {
-                return Ok(false);
-            }
-        }
-        if !crate::recording_privacy::range_protection_ready(
-            tx,
-            &chunk.recording_id,
-            eligible_start,
-            eligible_end,
-        )? {
+        if !unit_eligible(tx, &chunk.recording_id, track, unit)? {
             return Ok(false);
         }
         let published: bool = tx.query_row(
@@ -107,6 +80,45 @@ pub(super) fn publish(
         }
         Ok(true)
     })
+}
+
+pub(super) fn unit_eligible(
+    tx: &rusqlite::Connection,
+    recording_id: &str,
+    track: &RecordingTrackRow,
+    unit: &storage::SpeechUnit,
+) -> rusqlite::Result<bool> {
+    let (eligible_start, eligible_end) = if unit.submitted_end_ms == unit.submitted_start_ms {
+        (unit.start_ms, unit.end_ms)
+    } else {
+        (unit.submitted_start_ms, unit.submitted_end_ms)
+    };
+    let redactions = storage::list_redactions(tx, recording_id)?;
+    let segments = storage::list_recording_segments(tx, recording_id)?;
+    let bases = storage::segment_playback_bases(&segments);
+    for (source, base) in segments.iter().zip(bases) {
+        let start = eligible_start.max(base);
+        let end = eligible_end.min(base + source.duration_ms.unwrap_or(0));
+        if end <= start {
+            continue;
+        }
+        let mut ids = vec![track.id.clone()];
+        if let Some(id) = crate::recording_privacy::source_track_id(source, &track.kind) {
+            ids.push(id);
+        }
+        if crate::recording_privacy::range_redacted(&redactions, &ids, start, end) {
+            return Ok(false);
+        }
+    }
+    if !crate::recording_privacy::range_protection_ready(
+        tx,
+        recording_id,
+        eligible_start,
+        eligible_end,
+    )? {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 pub(super) fn finish_with_published_neighbor(

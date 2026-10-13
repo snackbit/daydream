@@ -40,7 +40,7 @@ struct Block {
     text: String,
 }
 
-pub(super) fn validate_response(
+pub(in crate::ai) fn validate_response(
     body: &str,
     _width: i64,
     _height: i64,

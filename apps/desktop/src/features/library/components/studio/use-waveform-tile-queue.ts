@@ -1,17 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useState } from 'react';
 import type {
   LibraryRecordingDetail,
-  LibraryWaveformTileTrack,
   LibraryWaveformTiles,
 } from '@daydream/shared';
+import { listenToAiProcessingChanged } from '@/features/ai/ai-client';
 import { getRecordingWaveformTiles } from '../../library-client';
-
-const WAVEFORM_CHUNK_DURATION_MS = 15_000;
 
 export interface WaveformRequestRange {
   endTimelineMs: number;
   startTimelineMs: number;
 }
+interface CachedWaveformTiles {
+  promise: Promise<LibraryWaveformTiles>;
+  data?: LibraryWaveformTiles;
+}
+const caches = new WeakMap<
+  typeof getRecordingWaveformTiles,
+  Map<string, CachedWaveformTiles>
+>();
+const RESOLUTIONS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
 
 export function useWaveformTileQueue({
   detail,
@@ -25,205 +32,178 @@ export function useWaveformTileQueue({
   timelineWidthPx: number;
   totalDurationMs: number;
   readTiles?: typeof getRecordingWaveformTiles | undefined;
-}): {
-  waveformStatus: 'error' | 'idle' | 'loading' | 'ready';
-  waveformTiles: LibraryWaveformTiles | null;
-} {
-  const requestIdRef = useRef(0);
-  const [waveformStatus, setWaveformStatus] = useState<
-    'error' | 'idle' | 'loading' | 'ready'
-  >('idle');
-  const [waveformTiles, setWaveformTiles] =
-    useState<LibraryWaveformTiles | null>(null);
-  const chunkRequests = useMemo(() => {
-    const chunks: Array<{
-      endTimelineMs: number;
-      startTimelineMs: number;
-      viewportWidthPx: number;
-    }> = [];
-    let chunkStartMs =
-      Math.floor(requestRange.startTimelineMs / WAVEFORM_CHUNK_DURATION_MS) *
-      WAVEFORM_CHUNK_DURATION_MS;
-    while (chunkStartMs < requestRange.endTimelineMs) {
-      const chunkEndMs = Math.min(
-        totalDurationMs,
-        chunkStartMs + WAVEFORM_CHUNK_DURATION_MS,
-      );
-      if (chunkEndMs > requestRange.startTimelineMs) {
-        chunks.push({
-          endTimelineMs: chunkEndMs,
-          startTimelineMs: chunkStartMs,
-          viewportWidthPx: Math.max(
-            1,
-            ((chunkEndMs - chunkStartMs) / totalDurationMs) * timelineWidthPx,
-          ),
-        });
-      }
-      chunkStartMs += WAVEFORM_CHUNK_DURATION_MS;
-    }
-
-    return chunks;
-  }, [
-    requestRange.endTimelineMs,
-    requestRange.startTimelineMs,
-    timelineWidthPx,
-    totalDurationMs,
-  ]);
-  const queueKey = useMemo(
+}) {
+  const sourceRevision = useMemo(
     () =>
-      chunkRequests
-        .map(
-          (chunk) =>
-            `${chunk.startTimelineMs}:${chunk.endTimelineMs}:${Math.round(
-              chunk.viewportWidthPx,
-            )}`,
-        )
-        .join('|'),
-    [chunkRequests],
+      JSON.stringify([
+        detail.audioCleanup?.revision,
+        detail.sizeBytes,
+        detail.tracks.map((track) => [track.id, track.kind, track.streamIndex]),
+        detail.segments.map((segment) => [
+          segment.id,
+          segment.durationMs,
+          segment.state,
+          segment.fileExists,
+          segment.playbackOffsetMs,
+          segment.desktopAudioStreamIndex,
+          segment.microphoneAudioStreamIndex,
+        ]),
+        detail.redactions,
+      ]),
+    [
+      detail.audioCleanup?.revision,
+      detail.sizeBytes,
+      detail.tracks,
+      detail.segments,
+      detail.redactions,
+    ],
   );
-
-  useEffect(() => {
-    if (detail.availability !== 'available') {
-      requestIdRef.current += 1;
-      return;
-    }
-
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    let active = true;
-    const timeout = window.setTimeout(() => {
-      setWaveformTiles((current) =>
-        current?.recordingId === detail.id ? current : null,
-      );
-      setWaveformStatus('loading');
-      void Promise.resolve().then(async () => {
-        let queueHasError = false;
-        for (const chunk of chunkRequests) {
-          if (!active || requestIdRef.current !== requestId) {
-            return;
-          }
-          try {
-            const nextWaveformTiles = await readTiles({
-              endTimelineMs: Math.round(chunk.endTimelineMs),
-              recordingId: detail.id,
-              startTimelineMs: Math.round(chunk.startTimelineMs),
-              viewportWidthPx: chunk.viewportWidthPx,
-            });
-            if (
-              !active ||
-              requestIdRef.current !== requestId ||
-              nextWaveformTiles.recordingId !== detail.id
-            ) {
-              return;
-            }
-            queueHasError = queueHasError || nextWaveformTiles.error !== null;
-            setWaveformTiles((current) =>
-              mergeWaveformTiles(current, nextWaveformTiles),
-            );
-            setWaveformStatus(queueHasError ? 'error' : 'loading');
-          } catch (waveformError) {
-            queueHasError = true;
-            if (!active || requestIdRef.current !== requestId) {
-              return;
-            }
-            setWaveformTiles((current) =>
-              mergeWaveformTiles(current, {
-                binMs: current?.binMs ?? 0,
-                error: errorMessage(waveformError),
-                recordingId: detail.id,
-                tracks: [],
-              }),
-            );
-            setWaveformStatus('error');
-          }
-        }
-
-        if (!active || requestIdRef.current !== requestId) {
-          return;
-        }
-        setWaveformStatus(queueHasError ? 'error' : 'ready');
-      });
-    }, 120);
-
-    return () => {
-      active = false;
-      window.clearTimeout(timeout);
+  const msPerPixel = totalDurationMs / Math.max(1, timelineWidthPx);
+  const resolution =
+    RESOLUTIONS.findLast((bin) => bin <= Math.ceil(msPerPixel)) ?? 5;
+  const input = useMemo(() => {
+    const start = Math.max(
+      0,
+      Math.floor(requestRange.startTimelineMs / 15_000) * 15_000,
+    );
+    const end = Math.min(
+      totalDurationMs,
+      Math.ceil(requestRange.endTimelineMs / 15_000) * 15_000,
+    );
+    return {
+      recordingId: detail.id,
+      startTimelineMs: start,
+      endTimelineMs: end,
+      viewportWidthPx: Math.max(1, (end - start) / resolution),
     };
   }, [
-    chunkRequests,
-    detail.availability,
     detail.id,
-    detail.audioCleanup?.revision,
-    queueKey,
-    readTiles,
+    requestRange.startTimelineMs,
+    requestRange.endTimelineMs,
+    resolution,
+    totalDurationMs,
   ]);
-
+  const key = JSON.stringify([
+    sourceRevision,
+    input.recordingId,
+    input.startTimelineMs,
+    input.endTimelineMs,
+    resolution,
+  ]);
+  const [sample, setSample] = useState<{
+    key: string;
+    revision: string;
+    data: LibraryWaveformTiles | null;
+    error: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (detail.availability !== 'available') return;
+    let active = true;
+    let timer = 0;
+    let unlisten: (() => void) | undefined;
+    const cache =
+      caches.get(readTiles) ?? new Map<string, CachedWaveformTiles>();
+    caches.set(readTiles, cache);
+    let reading = false;
+    let invalidatedDuringRead = false;
+    function refresh() {
+      if (!active || cache.get(key)?.data || timer) return;
+      if (reading) {
+        invalidatedDuringRead = true;
+        return;
+      }
+      timer = window.setTimeout(() => {
+        timer = 0;
+        void load();
+      }, 100);
+    }
+    async function load() {
+      reading = true;
+      try {
+        let pending = cache.get(key);
+        if (!pending) {
+          pending = { promise: readTiles(input) };
+          cache.set(key, pending);
+          while (cache.size > 32) {
+            const oldest = cache.keys().next().value;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+          }
+        }
+        const data = await pending.promise;
+        if (data.recordingId !== input.recordingId)
+          throw new Error(
+            'Waveform response belongs to a different recording.',
+          );
+        if (data.pending || data.error) cache.delete(key);
+        else pending.data = data;
+        if (active && data.recordingId === input.recordingId)
+          startTransition(() =>
+            setSample((current) =>
+              active
+                ? {
+                    key,
+                    revision: sourceRevision,
+                    data,
+                    error: data.error !== null,
+                  }
+                : current,
+            ),
+          );
+      } catch {
+        cache.delete(key);
+        if (active)
+          setSample({ key, revision: sourceRevision, data: null, error: true });
+      } finally {
+        reading = false;
+        if (invalidatedDuringRead) {
+          invalidatedDuringRead = false;
+          refresh();
+        }
+      }
+    }
+    void load();
+    void listenToAiProcessingChanged((event) => {
+      if (
+        !active ||
+        (event.recordingId !== detail.id && !detail.id.startsWith('day:'))
+      )
+        return;
+      // Complete cached views survive unrelated result events without more IPC.
+      refresh();
+    })
+      .then((cleanup) => {
+        if (active) unlisten = cleanup;
+        else cleanup();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      unlisten?.();
+    };
+  }, [detail.availability, detail.id, input, key, readTiles, sourceRevision]);
+  const ready = caches.get(readTiles)?.get(key)?.data;
+  const data =
+    detail.availability === 'available' && ready
+      ? ready
+      : detail.availability === 'available' &&
+          sample?.revision === sourceRevision
+        ? sample.data
+        : null;
   return {
+    waveformTiles: data,
     waveformStatus:
-      detail.availability === 'available' ? waveformStatus : 'idle',
-    waveformTiles:
-      detail.availability === 'available' &&
-      waveformTiles?.recordingId === detail.id
-        ? waveformTiles
-        : null,
+      detail.availability !== 'available'
+        ? ('idle' as const)
+        : ready
+          ? ('ready' as const)
+          : sample?.key !== key
+            ? ('loading' as const)
+            : sample.error
+              ? ('error' as const)
+              : sample.data?.pending
+                ? ('loading' as const)
+                : ('ready' as const),
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function mergeWaveformTiles(
-  current: LibraryWaveformTiles | null,
-  next: LibraryWaveformTiles,
-): LibraryWaveformTiles {
-  if (
-    !current ||
-    current.recordingId !== next.recordingId ||
-    current.binMs !== next.binMs
-  ) {
-    return next;
-  }
-
-  const tracks = new Map(
-    current.tracks.map((track) => [waveformTrackKey(track), track]),
-  );
-  for (const nextTrack of next.tracks) {
-    const trackKey = waveformTrackKey(nextTrack);
-    const currentTrack = tracks.get(trackKey);
-    if (!currentTrack) {
-      tracks.set(trackKey, nextTrack);
-      continue;
-    }
-
-    const tiles = new Map(
-      currentTrack.tiles.map((tile) => [
-        `${tile.segmentId}:${tile.streamIndex}:${tile.binMs}:${tile.timelineStartMs}`,
-        tile,
-      ]),
-    );
-    for (const tile of nextTrack.tiles) {
-      tiles.set(
-        `${tile.segmentId}:${tile.streamIndex}:${tile.binMs}:${tile.timelineStartMs}`,
-        tile,
-      );
-    }
-    tracks.set(trackKey, {
-      ...currentTrack,
-      scaleAmplitude: nextTrack.scaleAmplitude,
-      tiles: [...tiles.values()].sort(
-        (left, right) => left.timelineStartMs - right.timelineStartMs,
-      ),
-    });
-  }
-
-  return {
-    ...current,
-    error: next.error ?? current.error,
-    tracks: [...tracks.values()],
-  };
-}
-
-function waveformTrackKey(track: LibraryWaveformTileTrack): string {
-  return `${track.trackId}:${track.kind}`;
 }

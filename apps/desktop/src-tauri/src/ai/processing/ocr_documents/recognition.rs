@@ -60,7 +60,26 @@ pub(super) async fn run_frame(
             vision,
             true,
         )?;
-        vision::run_vision_document(vision, frame, cancel).await
+        if super::super::visual::shared_inference::matching_observation(
+            &app.state::<AppStorage>(),
+            chunk,
+            vision,
+            frame.timestamp_ms,
+        )? {
+            super::super::visual::shared_inference::infer(
+                app, chunk, frame, vision, true, true, cancel,
+            )
+            .await?
+            .ocr
+            .ok_or_else(|| {
+                ai_error(
+                    "ai_ocr_vision_response_invalid",
+                    "Vision OCR returned an invalid literal document.",
+                )
+            })
+        } else {
+            vision::run_vision_document(vision, frame, cancel).await
+        }
     } else {
         Err(ai_error(
             "ai_ocr_config_invalid",

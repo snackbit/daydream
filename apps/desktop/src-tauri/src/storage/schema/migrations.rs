@@ -9,6 +9,7 @@ mod live_processing;
 mod model_transfers;
 mod ocr_assets;
 mod ocr_documents;
+mod processing_overview;
 mod processing_resilience;
 mod processing_units;
 mod protected_windows;
@@ -19,8 +20,11 @@ mod reprocessing;
 mod scene_recording;
 mod settings_processing;
 mod source_video;
+mod speech_languages;
 mod speech_units;
+mod studio_processing;
 mod transcript_languages;
+mod visual_context_lineage;
 mod visual_frame_states;
 
 pub(in crate::storage) fn apply_migrations(
@@ -58,5 +62,9 @@ pub(crate) fn migrations() -> Migrations<'static> {
     migrations.extend(speech_units::migrations());
     migrations.extend(recall_speech::migrations());
     migrations.extend(audio_cleanup::migrations());
+    migrations.extend(studio_processing::migrations());
+    migrations.extend(speech_languages::migrations());
+    migrations.extend(processing_overview::migrations());
+    migrations.extend(visual_context_lineage::migrations());
     Migrations::new(migrations)
 }

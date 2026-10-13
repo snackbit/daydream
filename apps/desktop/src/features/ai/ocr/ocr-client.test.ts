@@ -13,6 +13,34 @@ vi.mock('@tauri-apps/api/core', () => ({
       : ipc.invoke(...args),
 }));
 beforeEach(() => vi.resetAllMocks());
+test.each(['waveform', 'vlm', 'unsupported'])(
+  'OCR selections validate background job kind %s',
+  async (kind) => {
+    const selection = {
+      document: null,
+      recordingId: 'recording-1',
+      sourceTrackId: 'video-0',
+      job: {
+        id: 'job-1',
+        recordingId: 'recording-1',
+        kind,
+        status: 'queued',
+        progress: 0,
+        errorCode: null,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      },
+    };
+    ipc.invoke.mockResolvedValue(selection);
+    const result = getOcrDocument({
+      recordingId: 'recording-1',
+      sourceTrackId: 'video-0',
+      timestampMs: 500,
+    });
+    if (kind === 'unsupported') await expect(result).rejects.toThrow();
+    else await expect(result).resolves.toEqual(selection);
+  },
+);
 test('OCR queries use exact source/timestamp native commands and decode empty results', async () => {
   ipc.invoke
     .mockResolvedValueOnce({

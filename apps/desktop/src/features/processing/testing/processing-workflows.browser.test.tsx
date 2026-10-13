@@ -5,12 +5,19 @@ import {
   createMemoryHistory,
   RouterProvider,
 } from '@tanstack/react-router';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useSettingsStore } from '@/features/settings/settings-store';
 import { ProcessingScreen } from '@/screens/ProcessingScreen';
 import { useBackgroundTaskStore } from '../background-task-store';
+import type * as ProcessingClient from '../processing-client';
 import { useRecordingProcessingStore } from '../recording-processing-store';
 import { group, groupPage, lane } from './processing-browser-fixtures';
 
@@ -25,6 +32,8 @@ const client = vi.hoisted(() => ({
   listenToBackgroundTasksChanged: vi.fn(),
 }));
 vi.mock('../processing-client', () => client);
+const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => native);
 function mount() {
   const root = createRootRoute();
   const index = createRoute({
@@ -70,6 +79,34 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+test('native waveform groups decode and render through the public processing client on refresh', async () => {
+  const actual = await vi.importActual<typeof ProcessingClient>(
+    '../processing-client',
+  );
+  native.invoke.mockImplementation((command) => {
+    if (command === 'listRecordingProcessingGroups')
+      return Promise.resolve(groupPage());
+    throw new Error(`Unexpected native operation: ${command}`);
+  });
+  client.listRecordingProcessingGroups.mockImplementation(
+    actual.listRecordingProcessingGroups,
+  );
+  mount();
+  await screen.findByRole('heading', { name: 'Synthetic recording' });
+  await page.getByRole('button', { name: 'Inspect Waveforms' }).click();
+  const waveform = screen.getByRole('listitem', {
+    name: 'Waveforms',
+  });
+  expect(within(waveform).getByText('4 complete / 10 sections')).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await waitFor(() => expect(native.invoke).toHaveBeenCalledTimes(2));
+  expect(
+    screen.getByRole('heading', { name: 'Synthetic recording' }),
+  ).toBeTruthy();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 test('group filters request complete native groups and failed pagination retries the same cursor', async () => {
   const cursor = { updatedAtMs: 1000, id: 'synthetic-recording' };
   client.listRecordingProcessingGroups
@@ -94,7 +131,7 @@ test('group filters request complete native groups and failed pagination retries
   await page.getByRole('button', { name: 'Load earlier recordings' }).click();
   await screen.findByRole('heading', { name: 'Earlier recording' });
   expect(client.listRecordingProcessingGroups).toHaveBeenNthCalledWith(3, {
-    filter: 'all',
+    filter: 'active',
     cursor,
     knownRecordingIds: [],
   });

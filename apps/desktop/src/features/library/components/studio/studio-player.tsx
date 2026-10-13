@@ -15,8 +15,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { formatDuration, formatTimestamp } from '../../library-format';
+import { formatTimestamp } from '../../library-format';
 import { PlaybackMediaGroup } from './playback/playback-media-group';
+import { PlaybackPosition } from './playback/playback-position';
 import { PlaybackSpeedControl } from './playback/playback-speed-control';
 import { SeekTenIcon } from './playback/seek-ten-icon';
 import { SegmentScrubber } from './segment-scrubber';
@@ -41,7 +42,7 @@ export function StudioPlayer({
 }) {
   const { actions, state } = playback;
   function handleRetryPlayback() {
-    actions.seekTimeline(state.displayedTimelineMs, { resume: true });
+    actions.seekTimeline(actions.readPlaybackTimeMs(), { resume: true });
   }
 
   function handleVolumeChange(values: number[]) {
@@ -152,11 +153,11 @@ export function StudioPlayer({
   const currentStart =
     (state.currentSegment.mediaStartMs ?? 0) + state.streamStartMs;
   function rewind() {
-    actions.seekTimeline(Math.max(0, state.displayedTimelineMs - 10_000));
+    actions.seekTimeline(Math.max(0, actions.readPlaybackTimeMs() - 10_000));
   }
   function forward() {
     actions.seekTimeline(
-      Math.min(state.totalDurationMs, state.displayedTimelineMs + 10_000),
+      Math.min(state.totalDurationMs, actions.readPlaybackTimeMs() + 10_000),
     );
   }
 
@@ -288,6 +289,8 @@ export function StudioPlayer({
 
       <div className="bg-background text-foreground flex shrink-0 flex-col gap-4 border-t p-5 sm:p-6">
         <SegmentScrubber
+          isPlaying={state.isPlaying}
+          readPlaybackTimeMs={actions.readPlaybackTimeMs}
           privacy={detail}
           currentTimelineMs={Math.min(
             state.displayedTimelineMs,
@@ -332,8 +335,7 @@ export function StudioPlayer({
               <SeekTenIcon direction="forward" />
             </Button>
             <span className="ml-2 text-xs tabular-nums">
-              {formatDuration(state.displayedTimelineMs)} /{' '}
-              {formatDuration(state.totalDurationMs)}
+              <PlaybackPosition playback={playback} />
             </span>
           </div>
 

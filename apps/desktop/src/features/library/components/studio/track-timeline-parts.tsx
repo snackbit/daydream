@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { LibraryRecordingTrack } from '@daydream/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -146,6 +146,7 @@ export function SortableTrackLane({
   visualFrames,
   onReprocess,
   onAudioCleanup,
+  onZoomRange,
 }: Omit<TrackLaneProps, 'dragHandleProps'>) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: track.id });
@@ -165,6 +166,7 @@ export function SortableTrackLane({
       }}
     >
       <TrackLane
+        onZoomRange={onZoomRange}
         visibleRange={visibleRange}
         aiProcessingState={aiProcessingState}
         clipDrafts={clipDrafts}
@@ -213,6 +215,9 @@ export function SortableActivityTrackLane({
   timelineWidthPx,
   timeRanges,
   totalDurationMs,
+  visibleRange,
+  overview,
+  onZoomRange,
 }: Omit<ActivityTrackLaneProps, 'dragHandleProps'>) {
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: lane.trackId });
@@ -232,6 +237,9 @@ export function SortableActivityTrackLane({
       }}
     >
       <ActivityTrackLane
+        visibleRange={visibleRange}
+        overview={overview}
+        onZoomRange={onZoomRange}
         activity={activity}
         segments={segments}
         dragHandleProps={{
@@ -262,12 +270,30 @@ export function TimeRuler({
   timelineWidthPx: number;
   originMs?: number | undefined;
 }) {
+  const clockFormat = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
+    [],
+  );
+  const leftPx = ticks[0]?.leftPx ?? 0;
+  const widthPx = Math.max(
+    1,
+    Math.min(timelineWidthPx, (ticks.at(-1)?.leftPx ?? 0) + 120) - leftPx,
+  );
   return (
     <div
       aria-label="Time ruler"
       className="bg-background relative sticky top-0 z-20 border-b"
       data-time-ruler
-      style={{ height: TRACK_RULER_HEIGHT_PX, width: timelineWidthPx }}
+      style={{
+        height: TRACK_RULER_HEIGHT_PX,
+        marginLeft: leftPx,
+        width: widthPx,
+      }}
     >
       {ticks.map((tick) => (
         <div
@@ -275,17 +301,14 @@ export function TimeRuler({
           key={`${tick.timeMs}-${tick.major ? 'major' : 'minor'}`}
           style={{
             height: tick.major ? 22 : 10,
-            left: tick.leftPx,
+            left: tick.leftPx - leftPx,
           }}
         >
           {tick.major ? (
             <div className="text-muted-foreground mt-0.5 ml-1 text-xs tabular-nums">
               {originMs === undefined
                 ? formatDuration(tick.timeMs)
-                : new Date(originMs + tick.timeMs).toLocaleTimeString(
-                    undefined,
-                    { hour: '2-digit', minute: '2-digit', second: '2-digit' },
-                  )}
+                : clockFormat.format(originMs + tick.timeMs)}
             </div>
           ) : null}
         </div>

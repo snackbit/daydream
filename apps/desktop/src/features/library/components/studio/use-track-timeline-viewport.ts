@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  clampScrollLeft,
   clampVisibleWindowMs,
   DEFAULT_TRACK_VIEWPORT_WIDTH_PX,
   INITIAL_TRACK_WINDOW_MS,
@@ -31,8 +30,8 @@ export function useTrackTimelineViewport({
     ),
   );
 
-  const markProgrammaticScroll = useCallback(() => {
-    programmaticScrollRef.current = viewportRef.current?.scrollLeft ?? null;
+  const markProgrammaticScroll = useCallback((target: number) => {
+    programmaticScrollRef.current = target;
   }, []);
 
   const keepPlayheadVisible = useCallback(
@@ -42,29 +41,45 @@ export function useTrackTimelineViewport({
         return;
       }
 
-      const visibleStartPx = viewport.scrollLeft + TRACK_LABEL_WIDTH_PX;
-      const visibleEndPx = viewport.scrollLeft + viewport.clientWidth;
-      const aheadPx = Math.max(
-        1,
-        (viewport.clientWidth - TRACK_LABEL_WIDTH_PX) * 0.1,
-      );
-      let nextScrollLeft = viewport.scrollLeft;
+      const visibleStartPx = scrollLeft + TRACK_LABEL_WIDTH_PX;
+      const visibleEndPx = scrollLeft + viewportWidth;
+      const usableWidth = Math.max(1, viewportWidth - TRACK_LABEL_WIDTH_PX);
+      const aheadPx = Math.max(1, usableWidth * 0.1);
+      let nextScrollLeft = scrollLeft;
       if (nextPlayheadLeftPx > visibleEndPx - aheadPx) {
-        nextScrollLeft = nextPlayheadLeftPx - viewport.clientWidth + aheadPx;
+        nextScrollLeft =
+          nextPlayheadLeftPx - TRACK_LABEL_WIDTH_PX - usableWidth * 0.5;
       } else if (nextPlayheadLeftPx < visibleStartPx) {
         nextScrollLeft = nextPlayheadLeftPx - TRACK_LABEL_WIDTH_PX - aheadPx;
       } else {
         return;
       }
 
-      viewport.scrollLeft = clampScrollLeft(nextScrollLeft, viewport);
-      markProgrammaticScroll();
-      setScrollLeft(viewport.scrollLeft);
+      const width = Math.max(
+        usableWidth,
+        (totalDurationMs / visibleWindowMs) * usableWidth,
+      );
+      const target = Math.max(
+        0,
+        Math.min(Math.floor(width - usableWidth), Math.round(nextScrollLeft)),
+      );
+      if (target === scrollLeft) return;
+      viewport.scrollLeft = target;
+      programmaticScrollRef.current = target;
+      setScrollLeft(target);
     },
-    [markProgrammaticScroll],
+    [scrollLeft, viewportWidth, totalDurationMs, visibleWindowMs],
   );
 
+  const ownerRef = useRef(detailId);
   useEffect(() => {
+    if (ownerRef.current === detailId) {
+      setVisibleWindowMs((current) =>
+        clampVisibleWindowMs(current, totalDurationMs),
+      );
+      return;
+    }
+    ownerRef.current = detailId;
     const frame = window.requestAnimationFrame(() => {
       setVisibleWindowMs((current) =>
         clampVisibleWindowMs(
@@ -165,6 +180,7 @@ export function useTrackTimelinePlayheadFollow({
   isPlaying,
   keepPlayheadVisible,
   playheadLeftPx,
+  readPlayheadLeftPx,
   seekRevision,
   setFollowPlayhead,
   suspended = false,
@@ -173,6 +189,7 @@ export function useTrackTimelinePlayheadFollow({
   isPlaying: boolean;
   keepPlayheadVisible: (playheadLeftPx: number) => void;
   playheadLeftPx: number;
+  readPlayheadLeftPx?: (() => number) | undefined;
   seekRevision: number;
   setFollowPlayhead: (follow: boolean) => void;
   suspended?: boolean;
@@ -181,12 +198,13 @@ export function useTrackTimelinePlayheadFollow({
     if (!followPlayhead || !isPlaying || suspended) {
       return;
     }
-    keepPlayheadVisible(playheadLeftPx);
+    keepPlayheadVisible(readPlayheadLeftPx?.() ?? playheadLeftPx);
   }, [
     followPlayhead,
     keepPlayheadVisible,
     isPlaying,
     playheadLeftPx,
+    readPlayheadLeftPx,
     suspended,
   ]);
 
@@ -200,7 +218,7 @@ export function useTrackTimelinePlayheadFollow({
     ) {
       const frame = window.requestAnimationFrame(() => {
         setFollowPlayhead(true);
-        keepPlayheadVisible(playheadLeftPx);
+        keepPlayheadVisible(readPlayheadLeftPx?.() ?? playheadLeftPx);
       });
       lastSeek.current = seekRevision;
       previousPlaying.current = isPlaying;
@@ -213,6 +231,7 @@ export function useTrackTimelinePlayheadFollow({
     isPlaying,
     keepPlayheadVisible,
     playheadLeftPx,
+    readPlayheadLeftPx,
     setFollowPlayhead,
     suspended,
   ]);

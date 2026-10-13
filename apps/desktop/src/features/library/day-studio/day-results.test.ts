@@ -3,6 +3,80 @@ import { projectDayResults, type DayRecordingResults } from './day-results';
 import { buildDayTimeline } from './day-timeline';
 import { dayTimelineFixture } from './day-timeline-fixtures';
 
+test('detail handoffs distinguish pending and failed recording spans from current reads', () => {
+  const model = buildDayTimeline(dayTimelineFixture());
+  const range = { startOffsetMs: 0, endOffsetMs: 18_000 };
+  const results = new Map<string, DayRecordingResults>([
+    ['a', { ai: null, activity: null, frames: [], request: range }],
+    [
+      'b',
+      {
+        ai: null,
+        activity: null,
+        frames: [],
+        request: { ...range, bucketMs: 5000 },
+      },
+    ],
+  ]);
+  const pending = projectDayResults(model, results, range);
+  expect(pending.pendingRanges).toEqual([
+    { startOffsetMs: 10_000, endOffsetMs: 18_000 },
+  ]);
+  expect(pending.failedRanges).toEqual([]);
+  const failed = projectDayResults(model, results, range, new Set(['b']));
+  expect(failed.pendingRanges).toEqual([]);
+  expect(failed.failedRanges).toEqual(pending.pendingRanges);
+  results.set('b', { ai: null, activity: null, frames: [], request: range });
+  expect(projectDayResults(model, results, range).pendingRanges).toEqual([]);
+});
+
+test('day overview counts preserve source provenance and omit support outside playable spans', () => {
+  const model = buildDayTimeline(dayTimelineFixture());
+  const result = projectDayResults(
+    model,
+    new Map([
+      [
+        'a',
+        {
+          ai: {
+            recordingId: 'a',
+            job: null,
+            chunks: [],
+            transcript: { recordingId: 'a', tracks: [] },
+            timelineOverview: [
+              {
+                trackId: 'a-screen-0',
+                kind: 'observation' as const,
+                startOffsetMs: 21_000,
+                endOffsetMs: 23_000,
+                count: 4,
+              },
+              {
+                trackId: 'a-screen-0',
+                kind: 'observation' as const,
+                startOffsetMs: 30_000,
+                endOffsetMs: 31_000,
+                count: 9,
+              },
+            ],
+          },
+          activity: null,
+          frames: [],
+        },
+      ],
+    ]),
+  );
+  expect(result.ai.timelineOverview).toEqual([
+    {
+      trackId: 'day-video-source-monitor-0',
+      kind: 'observation',
+      startOffsetMs: 0,
+      endOffsetMs: 2000,
+      count: 4,
+    },
+  ]);
+});
+
 test('published speech, input activity and visual navigation retain provenance while moving to the day clock', () => {
   const model = buildDayTimeline(dayTimelineFixture());
   const segment = {

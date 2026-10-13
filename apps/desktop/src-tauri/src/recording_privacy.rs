@@ -179,7 +179,7 @@ pub(crate) fn chunk_eligible(
     if let Some(track_id) = &chunk.track_id {
         ids.push(track_id.clone());
     }
-    let role = if chunk.source_kind == "audio" {
+    let role = if matches!(chunk.source_kind.as_str(), "audio" | "waveform") {
         let Some(track) = chunk
             .track_id
             .as_deref()

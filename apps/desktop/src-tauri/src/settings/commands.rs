@@ -15,13 +15,22 @@ use super::{
 };
 
 #[tauri::command(rename = "getAppSettings")]
-pub fn get_app_settings(
+pub async fn get_app_settings(
     storage: State<'_, AppStorage>,
 ) -> Result<AppSettingsState, AppSettingsError> {
-    load_app_settings(&storage).map(|mut settings| {
-        crate::model_registry::import_legacy(&mut settings);
-        settings_state(settings)
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        load_app_settings(&storage).map(|mut settings| {
+            crate::model_registry::import_legacy(&mut settings);
+            settings_state(settings)
+        })
     })
+    .await
+    .map_err(|_| AppSettingsError {
+        code: "settings_storage_failed".into(),
+        field: None,
+        message: "Settings could not be loaded. Try again.".into(),
+    })?
 }
 
 #[tauri::command(rename = "previewAppSettingsStorageCleanup")]

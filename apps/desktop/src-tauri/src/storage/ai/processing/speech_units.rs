@@ -37,22 +37,7 @@ pub fn speech_units(
 ) -> rusqlite::Result<Vec<SpeechUnit>> {
     let mut query=connection.prepare("SELECT id,job_id,track_id,owner_chunk_id,start_ms,end_ms,submitted_start_ms,submitted_end_ms,right_open,status,config_fingerprint,output_json FROM processing_speech_units WHERE job_id=?1 AND track_id=?2 ORDER BY start_ms")?;
     let result = query
-        .query_map(params![job, track], |row| {
-            Ok(SpeechUnit {
-                id: row.get(0)?,
-                job_id: row.get(1)?,
-                track_id: row.get(2)?,
-                owner_chunk_id: row.get(3)?,
-                start_ms: row.get(4)?,
-                end_ms: row.get(5)?,
-                submitted_start_ms: row.get(6)?,
-                submitted_end_ms: row.get(7)?,
-                right_open: row.get(8)?,
-                status: row.get(9)?,
-                fingerprint: row.get(10)?,
-                output_json: row.get(11)?,
-            })
-        })?
+        .query_map(params![job, track], speech_unit_from_row)?
         .collect();
     result
 }
@@ -60,6 +45,25 @@ pub fn save_speech_unit(connection: &Connection, unit: &SpeechUnit) -> rusqlite:
     connection.execute("INSERT OR IGNORE INTO processing_speech_units(id,job_id,track_id,owner_chunk_id,start_ms,end_ms,submitted_start_ms,submitted_end_ms,right_open,config_fingerprint) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",params![unit.id,unit.job_id,unit.track_id,unit.owner_chunk_id,unit.start_ms,unit.end_ms,unit.submitted_start_ms,unit.submitted_end_ms,unit.right_open,unit.fingerprint])?;
     connection.execute("INSERT OR IGNORE INTO processing_speech_unit_chunks(unit_id,chunk_id) SELECT ?1,id FROM processing_chunks WHERE job_id=?2 AND track_id=?3 AND source_kind='audio' AND start_offset_ms<?5 AND end_offset_ms>?4",params![unit.id,unit.job_id,unit.track_id,unit.start_ms,unit.end_ms])?;
     Ok(())
+}
+pub fn speech_unit(connection: &Connection, id: &str) -> rusqlite::Result<Option<SpeechUnit>> {
+    connection.query_row("SELECT id,job_id,track_id,owner_chunk_id,start_ms,end_ms,submitted_start_ms,submitted_end_ms,right_open,status,config_fingerprint,output_json FROM processing_speech_units WHERE id=?1", [id], speech_unit_from_row).optional()
+}
+fn speech_unit_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SpeechUnit> {
+    Ok(SpeechUnit {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        track_id: row.get(2)?,
+        owner_chunk_id: row.get(3)?,
+        start_ms: row.get(4)?,
+        end_ms: row.get(5)?,
+        submitted_start_ms: row.get(6)?,
+        submitted_end_ms: row.get(7)?,
+        right_open: row.get(8)?,
+        status: row.get(9)?,
+        fingerprint: row.get(10)?,
+        output_json: row.get(11)?,
+    })
 }
 pub fn stage_speech_unit(connection: &Connection, id: &str, json: &str) -> rusqlite::Result<()> {
     connection.execute("UPDATE processing_speech_units SET status='staged',output_json=?2,error_code=NULL WHERE id=?1 AND status!='published'",params![id,json])?;

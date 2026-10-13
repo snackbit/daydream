@@ -158,6 +158,12 @@ export function describeProcessingError(
     summary = vision
       ? 'The vision provider returned an unreadable OCR document. Try a compatible vision model or switch OCR to the local engine.'
       : 'The transcription provider returned an invalid result. Review the selected model and retry this section.';
+  else if (
+    code === 'ai_processing_job_worker_failed' ||
+    code === 'ai_processing_chunk_worker_failed'
+  )
+    summary =
+      'A processing worker stopped unexpectedly. Retry the affected sections; completed results remain available.';
   else if (code.includes('local_worker_crashed'))
     summary =
       'The local Whisper worker stopped unexpectedly. Retry; if it keeps failing, review the local backend and consider CPU.';

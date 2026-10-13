@@ -371,7 +371,7 @@ async fn vlm_ocr_context_for_frame(
     }
 }
 
-fn update_visual_chunk_progress(
+pub(super) fn update_visual_chunk_progress(
     app: &AppHandle,
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,

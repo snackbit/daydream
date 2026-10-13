@@ -27,6 +27,9 @@ vi.mock('@tauri-apps/api/core', async (importOriginal) => ({
   ...(await importOriginal<typeof TauriCore>()),
   invoke: native.invoke,
 }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(() => undefined),
+}));
 const detail: LibraryRecordingDetail = {
   ...studioStoryRecording,
   availability: 'available',
@@ -77,6 +80,7 @@ const detail: LibraryRecordingDetail = {
   ],
 };
 const assets: LibraryPlaybackAssets = {
+  canSeekInStream: true,
   recordingId: detail.id,
   sessionId: 'synthetic-session',
   error: null,
@@ -311,11 +315,13 @@ test.each([
       await screen.findByRole('button', { name: /^Select Desktop audio$/ }),
     );
     if (width < 1200)
-      await userEvent.click(screen.getByRole('button', { name: 'Inspector' }));
-    const inspector = await screen.findByRole('tab', { name: 'Inspector' });
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Review & details' }),
+      );
+    const inspector = await screen.findByRole('tab', { name: 'Details' });
     expect(inspector).toHaveAttribute('aria-selected', 'true');
     const selected = useStudioTimelineStore.getState().selection;
-    await userEvent.click(screen.getByRole('tab', { name: 'Teleprompter' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Review' }));
     expect(useStudioTimelineStore.getState().selection).toBe(selected);
     await userEvent.click(inspector);
     expect(
@@ -344,10 +350,8 @@ test('unavailable recordings select Inspector and disable Teleprompter', async (
     availability: 'missing-files',
     missingReasons: ['Synthetic missing media'],
   });
-  expect(
-    await screen.findByRole('tab', { name: 'Teleprompter' }),
-  ).toBeDisabled();
-  expect(screen.getByRole('tab', { name: 'Inspector' })).toHaveAttribute(
+  expect(await screen.findByRole('tab', { name: 'Review' })).toBeDisabled();
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -357,9 +361,9 @@ test('unavailable recordings select Inspector and disable Teleprompter', async (
 
 test('Teleprompter and Inspector remain directly accessible with Debug enabled', async () => {
   renderPlayback(true);
-  const teleprompter = await screen.findByRole('tab', { name: 'Teleprompter' });
+  const teleprompter = await screen.findByRole('tab', { name: 'Review' });
   expect(teleprompter).toHaveAttribute('aria-selected', 'true');
-  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Details' }));
   expect(await screen.findByText('Recording details')).toBeTruthy();
   await userEvent.click(teleprompter);
   expect(teleprompter).toHaveAttribute('aria-selected', 'true');
@@ -415,9 +419,9 @@ test('all speed choices apply to every track without replacing media and persist
     'video, audio',
   ))
     expect(media.playbackRate).toBe(2);
-  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Details' }));
   await userEvent.keyboard('{Escape}');
-  expect(screen.getByRole('tab', { name: 'Teleprompter' })).toHaveAttribute(
+  expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -494,6 +498,9 @@ test('synchronizing an audio track may seek it; the group waits for its resultin
   Object.defineProperty(audio, 'readyState', {
     configurable: true,
     get: () => ready,
+  });
+  Object.defineProperty(audio, 'seekable', {
+    value: { length: 1, start: () => 0, end: () => 10 },
   });
   await userEvent.click(await screen.findByRole('button', { name: 'Play' }));
   expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
@@ -574,7 +581,10 @@ test('real media advances Teleprompter highlights while browsing, changes speed,
   ).toBeTruthy();
   await waitFor(
     () =>
-      expect(screen.getByText('Later')).toHaveAttribute('aria-current', 'true'),
+      expect(screen.getByText('Later', { selector: 'span' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
     { timeout: 4000 },
   );
   expect(screen.getByText('Early')).not.toHaveAttribute('aria-current');
@@ -593,8 +603,8 @@ test('real media advances Teleprompter highlights while browsing, changes speed,
   await userEvent.click(await screen.findByRole('button', { name: 'Pause' }));
   expect(video.paused).toBe(true);
   const pausedTime = video.currentTime;
-  await userEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
-  await userEvent.click(screen.getByRole('tab', { name: 'Teleprompter' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Details' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Review' }));
   expect(video.currentTime).toBe(pausedTime);
   screen.getByRole('slider', { name: 'Playback position' }).focus();
   await userEvent.keyboard('{ArrowRight}');

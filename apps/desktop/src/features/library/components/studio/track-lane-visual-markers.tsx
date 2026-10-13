@@ -5,6 +5,10 @@ import { describeProcessingError } from '@/features/processing/processing-errors
 import { cn } from '@/lib/utils';
 import { formatDuration } from '../../library-format';
 import type { StudioVisualFrame } from './studio-visual-observations';
+import {
+  groupTimelineEntries,
+  TimelineEntryGroupButton,
+} from './timeline/timeline-entry-groups';
 
 type VisualFrameSource = 'mixed' | 'ocr' | 'vlm';
 
@@ -15,6 +19,7 @@ export interface VisualFrameSegmentsProps {
   totalDurationMs: number;
   visualFrameStates: VisualFrameProcessingState[];
   visualFrames: StudioVisualFrame[];
+  onZoomRange?: ((start: number, end: number) => void) | undefined;
 }
 
 export function VisualFrameSegments({
@@ -24,11 +29,22 @@ export function VisualFrameSegments({
   totalDurationMs,
   visualFrameStates,
   visualFrames,
+  onZoomRange,
 }: VisualFrameSegmentsProps) {
   const processingMarkers = visualProcessingMarkers({
     visualFrameStates,
     visualFrames,
   });
+  const pixelsPerMs = timelineWidthPx / totalDurationMs;
+  const groups = groupTimelineEntries(
+    visualFrames.map((frame) => ({
+      id: frame.id,
+      startMs: frame.frameTimestampMs,
+      endMs: frame.endTimestampMs,
+      frame,
+    })),
+    pixelsPerMs,
+  );
   if (visualFrames.length === 0 && processingMarkers.length === 0) {
     return null;
   }
@@ -43,16 +59,29 @@ export function VisualFrameSegments({
           totalDurationMs={totalDurationMs}
         />
       ))}
-      {visualFrames.map((frame) => (
-        <VisualFrameMarker
-          frame={frame}
-          key={frame.id}
-          selected={selectedVisualFrameIds.has(frame.id)}
-          timelineWidthPx={timelineWidthPx}
-          totalDurationMs={totalDurationMs}
-          onSelectVisualFrame={onSelectVisualFrame}
-        />
-      ))}
+      {groups.map((group) =>
+        group.id.startsWith('group:') && onZoomRange ? (
+          <div key={group.id} className="absolute inset-x-0 bottom-0 h-12">
+            <TimelineEntryGroupButton
+              group={group}
+              label="screen entries"
+              pixelsPerMs={pixelsPerMs}
+              onZoom={onZoomRange}
+            />
+          </div>
+        ) : (
+          group.items.map(({ frame }) => (
+            <VisualFrameMarker
+              frame={frame}
+              key={frame.id}
+              selected={selectedVisualFrameIds.has(frame.id)}
+              timelineWidthPx={timelineWidthPx}
+              totalDurationMs={totalDurationMs}
+              onSelectVisualFrame={onSelectVisualFrame}
+            />
+          ))
+        ),
+      )}
     </>
   );
 }
@@ -122,10 +151,11 @@ function VisualFrameMarker({
       </span>
       <span className="block h-6 truncate px-1 leading-6">
         {frame.vlmObservations
+          .filter(
+            (observation) => observation.observationKind !== 'corrected-ocr',
+          )
           .map((observation) => observation.text)
           .join(' · ') ||
-          frame.ocrRegions.map((region) => region.text).join(' ') ||
-          frame.ocrTextPreview ||
           (frame.ocrStatus === 'failed'
             ? 'Text recognition failed'
             : frame.ocrTextEmpty
@@ -169,8 +199,7 @@ function visualProcessingMarkers({
   return visualFrameStates
     .filter(
       (state) =>
-        state.status !== 'succeeded' ||
-        state.outputCount === 0 ||
+        state.status === 'failed' &&
         !outputKeys.has(`${state.sourceFrameRef}:${state.sourceKind}`),
     )
     .map((state) => ({
