@@ -4,7 +4,7 @@ import type {
 } from '@daydream/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { TranscriptionSelectionDetails } from '../../studio-sidebar-transcription';
+import { TranscriptionSelectionDetails } from '../editing/studio-sidebar-transcription';
 import {
   selectInspectorEntries,
   type InspectorContentEntry,

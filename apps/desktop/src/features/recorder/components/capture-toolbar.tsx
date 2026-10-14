@@ -10,6 +10,7 @@ import type { RecorderLifecycleAction } from '../recorder-workspace-store';
 import { getCaptureStartBlocker } from './capture-toolbar/start-blocker';
 
 export interface CaptureToolbarProps {
+  captureSelectionPending?: boolean;
   setupBlocker?: string | null;
   configurationLocked: boolean;
   isDirty: boolean;
@@ -28,6 +29,7 @@ export interface CaptureToolbarProps {
 }
 
 export function CaptureToolbar({
+  captureSelectionPending = false,
   setupBlocker,
   configurationLocked,
   isDirty,
@@ -57,14 +59,16 @@ export function CaptureToolbar({
   const canShowStart =
     !isRecording && status?.state !== 'paused' && status?.state !== 'stopping';
   const startBlocker = canShowStart
-    ? (setupBlocker ??
-      getCaptureStartBlocker({
-        isDirty,
-        lifecycleLocked,
-        loadStatus,
-        scene,
-        status,
-      }))
+    ? captureSelectionPending
+      ? 'Selecting monitor sources…'
+      : (setupBlocker ??
+        getCaptureStartBlocker({
+          isDirty,
+          lifecycleLocked,
+          loadStatus,
+          scene,
+          status,
+        }))
     : null;
   const startDisabled = startBlocker !== null;
 

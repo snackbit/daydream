@@ -337,6 +337,16 @@ test('day IPC decoder rejects malformed metadata, unowned spans and invalid cale
     expect(() => decodeDayTimeline(value)).toThrow();
 });
 
+test('day IPC preserves deferred disk usage instead of presenting a partial aggregate', () => {
+  const fixture = dayTimelineFixture();
+  const first = fixture.recordings[0];
+  if (!first) throw new Error('Synthetic recording missing');
+  first.sizeBytes = null;
+  const decoded = decodeDayTimeline(fixture);
+  expect(decoded.recordings[0]?.sizeBytes).toBeNull();
+  expect(buildDayTimeline(decoded).view.sizeBytes).toBeNull();
+});
+
 test('day IPC validates nested source, segment and redaction contracts rather than trusting JSON types', () => {
   const base = dayTimelineFixture();
   for (const availability of [

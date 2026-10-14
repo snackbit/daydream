@@ -114,6 +114,8 @@ export interface ProcessingLaneActivity {
   nextRetryAtMs: number | null;
   waitingReason: ProcessingWaitingReason | null;
   workerActive: boolean | null;
+  totalUnits?: number | null;
+  completedUnits?: number | null;
 }
 export interface RecordingProcessingLane {
   kind: RecordingProcessingLaneKind;
@@ -133,12 +135,24 @@ export interface RecordingProcessingLane {
   nextRetryAtMs: number | null;
   /** Bounded current/next work, absent on older native versions. */
   activity?: ProcessingLaneActivity[];
+  etaMs?: number | null;
 }
 export interface RecordingIndexCoverage {
   applicability: ProcessingApplicability;
   indexed: number;
   total: number;
   pending: number;
+  status?:
+    | 'ready'
+    | 'queued'
+    | 'running'
+    | 'paused'
+    | 'failed'
+    | 'cancelled'
+    | 'blocked'
+    | 'succeeded'
+    | null;
+  errorCode?: string | null;
 }
 export interface RecordingProcessingGroup {
   recordingId: string;
@@ -193,7 +207,7 @@ export interface RecordingProcessingLaneDetail {
 }
 export interface ControlRecordingProcessingGroupsInput {
   recordingId: string;
-  action: 'pause' | 'resume' | 'cancel' | 'retry';
+  action: 'pause' | 'resume' | 'cancel' | 'retry' | 'optimize-visual';
   sourceKind?: RecordingProcessingLaneKind;
   useCurrentSettings?: boolean;
 }

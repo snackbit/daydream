@@ -137,6 +137,8 @@ export async function resetCaptureFixture() {
   }));
   client.listenToRecorderPreviewFrames.mockResolvedValue(vi.fn());
   client.listenToRecorderStatusChanged.mockResolvedValue(vi.fn());
+  client.updateRecorderPreviewDemand.mockResolvedValue(undefined);
+  setupClient.listenToCaptureSetupSaved.mockResolvedValue(vi.fn());
   setupClient.getCaptureSetup.mockResolvedValue({
     scene: structuredClone(savedScene),
     fps: 0.2,

@@ -54,9 +54,11 @@ pub(crate) fn task_for_job(
         job.updated_at_ms
     } - started.unwrap_or(job.created_at_ms))
     .max(0);
-    let eta_ms = progress
-        .filter(|value| done >= 3 && *value > 0.0 && *value < 1.0 && job.status == "running")
-        .map(|value| ((elapsed_ms as f64 * (1.0 - value) / value).ceil() as i64).max(0));
+    let eta_ms = if matches!(job.status.as_str(), "running" | "queued") {
+        super::eta::job(connection, &job.id, now_ms())?
+    } else {
+        None
+    };
     let input_open = storage::processing_job_input_open(connection, &job.id)?;
     let eta_ms = if input_open { None } else { eta_ms };
     let phase:Option<String>=connection.query_row("SELECT r.phase FROM processing_chunks c LEFT JOIN processing_chunk_runtime r ON r.chunk_id=c.id WHERE c.job_id=?1 AND c.status IN ('running','queued') ORDER BY c.status='running' DESC,c.updated_at_ms DESC LIMIT 1",[&job.id],|row|row.get(0)).optional()?.flatten();

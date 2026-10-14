@@ -32,7 +32,6 @@ pub(crate) fn processing_state_with_review(
             } else {
                 Vec::new()
             };
-            let visual = storage::list_visual_frame_processing_states(&tx, recording_id)?;
             let transcript = super::transcript::transcript_from_connection_in_windows(
                 &tx,
                 recording_id,
@@ -86,6 +85,33 @@ pub(crate) fn processing_state_with_review(
             } else {
                 None
             };
+            let mut chunks = chunks;
+            let chunk_visible = |from: Option<i64>, to: Option<i64>| {
+                range.is_none_or(|(start, end)| match (from, to) {
+                    (Some(from), Some(to)) => {
+                        (from < end && to > start)
+                            || review.is_some_and(|(left, right)| from < right && to > left)
+                    }
+                    _ => true,
+                })
+            };
+            chunks.retain(|chunk| chunk_visible(chunk.start_offset_ms, chunk.end_offset_ms));
+            // Frame samples define coverage through their next neighbor. Read all
+            // samples for returned visual chunks, even beyond the requested windows.
+            let visual = if range.is_some() {
+                let chunk_ids = chunks
+                    .iter()
+                    .filter(|chunk| matches!(chunk.source_kind.as_str(), "ocr" | "vlm"))
+                    .map(|chunk| chunk.id.as_str())
+                    .collect::<Vec<_>>();
+                storage::list_visual_frame_processing_states_for_chunks(
+                    &tx,
+                    recording_id,
+                    &chunk_ids,
+                )?
+            } else {
+                storage::list_visual_frame_processing_states(&tx, recording_id)?
+            };
             tx.commit()?;
             let mut state = RecordingAiProcessingState {
                 timeline_overview: None,
@@ -102,29 +128,12 @@ pub(crate) fn processing_state_with_review(
                     .map(visual_frame_processing_state_from_row)
                     .collect(),
             };
-            if let Some((start, end)) = range {
-                let overlaps = |from: i64, to: i64| {
-                    (from < end && to > start)
-                        || review.is_some_and(|(left, right)| from < right && to > left)
-                };
-                let chunk_visible = |from: Option<i64>, to: Option<i64>| match (from, to) {
-                    (Some(from), Some(to)) => overlaps(from, to),
-                    _ => true,
-                };
-                state
-                    .chunks
-                    .retain(|chunk| chunk_visible(chunk.start_offset_ms, chunk.end_offset_ms));
+            if range.is_some() {
                 for track in &mut state.transcription_tracks {
                     track
                         .chunks
                         .retain(|chunk| chunk_visible(chunk.start_offset_ms, chunk.end_offset_ms));
                 }
-                state.visual_frames.retain(|frame| {
-                    overlaps(
-                        frame.frame_timestamp_ms,
-                        frame.frame_timestamp_ms.saturating_add(1),
-                    )
-                });
             }
             Ok(state)
         })

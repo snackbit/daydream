@@ -6,22 +6,24 @@ import type {
 import {
   availabilityLabel,
   formatDuration,
-  formatFileSize,
   formatTimestamp,
 } from '../../../library-format';
 import { transcriptionSourceLabel } from './inspector-format';
 import { InspectorField, InspectorSection } from './inspector-section';
+import { RecordingDiskUsage } from './recording-disk-usage';
 
 export interface RecordingInspectorSummaryProps {
   aiProcessingState: RecordingAiProcessingState | null;
   detail: LibraryRecordingDetail;
   debugEnabled?: boolean;
+  active?: boolean;
 }
 
 export function RecordingInspectorSummary({
   aiProcessingState,
   detail,
   debugEnabled = false,
+  active = true,
 }: RecordingInspectorSummaryProps) {
   const transcriptionTracks = aiProcessingState?.transcriptionTracks ?? [];
 
@@ -53,7 +55,7 @@ export function RecordingInspectorSummary({
           ) : null}
           <InspectorField
             label="Stored locally"
-            value={formatFileSize(detail.sizeBytes)}
+            value={<RecordingDiskUsage detail={detail} active={active} />}
           />
           <InspectorField
             label="Redactions"

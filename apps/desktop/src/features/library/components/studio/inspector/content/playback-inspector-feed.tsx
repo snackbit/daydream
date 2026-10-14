@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import {
   useStudioResultRange,
   useStudioResultWindowStore,
-} from '../../studio-result-window-store';
+} from '../../results/studio-result-window-store';
 import type {
   InspectorContentIndex,
   InspectorContentEntry,

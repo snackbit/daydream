@@ -1,16 +1,11 @@
 import type { RecorderScene } from '@daydream/shared';
 import { runAsyncStoreAction } from '@/lib/async-store-action';
-import {
-  saveRecorderScene,
-  selectCaptureSources,
-  stopRecorderPreview,
-} from './recorder-client';
+import { saveRecorderScene, selectCaptureSources } from './recorder-client';
 import {
   errorMessage,
   isRecorderPortalSelectionCancelled,
 } from './recorder-error-utils';
 import {
-  previewErrorStatus,
   previewIsActive,
   stopPreviewForRecording,
 } from './recorder-preview-store';
@@ -97,10 +92,7 @@ async function saveScene(set: RecorderWorkspaceSet, get: RecorderWorkspaceGet) {
   if (
     scene.sources.length === 0 &&
     previewIsActive(get().previewStatus) &&
-    !(await stopPreviewForRecording(
-      set,
-      get().previewStatus?.sceneId ?? scene.id,
-    ))
+    !(await stopPreviewForRecording(set, get))
   ) {
     set({ saveStatus: 'error' });
     return;
@@ -166,35 +158,13 @@ async function updateCaptureSources(
 ) {
   const revision = get().workspaceRevision;
   set = revisionScopedSet(set, get);
-  if (workspaceConfigurationLocked(get())) {
+  if (workspaceConfigurationLocked(get()) || get().captureSelectionPending) {
     return;
   }
-
-  const previewStatus = get().previewStatus;
-  if (previewStatus && previewIsActive(previewStatus)) {
-    const previewSceneId = previewStatus.sceneId;
-    try {
-      const stoppedPreviewStatus = await stopRecorderPreview();
-      set({
-        previewFramesBySceneSourceId: {},
-        previewStartInFlightSceneId: null,
-        previewStatus: stoppedPreviewStatus,
-      });
-    } catch (error) {
-      set({
-        error: errorMessage(error),
-        loadStatus: 'error',
-        previewFramesBySceneSourceId: {},
-        previewStartInFlightSceneId: null,
-        previewStatus: previewErrorStatus(previewSceneId, error),
-      });
-      return;
-    }
-  }
-
-  if (revision !== get().workspaceRevision) return;
+  // Own the entire selection, including cleanup, before any awaited IPC.
+  set({ captureSelectionPending: true, error: null, loadStatus: 'loading' });
   await runAsyncStoreAction({
-    before: () => set({ error: null, loadStatus: 'loading' }),
+    cleanup: () => set({ captureSelectionPending: false }),
     failure: (error) => {
       if (isRecorderPortalSelectionCancelled(error)) {
         set({ error: null, loadStatus: 'ready' });
@@ -207,11 +177,21 @@ async function updateCaptureSources(
       });
       return undefined;
     },
-    run: () =>
-      selectCaptureSources({
-        forceChooser: true,
-      }),
-    success: (captureSourceList) =>
-      applySelectedCaptureSources(set, get, captureSourceList.sources),
+    run: async () => {
+      const needsStop = previewIsActive(get().previewStatus);
+      await get().stopPreview();
+      if (revision !== get().workspaceRevision) return null;
+      if (needsStop && get().previewStatus?.state === 'error') {
+        throw (
+          get().previewStatus?.error ??
+          new Error('Preview could not stop. Try again.')
+        );
+      }
+      return selectCaptureSources({ forceChooser: true });
+    },
+    success: (captureSourceList) => {
+      if (captureSourceList)
+        applySelectedCaptureSources(set, get, captureSourceList.sources);
+    },
   });
 }

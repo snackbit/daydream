@@ -5,6 +5,7 @@ import {
   createLibraryPlaybackSession,
   deleteLibraryRedaction,
   renameLibraryRecording,
+  getLibraryRecordingSize,
   unredactLibraryRedactions,
 } from './library-client';
 
@@ -21,6 +22,39 @@ vi.mock('@tauri-apps/api/core', () => ({
 beforeEach(() => {
   convertFileSrcMock.mockReset();
   invokeMock.mockReset();
+});
+
+test.each([0, 4096])(
+  'exact recording disk usage accepts %i bytes',
+  async (sizeBytes) => {
+    invokeMock.mockResolvedValue({ id: 'recording-1', sizeBytes });
+    await expect(getLibraryRecordingSize('recording-1')).resolves.toBe(
+      sizeBytes,
+    );
+    expect(invokeMock).toHaveBeenCalledWith('getLibraryRecording', {
+      recordingId: 'recording-1',
+    });
+  },
+);
+
+test.each([
+  null,
+  undefined,
+  [],
+  {},
+  { id: 'other', sizeBytes: 10 },
+  { id: 'recording-1' },
+  ...[null, '10', -1, 0.5, Number.MAX_SAFE_INTEGER + 1].map((sizeBytes) => ({
+    id: 'recording-1',
+    sizeBytes,
+  })),
+])('disk usage rejects unowned or invalid IPC metadata: %j', async (value) => {
+  invokeMock.mockImplementation(async (command) =>
+    command === 'getLibraryRecording' ? value : undefined,
+  );
+  await expect(getLibraryRecordingSize('recording-1')).rejects.toThrow(
+    'Recording disk usage is unavailable.',
+  );
 });
 test('playback run assets reject invalid source metadata before reaching the player', async () => {
   invokeMock.mockResolvedValue({

@@ -43,7 +43,8 @@ pub struct LibraryRecordingDetail {
     pub(crate) playable_segment_count: usize,
     pub(crate) redactions: Vec<LibraryRecordingRedaction>,
     pub(crate) segments: Vec<LibraryRecordingSegment>,
-    pub(crate) size_bytes: u64,
+    /// Calendar-day reads defer recursive disk usage until details are opened.
+    pub(crate) size_bytes: Option<u64>,
     pub(crate) started_at_ms: Option<i64>,
     pub(crate) status: String,
     pub(crate) storage_dir: String,

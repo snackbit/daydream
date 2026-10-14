@@ -44,7 +44,7 @@ pub fn save_ocr_frame_result(
         return Ok(false);
     }
     if storage::replacement_pending(&transaction, &chunk.id)? {
-        if input.status == "succeeded" {
+        if matches!(input.status.as_str(), "succeeded" | "gap") {
             super::replacement::retain_unreplaced_intervals(&transaction, chunk, input)?;
             // Establish the replacement's cache reference before pruning old
             // occurrences. Both publication and cleanup share this transaction.

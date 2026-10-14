@@ -1,7 +1,33 @@
 import type { RecordingAiProcessingState } from './ai.js';
 import type { RecordingVisualObservations } from './ai/visual.js';
 import type { AudioCleanupState } from './audio-cleanup.js';
+import type { RecallDayCard } from './recall.js';
 import type { RecorderSegmentState } from './recorder.js';
+
+/** Card payload only; excludes evidence bodies, generated prose and day detail. */
+export type LibraryDayCard = Pick<
+  RecallDayCard,
+  | 'privacyRevision'
+  | 'dayId'
+  | 'recordingCount'
+  | 'evidenceCount'
+  | 'reviewed'
+  | 'status'
+  | 'capturedDurationMs'
+  | 'thumbnailPath'
+  | 'thumbnailRecordingId'
+  | 'redactionCount'
+  | 'recordingActive'
+>;
+
+export interface LibraryDaysPage {
+  privacyRevision: number;
+  days: LibraryDayCard[];
+  nextBeforeDayId: string | null;
+  /** Setup metadata only; listing never opens the keyring or tests a provider. */
+  generationReady: boolean;
+  generationUnavailableReason: string | null;
+}
 
 export type LibraryRecordingAvailability =
   'available' | 'incomplete' | 'locked' | 'missing-files';
@@ -92,7 +118,8 @@ export interface LibraryRecordingDetail {
   playableSegmentCount: number;
   redactions: LibraryRecordingRedaction[];
   segments: LibraryRecordingSegment[];
-  sizeBytes: number;
+  /** Exact disk usage; day playback defers this until recording details open. */
+  sizeBytes: number | null;
   startedAtMs: number | null;
   status: string;
   storageDir: string;

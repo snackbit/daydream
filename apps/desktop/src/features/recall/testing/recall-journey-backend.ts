@@ -140,6 +140,14 @@ export function createRecallJourneyBackend() {
         return structuredClone(state.status);
       case 'listRecallDays':
         return [structuredClone(state.day.day)];
+      case 'listLibraryDays':
+        return {
+          days: [structuredClone(state.day.day)],
+          privacyRevision: state.day.privacyRevision,
+          nextBeforeDayId: null,
+          generationReady: state.status.generationReady,
+          generationUnavailableReason: state.status.generationUnavailableReason,
+        };
       case 'searchRecallEvidence':
         return structuredClone(
           input(args).cursor ? state.searchNext : state.search,

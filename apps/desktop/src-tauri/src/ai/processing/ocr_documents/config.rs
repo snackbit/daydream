@@ -19,6 +19,14 @@ pub(super) struct OcrJobConfig {
     pub(super) recognition_fps: f64,
     pub(super) sync_with_recording: bool,
     pub(super) prompt_version: String,
+    #[serde(default = "full_sampling", skip_serializing_if = "is_full_sampling")]
+    pub(super) sampling_mode: String,
+}
+fn full_sampling() -> String {
+    "full".into()
+}
+fn is_full_sampling(value: &String) -> bool {
+    value == "full"
 }
 impl OcrJobConfig {
     pub(super) fn capture(settings: &settings::AppSettings) -> Result<Self, AiError> {
@@ -37,10 +45,13 @@ impl OcrJobConfig {
             recognition_fps: settings.ai.processing.frame_recognition_fps,
             sync_with_recording: settings.ai.processing.frame_recognition_sync_with_recording,
             prompt_version: OCR_PROMPT_VERSION.into(),
+            sampling_mode: settings.ai.processing.visual_sampling_mode.clone(),
         })
     }
     pub(super) fn legacy() -> Self {
-        Self::capture(&settings::default_settings()).expect("default OCR config")
+        let mut config = Self::capture(&settings::default_settings()).expect("default OCR config");
+        config.sampling_mode = "full".into();
+        config
     }
     pub(super) fn fps(&self, recorded_fps: f64) -> f64 {
         (if self.sync_with_recording {
@@ -94,6 +105,7 @@ pub(super) fn load_ocr_job_config(
             if !config.recognition_fps.is_finite()
                 || config.recognition_fps <= 0.0
                 || config.prompt_version != OCR_PROMPT_VERSION
+                || !matches!(config.sampling_mode.as_str(), "full" | "adaptive-v1")
             {
                 return Err(ai_error(
                     "ai_ocr_config_invalid",
@@ -128,12 +140,26 @@ pub(super) fn load_chunk_ocr_config(
     // identity. Full OCR reprocessing remains the explicit cadence-change path.
     updated.recognition_fps = original.recognition_fps;
     updated.sync_with_recording = original.sync_with_recording;
+    updated.sampling_mode = original.sampling_mode;
     Ok(updated)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn historical_config_retains_full_sampling_and_its_serialized_cache_identity() {
+        let json = r#"{"engine":"tesseract","vision":null,"recognitionFps":0.2,"syncWithRecording":true,"promptVersion":"literal-ocr-v1"}"#;
+        let old: OcrJobConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(old.sampling_mode, "full");
+        assert_eq!(serde_json::to_string(&old).unwrap(), json);
+        let new = OcrJobConfig::capture(&settings::default_settings()).unwrap();
+        assert_eq!(new.sampling_mode, "adaptive-v1");
+        assert_ne!(
+            old.fingerprint("native").unwrap(),
+            new.fingerprint("native").unwrap()
+        );
+    }
     #[test]
     fn legacy_jobs_keep_local_ocr_even_after_settings_choose_vision() {
         let mut settings = settings::default_settings();

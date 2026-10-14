@@ -12,7 +12,7 @@ import {
   scene,
 } from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
-import { VisualSourceInspector } from '../visual-source-inspector';
+import { VisualSourceInspector } from '../details/visual-source-inspector';
 import { OcrDocumentInspector } from './ocr-document-inspector';
 
 const ipc = vi.hoisted(() => ({

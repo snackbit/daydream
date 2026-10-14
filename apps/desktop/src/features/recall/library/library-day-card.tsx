@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import type { RecallDayCard, RecallStatus } from '@daydream/shared';
+import type {
+  LibraryDayCard as LibraryDayCardData,
+  LibraryDaysPage,
+} from '@daydream/shared';
 import { ArrowUpRight, CalendarDays } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { localAssetUrl } from '@/features/library/library-client';
@@ -12,9 +15,12 @@ import {
 import { useRecallDayThumbnail } from './use-recall-day-thumbnail';
 
 export interface LibraryDayCardProps {
-  day: RecallDayCard;
+  day: LibraryDayCardData;
   prominent?: boolean;
-  status?: RecallStatus;
+  status?: Pick<
+    LibraryDaysPage,
+    'generationReady' | 'generationUnavailableReason'
+  >;
 }
 export function LibraryDayCard({
   day,

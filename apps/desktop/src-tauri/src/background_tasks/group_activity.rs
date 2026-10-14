@@ -15,7 +15,9 @@ WITH work AS (
  FROM processing_chunks c WHERE c.job_id IN(SELECT value FROM json_each(?1)) AND c.source_kind=?2 AND c.status IN('running','queued')
 )
 SELECT c.id,c.job_id,c.track_id,t.label,c.start_offset_ms,c.end_offset_ms,c.status,
- COALESCE(r.phase,'queued'),r.started_at_ms,r.phase_started_at_ms,r.last_progress_at_ms,r.next_retry_at_ms,j.status
+ COALESCE(r.phase,'queued'),r.started_at_ms,r.phase_started_at_ms,r.last_progress_at_ms,r.next_retry_at_ms,j.status,
+ CASE WHEN c.source_kind IN('ocr','vlm') THEN r.total_units END,
+ (SELECT COUNT(*) FROM visual_frame_processing_states v WHERE v.chunk_id=c.id AND v.status IN('succeeded','failed'))
 FROM work c LEFT JOIN processing_chunk_runtime r ON r.chunk_id=c.id LEFT JOIN recording_tracks t ON t.id=c.track_id
 JOIN processing_jobs j ON j.id=c.job_id WHERE position<=3 ORDER BY c.status='running' DESC,c.start_offset_ms,c.id
 "#)?;
@@ -37,6 +39,12 @@ JOIN processing_jobs j ON j.id=c.job_id WHERE position<=3 ORDER BY c.status='run
                     next_retry_at_ms: row.get(11)?,
                     waiting_reason: None,
                     worker_active: None,
+                    total_units: row.get(13)?,
+                    completed_units: if row.get::<_, Option<i64>>(13)?.is_some() {
+                        Some(row.get(14)?)
+                    } else {
+                        None
+                    },
                 },
                 row.get::<_, String>(12)?,
             ))
@@ -101,6 +109,58 @@ JOIN processing_jobs j ON j.id=c.job_id WHERE position<=3 ORDER BY c.status='run
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finding_audio_activity_does_not_expose_frame_counters() {
+        let storage = fixture();
+        let settings = crate::settings::load_app_settings(&storage).unwrap();
+        storage
+            .with_connection(|connection| {
+                recording(connection, "audio-progress");
+                for kind in ["audio", "ocr", "vlm"] {
+                    job(connection, "audio-progress", kind, 10, kind, "running");
+                    storage::set_processing_chunk_total(
+                        connection,
+                        &fixture_id(&format!("{kind}-chunk")),
+                        6,
+                    )?;
+                    let lane =
+                        groups::lane(connection, &fixture_id("audio-progress"), kind, &settings)?;
+                    assert_eq!(
+                        lane.activity[0].total_units,
+                        if kind == "audio" { None } else { Some(6) }
+                    );
+                    assert_eq!(
+                        lane.activity[0].completed_units,
+                        if kind == "audio" { None } else { Some(0) }
+                    );
+                }
+                Ok(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn retry_progress_counts_retained_successes_and_the_retried_checkpoint() {
+        use super::super::{group_test_fixtures::*, groups};
+        let storage = fixture();
+        let settings = crate::settings::load_app_settings(&storage).unwrap();
+        storage.with_connection(|connection| {
+            recording(connection, "retry-progress");
+            job(connection, "retry-progress", "visual", 10, "vlm", "running");
+            let chunk = fixture_id("visual-chunk");
+            for index in 0..6 {
+                connection.execute("INSERT INTO visual_frame_processing_states(id,chunk_id,job_id,recording_id,source_kind,frame_timestamp_ms,source_frame_ref,region_x,region_y,region_width,region_height,status,progress,output_count,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,'vlm',?5,?8,0,0,64,64,?6,?7,0,1,1)",params![fixture_id(&format!("checkpoint-{index}")),chunk,fixture_id("visual"),fixture_id("retry-progress"),index*100,if index<5 {"succeeded"}else{"queued"},if index<5 {1.}else{0.},format!("synthetic-checkpoint-{index}")])?;
+            }
+            storage::set_processing_chunk_visual_total(connection, &chunk)?;
+            let lane = groups::lane(connection, &fixture_id("retry-progress"), "vlm", &settings)?;
+            assert_eq!(lane.activity[0].total_units, Some(6));
+            assert_eq!(lane.activity[0].completed_units, Some(5));
+            connection.execute("UPDATE visual_frame_processing_states SET status='succeeded',progress=1 WHERE id=?1",[fixture_id("checkpoint-5")])?;
+            let lane = groups::lane(connection, &fixture_id("retry-progress"), "vlm", &settings)?;
+            assert_eq!(lane.activity[0].total_units, Some(6));
+            assert_eq!(lane.activity[0].completed_units, Some(6));
+            Ok(())
+        }).unwrap();
+    }
     use crate::background_tasks::{group_test_fixtures::*, groups};
 
     #[test]

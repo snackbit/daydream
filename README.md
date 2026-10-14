@@ -155,6 +155,16 @@ React does not access SQLite, native capture APIs, media writers, or model
 runtimes directly. Typed Tauri commands own those boundaries.
 
 OCR recognizes full snapshots at the configured frame-recognition sampling rate.
+New work defaults to local OCR with adaptive sampling: it checks at most one
+frame every five seconds, recognizes material changes and takes a full checkpoint
+every 30 seconds. Exact duplicates retain sampled occurrences through cache reuse;
+other omitted samples are gaps, not confirmed unchanged text. Full sampling remains
+available in processing preferences. Existing jobs retain their saved policy.
+Processing's **Use fast local processing** action drains active visual owners and
+replans OCR and optional observations with local adaptive OCR, preserving completed
+audio, activity and waveforms. Descriptions have separate capacity, so a slow
+Vision request does not block OCR on the next recording. Search shows eligible
+OCR and transcripts while descriptions and semantic indexing continue.
 Exact-image reuse reduces repeated engine calls while retaining sampled occurrences;
 whitespace-only text grouping preserves source timestamps and splits at redactions.
 Settings select the OCR engine separately from screen observations. Retry keeps a

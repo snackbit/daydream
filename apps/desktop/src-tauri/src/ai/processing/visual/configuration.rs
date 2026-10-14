@@ -4,7 +4,16 @@ pub(super) fn load_visual_settings(
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,
 ) -> Result<settings::AppSettings, AiError> {
-    let settings = super::super::worker::load_chunk_settings(storage, chunk)?;
+    let mut settings = super::super::worker::load_chunk_settings(storage, chunk)?;
+    if chunk.source_kind == "vlm" {
+        let original = super::super::worker::load_job_settings(storage, &chunk.job_id)?;
+        // Retrying existing observations may change their provider, but their
+        // timestamps must stay on the admitted job's sampling clock.
+        settings.ai.processing.frame_recognition_fps = original.ai.processing.frame_recognition_fps;
+        settings.ai.processing.frame_recognition_sync_with_recording =
+            original.ai.processing.frame_recognition_sync_with_recording;
+        settings.ai.processing.visual_sampling_mode = original.ai.processing.visual_sampling_mode;
+    }
     if chunk.source_kind == "vlm" && !super::vlm::vision_provider_ready(&settings) {
         return Err(ai_error("ai_vision_remote_unconfigured","Screen observations require a configured Vision endpoint, model and authentication. Review Vision settings, then retry this section."));
     }

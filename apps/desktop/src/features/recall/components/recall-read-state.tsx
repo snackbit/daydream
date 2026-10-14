@@ -4,8 +4,15 @@ import { Button } from '@/components/ui/button';
 export interface RecallReadStateProps {
   status: 'loading' | 'invalidated' | 'error';
   onRetry: () => void;
+  loadingLabel?: string;
+  errorLabel?: string;
 }
-export function RecallReadState({ status, onRetry }: RecallReadStateProps) {
+export function RecallReadState({
+  status,
+  onRetry,
+  loadingLabel = 'Loading local text and transcripts…',
+  errorLabel = 'Recall could not be loaded.',
+}: RecallReadStateProps) {
   return (
     <div
       className="bg-muted rounded-[20px] p-6"
@@ -13,10 +20,10 @@ export function RecallReadState({ status, onRetry }: RecallReadStateProps) {
     >
       <p>
         {status === 'error'
-          ? 'Recall could not be loaded.'
+          ? errorLabel
           : status === 'invalidated'
             ? 'Source eligibility changed. Private results have been cleared.'
-            : 'Loading local text and transcripts…'}
+            : loadingLabel}
       </p>
       {status === 'error' || status === 'invalidated' ? (
         <Button className="mt-4" onClick={onRetry} variant="outline">

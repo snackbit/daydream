@@ -63,6 +63,19 @@ pub fn processing_chunk_selection(
         .map(Option::flatten)
 }
 
+/// Include retained checkpoints on retry, matching the activity projection's population.
+pub fn set_processing_chunk_visual_total(
+    connection: &Connection,
+    chunk: &str,
+) -> rusqlite::Result<()> {
+    let total = connection.query_row(
+        "SELECT COUNT(*) FROM visual_frame_processing_states WHERE chunk_id=?1",
+        [chunk],
+        |row| row.get::<_, i64>(0),
+    )?;
+    set_processing_chunk_total(connection, chunk, total)
+}
+
 pub fn set_processing_chunk_total(
     connection: &Connection,
     chunk_id: &str,

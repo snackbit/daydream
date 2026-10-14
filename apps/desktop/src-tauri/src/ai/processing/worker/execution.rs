@@ -2,7 +2,7 @@ use super::super::super::*;
 use super::{
     chunk_runner::process_processing_chunk,
     completion::{fail_processing_job, finish_processing_job},
-    dispatch::claim_next_processing_chunk,
+    dispatch::claim_with_capacity,
     job_state::{handle_current_job_status, JobStatusAction},
 };
 
@@ -43,6 +43,8 @@ pub(super) async fn process_recording_ai_job(
             ) as usize
     };
     let mut active_chunks = futures_util::stream::FuturesUnordered::new();
+    let mut local_active = 0usize;
+    let mut remote_active = 0usize;
 
     loop {
         match handle_current_job_status(&app, &storage, &job_id)? {
@@ -53,24 +55,37 @@ pub(super) async fn process_recording_ai_job(
             }
         }
 
-        while active_chunks.len() < max_parallel_chunks {
-            let Some(chunk) = claim_next_processing_chunk(&storage, &job_id)? else {
+        while local_active < max_parallel_chunks || remote_active < 1 {
+            let Some(chunk) = claim_with_capacity(
+                &storage,
+                &job_id,
+                local_active < max_parallel_chunks,
+                remote_active < 1,
+            )?
+            else {
                 break;
             };
+            let remote = chunk.source_kind == "vlm";
+            if remote {
+                remote_active += 1;
+            } else {
+                local_active += 1;
+            }
 
             let app = app.clone();
             let job_id = job_id.clone();
             let ownership = ownership.clone();
             active_chunks.push(async move {
                 let worker_app=app.clone();let worker_id=job_id.clone();let worker_chunk=chunk.clone();
-                match tauri::async_runtime::spawn(async move {let _ownership=ownership;process_processing_chunk(&worker_app,&worker_id,worker_chunk).await}).await {
+                let result=match tauri::async_runtime::spawn(async move {let _ownership=ownership;process_processing_chunk(&worker_app,&worker_id,worker_chunk).await}).await {
                     Ok(result)=>result,
                     Err(_)=>{
                         super::chunk_context::ProcessingChunkContext::new(&app,&job_id,&chunk).mark_failed("ai_processing_chunk_worker_failed")?;
                         emit_processing_state(&app,&chunk.recording_id);
                         Err(ai_error("ai_processing_chunk_worker_failed","A processing worker stopped unexpectedly. Other sections will continue."))
                     }
-                }
+                };
+                Ok::<_,AiError>((remote,result))
             });
         }
 
@@ -109,10 +124,17 @@ pub(super) async fn process_recording_ai_job(
                 elapsed_ms = elapsed_ms(started),
                 "ai_processing_job_finished"
             );
+            super::super::discard_visual_cache(std::slice::from_ref(&job_id));
             return Ok(());
         }
 
         if let Some(result) = active_chunks.next().await {
+            let (remote, result) = result?;
+            if remote {
+                remote_active -= 1;
+            } else {
+                local_active -= 1;
+            }
             match result {
                 Ok(()) => {}
                 Err(error)

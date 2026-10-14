@@ -212,6 +212,15 @@ pub(super) async fn process_vlm_frames(
                 let _vlm_permit =
                     acquire_vlm_cancellable(max_parallel_vlm_jobs.max(1), cancel.clone()).await?;
                 check_processing_cancel(&cancel)?;
+                storage
+                    .with_connection(|connection| {
+                        storage::set_processing_chunk_phase(
+                            connection,
+                            &chunk.id,
+                            "observing-screen",
+                        )
+                    })
+                    .map_err(storage_error)?;
                 mark_visual_frame_state(
                     &app,
                     &storage,

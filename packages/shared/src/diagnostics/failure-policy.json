@@ -74,6 +74,7 @@
     "listAiModels",
     "listBackgroundTasks",
     "listLibraryRecordings",
+    "listLibraryDays",
     "listProcessingJobs",
     "listProtectableWindows",
     "listRecallDays",

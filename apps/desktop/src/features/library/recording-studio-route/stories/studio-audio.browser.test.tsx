@@ -17,7 +17,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import '@/index.css';
 import { RecordingStudio } from '../../components/studio/recording-studio';
-import { useStudioTimelineStore } from '../../components/studio/studio-timeline-store';
+import { useStudioTimelineStore } from '../../components/studio/timeline/state/studio-timeline-store';
 import { createLibraryPlaybackSession } from '../../library-client';
 import syntheticMedia from './fixtures/synthetic-player.webm?url';
 import { studioStoryRecording } from './studio-route-fixture';
@@ -138,6 +138,116 @@ function mediaReady(container: HTMLElement, state: number) {
       get: () => state,
     });
 }
+
+test.each([
+  ['light', 1440],
+  ['dark', 620],
+] as const)(
+  'desktop audio menu opens reprocessing without seeking or clearing selection in %s at %i pixels',
+  async (theme, width) => {
+    await page.viewport(width, 960);
+    document.documentElement.dataset.theme = theme;
+    native.invoke.mockImplementation(async (command: string) => {
+      if (command === 'log_frontend_failure') return;
+      if (command === 'getRecordingWaveformTiles')
+        return { recordingId: detail.id, binMs: 10, tracks: [], error: null };
+      if (command === 'previewRecordingReprocessing')
+        return {
+          recordingId: detail.id,
+          planFingerprint: 'synthetic-menu-plan',
+          blockedReason: null,
+          operations: [
+            {
+              operation: 'transcription',
+              enabled: true,
+              remote: false,
+              providerLabel: 'Local transcription',
+              blockedReason: null,
+            },
+          ],
+          scopes: [
+            {
+              id: 'desktop-scope',
+              trackId: 'desktop-audio-1',
+              sourceLabel: 'Desktop audio',
+              operation: 'transcription',
+              startOffsetMs: 0,
+              endOffsetMs: 10000,
+            },
+          ],
+        };
+      throw new Error(`Unexpected native command: ${command}`);
+    });
+    renderPlayback();
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Select Desktop audio' }),
+    );
+    const selected = useStudioTimelineStore.getState().selection;
+    const position = screen.getByText('0:00 / 0:10');
+    const actions = screen.getByRole('button', {
+      name: 'Desktop audio actions',
+    });
+    await userEvent.click(actions);
+    const item = screen.getByRole('menuitem', {
+      name: /Reprocess desktop audio/i,
+    });
+    await page.screenshot({
+      path: `__screenshots__/desktop-audio-menu-${theme}.png`,
+    });
+    await userEvent.click(item, {
+      position: { x: item.getBoundingClientRect().width - 8, y: 10 },
+    });
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Reprocess sources',
+    });
+    await screen.findByText(/Desktop audio · Transcription/);
+    expect(useStudioTimelineStore.getState().selection).toBe(selected);
+    expect(position).toHaveTextContent('0:00 / 0:10');
+    expect(
+      native.invoke.mock.calls.filter(
+        ([command]) => command === 'previewRecordingReprocessing',
+      ),
+    ).toEqual([
+      [
+        'previewRecordingReprocessing',
+        {
+          input: {
+            recordingId: detail.id,
+            targets: [{ trackId: 'desktop-audio-1', ranges: null }],
+          },
+        },
+      ],
+    ]);
+    await page.screenshot({
+      element: dialog,
+      path: `__screenshots__/desktop-audio-review-${theme}.png`,
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Select Desktop audio' }),
+      { button: 'right' },
+    );
+    await userEvent.click(
+      screen.getByRole('menuitem', { name: /Reprocess desktop audio/i }),
+    );
+    await screen.findByRole('dialog', { name: 'Reprocess sources' });
+    expect(useStudioTimelineStore.getState().selection).toBe(selected);
+    expect(position).toHaveTextContent('0:00 / 0:10');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    actions.focus();
+    await userEvent.keyboard('{ArrowDown}');
+    await screen.findByRole('menuitem', { name: /Reprocess desktop audio/i });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(actions).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    await screen.findByRole('dialog', { name: 'Reprocess sources' });
+    expect(useStudioTimelineStore.getState().selection).toBe(selected);
+    expect(position).toHaveTextContent('0:00 / 0:10');
+  },
+);
 beforeEach(async () => {
   await page.viewport(1440, 960);
   vi.resetAllMocks();

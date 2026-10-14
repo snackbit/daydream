@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { ControlRecordingProcessingGroupsInput } from '@daydream/shared';
+import { useSettingsStore } from '@/features/settings/settings-store';
 import { controlRecordingProcessingGroups } from './processing-client';
 import {
   processingFailureSummary,
@@ -43,8 +44,22 @@ export function useRecordingProcessingActions(
         setError(processingFailureSummary(error));
         await refresh();
       } finally {
-        admission.current = false;
-        setPending(false);
+        try {
+          if (input.action === 'optimize-visual') {
+            const settings = useSettingsStore.getState();
+            settings.invalidatePreferences();
+            await settings.load();
+          }
+        } catch {
+          setError(
+            (current) =>
+              current ??
+              'Settings could not be reloaded. Open Settings to retry.',
+          );
+        } finally {
+          admission.current = false;
+          setPending(false);
+        }
       }
     },
     [recordingId, refresh],

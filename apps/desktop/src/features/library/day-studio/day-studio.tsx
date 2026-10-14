@@ -11,16 +11,16 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { startRecordingAiProcessing } from '@/features/ai/ai-client';
 import { recallDateLabel } from '@/features/recall/recall-format';
 import { useDebugEnabled } from '@/features/settings/use-debug-enabled';
+import { StudioSidebar } from '../components/studio/inspector/studio-sidebar';
 import { useStudioSelectionDismissal } from '../components/studio/interactions/use-studio-selection-dismissal';
 import { RecordingStudioLayout } from '../components/studio/layout/recording-studio-layout';
+import type { StudioInspectorSelection } from '../components/studio/navigation/studio-inspector-selection';
+import { StudioSourcePlayer } from '../components/studio/playback/sources/studio-source-player';
+import { useStudioVideoSources } from '../components/studio/playback/sources/use-studio-video-sources';
+import { useRecordingPlaybackController } from '../components/studio/playback/use-recording-playback-controller';
 import { ReprocessingDialog } from '../components/studio/reprocessing/reprocessing-dialog';
-import type { StudioInspectorSelection } from '../components/studio/studio-inspector-selection';
-import { StudioSidebar } from '../components/studio/studio-sidebar';
-import { StudioSourcePlayer } from '../components/studio/studio-source-player';
-import { useStudioTimelineStore } from '../components/studio/studio-timeline-store';
-import { TrackTimeline } from '../components/studio/track-timeline';
-import { useRecordingPlaybackController } from '../components/studio/use-recording-playback-controller';
-import { useStudioVideoSources } from '../components/studio/use-studio-video-sources';
+import { useStudioTimelineStore } from '../components/studio/timeline/state/studio-timeline-store';
+import { TrackTimeline } from '../components/studio/timeline/track-timeline';
 import {
   deleteLibraryRecording,
   renameLibraryRecording,
@@ -63,12 +63,14 @@ export interface DayStudioProps {
   location: DayStudioLocation;
   onRefresh: () => void;
   mutations: DayMutationController;
+  isRefreshing?: boolean;
 }
 export function DayStudio({
   model,
   location,
   onRefresh,
   mutations,
+  isRefreshing = false,
 }: DayStudioProps) {
   const sessions = useDayPlaybackSessions(model),
     derived = useDayResults(model);
@@ -412,6 +414,7 @@ export function DayStudio({
         }}
         debugEnabled={debugEnabled}
         loadStatus="ready"
+        loadingStatus={isRefreshing ? 'Refreshing day…' : null}
         processingStartBusy={busy}
         onRename={openRename}
         onDelete={openDelete}

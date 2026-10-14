@@ -8,11 +8,11 @@ import {
 import type { LibraryRecordingRedaction } from '@daydream/shared';
 import { Button } from '@/components/ui/button';
 import { resizeLibraryRedaction } from '../../../library-client';
-import type { TimelineLaneLayout } from '../track-timeline-math';
+import type { TimelineLaneLayout } from '../timeline/interactions/track-timeline-math';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_RULER_HEIGHT_PX,
-} from '../track-timeline-math';
+} from '../timeline/interactions/track-timeline-math';
 
 export interface GroupedRedactionsProps {
   redactions: LibraryRecordingRedaction[];

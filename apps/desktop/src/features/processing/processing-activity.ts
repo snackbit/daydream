@@ -34,6 +34,8 @@ export function processingActivityLabel(
       return 'Describing screen changes';
     case 'waiting-for-model':
       return 'Waiting for the model';
+    case 'waiting-for-worker':
+      return 'Waiting for an available worker';
     default:
       return activity.status === 'running' ? 'Processing source' : 'Queued';
   }

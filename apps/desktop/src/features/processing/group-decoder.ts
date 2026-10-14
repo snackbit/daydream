@@ -64,6 +64,7 @@ function lane(value: unknown): RecordingProcessingLane {
     ...(r.activity === undefined
       ? {}
       : { activity: array(r.activity, activity) }),
+    ...(r.etaMs === undefined ? {} : { etaMs: nullable(r.etaMs, count) }),
   };
   if (
     result.completed +
@@ -99,6 +100,18 @@ function activity(value: unknown): ProcessingLaneActivity {
   );
   const startOffsetMs = nullable(r.startOffsetMs, count),
     endOffsetMs = nullable(r.endOffsetMs, count);
+  const totalUnits =
+    r.totalUnits === undefined ? undefined : nullable(r.totalUnits, count);
+  const completedUnits =
+    r.completedUnits === undefined
+      ? undefined
+      : nullable(r.completedUnits, count);
+  if (
+    typeof totalUnits === 'number' &&
+    typeof completedUnits === 'number' &&
+    completedUnits > totalUnits
+  )
+    return invalid();
   if (
     startOffsetMs !== null &&
     endOffsetMs !== null &&
@@ -120,6 +133,8 @@ function activity(value: unknown): ProcessingLaneActivity {
     nextRetryAtMs: nullable(r.nextRetryAtMs, count),
     waitingReason,
     workerActive: nullable(r.workerActive, boolean),
+    ...(totalUnits === undefined ? {} : { totalUnits }),
+    ...(completedUnits === undefined ? {} : { completedUnits }),
   };
 }
 function group(value: unknown): RecordingProcessingGroup {
@@ -140,6 +155,12 @@ function group(value: unknown): RecordingProcessingGroup {
     indexed: count(index.indexed),
     total: count(index.total),
     pending: count(index.pending),
+    ...(index.status === undefined
+      ? {}
+      : { status: nullable(index.status, indexStatus) }),
+    ...(index.errorCode === undefined
+      ? {}
+      : { errorCode: nullable(index.errorCode, string) }),
   };
   if (indexCoverage.indexed + indexCoverage.pending !== indexCoverage.total)
     return invalid();
@@ -157,6 +178,23 @@ function group(value: unknown): RecordingProcessingGroup {
   };
   if (result.inputOpen && result.etaMs !== null) return invalid();
   return result;
+}
+function indexStatus(
+  value: unknown,
+): NonNullable<RecordingProcessingGroup['indexCoverage']['status']> {
+  switch (value) {
+    case 'ready':
+    case 'queued':
+    case 'running':
+    case 'paused':
+    case 'failed':
+    case 'cancelled':
+    case 'blocked':
+    case 'succeeded':
+      return value;
+    default:
+      return invalid();
+  }
 }
 export function decodeRecordingGroupPage(
   value: unknown,

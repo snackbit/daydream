@@ -9,11 +9,11 @@ import { settleVisualTransitions } from '@/app/design-accessibility-audit';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
 import { studioStoryRecording } from '../../../recording-studio-route/stories/studio-route-fixture';
-import { ActivityTrackLane } from '../activity-track-lane';
-import { SegmentTranscriptionLayer } from '../derived-ai-lane-strip';
-import { TrackLane } from '../track-lane';
-import { VisualFrameSegments } from '../track-lane-visual-markers';
-import { trackLaneHeightPxForKind } from '../track-timeline-math';
+import { VisualFrameSegments } from '../observations/track-lane-visual-markers';
+import { trackLaneHeightPxForKind } from '../timeline/interactions/track-timeline-math';
+import { ActivityTrackLane } from '../timeline/lanes/activity/activity-track-lane';
+import { TrackLane } from '../timeline/lanes/track-lane';
+import { SegmentTranscriptionLayer } from '../timeline/transcripts/derived-ai-lane-strip';
 
 afterEach(() => {
   cleanup();

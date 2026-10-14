@@ -7,6 +7,7 @@ import { Check, Circle, Loader2, Pause, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { processingLaneLabel } from '../processing-activity';
 import { stageLabel } from '../task-format';
+import { formatElapsed } from '../task-format';
 
 export interface ProcessingPipelineNodeProps {
   lane: RecordingProcessingLane;
@@ -45,6 +46,26 @@ export function ProcessingPipelineNode({
           <span className="text-muted-foreground mt-1 block text-xs font-normal">
             {processingLaneLabel(lane)}
           </span>
+          {lane.activity
+            ?.filter(
+              (item) =>
+                item.status === 'running' &&
+                typeof item.totalUnits === 'number' &&
+                typeof item.completedUnits === 'number',
+            )
+            .map((item) => (
+              <span
+                key={item.chunkId}
+                className="text-muted-foreground mt-1 block text-xs font-normal tabular-nums"
+              >
+                {item.completedUnits}/{item.totalUnits} frames processed
+              </span>
+            ))}
+          {typeof lane.etaMs === 'number' ? (
+            <span className="text-muted-foreground mt-1 block text-xs font-normal">
+              About {formatElapsed(lane.etaMs)} remaining
+            </span>
+          ) : null}
           {lane.total ? (
             <span className="text-muted-foreground mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs font-normal tabular-nums">
               <span>

@@ -20,6 +20,7 @@ pub struct RecordingProcessingLane {
     pub error_code: Option<String>,
     pub next_retry_at_ms: Option<i64>,
     pub activity: Vec<ProcessingLaneActivity>,
+    pub eta_ms: Option<i64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +39,8 @@ pub struct ProcessingLaneActivity {
     pub next_retry_at_ms: Option<i64>,
     pub waiting_reason: Option<String>,
     pub worker_active: Option<bool>,
+    pub total_units: Option<i64>,
+    pub completed_units: Option<i64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +49,8 @@ pub struct RecordingIndexCoverage {
     pub indexed: i64,
     pub total: i64,
     pub pending: i64,
+    pub status: Option<String>,
+    pub error_code: Option<String>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

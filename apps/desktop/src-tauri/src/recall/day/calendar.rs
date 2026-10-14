@@ -1,6 +1,68 @@
 use chrono::{NaiveDate, TimeZone};
 use chrono_tz::Tz;
 
+pub(super) fn segment_stop(segment: &crate::storage::RecordingSegmentRow, now: i64) -> Option<i64> {
+    segment
+        .duration_ms
+        .filter(|duration| *duration >= 0)
+        .and_then(|duration| segment.started_at_ms.checked_add(duration))
+        .or(segment.ended_at_ms)
+        .or_else(|| (segment.state == "recording").then_some(now))
+}
+
+pub(crate) fn capture_dates(
+    rows: &super::CaptureRows,
+    input: &super::ListRecallDaysInput,
+    now: i64,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let tz = input_timezone(input)?;
+    let mut dates = std::collections::BTreeSet::new();
+    for (_, segments) in rows {
+        for segment in segments {
+            let end = segment_stop(segment, now)
+                .unwrap_or_else(|| segment.started_at_ms.saturating_add(1))
+                .max(segment.started_at_ms.saturating_add(1));
+            let Some(first) = chrono::Utc
+                .timestamp_millis_opt(segment.started_at_ms)
+                .single()
+            else {
+                continue;
+            };
+            let Some(last) = chrono::Utc
+                .timestamp_millis_opt(end.saturating_sub(1))
+                .single()
+            else {
+                continue;
+            };
+            let mut date = first.with_timezone(&tz).date_naive();
+            let last = last.with_timezone(&tz).date_naive();
+            if last.signed_duration_since(date).num_days() > 3660 {
+                return Err("Invalid recording duration.".into());
+            }
+            while date <= last {
+                let id = date.format("%Y-%m-%d").to_string();
+                if input
+                    .before_day_id
+                    .as_ref()
+                    .is_none_or(|before| &id < before)
+                {
+                    dates.insert(id);
+                }
+                date = date.succ_opt().ok_or("Invalid calendar day.")?;
+            }
+        }
+    }
+    Ok(dates)
+}
+
+pub(super) fn input_timezone(input: &super::ListRecallDaysInput) -> Result<Tz, String> {
+    let timezone = input.timezone.parse().map_err(|_| "Invalid timezone.")?;
+    if let Some(before) = &input.before_day_id {
+        day_bounds(before, &input.timezone)?;
+    }
+    Ok(timezone)
+}
+
 pub fn day_bounds(day_id: &str, timezone: &str) -> Result<(i64, i64), String> {
     let date = NaiveDate::parse_from_str(day_id, "%Y-%m-%d")
         .map_err(|_| "Invalid calendar day.".to_string())?;

@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { formatElapsed, taskStatusLabel } from '../task-format';
 import { useRecordingProcessingActions } from '../use-recording-processing-actions';
 import { ProcessingActivityList } from './processing-activity-list';
+import { ProcessingError } from './processing-error';
 import { RecordingProcessingLaneRow } from './recording-processing-lane';
 import { RecordingProcessingPipeline } from './recording-processing-pipeline';
 
@@ -47,6 +48,10 @@ export function RecordingProcessingCard({
   );
   const cancel = useCallback(
     () => void perform({ action: 'cancel' }),
+    [perform],
+  );
+  const optimize = useCallback(
+    () => void perform({ action: 'optimize-visual' }),
     [perform],
   );
   const retry = useCallback(
@@ -95,6 +100,20 @@ export function RecordingProcessingCard({
           </div>
         </div>
         <div className="flex flex-wrap gap-1">
+          {group.lanes.some(
+            (lane) =>
+              (lane.kind === 'ocr' || lane.kind === 'vlm') && lane.total > 0,
+          ) ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || group.inputOpen}
+              title="Use local OCR and adaptive sampling for this recording and future jobs. Brief or subtle content may be omitted."
+              onClick={optimize}
+            >
+              Use fast local processing
+            </Button>
+          ) : null}
           {running && group.jobIds.length ? (
             <Button
               size="sm"
@@ -170,7 +189,11 @@ export function RecordingProcessingCard({
         label="Search readiness"
         status={
           coverage.applicability === 'available'
-            ? `${coverage.indexed}/${coverage.total} ready`
+            ? coverage.status === 'blocked' || coverage.status === 'failed'
+              ? 'Semantic indexing needs attention'
+              : coverage.status === 'paused' || coverage.status === 'cancelled'
+                ? 'Semantic indexing stopped'
+                : `${coverage.indexed}/${coverage.total} ready`
             : coverage.applicability === 'disabled'
               ? 'Disabled'
               : 'No text or transcripts available'
@@ -179,6 +202,12 @@ export function RecordingProcessingCard({
       >
         {coverage.applicability === 'available' ? (
           <>
+            {coverage.errorCode ? (
+              <ProcessingError
+                errorCode={coverage.errorCode}
+                technicalDetails={false}
+              />
+            ) : null}
             <Progress
               aria-label="Available text and transcripts indexed"
               value={
@@ -192,6 +221,10 @@ export function RecordingProcessingCard({
                 ? `${coverage.pending} eligible passages waiting for the shared index worker.`
                 : 'Current eligible passages are ready for semantic search.'}{' '}
               New processing results can add more text and transcripts.
+            </p>
+            <p className="text-muted-foreground mt-2 text-xs">
+              Text search uses available OCR and transcripts while descriptions
+              and semantic indexing continue.
             </p>
           </>
         ) : (

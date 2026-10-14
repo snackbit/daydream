@@ -52,6 +52,8 @@ impl LivePortalSession {
 pub(crate) async fn open_live_capture_session(
     storage: &AppStorage,
 ) -> Result<LivePortalSession, RecorderError> {
+    let _timing =
+        crate::recorder::operation_timing::OperationTimer::start("portal_live_session_open");
     let restore_token = restore_token_for_live_session(
         storage
             .with_connection(|connection| {
@@ -144,6 +146,7 @@ pub(super) async fn close_portal_session(
     session: &Session<Screencast>,
     context: &'static str,
 ) -> Result<(), RecorderError> {
+    let _timing = crate::recorder::operation_timing::OperationTimer::start("portal_session_close");
     info!(context, "portal_session_close_requested");
     match session.close().await {
         Ok(()) => {

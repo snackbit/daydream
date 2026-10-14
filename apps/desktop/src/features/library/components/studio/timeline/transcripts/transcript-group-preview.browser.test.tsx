@@ -4,7 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { getRecordingTranscriptPreview } from '@/features/ai/transcript/preview-client';
 import '@/index.css';
-import { SourceOverviewStrip } from '../source-overview-strip';
+import { SourceOverviewStrip } from '../overview/source-overview-strip';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => native);

@@ -11,8 +11,8 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '../../../../library-format';
-import { aiProcessingErrorDetails } from '../../ai-processing-error-copy';
-import type { StudioInspectorSelection } from '../../studio-inspector-selection';
+import type { StudioInspectorSelection } from '../../navigation/studio-inspector-selection';
+import { aiProcessingErrorDetails } from '../processing/ai-processing-error-copy';
 
 export type SegmentTranscriptionDisplayItem =
   | {

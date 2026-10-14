@@ -1,44 +1,34 @@
-import { useCallback, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { ArrowUpRight, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { listLibraryDays } from '@/features/library/day-studio/day-client';
 import { RecallReadState } from '../components/recall-read-state';
-import { getRecallStatus, listRecallDays } from '../recall-client';
 import { recallTimezone } from '../recall-format';
 import { useLocalDayId } from '../use-local-day-id';
 import { useRecallRead } from '../use-recall-read';
-import { LibraryDayCard } from './library-day-card';
+import { LibraryDaysPage } from './library-days-page';
+
+function readDays() {
+  return listLibraryDays({
+    beforeDayId: null,
+    limit: 30,
+    timezone: recallTimezone,
+  });
+}
 
 export function LibraryDays() {
-  const [pages, setPages] = useState(1);
-  const read = useCallback(async () => {
-    const status = await getRecallStatus();
-    let beforeDayId: string | null = null;
-    const days = [];
-    let hasMore = false;
-    for (let page = 0; page < pages; page += 1) {
-      const batch = await listRecallDays({
-        beforeDayId,
-        limit: 30,
-        timezone: recallTimezone,
-      });
-      days.push(...batch);
-      hasMore = batch.length === 30;
-      beforeDayId = batch.at(-1)?.dayId ?? null;
-      if (!hasMore) break;
-    }
-    if (days.some((day) => day.privacyRevision !== status.privacyRevision))
-      throw new Error('Recall eligibility changed during listing.');
-    return { days, status, hasMore, privacyRevision: status.privacyRevision };
-  }, [pages]);
-  const { state, refresh } = useRecallRead(read);
+  const { state, refresh } = useRecallRead(readDays);
   const today = useLocalDayId();
   if (state.status !== 'ready')
-    return <RecallReadState status={state.status} onRetry={refresh} />;
+    return (
+      <RecallReadState
+        status={state.status}
+        onRetry={refresh}
+        loadingLabel="Loading days…"
+        errorLabel="Library days could not be loaded."
+      />
+    );
   const days = state.data.days;
-  function loadOlder() {
-    setPages((value) => value + 1);
-  }
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -49,14 +39,7 @@ export function LibraryDays() {
           </Link>
         </Button>
       </div>
-      {days.map((day) => (
-        <LibraryDayCard key={day.dayId} day={day} status={state.data.status} />
-      ))}
-      {state.data.hasMore ? (
-        <Button onClick={loadOlder} variant="outline">
-          Load older days
-        </Button>
-      ) : null}
+      <LibraryDaysPage key={state.data.privacyRevision} page={state.data} />
       {days.length === 0 ? (
         <div className="bg-muted rounded-[20px] p-8">
           <h3 className="text-2xl font-light">

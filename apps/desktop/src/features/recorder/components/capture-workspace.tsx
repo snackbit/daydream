@@ -28,6 +28,7 @@ import { RecorderErrorAlert } from './recorder-error-alert';
 import { SceneCanvasPanel } from './scene-canvas-panel';
 
 export interface CaptureWorkspaceProps {
+  captureSelectionPending?: boolean;
   audioSources: AudioSource[];
   captureSources: CaptureSource[];
   desktopAudioSourceId: string | null;

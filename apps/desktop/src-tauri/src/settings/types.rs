@@ -107,6 +107,8 @@ pub struct AiProcessingSettings {
     pub timing: String,
     #[serde(default = "default_processing_resource_mode")]
     pub resource_mode: String,
+    #[serde(default = "default_visual_sampling_mode")]
+    pub visual_sampling_mode: String,
     pub frame_recognition_fps: f64,
     pub frame_recognition_sync_with_recording: bool,
     pub frame_similarity_enabled: bool,
@@ -124,6 +126,9 @@ fn default_processing_timing() -> String {
 }
 fn default_processing_resource_mode() -> String {
     "background".into()
+}
+fn default_visual_sampling_mode() -> String {
+    "full".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

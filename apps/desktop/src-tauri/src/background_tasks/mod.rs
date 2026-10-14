@@ -1,3 +1,4 @@
+mod eta;
 mod group_actions;
 mod group_activity;
 mod group_candidates;

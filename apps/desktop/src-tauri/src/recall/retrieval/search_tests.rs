@@ -15,6 +15,74 @@ struct PrivacyProvider {
     recording_id: String,
     fail: bool,
 }
+struct BatchProvider {
+    calls: std::sync::Mutex<Vec<usize>>,
+    invalid: bool,
+}
+impl EmbeddingProvider for BatchProvider {
+    fn space(&self) -> EmbeddingSpace {
+        configured_space(&RecallSettings::default().embedding).unwrap()
+    }
+    fn configuration_fingerprint(&self) -> String {
+        configuration_fingerprint(&RecallSettings::default().embedding)
+    }
+    async fn embed(
+        &self,
+        _: EmbeddingPurpose,
+        texts: &[String],
+        _: &AtomicBool,
+    ) -> Result<Vec<Vec<f32>>, String> {
+        self.calls.lock().unwrap().push(texts.len());
+        Ok(texts
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let mut vector = vec![0.0; 384];
+                vector[0] = 1.;
+                if self.invalid && index == 1 {
+                    vector[0] = f32::NAN;
+                }
+                vector
+            })
+            .collect())
+    }
+}
+#[test]
+fn indexing_submits_one_batch_and_never_publishes_partial_invalid_vectors() {
+    for invalid in [false, true] {
+        let storage = storage::test_storage(std::env::temp_dir());
+        let fixtures = storage
+            .with_connection(|connection| {
+                Ok((0..3)
+                    .map(|_| storage::seed_recall_fixture(connection))
+                    .collect::<Vec<_>>())
+            })
+            .unwrap();
+        let provider = BatchProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+            invalid,
+        };
+        let result = tauri::async_runtime::block_on(index::index_pending(
+            &storage,
+            &provider,
+            &AtomicBool::new(false),
+            |_| {},
+        ));
+        assert_eq!(result.is_err(), invalid);
+        assert_eq!(*provider.calls.lock().unwrap(), vec![3]);
+        let count = storage
+            .with_connection(|connection| {
+                connection.query_row("SELECT count(*) FROM recall_index", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
+            .unwrap();
+        assert_eq!(count, if invalid { 0 } else { 3 });
+        for fixture in &fixtures {
+            assert!(crate::recording_privacy::try_mutation_lease(&fixture.recording).is_some());
+        }
+    }
+}
 impl EmbeddingProvider for PrivacyProvider {
     fn space(&self) -> EmbeddingSpace {
         configured_space(&RecallSettings::default().embedding).unwrap()

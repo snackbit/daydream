@@ -26,7 +26,8 @@ mod tests {
             }
             connection.execute("INSERT INTO studio_visual_samples(job_id,recording_id,source_id,frame_ms,end_ms,fingerprint,pixel_hash,chunk_id,ocr_json,observation_json,context_start_ms,width,height,source_frame_ref) VALUES(?1,?2,'screen',5000,6000,'synthetic-model','synthetic-pixels',?3,'synthetic-ocr','synthetic-description',2000,64,32,'synthetic-frame')", rusqlite::params![chunk.job_id,chunk.recording_id,chunk.id])?;
             let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-            connection.pragma_update(None, "user_version", version - 1)?;
+            connection.pragma_update(None, "user_version", 38)?;
+            connection.execute_batch("DROP INDEX idx_recall_job_execution_admission; ALTER TABLE processing_job_runtime DROP COLUMN visual_recovery_json;")?;
             super::super::apply_migrations(connection).unwrap();
             let row: (i64, String, String) = connection.query_row("SELECT context_start_ms,ocr_json,observation_json FROM studio_visual_samples", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
             assert_eq!(row, (0, "synthetic-ocr".into(), "synthetic-description".into()));

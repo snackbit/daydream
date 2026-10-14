@@ -24,9 +24,18 @@ impl ProcessingChunkSource {
     }
 }
 
+#[cfg(test)]
 pub(in crate::ai) fn claim_next_processing_chunk(
     storage: &AppStorage,
     job_id: &str,
+) -> Result<Option<ProcessingChunkRow>, AiError> {
+    claim_with_capacity(storage, job_id, true, true)
+}
+pub(super) fn claim_with_capacity(
+    storage: &AppStorage,
+    job_id: &str,
+    local: bool,
+    remote: bool,
 ) -> Result<Option<ProcessingChunkRow>, AiError> {
     let next_chunk = storage
         .with_connection(|connection| {
@@ -45,6 +54,7 @@ pub(in crate::ai) fn claim_next_processing_chunk(
                 }
                 if !storage::processing_chunk_retry_ready(connection, &chunks[index].id, now_ms())? { continue; }
                 let chunk = &chunks[index];
+                if (chunk.source_kind=="vlm" && !remote) || (chunk.source_kind!="vlm" && !local) {continue;}
                 if chunk.source_kind=="audio"&&!storage::speech_strategy(connection,job_id)?&&storage::processing_job_input_open(connection,job_id)? {
                     let segments=storage::list_recording_segments(connection,&chunk.recording_id)?;
                     if let Some(index)=segments.iter().position(|segment|Some(segment.id.as_str())==chunk.segment_id.as_deref()) {

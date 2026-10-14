@@ -16,29 +16,79 @@ pub(crate) async fn cancel_recording(storage: &AppStorage, id: &str) -> Result<(
 }
 
 pub(crate) fn read_state(storage: &AppStorage, id: &str) -> Result<AudioCleanupState, String> {
-    storage.with_connection(|c| {
-        let segments = storage::list_recording_segments(c,id)?;
-        storage::get_recording(c,id)?;
-        let total: i64 = segments.iter().filter(|part| part.microphone_audio_stream_index.is_some()).map(|part|part.duration_ms.unwrap_or(0)).sum();
-        let revisions: (Option<String>,Option<String>) = c.query_row("SELECT active_revision,pending_revision FROM recording_audio_cleanup WHERE recording_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.unwrap_or_default();
-        let mut state = AudioCleanupState { recording_id:id.into(),config:AudioCleanupConfig::default(),pending_config:None,
-            revision:revisions.0.clone(),phase:"idle".into(),progress:0.0,matched_ms:0,
-            reference_available:segments.iter().any(|part|part.microphone_audio_stream_index.is_some()&&part.desktop_audio_stream_index.is_some()),transcripts_outdated:false,error:None };
-        let saved_config:Option<String>=c.query_row("SELECT config_json FROM recording_audio_cleanup WHERE recording_id=?1",[id],|r|r.get(0)).optional()?;
-        if let Some(config)=saved_config {state.config=serde_json::from_str(&config).map_err(|_|rusqlite::Error::InvalidQuery)?;}
-        for (revision,pending) in [(revisions.0,false),(revisions.1,true)] {
-            let Some(revision) = revision else { continue; };
-            let (config,status,completed,matched,error,saved): (String,String,i64,i64,Option<String>,String) = c.query_row(
+    storage
+        .with_connection(|c| {
+            let segments = storage::list_recording_segments(c, id)?;
+            read_state_from_connection(c, id, &segments)
+        })
+        .map_err(|_| "Audio cleanup settings could not be read.".into())
+}
+
+pub(crate) fn read_state_from_connection(
+    c: &rusqlite::Connection,
+    id: &str,
+    segments: &[storage::RecordingSegmentRow],
+) -> rusqlite::Result<AudioCleanupState> {
+    storage::get_recording(c, id)?;
+    let total: i64 = segments
+        .iter()
+        .filter(|part| part.microphone_audio_stream_index.is_some())
+        .map(|part| part.duration_ms.unwrap_or(0))
+        .sum();
+    let revisions: (Option<String>,Option<String>) = c.query_row("SELECT active_revision,pending_revision FROM recording_audio_cleanup WHERE recording_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.unwrap_or_default();
+    let mut state = AudioCleanupState {
+        recording_id: id.into(),
+        config: AudioCleanupConfig::default(),
+        pending_config: None,
+        revision: revisions.0.clone(),
+        phase: "idle".into(),
+        progress: 0.0,
+        matched_ms: 0,
+        reference_available: segments.iter().any(|part| {
+            part.microphone_audio_stream_index.is_some()
+                && part.desktop_audio_stream_index.is_some()
+        }),
+        transcripts_outdated: false,
+        error: None,
+    };
+    let saved_config: Option<String> = c
+        .query_row(
+            "SELECT config_json FROM recording_audio_cleanup WHERE recording_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(config) = saved_config {
+        state.config = serde_json::from_str(&config).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    }
+    for (revision, pending) in [(revisions.0, false), (revisions.1, true)] {
+        let Some(revision) = revision else {
+            continue;
+        };
+        let (config,status,completed,matched,error,saved): (String,String,i64,i64,Option<String>,String) = c.query_row(
                 "SELECT config_json,status,completed_ms,matched_ms,error,source_fingerprint FROM audio_cleanup_generations WHERE id=?1",[&revision],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
-            let config:AudioCleanupConfig = serde_json::from_str(&config).map_err(|_|rusqlite::Error::InvalidQuery)?;
-            if pending { state.pending_config=Some(config); } else { state.config=config; }
-            state.phase=if saved!=persistence::fingerprint(c,id)? { "invalidated".into() } else { status };
-            state.progress=if total>0 { (completed as f64/total as f64).clamp(0.0,1.0) } else { 0.0 };
-            state.matched_ms=matched; state.error=error;
+        let config: AudioCleanupConfig =
+            serde_json::from_str(&config).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if pending {
+            state.pending_config = Some(config);
+        } else {
+            state.config = config;
         }
-        state.transcripts_outdated=c.query_row("SELECT EXISTS(SELECT 1 FROM published_transcript_segments t WHERE t.recording_id=?1 AND t.source_role='microphone' AND COALESCE((SELECT revision FROM processing_audio_cleanup_inputs i WHERE i.job_id=t.job_id),'')!=COALESCE(?2,''))",params![id,state.revision],|r|r.get(0))?;
-        Ok(state)
-    }).map_err(|_| "Audio cleanup settings could not be read.".into())
+        state.phase = if saved != persistence::fingerprint(c, id)? {
+            "invalidated".into()
+        } else {
+            status
+        };
+        state.progress = if total > 0 {
+            (completed as f64 / total as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        state.matched_ms = matched;
+        state.error = error;
+    }
+    state.transcripts_outdated=c.query_row("SELECT EXISTS(SELECT 1 FROM published_transcript_segments t WHERE t.recording_id=?1 AND t.source_role='microphone' AND COALESCE((SELECT revision FROM processing_audio_cleanup_inputs i WHERE i.job_id=t.job_id),'')!=COALESCE(?2,''))",params![id,state.revision],|r|r.get(0))?;
+    Ok(state)
 }
 
 pub(super) async fn apply(

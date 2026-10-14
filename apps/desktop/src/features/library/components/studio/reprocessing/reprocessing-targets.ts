@@ -1,5 +1,5 @@
 import type { ReprocessingTarget } from '@daydream/shared';
-import type { StudioTimeRangeSelection } from '../studio-timeline-store';
+import type { StudioTimeRangeSelection } from '../timeline/state/studio-timeline-store';
 
 export function reprocessingTargets(
   ranges: StudioTimeRangeSelection[],

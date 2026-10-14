@@ -30,9 +30,9 @@ import {
 } from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { DayScreen } from '@/screens/DayScreen';
-import { useStudioTimelineStore } from '../components/studio/studio-timeline-store';
-import { TRACK_LABEL_WIDTH_PX } from '../components/studio/track-timeline-math';
-import { useStudioVideoSources } from '../components/studio/use-studio-video-sources';
+import { useStudioVideoSources } from '../components/studio/playback/sources/use-studio-video-sources';
+import { TRACK_LABEL_WIDTH_PX } from '../components/studio/timeline/interactions/track-timeline-math';
+import { useStudioTimelineStore } from '../components/studio/timeline/state/studio-timeline-store';
 import syntheticMedia from '../recording-studio-route/stories/fixtures/synthetic-player.webm?url';
 import { DayRecordingAudioCleanup } from './day-recording-audio-cleanup';
 import type { DayStudioLocation } from './day-studio';

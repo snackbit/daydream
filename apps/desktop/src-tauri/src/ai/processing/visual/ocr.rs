@@ -52,6 +52,7 @@ fn run_tesseract_ocr_command(
     frame: &ExtractedVisualFrame,
 ) -> Result<Vec<OcrCandidate>, AiError> {
     let mut command = Command::new(binary);
+    command.env("OMP_THREAD_LIMIT", "1");
     configure_tesseract_ocr_command(&mut command, tessdata_dir, languages, path);
     tracing::debug!(
         frame_timestamp_ms = frame.frame_timestamp_ms,
@@ -72,7 +73,13 @@ fn run_tesseract_ocr_command(
         "ai_ocr_tesseract_started"
     );
     let started = Instant::now();
-    let output = command.output().map_err(|error| {
+    let output = crate::subprocess::run(
+        &mut command,
+        &AtomicBool::new(false),
+        Duration::from_secs(30),
+        8_000_000,
+    )
+    .map_err(|error| {
         let elapsed_ms = elapsed_ms(started);
         if error.kind() == std::io::ErrorKind::NotFound {
             tracing::warn!(

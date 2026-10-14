@@ -14,17 +14,23 @@ pub(super) async fn run_frame(
     if let Some(runtime) = runtime {
         let settings =
             settings::load_app_settings(&app.state::<AppStorage>()).map_err(settings_error)?;
+        app.state::<AppStorage>()
+            .with_connection(|connection| {
+                storage::set_processing_chunk_phase(connection, &chunk.id, "waiting-for-worker")
+            })
+            .map_err(storage_error)?;
         let _permit = super::super::visual::acquire_ocr_permit_for_documents(
-            if settings.ai.processing.resource_mode == "background" {
-                1
-            } else {
-                settings.ai.processing.max_parallel_ocr_jobs as usize
-            },
+            super::super::visual::local_ocr_limit(&settings.ai.processing),
             cancel.clone(),
         )
         .await?;
         ensure_chunk_active(&app.state::<AppStorage>(), chunk)?;
         check_processing_cancel(&cancel)?;
+        app.state::<AppStorage>()
+            .with_connection(|connection| {
+                storage::set_processing_chunk_phase(connection, &chunk.id, "recognizing-text")
+            })
+            .map_err(storage_error)?;
         let runtime = runtime.clone();
         let owned = FullFrame {
             path: frame.path.clone(),

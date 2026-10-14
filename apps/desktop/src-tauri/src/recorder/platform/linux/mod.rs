@@ -14,6 +14,7 @@ use super::super::{
     manager::RecorderManager,
     manager::RecordingSegmentRuntime,
     media_writer::{self, MediaSegmentInput},
+    operation_timing::{run_blocking, OperationTimer},
     types::{
         AudioSourceList, ProtectableWindowList, RecorderAudioHealth,
         RecorderBackendComponentHealth, RecorderBackendHealth, RecorderError, RecorderScene,
@@ -34,7 +35,32 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
     }
 
     let portal = portal::collect_portal_health().await;
+    let blocking_portal = portal.clone();
+    match run_blocking("capture_backend_probes", move || {
+        Ok(collect_blocking_backend_health(blocking_portal))
+    })
+    .await
+    {
+        Ok(health) => health,
+        Err(error) => {
+            let mut health = super::super::manager::unavailable_backend_health();
+            health.portal = portal;
+            health.desktop_audio.error = Some(error.message.clone());
+            health.microphone.error = Some(error.message.clone());
+            health.pipewire.error = Some(error.message.clone());
+            health.gpu_capture.error = Some(error.message.clone());
+            health.media_writer.error = Some(error.message);
+            health
+        }
+    }
+}
+
+fn collect_blocking_backend_health(
+    portal: super::super::types::RecorderPortalHealth,
+) -> RecorderBackendHealth {
+    let _audio_timing = OperationTimer::start("audio_probe");
     let audio = audio::probe_audio_server();
+    drop(_audio_timing);
     let pipewire = audio
         .server_name
         .as_deref()
@@ -45,12 +71,17 @@ pub async fn collect_backend_health() -> RecorderBackendHealth {
         });
     let desktop_audio = audio_health(audio.desktop_default_source_id.clone(), audio.error.clone());
     let microphone = audio_health(audio.microphone_default_source_id.clone(), audio.error);
+    let gpu_timing = OperationTimer::start("gpu_probe");
     let gpu_capture = gpu_probe::collect_gpu_capture_health();
+    drop(gpu_timing);
+    let writer_timing = OperationTimer::start("media_writer_probe");
+    let writer = media_writer::collect_media_writer_health();
+    drop(writer_timing);
 
     RecorderBackendHealth {
         desktop_audio,
         gpu_capture,
-        media_writer: media_writer::collect_media_writer_health(),
+        media_writer: writer,
         microphone,
         pipewire,
         portal,
@@ -84,7 +115,7 @@ pub async fn get_audio_sources() -> Result<AudioSourceList, RecorderError> {
         return fake::get_audio_sources().await;
     }
 
-    audio::get_audio_sources()
+    run_blocking("audio_sources", audio::get_audio_sources).await
 }
 
 pub async fn prepare_live_capture(

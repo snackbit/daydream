@@ -13,6 +13,7 @@ export async function checkStudioInference({
   button,
   navigate,
   viewer,
+  afterBaseline,
 }) {
   const requests = [];
   let releaseProvider, signalRequest;
@@ -23,6 +24,15 @@ export async function checkStudioInference({
     signalRequest = resolve;
   });
   let malformed = true;
+  let holdDescriptions = false,
+    releaseDescriptions,
+    signalRecoveryRequest;
+  const recoveryRequest = new Promise((resolve) => {
+    signalRecoveryRequest = resolve;
+  });
+  const descriptionGate = new Promise((resolve) => {
+    releaseDescriptions = resolve;
+  });
   const server = createServer(async (request, response) => {
     let body = '';
     for await (const bytes of request) body += bytes;
@@ -32,6 +42,10 @@ export async function checkStudioInference({
     const images = content.filter((part) => part.type === 'image_url').length;
     const wantsOcr = fields.includes('ocr'),
       wantsObservation = fields.includes('observation');
+    if (holdDescriptions) {
+      signalRecoveryRequest();
+      await descriptionGate;
+    }
     requests.push({ images, ocr: wantsOcr, observation: wantsObservation });
     if (requests.length === 1) {
       signalRequest();
@@ -103,6 +117,7 @@ export async function checkStudioInference({
     settings.ai.ocr = { enabled: true, engine: 'vision' };
     settings.ai.processing.frameRecognitionSyncWithRecording = false;
     settings.ai.processing.frameRecognitionFps = 0.2;
+    settings.ai.processing.visualSamplingMode = 'full';
     settings.ai.processing.autoStartAfterRecording = false;
     for (const source of Object.values(settings.ai.activity))
       source.enabled = false;
@@ -257,8 +272,139 @@ export async function checkStudioInference({
         2,
       ),
     );
+    // Review consumes the baseline provider's synthetic text. Run that journey
+    // before local replacement of these text-free color/test-pattern screens.
+    await afterBaseline();
+    await navigate('Settings', '/settings');
+    await native.wait(
+      `document.querySelector('[aria-label="Enable debug tools"]') !== null`,
+      'settings cache is loaded before local recovery',
+    );
+    await navigate('Processing', '/processing');
+    holdDescriptions = true;
+    // The baseline's exact OCR outputs are already cached. Change the saved
+    // cadence so this scenario owns a genuinely new provider request to drain.
+    const uncached = (await native.invoke('getAppSettings')).settings;
+    uncached.ai.processing.frameRecognitionFps = 0.25;
+    await native.invoke('saveAppSettings', {
+      input: { settings: uncached, applyStorageCleanup: false },
+    });
+    const interrupted = await native.invoke('reprocessRecordingOcr', {
+      input: { recordingId },
+    });
+    await Promise.race([
+      recoveryRequest,
+      delay(10_000).then(() => {
+        throw new Error('Recovery fixture did not receive the old OCR request');
+      }),
+    ]);
+    await navigate('Processing', '/processing');
+    await native.wait(
+      `[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Use fast local processing' && !button.disabled)`,
+      'local recovery control is available',
+    );
+    await button('Use fast local processing');
+    let local;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      local = (await native.invoke('getAppSettings')).settings;
+      if (local.ai.ocr.engine === 'tesseract') break;
+      await delay(500);
+    }
+    const retired = (
+      await native.invoke('listProcessingJobs', { input: { recordingId } })
+    ).jobs.find((job) => job.id === interrupted.id);
+    assert.equal(
+      retired.status,
+      'completed-with-errors',
+      'The old owner is stopped before local replacement admission',
+    );
+    assert.equal(local.ai.ocr.engine, 'tesseract');
+    assert.equal(local.ai.processing.visualSamplingMode, 'adaptive-v1');
+    assert.equal(local.ai.processing.resourceMode, 'fast');
+    let localOverview;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      localOverview = await native.invoke('listRecordingProcessingGroups', {
+        input: { recordingId },
+      });
+      if (
+        localOverview.groups[0]?.lanes.find((lane) => lane.kind === 'ocr')
+          .status === 'succeeded'
+      )
+        break;
+      await delay(500);
+    }
+    const localGroup = localOverview.groups[0];
+    assert.equal(
+      localGroup.lanes.find((lane) => lane.kind === 'ocr').status,
+      'succeeded',
+      'Local OCR completes while Vision descriptions are held',
+    );
+    assert.ok(
+      localGroup.lanes.find((lane) => lane.kind === 'vlm').running > 0,
+      'Descriptions remain a separate active lane',
+    );
+    await native.wait(
+      `document.querySelector('button[aria-label="Inspect OCR"]')?.textContent.includes('Complete') && document.querySelector('button[aria-label="Inspect Screen observations"]')?.textContent.includes('frames processed')`,
+      'visible OCR completion and independent description progress',
+    );
+    await writeFile(
+      `${artifacts}/local-visual-recovery.json`,
+      JSON.stringify(
+        {
+          ocrCompleted: true,
+          descriptionsRunning: true,
+          frameProgress: localGroup.lanes
+            .find((lane) => lane.kind === 'vlm')
+            .activity.map((work) => ({
+              total: work.totalUnits,
+              completed: work.completedUnits,
+            })),
+        },
+        null,
+        2,
+      ),
+    );
+    await viewer.mouse.move(10, 10);
+    await viewer.screenshot({ path: `${artifacts}/local-visual-recovery.png` });
+    releaseDescriptions();
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const page = await native.invoke('listRecordingProcessingGroups', {
+        input: { recordingId },
+      });
+      if (page.groups[0]?.status === 'succeeded') break;
+      await delay(500);
+      if (attempt === 119)
+        throw new Error('Local visual recovery did not complete');
+    }
+    await navigate('Settings', '/settings');
+    await native.wait(
+      `document.querySelector('[aria-label="Enable debug tools"]') !== null`,
+      'settings reopen after local recovery',
+    );
+    const debugBefore = (await native.invoke('getAppSettings')).settings.debug
+      .enabled;
+    await click('[aria-label="Enable debug tools"]');
+    let savedPreset;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      savedPreset = (await native.invoke('getAppSettings')).settings;
+      if (savedPreset.debug.enabled !== debugBefore) break;
+      await delay(100);
+    }
+    assert.equal(
+      savedPreset.debug.enabled,
+      !debugBefore,
+      'Unrelated preference is saved',
+    );
+    assert.equal(savedPreset.ai.ocr.engine, 'tesseract');
+    assert.equal(savedPreset.ai.processing.resourceMode, 'fast');
+    assert.equal(savedPreset.ai.processing.visualSamplingMode, 'adaptive-v1');
+    await writeFile(
+      `${artifacts}/local-visual-settings.json`,
+      JSON.stringify({ presetRetainedAfterUnrelatedSave: true }),
+    );
   } finally {
     releaseProvider();
+    releaseDescriptions();
     await native.invoke('saveAppSettings', {
       input: { settings: original, applyStorageCleanup: false },
     });

@@ -11,6 +11,10 @@ export async function checkStudioControls({
     'document.querySelector("[role=tabpanel][data-state=active]").textContent.includes("Recording details")',
     'Inspector summary',
   );
+  await native.wait(
+    `(() => { const panel = document.querySelector('[role=tabpanel][data-state=active]'); const field = [...panel.querySelectorAll('dt')].find(element => element.textContent === 'Stored locally'); return /^\\d+(?:\\.\\d+)? [KMGT]?B$/.test(field?.nextElementSibling?.textContent?.trim() ?? ''); })()`,
+    'exact on-demand recording disk usage',
+  );
   await button('Review');
   await native.wait(
     'document.querySelector("[role=tab][aria-selected=true]").textContent === "Review"',

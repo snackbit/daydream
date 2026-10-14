@@ -6,13 +6,13 @@ import type {
   RecordingTranscriptWord,
   VlmObservation,
 } from '@daydream/shared';
+import type { StudioVisualFrame } from '../../observations/studio-visual-observations';
 import {
   ACTIVITY_FOCUS_LANE_ID,
   ACTIVITY_KEYBOARD_LANE_ID,
   ACTIVITY_MOUSE_LANE_ID,
-} from '../../studio-activity-lanes';
-import type { StudioTimeRangeSelection } from '../../studio-timeline-store';
-import type { StudioVisualFrame } from '../../studio-visual-observations';
+} from '../../timeline/lanes/activity/studio-activity-lanes';
+import type { StudioTimeRangeSelection } from '../../timeline/state/studio-timeline-store';
 import { transcriptTextSpans } from './transcript-text-spans';
 
 export interface InspectorFragment {

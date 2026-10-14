@@ -126,6 +126,18 @@ export function ProcessingPreferences({
       },
     }));
   }
+  function adaptive(enabled: boolean) {
+    onUpdate((current) => ({
+      ...current,
+      ai: {
+        ...current.ai,
+        processing: {
+          ...current.ai.processing,
+          visualSamplingMode: enabled ? 'adaptive-v1' : 'full',
+        },
+      },
+    }));
+  }
   function similarity(frameSimilarityEnabled: boolean) {
     onUpdate((current) => ({
       ...current,
@@ -146,6 +158,19 @@ export function ProcessingPreferences({
   }
   return (
     <div>
+      <SettingRow title="Adaptive screen sampling">
+        <Switch
+          aria-label="Adaptive screen sampling"
+          checked={draft.ai.processing.visualSamplingMode === 'adaptive-v1'}
+          onCheckedChange={adaptive}
+        />
+      </SettingRow>
+      <p className="text-muted-foreground text-xs">
+        Adaptive sampling checks up to one frame every five seconds and
+        recognizes material changes, with a full OCR checkpoint every 30
+        seconds. Brief or subtle content may be omitted. Existing jobs keep
+        their saved sampling settings.
+      </p>
       <SettingRow title="Match recording cadence">
         <Switch
           aria-label="Match recording cadence"

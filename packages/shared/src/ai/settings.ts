@@ -67,6 +67,7 @@ export interface AiProcessingSettings {
   autoStartAfterRecording: boolean;
   timing?: 'during-recording' | 'after-stop' | 'manual';
   resourceMode?: 'background' | 'fast';
+  visualSamplingMode?: 'full' | 'adaptive-v1';
   frameRecognitionFps: number;
   frameRecognitionSyncWithRecording: boolean;
   frameSimilarityEnabled: boolean;

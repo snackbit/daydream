@@ -1,13 +1,16 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tracing::{debug, info, warn};
 
 use crate::storage::AppStorage;
 
+#[cfg(test)]
+use super::super::types::RecorderScene;
 use super::super::{
     manager::{now_ms, PreviewStartDecision, RecorderManager},
+    operation_timing::run_blocking,
     platform,
     storage_mapping::recorder_scene_for_storage,
-    types::{RecorderError, RecorderPreviewStatus, RecorderScene, StartRecorderPreviewInput},
+    types::{RecorderError, RecorderPreviewStatus, StartRecorderPreviewInput},
 };
 
 pub fn get_recorder_preview_status(
@@ -57,7 +60,15 @@ pub async fn start_recorder_preview(
         })?;
     let timestamp_ms = now_ms();
     info!(scene_id = %input.scene_id, "recorder_preview_start_requested");
-    let (scene_id, generation) = match manager.begin_preview_start(&input.scene_id, timestamp_ms)? {
+    let begin_app = app.clone();
+    let requested_scene = input.scene_id.clone();
+    let decision = run_blocking("preview_begin", move || {
+        begin_app
+            .state::<RecorderManager>()
+            .begin_preview_start(&requested_scene, timestamp_ms)
+    })
+    .await?;
+    let (scene_id, generation) = match decision {
         PreviewStartDecision::AlreadyCurrent(status) => {
             debug!(
                 scene_id = %input.scene_id,
@@ -78,7 +89,12 @@ pub async fn start_recorder_preview(
             ))
         }
     } else {
-        recorder_scene_for_storage(&storage, &scene_id)
+        let storage = storage.inner().clone();
+        let scene_id = scene_id.clone();
+        run_blocking("preview_scene_read", move || {
+            recorder_scene_for_storage(&storage, &scene_id)
+        })
+        .await
     };
     let scene = match loaded_scene {
         Ok(scene) => scene,
@@ -112,10 +128,18 @@ pub async fn start_recorder_preview(
         );
         return manager.preview_status();
     }
-    if let Some(status) = stop_empty_preview_start(&manager, &scene, &scene_id, generation)? {
-        return Ok(status);
+    if scene.sources.is_empty() {
+        let stop_app = app.clone();
+        return run_blocking("preview_empty_stop", move || {
+            stop_app.state::<RecorderManager>().cancel_preview_start(
+                &scene_id,
+                generation,
+                now_ms(),
+            )
+        })
+        .await;
     }
-    let preview = match platform::start_preview_session(app, &storage, &scene).await {
+    let preview = match platform::start_preview_session(app.clone(), &storage, &scene).await {
         Ok(preview) => preview,
         Err(error) => {
             warn!(
@@ -141,13 +165,16 @@ pub async fn start_recorder_preview(
         "recorder_preview_start_succeeded"
     );
 
-    manager.activate_preview(
-        scene_id,
-        generation,
-        preview.source_ids,
-        preview.session,
-        now_ms(),
-    )
+    run_blocking("preview_activate", move || {
+        app.state::<RecorderManager>().activate_preview(
+            scene_id,
+            generation,
+            preview.source_ids,
+            preview.session,
+            now_ms(),
+        )
+    })
+    .await
 }
 
 pub fn stop_recorder_preview(
@@ -157,6 +184,7 @@ pub fn stop_recorder_preview(
     manager.stop_preview(now_ms())
 }
 
+#[cfg(test)]
 pub(crate) fn stop_empty_preview_start(
     manager: &RecorderManager,
     scene: &RecorderScene,
@@ -173,5 +201,7 @@ pub(crate) fn stop_empty_preview_start(
         "recorder_preview_start_skipped_empty_scene"
     );
 
-    manager.stop_preview(now_ms()).map(Some)
+    manager
+        .cancel_preview_start(scene_id, generation, now_ms())
+        .map(Some)
 }

@@ -43,6 +43,7 @@ pub(super) fn run_tesseract_document(
     cancel: &AtomicBool,
 ) -> Result<OcrContentInput, AiError> {
     let mut command = Command::new(&runtime.binary);
+    command.env("OMP_THREAD_LIMIT", "1");
     if let Some(directory) = &runtime.tessdata_dir {
         command.arg("--tessdata-dir").arg(directory);
     }

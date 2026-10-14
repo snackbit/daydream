@@ -1,5 +1,16 @@
 use super::super::super::*;
 use tokio::sync::Notify;
+pub(in crate::ai) fn local_ocr_limit(settings: &settings::AiProcessingSettings) -> usize {
+    if settings.resource_mode == "background" {
+        1
+    } else {
+        settings
+            .max_parallel_ocr_jobs
+            .clamp(1, 4)
+            .min(std::thread::available_parallelism().map_or(1, |cores| cores.get() as u32))
+            as usize
+    }
+}
 
 struct VisualFramePoolLimiter {
     active: Mutex<usize>,

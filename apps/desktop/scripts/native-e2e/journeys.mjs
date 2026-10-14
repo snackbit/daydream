@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 import { checkDayReview } from './day-review.mjs';
 import { connectInspector } from './inspector.mjs';
 import { checkLanguageContinuity } from './language.mjs';
+import { checkLibraryDays } from './library.mjs';
 import { checkLongPlayback, longPlayback } from './long-playback.mjs';
 import { checkModelSettings } from './model-settings.mjs';
 import { createNativePointer } from './pointer.mjs';
@@ -206,21 +207,35 @@ try {
       viewer,
       recordingId: fixture.visionId,
       artifacts,
+      afterBaseline: async () => {
+        await checkDayReview({
+          native,
+          click,
+          button,
+          navigate,
+          viewer,
+          recordingId: fixture.visionId,
+          artifacts,
+        });
+        stories.push('NATIVE-DAY-REVIEW-GENERATION-FAILURE-RETRY-PUBLICATION');
+        await click('[data-slot="sheet-content"] button:has(.lucide-x)');
+        await native.wait(
+          `document.querySelector('[data-slot="sheet-content"]') === null`,
+          'review closes before recovery navigation',
+        );
+      },
     });
     stories.push('NATIVE-STUDIO-SHARED-INFERENCE-PARTIAL-RETRY-CONTEXT');
     stories.push('NATIVE-PROCESSING-PIPELINE-SCOPED-OVERVIEW-LIVE-DEPENDENCY');
-    await checkDayReview({
-      native,
-      click,
-      button,
-      navigate,
-      viewer,
-      recordingId: fixture.visionId,
-      artifacts,
-    });
-    stories.push('NATIVE-DAY-REVIEW-GENERATION-FAILURE-RETRY-PUBLICATION');
+    stories.push('NATIVE-LOCAL-VISUAL-RECOVERY-INDEPENDENT-DESCRIPTIONS');
   } else if (phase === 'language') {
-    await checkLanguageContinuity({ native, artifacts });
+    await checkLanguageContinuity({
+      native,
+      artifacts,
+      navigate,
+      click,
+      viewer,
+    });
     stories.push('NATIVE-AUTO-LANGUAGE-CONSENSUS-RETROACTIVE-CORRECTION');
   } else if (phase === 'studio') {
     const diagnostic = await checkStudioLoad({
@@ -504,7 +519,9 @@ try {
         assert.ok(segment.filePath.startsWith(`${artifacts}/data/`));
         assert.ok((await stat(segment.filePath)).size > 0);
       }
-      await navigate('Library', '/library');
+      await checkLibraryDays({ native, navigate, viewer, artifacts });
+      stories.push('NATIVE-LIBRARY-METADATA-DAYS');
+      const dayOpeningStarted = performance.now();
       await click('a[href^="/day/"]');
       await native.wait(
         'document.querySelector("video") !== null',
@@ -513,6 +530,14 @@ try {
       await native.wait(
         'document.querySelector("video").readyState >= 2',
         'native decoded video frame',
+      );
+      await writeFile(
+        `${artifacts}/initial-day-opening-timings.json`,
+        JSON.stringify(
+          { navigationToDecodedFrameMs: performance.now() - dayOpeningStarted },
+          null,
+          2,
+        ),
       );
       assert.ok(
         await native.evaluate('document.querySelector("video").videoWidth > 0'),

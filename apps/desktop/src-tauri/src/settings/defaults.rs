@@ -121,6 +121,7 @@ pub fn default_ai_settings() -> AiSettings {
             auto_start_after_recording: true,
             timing: "during-recording".into(),
             resource_mode: "background".into(),
+            visual_sampling_mode: "adaptive-v1".into(),
             frame_recognition_fps: DEFAULT_AI_FRAME_RECOGNITION_FPS,
             frame_recognition_sync_with_recording: true,
             frame_similarity_enabled: true,

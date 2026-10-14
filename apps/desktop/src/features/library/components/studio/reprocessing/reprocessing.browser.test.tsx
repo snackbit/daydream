@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import '@/index.css';
 import { useStudioSelectionDismissal } from '../interactions/use-studio-selection-dismissal';
-import { useStudioTimelineStore } from '../studio-timeline-store';
+import { useStudioTimelineStore } from '../timeline/state/studio-timeline-store';
 import { ReprocessingDialog } from './reprocessing-dialog';
 import { ReprocessingDropdown } from './reprocessing-menu';
 import { useStudioReprocessing } from './use-studio-reprocessing';

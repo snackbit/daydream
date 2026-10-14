@@ -286,7 +286,9 @@ pub fn get_visual_frame_processing_state(
     connection: &Connection,
     id: &str,
 ) -> rusqlite::Result<Option<VisualFrameProcessingStateRow>> {
-    let mut statement = connection.prepare(VISUAL_FRAME_PROCESSING_STATE_SELECT)?;
+    let mut statement = connection.prepare(&format!(
+        "{VISUAL_FRAME_PROCESSING_STATE_SELECT} WHERE id = ?1"
+    ))?;
     statement
         .query_row([id], visual_frame_processing_state_row)
         .optional()
@@ -337,34 +339,31 @@ pub fn list_visual_frame_processing_states(
     connection: &Connection,
     recording_id: &str,
 ) -> rusqlite::Result<Vec<VisualFrameProcessingStateRow>> {
-    let mut statement = connection.prepare(
-        r#"
-        SELECT
-            id,
-            recording_id,
-            job_id,
-            chunk_id,
-            source_kind,
-            segment_id,
-            frame_timestamp_ms,
-            source_frame_ref,
-            region_x,
-            region_y,
-            region_width,
-            region_height,
-            status,
-            progress,
-            error_code,
-            output_count,
-            created_at_ms,
-            updated_at_ms
-        FROM visual_frame_processing_states
-        WHERE recording_id = ?1
-        ORDER BY frame_timestamp_ms ASC, source_kind ASC, source_frame_ref ASC, id ASC
-        "#,
-    )?;
+    let mut statement = connection.prepare(&format!(
+        "{VISUAL_FRAME_PROCESSING_STATE_SELECT} WHERE recording_id = ?1
+        ORDER BY frame_timestamp_ms ASC, source_kind ASC, source_frame_ref ASC, id ASC"
+    ))?;
     let rows = statement.query_map([recording_id], visual_frame_processing_state_row)?;
 
+    rows.collect()
+}
+
+pub fn list_visual_frame_processing_states_for_chunks(
+    connection: &Connection,
+    recording_id: &str,
+    chunk_ids: &[&str],
+) -> rusqlite::Result<Vec<VisualFrameProcessingStateRow>> {
+    let chunk_ids_json =
+        serde_json::to_string(chunk_ids).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let mut statement = connection.prepare(&format!(
+        "{VISUAL_FRAME_PROCESSING_STATE_SELECT}
+        WHERE recording_id = ?1 AND chunk_id IN (SELECT value FROM json_each(?2))
+        ORDER BY frame_timestamp_ms ASC, source_kind ASC, source_frame_ref ASC, id ASC"
+    ))?;
+    let rows = statement.query_map(
+        params![recording_id, chunk_ids_json],
+        visual_frame_processing_state_row,
+    )?;
     rows.collect()
 }
 
@@ -433,5 +432,4 @@ const VISUAL_FRAME_PROCESSING_STATE_SELECT: &str = r#"
         created_at_ms,
         updated_at_ms
     FROM visual_frame_processing_states
-    WHERE id = ?1
     "#;

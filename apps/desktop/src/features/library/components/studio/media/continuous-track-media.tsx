@@ -5,7 +5,7 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTileTrack,
 } from '@daydream/shared';
-import { STUDIO_OVERVIEW_PIXELS_PER_MS } from '../studio-result-window-store';
+import { STUDIO_OVERVIEW_PIXELS_PER_MS } from '../results/studio-result-window-store';
 
 export interface ContinuousTrackMediaProps {
   detail: LibraryRecordingDetail;

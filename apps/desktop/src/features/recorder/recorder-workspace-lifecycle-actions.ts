@@ -147,7 +147,7 @@ async function start(
 
   if (
     previewIsActive(state.previewStatus) &&
-    !(await stopPreviewForRecording(set, state.previewStatus?.sceneId ?? null))
+    !(await stopPreviewForRecording(set, get))
   ) {
     set({ pendingLifecycleAction: null });
     return;

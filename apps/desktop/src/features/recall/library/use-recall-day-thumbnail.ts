@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { RecallDayCard } from '@daydream/shared';
+import type { LibraryDayCard } from '@daydream/shared';
 import { prepareLibraryRecordingThumbnail } from '@/features/library/library-client';
 
 // Uncached previews launch FFmpeg. Match the existing Library's single request budget.
 let pendingPreparation: Promise<void> = Promise.resolve();
 
 /** The native thumbnail adapter applies current source protection and redactions. */
-export function useRecallDayThumbnail(day: RecallDayCard): {
+export function useRecallDayThumbnail(day: LibraryDayCard): {
   path: string | null;
   state: 'ready' | 'loading' | 'hidden' | 'unavailable';
 } {

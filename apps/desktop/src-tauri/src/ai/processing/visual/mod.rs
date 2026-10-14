@@ -1,7 +1,7 @@
 use super::super::*;
 pub(in crate::ai) use concurrency::{
     acquire_ocr_cancellable as acquire_ocr_permit_for_documents,
-    acquire_vlm_cancellable as acquire_vlm_permit_for_documents,
+    acquire_vlm_cancellable as acquire_vlm_permit_for_documents, local_ocr_limit,
 };
 pub(in crate::ai) use image::decode_png_rgba as decode_png_rgba_for_ocr;
 pub(in crate::ai) use vlm::{
@@ -19,6 +19,9 @@ mod context;
 mod extraction;
 mod frame_jobs;
 mod image;
+pub(in crate::ai) fn material_change(previous: &VisualImage, current: &VisualImage) -> bool {
+    !image::visual_delta_regions(previous, current, 64).is_empty()
+}
 mod ocr;
 mod persistence;
 mod provider_configuration;
@@ -243,7 +246,6 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
             source_kind = %chunk.source_kind,
             provider = %config.provider,
             model = %config.model,
-            base_url = %config.base_url,
             elapsed_ms = elapsed_ms(config_started),
             "ai_processing_visual_vlm_config_loaded"
         );
@@ -304,6 +306,11 @@ pub(in crate::ai) async fn process_visual_chunk_inner(
             )
         })?;
         let frame_count = frame_set.vlm_frames.len();
+        storage
+            .with_connection(|connection| {
+                storage::set_processing_chunk_phase(connection, &chunk.id, "waiting-for-model")
+            })
+            .map_err(storage_error)?;
         if frame_count == 0 {
             tracing::info!(
                 recording_id = %chunk.recording_id,

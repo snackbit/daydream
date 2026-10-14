@@ -36,6 +36,56 @@ fn read(storage: &AppStorage, chunk: &ProcessingChunkRow, timestamp_ms: i64) -> 
 }
 
 #[test]
+fn adaptive_replacement_publishes_a_gap_without_retaining_old_text_inside_it() {
+    let storage = storage::test_storage(PathBuf::new());
+    let old = seed(&storage);
+    let mut first = occurrence(&old, 0, "old pixels");
+    first.content = Some(OcrContentInput {
+        text: "Synthetic old screen text".into(),
+        blocks: vec![],
+    });
+    assert!(storage
+        .with_connection_mut(|connection| storage::save_ocr_frame_result(connection, &old, &first))
+        .unwrap());
+    let child = replacement(&storage, &old, 0, 1000, 30_000);
+    let mut omitted = occurrence(&child, 0, "different pixels");
+    omitted.status = "gap".into();
+    omitted.error_code = Some("ai_ocr_sample_omitted".into());
+    assert!(storage
+        .with_connection_mut(|connection| storage::save_ocr_frame_result(
+            connection, &child, &omitted
+        ))
+        .unwrap());
+    let document = storage
+        .with_connection(|connection| {
+            storage::get_ocr_document(
+                connection,
+                &GetOcrDocumentInput {
+                    recording_id: child.recording_id.clone(),
+                    source_track_id: "video-0".into(),
+                    timestamp_ms: 500,
+                    document_id: None,
+                },
+            )
+        })
+        .unwrap();
+    let gap = document.document.expect("an explicit gap document");
+    assert_eq!(gap.entry.status, "gap");
+    assert!(gap.content_id.is_none());
+    assert!(gap.blocks.is_empty());
+    let retained = storage
+        .with_connection(|connection| {
+            connection.query_row(
+                "SELECT status,content_id FROM ocr_frame_occurrences WHERE chunk_id=?1",
+                [&child.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+        })
+        .unwrap();
+    assert_eq!(retained, ("gap".into(), None));
+}
+
+#[test]
 fn reprocessing_unchanged_ocr_reuses_the_last_cached_occurrence() {
     tauri::async_runtime::block_on(async {
         let storage = storage::test_storage(PathBuf::new());

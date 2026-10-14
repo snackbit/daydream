@@ -9,8 +9,8 @@ import { page } from 'vitest/browser';
 import {
   buildStudioVisualFrames,
   type StudioVisualFrame,
-} from '../studio-visual-observations';
-import { VisualFrameSegments } from '../track-lane-visual-markers';
+} from './studio-visual-observations';
+import { VisualFrameSegments } from './track-lane-visual-markers';
 
 const durationMs = 38_000;
 const detail: LibraryRecordingDetail = {

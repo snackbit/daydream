@@ -64,6 +64,7 @@ pub(super) fn lane(
         error_code: None,
         next_retry_at_ms: None,
         activity: Vec::new(),
+        eta_ms: None,
     };
     let mut progress_sum = 0.0;
     let mut statuses = Vec::new();
@@ -146,6 +147,15 @@ pub(super) fn lane(
         )?;
     }
     lane.activity = super::group_activity::read(connection, &lane)?;
+    if !lane.input_open
+        && !matches!(
+            lane.status.as_deref(),
+            Some("paused" | "failed" | "cancelled")
+        )
+    {
+        lane.eta_ms = super::eta::lane(connection, &lane.job_ids, kind, super::now_ms())?
+            .filter(|eta| *eta > 0);
+    }
     Ok(lane)
 }
 
@@ -224,6 +234,8 @@ pub(super) fn group(
         indexed,
         total,
         pending: total.saturating_sub(indexed),
+        status: None,
+        error_code: None,
     };
     Ok(RecordingProcessingGroup {
         recording_id: recording.into(),

@@ -10,10 +10,10 @@ import {
   within,
 } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { StudioInspectorSelection } from '../studio-inspector-selection';
+import type { StudioInspectorSelection } from '../navigation/studio-inspector-selection';
+import { SelectedSourceInspector } from './details/selected-source-inspector';
+import { VisualSourceInspector } from './details/visual-source-inspector';
 import { RecordingInspectorSummary } from './recording-inspector-summary';
-import { SelectedSourceInspector } from './selected-source-inspector';
-import { VisualSourceInspector } from './visual-source-inspector';
 
 afterEach(() => {
   cleanup();

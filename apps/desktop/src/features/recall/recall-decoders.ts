@@ -14,6 +14,8 @@ import type {
   RecallStatus,
   RecallSuggestion,
   RecallTask,
+  LibraryDayCard,
+  LibraryDaysPage,
 } from '@daydream/shared';
 
 function invalid(): never {
@@ -85,18 +87,13 @@ export function decodeRecallEvidence(value: unknown): RecallEvidence {
   const r = record(value);
   return { ...decodeRecallCitation(value), text: string(r.text) };
 }
-export function decodeRecallDayCard(value: unknown): RecallDayCard {
+function decodeLibraryDayCard(value: unknown): LibraryDayCard {
   const r = record(value);
-  const [startMs, endMs] = range(r.startMs, r.endMs);
   return {
     privacyRevision: count(r.privacyRevision),
     dayId: string(r.dayId),
-    startMs,
-    endMs,
-    timezone: string(r.timezone),
     recordingCount: count(r.recordingCount),
     evidenceCount: count(r.evidenceCount),
-    summary: nullable(r.summary, string),
     reviewed: boolean(r.reviewed),
     status: oneOf(r.status, [
       'empty',
@@ -110,12 +107,45 @@ export function decodeRecallDayCard(value: unknown): RecallDayCard {
       'invalidated',
       'insufficient',
     ]),
-    inputFingerprint: string(r.inputFingerprint),
     capturedDurationMs: count(r.capturedDurationMs),
     thumbnailPath: nullable(r.thumbnailPath, string),
     thumbnailRecordingId: nullable(r.thumbnailRecordingId, string),
     redactionCount: count(r.redactionCount),
     recordingActive: boolean(r.recordingActive),
+  };
+}
+
+export function decodeLibraryDaysPage(value: unknown): LibraryDaysPage {
+  const r = record(value);
+  const page = {
+    privacyRevision: count(r.privacyRevision),
+    days: array(r.days, decodeLibraryDayCard),
+    nextBeforeDayId: nullable(r.nextBeforeDayId, string),
+    generationReady: boolean(r.generationReady),
+    generationUnavailableReason: nullable(
+      r.generationUnavailableReason,
+      string,
+    ),
+  };
+  if (
+    page.days.some((day) => day.privacyRevision !== page.privacyRevision) ||
+    (page.nextBeforeDayId !== null &&
+      page.nextBeforeDayId !== page.days.at(-1)?.dayId)
+  )
+    invalid();
+  return page;
+}
+
+export function decodeRecallDayCard(value: unknown): RecallDayCard {
+  const r = record(value);
+  const [startMs, endMs] = range(r.startMs, r.endMs);
+  return {
+    ...decodeLibraryDayCard(value),
+    startMs,
+    endMs,
+    timezone: string(r.timezone),
+    summary: nullable(r.summary, string),
+    inputFingerprint: string(r.inputFingerprint),
   };
 }
 function session(value: unknown): RecallSession {

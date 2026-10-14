@@ -28,27 +28,39 @@ pub(super) fn detail_from_rows(
     segments: &[RecordingSegmentRow],
     redactions: &[RedactionRow],
 ) -> LibraryRecordingDetail {
-    let summary = summary_from_rows(recording, segments);
+    let mut detail = detail_metadata_from_rows(recording, segments, redactions);
+    detail.size_bytes = Some(recording_size_bytes(recording, segments));
+    detail
+}
+
+/// Maps playback metadata without enumerating recording directories.
+pub(super) fn detail_metadata_from_rows(
+    recording: &RecordingRow,
+    segments: &[RecordingSegmentRow],
+    redactions: &[RedactionRow],
+) -> LibraryRecordingDetail {
+    let (availability, missing_reasons, playable_segment_count) =
+        recording_availability(recording, segments);
     let library_segments = library_segments(segments);
     let tracks = tracks_from_segments(segments);
     let library_redactions = library_redactions(redactions, &tracks);
 
     LibraryRecordingDetail {
         audio_cleanup: None,
-        availability: summary.availability,
-        duration_ms: summary.duration_ms,
-        ended_at_ms: summary.ended_at_ms,
-        id: summary.id,
-        missing_reasons: summary.missing_reasons,
-        playable_segment_count: summary.playable_segment_count,
+        availability,
+        duration_ms: recording_duration_ms(recording, segments),
+        ended_at_ms: recording.ended_at_ms,
+        id: recording.id.clone(),
+        missing_reasons,
+        playable_segment_count,
         redactions: library_redactions,
         segments: library_segments,
-        size_bytes: summary.size_bytes,
-        started_at_ms: summary.started_at_ms,
-        status: summary.status,
-        storage_dir: summary.storage_dir,
-        thumbnail_path: summary.thumbnail_path,
-        title: summary.title,
+        size_bytes: None,
+        started_at_ms: recording.started_at_ms,
+        status: recording.status.clone(),
+        storage_dir: recording.storage_dir.clone(),
+        thumbnail_path: None,
+        title: recording.title.clone(),
         tracks,
     }
 }
@@ -71,15 +83,24 @@ pub(super) fn detail_for_recording(
     let mappings = storage
         .with_connection(|connection| storage::recording_video_streams(connection, recording_id))
         .map_err(|_| "Video source metadata could not be read.".to_string())?;
+    apply_source_metadata(&mut detail, &segments, &redactions, &mappings);
+    detail.audio_cleanup = Some(audio_cleanup::read_state(storage, recording_id)?);
+    Ok(detail)
+}
+
+pub(super) fn apply_source_metadata(
+    detail: &mut LibraryRecordingDetail,
+    segments: &[RecordingSegmentRow],
+    redactions: &[RedactionRow],
+    mappings: &BTreeMap<String, Vec<storage::SegmentVideoStream>>,
+) {
     for segment in &mut detail.segments {
         if let Some(streams) = mappings.get(&segment.id) {
             segment.video_streams = streams.clone();
         }
     }
-    detail.tracks = source_tracks(&segments, &mappings);
-    detail.redactions = library_redactions(&redactions, &detail.tracks);
-    detail.audio_cleanup = Some(audio_cleanup::read_state(storage, recording_id)?);
-    Ok(detail)
+    detail.tracks = source_tracks(segments, mappings);
+    detail.redactions = library_redactions(redactions, &detail.tracks);
 }
 
 pub(super) fn tracks_for_recording(
@@ -134,6 +155,29 @@ pub(super) fn summary_from_rows(
     recording: &RecordingRow,
     segments: &[RecordingSegmentRow],
 ) -> LibraryRecordingSummary {
+    let (availability, missing_reasons, playable_segment_count) =
+        recording_availability(recording, segments);
+    LibraryRecordingSummary {
+        availability,
+        duration_ms: recording_duration_ms(recording, segments),
+        ended_at_ms: recording.ended_at_ms,
+        id: recording.id.clone(),
+        missing_reasons,
+        playable_segment_count,
+        segment_count: segments.len(),
+        size_bytes: recording_size_bytes(recording, segments),
+        started_at_ms: recording.started_at_ms,
+        status: recording.status.clone(),
+        storage_dir: recording.storage_dir.clone(),
+        thumbnail_path: None,
+        title: recording.title.clone(),
+    }
+}
+
+fn recording_availability(
+    recording: &RecordingRow,
+    segments: &[RecordingSegmentRow],
+) -> (LibraryRecordingAvailability, Vec<String>, usize) {
     let storage_dir_exists = Path::new(&recording.storage_dir).is_dir();
     let playable_segments = playable_segments(segments);
     let playable_segment_count = playable_segments.len();
@@ -164,21 +208,7 @@ pub(super) fn summary_from_rows(
         LibraryRecordingAvailability::Available
     };
 
-    LibraryRecordingSummary {
-        availability,
-        duration_ms: recording_duration_ms(recording, segments),
-        ended_at_ms: recording.ended_at_ms,
-        id: recording.id.clone(),
-        missing_reasons,
-        playable_segment_count,
-        segment_count: segments.len(),
-        size_bytes: recording_size_bytes(recording, segments),
-        started_at_ms: recording.started_at_ms,
-        status: recording.status.clone(),
-        storage_dir: recording.storage_dir.clone(),
-        thumbnail_path: None,
-        title: recording.title.clone(),
-    }
+    (availability, missing_reasons, playable_segment_count)
 }
 
 fn library_redactions(

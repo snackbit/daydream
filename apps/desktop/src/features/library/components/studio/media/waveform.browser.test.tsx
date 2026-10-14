@@ -7,7 +7,7 @@ import type {
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { Button } from '@/components/ui/button';
-import { TrackClipMedia } from '../track-lane-media';
+import { TrackClipMedia } from './track-clip-media';
 
 let stylesheet: HTMLLinkElement;
 const initialDark = document.documentElement.classList.contains('dark');

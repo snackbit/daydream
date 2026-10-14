@@ -18,8 +18,15 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { Button } from '@/components/ui/button';
 import { useStudioSelectionDismissal } from '@/features/library/components/studio/interactions/use-studio-selection-dismissal';
-import { useStudioTimelineStore } from '@/features/library/components/studio/studio-timeline-store';
 import { detail } from '@/features/library/components/studio/timeline/processing/processing-test-fixtures';
+import { useStudioTimelineStore } from '@/features/library/components/studio/timeline/state/studio-timeline-store';
+import type * as RecorderClient from '@/features/recorder/recorder-client';
+import type * as SettingsClient from '@/features/settings/settings-client';
+import { useSettingsStore } from '@/features/settings/settings-store';
+import {
+  defaultSettingsState,
+  scene,
+} from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { ProcessingScreen } from '@/screens/ProcessingScreen';
 import { StudioProcessingOverview } from '../components/studio-processing-overview';
@@ -43,6 +50,15 @@ const client = vi.hoisted(() => ({
   reprocessRecordingTranscription: vi.fn(),
 }));
 vi.mock('../processing-client', () => client);
+const settingsClient = vi.hoisted(() => ({ getAppSettings: vi.fn() }));
+vi.mock('@/features/settings/settings-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsClient>()),
+  ...settingsClient,
+}));
+vi.mock('@/features/recorder/recorder-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof RecorderClient>()),
+  getRecorderScene: async () => scene,
+}));
 let changed: ((event: BackgroundTasksChanged) => void) | undefined;
 let studioIds = ['recording-b', 'recording-a'];
 const clearSelection = vi.fn();
@@ -61,6 +77,138 @@ test('an empty Studio scope cannot open unrelated work; a single recording has a
   await page.getByRole('button', { name: 'Processing overview' }).click();
   await screen.findByText('Current and queued work for this recording.');
 });
+
+test('partial native progress and live recordings keep recovery disabled without inventing frame counts', async () => {
+  client.listRecordingProcessingGroups.mockResolvedValue(
+    groupPage([
+      group({
+        inputOpen: true,
+        etaMs: null,
+        lanes: group().lanes.map((value) =>
+          value.kind === 'ocr'
+            ? {
+                ...value,
+                activity: [
+                  activity({
+                    chunkId: 'unknown-total',
+                    totalUnits: null,
+                    completedUnits: 0,
+                  }),
+                  activity({
+                    chunkId: 'unknown-done',
+                    totalUnits: 5,
+                    completedUnits: null,
+                  }),
+                ],
+              }
+            : value,
+        ),
+      }),
+    ]),
+  );
+  mount();
+  await screen.findByRole('button', { name: 'Use fast local processing' });
+  expect(
+    page.getByRole('button', { name: 'Use fast local processing' }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Inspect OCR' }).click();
+  expect(screen.queryByText(/frames processed/)).toBeNull();
+});
+
+test('visible frame progress and indexing failures survive visual recovery without hiding completed audio', async () => {
+  const current = group({
+    lanes: group().lanes.map((value) =>
+      value.kind === 'ocr'
+        ? {
+            ...value,
+            etaMs: 60_000,
+            activity: [activity({ totalUnits: 5, completedUnits: 4 })],
+          }
+        : value.kind === 'audio'
+          ? {
+              ...value,
+              status: 'succeeded',
+              completed: value.total,
+              running: 0,
+              queued: 0,
+              progress: 1,
+              activity: [],
+            }
+          : value,
+    ),
+    indexCoverage: {
+      applicability: 'available',
+      indexed: 0,
+      total: 5,
+      pending: 5,
+      status: 'blocked',
+      errorCode: 'recall_embedding_vulkan_unavailable',
+    },
+  });
+  client.listRecordingProcessingGroups.mockResolvedValue(groupPage([current]));
+  client.controlRecordingProcessingGroups.mockResolvedValue({
+    results: [{ jobId: 'local-visual', succeeded: true, errorCode: null }],
+  });
+  mount();
+  await screen.findByText('4/5 frames processed');
+  expect(
+    screen.getByRole('button', { name: 'Inspect Transcription' }).textContent,
+  ).toContain('Complete');
+  await page.getByRole('button', { name: /Search readiness/ }).click();
+  await screen.findByText(/The Vulkan embedding worker is unavailable/);
+  await page.getByRole('button', { name: 'Use fast local processing' }).click();
+  expect(client.controlRecordingProcessingGroups).toHaveBeenCalledWith({
+    recordingId: current.recordingId,
+    action: 'optimize-visual',
+  });
+  expect(screen.getByText('4/5 frames processed')).toBeTruthy();
+  client.controlRecordingProcessingGroups.mockRejectedValue(
+    new Error('synthetic recovery failed'),
+  );
+  await page.getByRole('button', { name: 'Use fast local processing' }).click();
+  await screen.findByText(
+    'Processing could not complete this action. Retry to reconnect.',
+  );
+  expect(
+    screen.getByRole('button', { name: 'Inspect Transcription' }).textContent,
+  ).toContain('Complete');
+});
+
+test.each(['success', 'failure'])(
+  'a settings reload failure after visual recovery (%s) releases controls for the next action',
+  async (outcome) => {
+    settingsClient.getAppSettings.mockRejectedValueOnce(
+      new Error('synthetic settings read failed'),
+    );
+    if (outcome === 'failure')
+      client.controlRecordingProcessingGroups.mockRejectedValueOnce(
+        new Error('synthetic recovery failed'),
+      );
+    mount();
+    await page
+      .getByRole('button', { name: 'Use fast local processing' })
+      .click();
+    await screen.findByRole('alert');
+    await expect
+      .element(page.getByRole('button', { name: 'Pause recording processing' }))
+      .toBeEnabled();
+    expect(screen.getByRole('alert').textContent).toContain(
+      outcome === 'failure'
+        ? 'Processing could not complete this action.'
+        : 'Settings could not be reloaded.',
+    );
+    expect(useSettingsStore.getState().loadStatus).toBe('error');
+    await page
+      .getByRole('button', { name: 'Pause recording processing' })
+      .click();
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(client.controlRecordingProcessingGroups).toHaveBeenLastCalledWith({
+      recordingId: 'synthetic-recording',
+      action: 'pause',
+    });
+    expect(client.controlRecordingProcessingGroups).toHaveBeenCalledTimes(2);
+  },
+);
 
 test.each(['disabled', 'no-eligible-input', 'available'] as const)(
   'completed pipelines retain source availability and %s search readiness without a fabricated estimate',
@@ -236,6 +384,14 @@ function mount(studio = false, search = '') {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  settingsClient.getAppSettings.mockImplementation(async () =>
+    structuredClone(defaultSettingsState),
+  );
+  useSettingsStore.setState({
+    loadStatus: 'ready',
+    draft: null,
+    settingsState: null,
+  });
   changed = undefined;
   studioIds = ['recording-b', 'recording-a'];
   useStudioTimelineStore.setState(

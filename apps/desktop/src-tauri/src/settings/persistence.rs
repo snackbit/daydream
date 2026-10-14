@@ -95,6 +95,8 @@ fn apply_setting_row(
         "ai.processing.maxParallelJobs" => {
             settings.ai.processing.max_parallel_jobs = setting_value(row)?;
         }
+        "ai.processing.timing" => settings.ai.processing.timing = setting_value(row)?,
+        "ai.processing.resourceMode" => settings.ai.processing.resource_mode = setting_value(row)?,
         "ai.processing.maxParallelChunksPerJob" => {
             settings.ai.processing.max_parallel_chunks_per_job = setting_value(row)?;
         }
@@ -103,6 +105,9 @@ fn apply_setting_row(
         }
         "ai.processing.frameRecognitionFps" => {
             settings.ai.processing.frame_recognition_fps = setting_value(row)?;
+        }
+        "ai.processing.visualSamplingMode" => {
+            settings.ai.processing.visual_sampling_mode = setting_value(row)?;
         }
         "ai.processing.frameRecognitionSyncWithRecording" => {
             settings.ai.processing.frame_recognition_sync_with_recording = setting_value(row)?;
@@ -334,6 +339,18 @@ pub(super) fn settings_to_storage_inputs(
             timestamp_ms,
         )?,
         setting_input(
+            "ai.processing.timing",
+            &settings.ai.processing.timing,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.resourceMode",
+            &settings.ai.processing.resource_mode,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
             "ai.processing.maxParallelJobs",
             &settings.ai.processing.max_parallel_jobs,
             false,
@@ -354,6 +371,12 @@ pub(super) fn settings_to_storage_inputs(
         setting_input(
             "ai.processing.frameRecognitionFps",
             &settings.ai.processing.frame_recognition_fps,
+            false,
+            timestamp_ms,
+        )?,
+        setting_input(
+            "ai.processing.visualSamplingMode",
+            &settings.ai.processing.visual_sampling_mode,
             false,
             timestamp_ms,
         )?,

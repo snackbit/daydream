@@ -33,6 +33,7 @@ use crate::storage;
 mod failures;
 mod live_processing;
 mod protection;
+mod responsiveness;
 mod setup;
 
 #[test]

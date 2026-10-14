@@ -3,6 +3,7 @@ import type {
   LibraryRecordingSummary,
   RecallDayCard,
   LibraryRecordingThumbnail,
+  RecallStateChanged,
 } from '@daydream/shared';
 import {
   cleanup,
@@ -39,9 +40,26 @@ vi.mock('@/features/library/library-client', () => client);
 const recall = vi.hoisted(() => ({
   listRecallDays: vi.fn<() => Promise<RecallDayCard[]>>(async () => []),
   getRecallStatus: vi.fn(),
-  listenToRecallStateChanged: vi.fn(async () => () => undefined),
+  listenToRecallStateChanged: vi.fn(
+    async (_handler: (event: RecallStateChanged) => void) => () => undefined,
+  ),
 }));
 vi.mock('@/features/recall/recall-client', () => recall);
+const daysClient = vi.hoisted(() => ({ listLibraryDays: vi.fn() }));
+vi.mock('@/features/library/day-studio/day-client', () => daysClient);
+
+function daysPage(
+  days: RecallDayCard[] = [],
+  nextBeforeDayId: string | null = null,
+) {
+  return {
+    days,
+    nextBeforeDayId,
+    privacyRevision: 1,
+    generationReady: true,
+    generationUnavailableReason: null,
+  };
+}
 
 async function renderRecordings() {
   render(<LibraryScreen />);
@@ -127,6 +145,7 @@ beforeEach(async () => {
   vi.resetAllMocks();
   vi.setSystemTime(new Date('2026-10-06T12:00:00'));
   recall.getRecallStatus.mockResolvedValue(recallStatusFixture);
+  daysClient.listLibraryDays.mockResolvedValue(daysPage());
   client.listLibraryRecordings.mockResolvedValue([
     readyRecording,
     missingRecording,
@@ -158,10 +177,12 @@ afterEach(() => {
 });
 
 test('Library defaults to newest-first Days regardless of review status', async () => {
-  recall.listRecallDays.mockResolvedValue([
-    { ...recallDayFixture.day, dayId: '2026-10-06', reviewed: true },
-    recallDayFixture.day,
-  ]);
+  daysClient.listLibraryDays.mockResolvedValue(
+    daysPage([
+      { ...recallDayFixture.day, dayId: '2026-10-06', reviewed: true },
+      recallDayFixture.day,
+    ]),
+  );
   render(<LibraryScreen />);
   await screen.findByRole('link', { name: /open day.*october 6/i });
   expect(
@@ -177,8 +198,142 @@ test('Library defaults to newest-first Days regardless of review status', async 
   expect(client.listLibraryRecordings).not.toHaveBeenCalled();
 });
 
+test('Library days remain available while Recall status is stalled', async () => {
+  recall.getRecallStatus.mockReturnValue(new Promise(() => {}));
+  let finishPreview: ((value: LibraryRecordingThumbnail) => void) | undefined;
+  client.prepareLibraryRecordingThumbnail.mockReturnValue(
+    new Promise<LibraryRecordingThumbnail>((resolve) => {
+      finishPreview = resolve;
+    }),
+  );
+  daysClient.listLibraryDays.mockResolvedValue(
+    daysPage([
+      { ...recallDayFixture.day, thumbnailRecordingId: 'recording-pending' },
+    ]),
+  );
+  render(<LibraryScreen />);
+  await screen.findByRole('link', { name: /open day.*october 5/i });
+  expect(recall.getRecallStatus).not.toHaveBeenCalled();
+  expect(recall.listRecallDays).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(client.prepareLibraryRecordingThumbnail).toHaveBeenCalled(),
+  );
+  await act(async () =>
+    finishPreview?.({
+      recordingId: 'recording-pending',
+      path: null,
+      error: null,
+    }),
+  );
+});
+
+test('Library retries a failed metadata read and preserves loaded days while loading older pages', async () => {
+  daysClient.listLibraryDays
+    .mockRejectedValueOnce(new Error('synthetic read failure'))
+    .mockResolvedValueOnce(daysPage([recallDayFixture.day], '2026-10-05'))
+    .mockRejectedValueOnce(new Error('synthetic older-page failure'));
+  render(<LibraryScreen />);
+  await screen.findByRole('alert');
+  await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  const day = await screen.findByRole('link', { name: /open day.*october 5/i });
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Load older days' }),
+  );
+  await screen.findByRole('alert');
+  expect(day).toBeVisible();
+  let complete: ((page: ReturnType<typeof daysPage>) => void) | undefined;
+  daysClient.listLibraryDays.mockReturnValueOnce(
+    new Promise<ReturnType<typeof daysPage>>((resolve) => {
+      complete = resolve;
+    }),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(day).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('Loading days');
+  await act(async () =>
+    complete?.(daysPage([{ ...recallDayFixture.day, dayId: '2026-10-04' }])),
+  );
+  await screen.findByRole('link', { name: /open day.*october 4/i });
+  expect(screen.getAllByRole('link', { name: /open day/i })).toHaveLength(2);
+  expect(
+    daysClient.listLibraryDays.mock.calls.map(([input]) => input.beforeDayId),
+  ).toEqual([null, null, '2026-10-05', '2026-10-05']);
+});
+
+test('Library drops pending older pages when privacy changes', async () => {
+  let complete: ((page: ReturnType<typeof daysPage>) => void) | undefined;
+  let completeCurrent:
+    ((page: ReturnType<typeof daysPage>) => void) | undefined;
+  daysClient.listLibraryDays
+    .mockResolvedValueOnce(daysPage([recallDayFixture.day], '2026-10-05'))
+    .mockReturnValueOnce(
+      new Promise<ReturnType<typeof daysPage>>((resolve) => {
+        complete = resolve;
+      }),
+    )
+    .mockReturnValue(
+      new Promise<ReturnType<typeof daysPage>>((resolve) => {
+        completeCurrent = resolve;
+      }),
+    );
+  render(<LibraryScreen />);
+  await screen.findByRole('link', { name: /open day.*october 5/i });
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Load older days' }),
+  );
+  await waitFor(() =>
+    expect(daysClient.listLibraryDays).toHaveBeenCalledTimes(2),
+  );
+  act(() => {
+    for (const [handler] of recall.listenToRecallStateChanged.mock.calls)
+      handler({ privacyRevision: 2, dayId: null });
+  });
+  await screen.findByRole('status');
+  expect(screen.queryByRole('link', { name: /open day/i })).toBeNull();
+  await act(async () =>
+    complete?.(daysPage([{ ...recallDayFixture.day, dayId: '2026-10-04' }])),
+  );
+  expect(
+    screen.queryByRole('link', { name: /open day.*october 4/i }),
+  ).toBeNull();
+  await act(async () =>
+    completeCurrent?.({
+      ...daysPage([{ ...recallDayFixture.day, privacyRevision: 2 }]),
+      privacyRevision: 2,
+    }),
+  );
+  await screen.findByRole('link', { name: /open day.*october 5/i });
+  expect(screen.getAllByRole('link', { name: /open day/i })).toHaveLength(1);
+});
+
+test('Library rejects an older page with changed privacy or an overlapping cursor', async () => {
+  for (const page of [
+    {
+      ...daysPage([
+        { ...recallDayFixture.day, dayId: '2026-10-04', privacyRevision: 2 },
+      ]),
+      privacyRevision: 2,
+    },
+    daysPage([recallDayFixture.day]),
+  ]) {
+    daysClient.listLibraryDays
+      .mockResolvedValueOnce(daysPage([recallDayFixture.day], '2026-10-05'))
+      .mockResolvedValueOnce(page);
+    render(<LibraryScreen />);
+    await screen.findByRole('link', { name: /open day/i });
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Load older days' }),
+    );
+    await screen.findByRole('alert');
+    expect(screen.getAllByRole('link', { name: /open day/i })).toHaveLength(1);
+    cleanup();
+  }
+});
+
 test('Library Days preserves primary links in both themes at desktop and narrow widths', async () => {
-  recall.listRecallDays.mockResolvedValue([recallDayFixture.day]);
+  daysClient.listLibraryDays.mockResolvedValue(
+    daysPage([recallDayFixture.day]),
+  );
   for (const dark of [false, true]) {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     for (const width of [1440, 1024, 768, 390, 320]) {

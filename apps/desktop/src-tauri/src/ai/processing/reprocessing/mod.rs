@@ -11,11 +11,33 @@ pub(crate) fn whole_recording(
     recording_id: &str,
     operation: ReprocessingOperation,
 ) -> Result<ProcessingJob, AiError> {
+    whole_operations(storage, recording_id, vec![operation])
+}
+pub(crate) fn whole_visual(
+    storage: &AppStorage,
+    recording_id: &str,
+) -> Result<ProcessingJob, AiError> {
+    let mut operations = vec![ReprocessingOperation::Ocr];
+    if settings::load_app_settings(storage)
+        .map_err(settings_error)?
+        .ai
+        .vision
+        .observations_enabled
+    {
+        operations.push(ReprocessingOperation::ScreenObservations);
+    }
+    whole_operations(storage, recording_id, operations)
+}
+fn whole_operations(
+    storage: &AppStorage,
+    recording_id: &str,
+    operations: Vec<ReprocessingOperation>,
+) -> Result<ProcessingJob, AiError> {
     let targets = storage
         .with_connection(|connection| {
             let mut ids = BTreeSet::new();
             for segment in storage::list_recording_segments(connection, recording_id)? {
-                if operation == ReprocessingOperation::Transcription {
+                if operations.contains(&ReprocessingOperation::Transcription) {
                     for role in ["microphone", "desktop-audio"] {
                         if let Some(id) = crate::recording_privacy::source_track_id(&segment, role)
                         {
@@ -40,7 +62,7 @@ pub(crate) fn whole_recording(
     let input = PreviewRecordingReprocessingInput {
         recording_id: recording_id.into(),
         targets,
-        operations: Some(vec![operation]),
+        operations: Some(operations),
     };
     let preview = preview(storage, &input)?;
     let kind = if input

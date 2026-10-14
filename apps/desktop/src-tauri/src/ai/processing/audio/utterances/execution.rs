@@ -65,13 +65,17 @@ impl SpeechWorker<'_> {
                 c.execute("DELETE FROM processing_speech_language_support WHERE unit_id=?1", [&unit.id])?; Ok(())
             }).map_err(storage_error)?;
             }
+            let mut checkpoint_corrected = false;
             let mut value = if let Some(json) = &unit.output_json {
-                serde_json::from_str(json).map_err(|_| {
-                    ai_error(
-                        "ai_processing_config_invalid",
-                        "The saved speech checkpoint is invalid.",
-                    )
-                })?
+                let checkpoint: language_history::Checkpoint<transcription::VerboseTranscription> =
+                    serde_json::from_str(json).map_err(|_| {
+                        ai_error(
+                            "ai_processing_config_invalid",
+                            "The saved speech checkpoint is invalid.",
+                        )
+                    })?;
+                checkpoint_corrected = checkpoint.language_corrected;
+                checkpoint.value
             } else if unit.submitted_end_ms == unit.submitted_start_ms {
                 empty_transcription()
             } else {
@@ -88,8 +92,10 @@ impl SpeechWorker<'_> {
                 }
             };
             if settings.ai.transcription.language == "auto" {
-                let stabilized = self.stabilize_language(&unit, value).await;
-                let (corrected, mut staged_repairs) = match stabilized {
+                let stabilized = self
+                    .stabilize_language(&unit, value, checkpoint_corrected)
+                    .await;
+                let (corrected, mut staged_repairs, corrected_checkpoint) = match stabilized {
                     Ok(result) => result,
                     Err(error) => {
                         storage
@@ -101,6 +107,7 @@ impl SpeechWorker<'_> {
                     }
                 };
                 value = corrected;
+                checkpoint_corrected = corrected_checkpoint;
                 if let Some((before, left)) = &mut previous {
                     if let Some(corrected) = staged_repairs.remove(&before.id) {
                         *left = corrected;
@@ -118,7 +125,11 @@ impl SpeechWorker<'_> {
                 );
                 publication::publish(&storage, chunk, track, settings, &before, left)?;
             }
-            let json = serde_json::to_string(&value).map_err(|_| {
+            let json = serde_json::to_string(&language_history::Checkpoint {
+                value: &value,
+                language_corrected: checkpoint_corrected,
+            })
+            .map_err(|_| {
                 ai_error(
                     "ai_processing_config_invalid",
                     "The speech checkpoint could not be saved.",
@@ -149,13 +160,12 @@ impl SpeechWorker<'_> {
     pub(super) async fn transcribe_unit(
         &self,
         unit: &storage::SpeechUnit,
-        correction_language: Option<&str>,
+        correction: Option<(&str, &language::State)>,
     ) -> Result<transcription::VerboseTranscription, AiError> {
-        let (app, chunk, track, run, settings, cancel, lease) = (
+        let (app, chunk, track, settings, cancel, lease) = (
             self.app,
             self.chunk,
             self.track,
-            self.run,
             self.settings,
             &self.cancel,
             &self.lease,
@@ -178,7 +188,22 @@ impl SpeechWorker<'_> {
         let path = temp.path().to_path_buf();
         let start = unit.submitted_start_ms;
         let end = unit.submitted_end_ms;
-        let run = run.window(start, end);
+        let run = if correction.is_some() {
+            // Repairs may precede the current run or chunk. Rebuild eligible
+            // input from this job's pinned source revision and current privacy.
+            source_runs(&storage, chunk, track)?
+                .into_iter()
+                .find(|run| start >= run.start && end <= run.end)
+                .ok_or_else(|| {
+                    ai_error(
+                        "ai_processing_audio_context_unavailable",
+                        "The speech source audio is unavailable.",
+                    )
+                })?
+                .window(start, end)
+        } else {
+            self.run.window(start, end)
+        };
         let worker_cancel = cancel.clone();
         let worker_lease = lease.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -223,6 +248,25 @@ impl SpeechWorker<'_> {
         super::super::super::worker::check_transcription_readiness(app, &storage, settings)?;
         check_atomic_cancel(cancel)?;
         ensure_chunk_active(&storage, chunk)?;
+        if !storage
+            .with_connection(|connection| {
+                Ok(
+                    publication::unit_eligible(connection, &chunk.recording_id, track, unit)?
+                        && match correction {
+                            Some((_, state)) => language_history::output_supported(
+                                connection, chunk, track, unit, state,
+                            )?,
+                            None => true,
+                        },
+                )
+            })
+            .map_err(storage_error)?
+        {
+            return Err(ai_error(
+                "ai_processing_cancelled",
+                "The speech window or language evidence is no longer eligible.",
+            ));
+        }
         let model = selected_transcription_model(settings)?;
         storage
             .with_connection(|c| storage::set_processing_chunk_phase(c, &chunk.id, "transcribing"))
@@ -236,12 +280,14 @@ impl SpeechWorker<'_> {
                     processing_lease: Some(lease.clone()),
                     audio_path: temp.path().to_path_buf(),
                     cancel: cancel.clone(),
-                    language: correction_language.map(str::to_owned).unwrap_or_else(|| {
-                        language_context::request_language(
-                            &settings.ai.transcription.language,
-                            None,
-                        )
-                    }),
+                    language: correction
+                        .map(|(language, _)| language.to_owned())
+                        .unwrap_or_else(|| {
+                            language_context::request_language(
+                                &settings.ai.transcription.language,
+                                None,
+                            )
+                        }),
                     max_initial_timestamp_seconds: settings
                         .ai
                         .transcription

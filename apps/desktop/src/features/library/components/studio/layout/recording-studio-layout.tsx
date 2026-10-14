@@ -25,12 +25,14 @@ export interface RecordingStudioLayoutProps {
   timeline: ReactNode;
   inspector: ReactNode;
   initiallyOpen: boolean;
+  disabled?: boolean;
 }
 export function RecordingStudioLayout({
   player,
   timeline,
   inspector,
   initiallyOpen,
+  disabled = false,
 }: RecordingStudioLayoutProps) {
   const [compact, setCompact] = useState(() => window.innerWidth < 1200);
   const [preference, setPreference] = useState<boolean | null>(null);
@@ -80,6 +82,7 @@ export function RecordingStudioLayout({
         <Sheet modal={false} open={open} onOpenChange={changeOpen}>
           <SheetTrigger asChild>
             <Button
+              disabled={disabled}
               ref={triggerRef}
               variant="outline"
               data-studio-preserve-selection
@@ -122,6 +125,7 @@ export function RecordingStudioLayout({
             </div>
           </ResizablePanel>
           <ResizableHandle
+            disabled={disabled}
             className="w-6 bg-transparent aria-[orientation=horizontal]:h-6"
             withHandle
           />
@@ -133,6 +137,7 @@ export function RecordingStudioLayout({
         </ResizablePanelGroup>
       </ResizablePanel>
       <ResizableHandle
+        disabled={disabled}
         className="w-6 bg-transparent aria-[orientation=horizontal]:h-6"
         withHandle
       />

@@ -1,3 +1,12 @@
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  createMemoryHistory,
+  Link,
+  Outlet,
+  RouterProvider,
+} from '@tanstack/react-router';
 import type { CaptureSetup } from '@daydream/shared';
 import {
   act,
@@ -12,6 +21,7 @@ import {
   chooseSelectOption,
   waitForSelectDismissal,
 } from '@/components/ui/testing/select-interactions';
+import { useAppearanceStore } from '@/features/appearance/appearance-store';
 import { useRecorderWorkspaceStore } from '@/features/recorder/recorder-workspace-store';
 import '@/index.css';
 import { CaptureScreen } from './CaptureScreen';
@@ -28,7 +38,224 @@ import {
 vi.mock('@/features/recorder/recorder-client');
 vi.mock('@/features/recorder/source-capture-client');
 beforeEach(resetCaptureFixture);
-afterEach(cleanupCaptureFixture);
+afterEach(() => {
+  cleanupCaptureFixture();
+  useAppearanceStore.getState().setMode('light');
+});
+
+function NavigationFixture() {
+  return (
+    <>
+      <nav aria-label="Test navigation">
+        <Link to="/capture">Capture</Link>
+        <Link to="/settings">Settings</Link>
+      </nav>
+      <Outlet />
+    </>
+  );
+}
+function SettingsDestination() {
+  return <h1>Settings destination</h1>;
+}
+function mountWithNavigation() {
+  const root = createRootRoute({ component: NavigationFixture });
+  const capture = createRoute({
+    getParentRoute: () => root,
+    path: '/capture',
+    component: CaptureScreen,
+  });
+  const settings = createRoute({
+    getParentRoute: () => root,
+    path: '/settings',
+    component: SettingsDestination,
+  });
+  return render(
+    <RouterProvider
+      router={createRouter({
+        routeTree: root.addChildren([capture, settings]),
+        history: createMemoryHistory({ initialEntries: ['/capture'] }),
+      })}
+    />,
+  );
+}
+
+test.each([
+  { theme: 'light', width: 1440 },
+  { theme: 'dark', width: 960 },
+] as const)(
+  'pending cleanup and cancelled chooser preserve sources and navigation at $width in $theme',
+  async ({ theme, width }) => {
+    await page.viewport(width, 960);
+    useAppearanceStore.getState().setMode(theme);
+    const stop =
+      deferred<Awaited<ReturnType<typeof client.stopRecorderPreview>>>();
+    const selection =
+      deferred<Awaited<ReturnType<typeof client.selectCaptureSources>>>();
+    client.stopRecorderPreview.mockReturnValueOnce(stop.promise);
+    client.selectCaptureSources.mockReturnValueOnce(selection.promise);
+    mountWithNavigation();
+    await screen.findByText('Preview: live');
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add monitor sources' }),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Add monitor sources' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Focus Synthetic monitor' }),
+    ).toBeTruthy();
+    expect(client.selectCaptureSources).not.toHaveBeenCalled();
+    await screen.findByText('Selecting monitor sources…');
+    await page.screenshot({
+      path: `__screenshots__/capture-pending-${theme}-${width}.png`,
+    });
+    await userEvent.click(screen.getByRole('link', { name: 'Settings' }));
+    await screen.findByRole('heading', { name: 'Settings destination' });
+    stop.resolve({
+      error: null,
+      sceneId: null,
+      sourceIds: [],
+      state: 'idle',
+      updatedAtMs: 3,
+    });
+    await waitFor(() =>
+      expect(client.selectCaptureSources).toHaveBeenCalledOnce(),
+    );
+    await userEvent.click(screen.getByRole('link', { name: 'Capture' }));
+    await screen.findByText('Selecting monitor sources…');
+    expect(client.startRecorderPreview).toHaveBeenCalledOnce();
+    selection.reject(
+      Object.assign(new Error('Synthetic picker cancellation'), {
+        code: 'recorder_portal_permission_denied',
+        category: 'permission',
+        message: 'Source selection cancelled.',
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Add monitor sources' }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Focus Synthetic monitor' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() =>
+      expect(client.startRecorderPreview).toHaveBeenCalledTimes(2),
+    );
+    useAppearanceStore.getState().setMode('light');
+  },
+);
+
+test('deleting the last monitor and adding it again displays a decoded preview after pending startup', async () => {
+  const selection =
+    deferred<Awaited<ReturnType<typeof client.selectCaptureSources>>>();
+  const preview =
+    deferred<Awaited<ReturnType<typeof client.startRecorderPreview>>>();
+  let publishFrame:
+    Parameters<typeof client.listenToRecorderPreviewFrames>[0] | undefined;
+  client.listenToRecorderPreviewFrames.mockImplementation(async (listener) => {
+    publishFrame = listener;
+    return () => undefined;
+  });
+  render(<CaptureScreen />);
+  await screen.findByText('Preview: live');
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Delete Synthetic monitor' }),
+  );
+  await screen.findByText('No monitor sources selected.');
+  await waitFor(() =>
+    expect(useRecorderWorkspaceStore.getState().previewStopInFlight).toBe(
+      false,
+    ),
+  );
+  client.selectCaptureSources.mockReturnValueOnce(selection.promise);
+  client.startRecorderPreview.mockReturnValueOnce(preview.promise);
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Add monitor sources' }),
+  );
+  await screen.findByText('Selecting monitor sources…');
+  selection.resolve({
+    sources: [
+      {
+        id: 'replacement-monitor',
+        displayName: 'Replacement monitor',
+        kind: 'monitor',
+        width: 1440,
+        height: 900,
+        logicalWidth: 1440,
+        logicalHeight: 900,
+        scaleFactor: 1,
+      },
+    ],
+  });
+  await screen.findByRole('button', { name: 'Focus Replacement monitor' });
+  await screen.findByText('Preview: starting');
+  expect(client.startRecorderPreview).toHaveBeenCalledTimes(2);
+  const source = useRecorderWorkspaceStore.getState().scene?.sources[0];
+  if (!source) throw new Error('Expected the selected replacement source');
+  preview.resolve({
+    error: null,
+    sceneId: savedScene.id,
+    sourceIds: ['replacement-monitor'],
+    state: 'live',
+    updatedAtMs: 4,
+  });
+  await screen.findByText('Preview: live');
+  publishFrame?.({
+    sceneSourceId: source.id,
+    sourceId: source.sourceId,
+    width: 320,
+    height: 180,
+    timestampMs: 5,
+    dataUrl:
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZWQAAAAASUVORK5CYII=',
+  });
+  const image = await screen.findByRole('img', {
+    name: 'Replacement monitor preview',
+  });
+  expect((image as HTMLImageElement).naturalWidth).toBeGreaterThan(0);
+});
+
+test('navigation during startup fences a late same-scene preview response', async () => {
+  const obsolete =
+    deferred<Awaited<ReturnType<typeof client.startRecorderPreview>>>();
+  const current =
+    deferred<Awaited<ReturnType<typeof client.startRecorderPreview>>>();
+  client.startRecorderPreview
+    .mockReturnValueOnce(obsolete.promise)
+    .mockReturnValueOnce(current.promise);
+  mountWithNavigation();
+  await screen.findByText('Preview: starting');
+  await userEvent.click(screen.getByRole('link', { name: 'Settings' }));
+  await screen.findByRole('heading', { name: 'Settings destination' });
+  await waitFor(() =>
+    expect(client.stopRecorderPreview).toHaveBeenCalledOnce(),
+  );
+  await userEvent.click(screen.getByRole('link', { name: 'Capture' }));
+  await waitFor(() =>
+    expect(client.startRecorderPreview).toHaveBeenCalledTimes(2),
+  );
+  obsolete.resolve({
+    error: null,
+    sceneId: savedScene.id,
+    sourceIds: ['obsolete'],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+  await act(async () => {
+    await obsolete.promise;
+  });
+  expect(screen.getByText('Preview: starting')).toBeTruthy();
+  current.resolve({
+    error: null,
+    sceneId: savedScene.id,
+    sourceIds: ['synthetic-monitor'],
+    state: 'live',
+    updatedAtMs: 4,
+  });
+  await screen.findByText('Preview: live');
+});
 test('dirty Start submits one reviewed snapshot and retains edits when persistence fails', async () => {
   const pending = deferred<Awaited<ReturnType<typeof client.startRecording>>>();
   client.startRecording.mockReturnValue(pending.promise);
@@ -46,7 +273,7 @@ test('dirty Start submits one reviewed snapshot and retains edits when persisten
   await userEvent.click(start);
   expect(start).toBeDisabled();
   fireEvent.click(start);
-  expect(client.startRecording).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(client.startRecording).toHaveBeenCalledTimes(1));
   expect(client.startRecording).toHaveBeenCalledWith(
     expect.objectContaining({
       setup: expect.objectContaining({ videoBitrateKbps: 4500, fps: 0.2 }),

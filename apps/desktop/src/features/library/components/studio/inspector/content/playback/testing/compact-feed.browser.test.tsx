@@ -8,7 +8,7 @@ import {
 import { afterEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import '@/index.css';
-import { useStudioResultWindowStore as windows } from '../../../../studio-result-window-store';
+import { useStudioResultWindowStore as windows } from '../../../../results/studio-result-window-store';
 import type {
   InspectorContentEntry,
   InspectorContentIndex,

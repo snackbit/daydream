@@ -210,6 +210,19 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
             )?;
         }
     }
+    let remote_only = storage
+        .with_connection(|connection| {
+            let mut ids = std::collections::BTreeSet::new();
+            for id in owned.keys() {
+                if observations_only(connection, id)? {
+                    ids.insert(id.clone());
+                }
+            }
+            Ok(ids)
+        })
+        .map_err(storage_error)?;
+    let mut remote_available = app_settings.ai.processing.max_parallel_jobs.max(1) as usize;
+    remote_available = remote_available.saturating_sub(remote_only.len());
     let mut available = app_settings
         .ai
         .processing
@@ -223,12 +236,12 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
         )
         .saturating_sub(
             owned
-                .values()
-                .filter(|kind| kind.as_str() != "waveform")
+                .iter()
+                .filter(|(id, kind)| kind.as_str() != "waveform" && !remote_only.contains(*id))
                 .count() as u32,
         ) as usize;
     let mut waveform_available = !owned.values().any(|kind| kind == "waveform");
-    if available == 0 && !waveform_available {
+    if available == 0 && !waveform_available && remote_available == 0 {
         log_capacity_full_throttled(running.len(), app_settings.ai.processing.max_parallel_jobs);
         return Ok(());
     }
@@ -238,8 +251,15 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
     log_worker_tick(running.len(), queued.len(), available);
 
     for job in queued {
+        let remote = storage
+            .with_connection(|connection| observations_only(connection, &job.id))
+            .map_err(storage_error)?;
         if job.kind == "waveform" {
             if !waveform_available {
+                continue;
+            }
+        } else if remote {
+            if remote_available == 0 {
                 continue;
             }
         } else {
@@ -270,6 +290,8 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
         if let Some(claimed) = claimed {
             if claimed.kind == "waveform" {
                 waveform_available = false;
+            } else if remote {
+                remote_available -= 1;
             } else {
                 available -= 1;
             }
@@ -316,6 +338,13 @@ pub(in crate::ai) async fn run_processing_worker_tick(app: &AppHandle) -> Result
     Ok(())
 }
 
+pub(crate) fn observations_only(
+    connection: &rusqlite::Connection,
+    job: &str,
+) -> rusqlite::Result<bool> {
+    connection.query_row("SELECT EXISTS(SELECT 1 FROM processing_chunks WHERE job_id=?1 AND source_kind='vlm' AND status IN('queued','running')) AND NOT EXISTS(SELECT 1 FROM processing_chunks WHERE job_id=?1 AND source_kind!='vlm' AND status IN('queued','running')) AND NOT EXISTS(SELECT 1 FROM processing_job_runtime WHERE job_id=?1 AND input_open=1)",[job],|row|row.get(0))
+}
+
 fn log_capacity_full_throttled(running_job_count: usize, max_parallel_jobs: u32) {
     static LAST_LOGGED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
     let now = Instant::now();
@@ -355,6 +384,23 @@ fn should_log_worker_tick(queued_job_count: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::should_log_worker_tick;
+    #[test]
+    fn finished_local_work_releases_capacity_while_observations_keep_their_owner() {
+        let storage = crate::storage::test_storage(std::env::temp_dir());
+        storage.with_connection(|connection| {
+            let (chunk,_)=crate::ai::tests::test_transcription_chunk(connection);
+            connection.execute("UPDATE processing_chunks SET source_kind='vlm' WHERE id=?1",[&chunk.id])?;
+            assert!(super::observations_only(connection,&chunk.job_id)?);
+            crate::storage::set_processing_job_runtime(connection,&chunk.job_id,true,"{}")?;
+            assert!(!super::observations_only(connection,&chunk.job_id)?);
+            crate::storage::set_processing_job_runtime(connection,&chunk.job_id,false,"{}")?;
+            crate::storage::create_processing_chunk(connection,&crate::storage::CreateProcessingChunkInput {id:uuid::Uuid::now_v7().to_string(),job_id:chunk.job_id.clone(),recording_id:chunk.recording_id,source_kind:"ocr".into(),track_id:None,segment_id:chunk.segment_id,start_offset_ms:Some(0),end_offset_ms:Some(10_000),status:"queued".into(),progress:0.,attempt_count:0,error_code:None,result_code:None,created_at_ms:1,updated_at_ms:1})?;
+            assert!(!super::observations_only(connection,&chunk.job_id)?);
+            connection.execute("UPDATE processing_chunks SET status='succeeded',progress=1 WHERE job_id=?1 AND source_kind='ocr'",[&chunk.job_id])?;
+            assert!(super::observations_only(connection,&chunk.job_id)?);
+            Ok(())
+        }).unwrap();
+    }
 
     #[test]
     fn worker_tick_log_is_silent_when_no_jobs_are_queued() {

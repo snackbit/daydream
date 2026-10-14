@@ -1,7 +1,10 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { Button } from '@/components/ui/button';
 import type * as NotificationsClient from '@/features/notifications/notifications-client';
+import type * as ProcessingClient from '@/features/processing/processing-client';
+import { useRecordingProcessingActions } from '@/features/processing/use-recording-processing-actions';
 import type * as RecorderClient from '@/features/recorder/recorder-client';
 import { SettingsScreen } from '@/screens/SettingsScreen';
 import { useSettingsStore } from '../settings-store';
@@ -17,6 +20,31 @@ import {
   ai,
   recorder,
 } from './settings-workspace-harness';
+
+const processingControl = vi.hoisted(() => vi.fn());
+vi.mock('@/features/processing/processing-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProcessingClient>()),
+  controlRecordingProcessingGroups: processingControl,
+}));
+
+const refreshedProcessing = async () => {};
+function LocalPresetAction() {
+  const { perform, pending, error } = useRecordingProcessingActions(
+    'synthetic-recording',
+    refreshedProcessing,
+  );
+  return (
+    <>
+      <Button
+        disabled={pending}
+        onClick={() => void perform({ action: 'optimize-visual' })}
+      >
+        Use fast local processing
+      </Button>
+      {error ? <p role="alert">{error}</p> : null}
+    </>
+  );
+}
 
 vi.mock(
   '@/features/settings/maintenance-client',
@@ -73,6 +101,62 @@ vi.mock(
 
 beforeEach(setupWorkspace);
 afterEach(cleanupWorkspace);
+test.each([true, false])(
+  'local preset stays saved after reopening settings and an unrelated edit (admitted: %s)',
+  async (admitted) => {
+    const nativeState = structuredClone(saved);
+    nativeState.settings.ai.ocr.engine = 'vision';
+    nativeState.settings.ai.processing.resourceMode = 'background';
+    nativeState.settings.ai.processing.visualSamplingMode = 'full';
+    settings.getAppSettings.mockImplementation(async () =>
+      structuredClone(nativeState),
+    );
+    settings.saveAppSettings.mockImplementation(async (input) => {
+      nativeState.settings = structuredClone(input.settings);
+      return structuredClone(nativeState);
+    });
+    const initial = render(<SettingsScreen />);
+    await screen.findByRole('switch', { name: 'Enable debug tools' });
+    initial.unmount();
+    processingControl.mockImplementation(async () => {
+      nativeState.settings.ai.ocr.engine = 'tesseract';
+      nativeState.settings.ai.processing.resourceMode = 'fast';
+      nativeState.settings.ai.processing.visualSamplingMode = 'adaptive-v1';
+      return {
+        results: [
+          {
+            jobId: 'synthetic-job',
+            succeeded: admitted,
+            errorCode: admitted ? null : 'ai_reprocessing_preview_changed',
+          },
+        ],
+      };
+    });
+    const action = render(<LocalPresetAction />);
+    await page
+      .getByRole('button', { name: 'Use fast local processing' })
+      .click();
+    await waitFor(() =>
+      expect(
+        useSettingsStore.getState().draft?.ai.processing.resourceMode,
+      ).toBe('fast'),
+    );
+    await expect(
+      page.getByRole('button', { name: 'Use fast local processing' }),
+    ).not.toBeDisabled();
+    if (!admitted) await screen.findByRole('alert');
+    action.unmount();
+    render(<SettingsScreen />);
+    await screen.findByRole('switch', { name: 'Enable debug tools' });
+    await page.getByRole('switch', { name: 'Enable debug tools' }).click();
+    await waitFor(() => expect(nativeState.settings.debug?.enabled).toBe(true));
+    expect(nativeState.settings.ai.ocr.engine).toBe('tesseract');
+    expect(nativeState.settings.ai.processing).toMatchObject({
+      resourceMode: 'fast',
+      visualSamplingMode: 'adaptive-v1',
+    });
+  },
+);
 test('SET-03 switches autosave without cleanup and survive reopening settings', async () => {
   const view = render(<SettingsScreen />);
   await screen.findByRole('switch', { name: 'Enable expert mode' });
@@ -211,6 +295,7 @@ test('SET-07 window picker retries an unavailable provider and saves the selecte
   );
 });
 test('SET-08 processing timing and resource mode autosave independently', async () => {
+  saved.settings.expert = { enabled: true };
   render(<SettingsScreen section="ai" />);
   await screen.findByRole('combobox', { name: 'Processing timing' });
   await selectSetting('Processing timing', 'Manually');
@@ -227,6 +312,34 @@ test('SET-08 processing timing and resource mode autosave independently', async 
       autoStartAfterRecording: true,
       timing: 'during-recording',
     }),
+  );
+  await page.getByRole('button', { name: 'Advanced processing' }).click();
+  const adaptive = await screen.findByRole('switch', {
+    name: 'Adaptive screen sampling',
+  });
+  const wasEnabled = adaptive.getAttribute('aria-checked') === 'true';
+  await page.getByRole('switch', { name: 'Adaptive screen sampling' }).click();
+  expect(
+    saved.settings.ai.processing.visualSamplingMode === 'adaptive-v1',
+  ).toBe(wasEnabled);
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await waitFor(() =>
+    expect(saved.settings.ai.processing).toMatchObject({
+      visualSamplingMode: wasEnabled ? 'full' : 'adaptive-v1',
+      resourceMode: 'fast',
+      timing: 'during-recording',
+    }),
+  );
+  await page.getByRole('button', { name: 'Advanced processing' }).click();
+  expect(
+    await screen.findByRole('switch', { name: 'Adaptive screen sampling' }),
+  ).toHaveAttribute('aria-checked', String(!wasEnabled));
+  await page.getByRole('switch', { name: 'Adaptive screen sampling' }).click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await waitFor(() =>
+    expect(
+      saved.settings.ai.processing.visualSamplingMode === 'adaptive-v1',
+    ).toBe(wasEnabled),
   );
 });
 test('SET-10 transcription saves model, language and backend together; CUDA remains unavailable', async () => {

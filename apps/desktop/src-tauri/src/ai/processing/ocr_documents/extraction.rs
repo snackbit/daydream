@@ -21,6 +21,13 @@ pub(in crate::ai) struct FullFrameSet {
     chunk_start: i64,
     chunk_end: i64,
     fps: f64,
+    metadata: Mutex<BTreeMap<usize, FullFrame>>,
+    decoded: Mutex<Option<DecodedFrame>>,
+}
+struct DecodedFrame {
+    encoded_hash: String,
+    pixel_hash: String,
+    image: Arc<super::super::visual::VisualImage>,
 }
 impl FullFrameSet {
     pub(in crate::ai) fn len(&self) -> usize {
@@ -30,16 +37,56 @@ impl FullFrameSet {
         self.chunk_start + sample_offset_ms(index, self.fps)
     }
     pub(in crate::ai) fn frame(&self, index: usize) -> Result<FullFrame, AiError> {
+        if let Some(frame) = self
+            .metadata
+            .lock()
+            .map_err(|_| file_error(std::io::Error::other("Frame metadata unavailable")))?
+            .get(&index)
+            .cloned()
+        {
+            return Ok(frame);
+        }
+        self.decode(index).map(|(frame, _)| frame)
+    }
+    pub(in crate::ai) fn decode(
+        &self,
+        index: usize,
+    ) -> Result<(FullFrame, Arc<super::super::visual::VisualImage>), AiError> {
         let path = self.paths[index].clone();
-        let image = decode_png_rgba_for_ocr(&path)?;
+        // Repeated PNGs are common on static screens. Compare their encoded
+        // identity before decoding and hashing millions of identical pixels.
+        let encoded_hash = format!("{:x}", Sha256::digest(fs::read(&path).map_err(file_error)?));
+        let cached = self
+            .decoded
+            .lock()
+            .map_err(|_| file_error(std::io::Error::other("Decoded frame cache unavailable")))?
+            .as_ref()
+            .filter(|entry| entry.encoded_hash == encoded_hash)
+            .map(|entry| (entry.image.clone(), entry.pixel_hash.clone()));
+        let (image, hash) = if let Some(cached) = cached {
+            cached
+        } else {
+            let image = Arc::new(decode_png_rgba_for_ocr(&path)?);
+            let hash = pixel_hash(&image);
+            if image.pixels.len() <= 32 * 1024 * 1024 {
+                *self.decoded.lock().map_err(|_| {
+                    file_error(std::io::Error::other("Decoded frame cache unavailable"))
+                })? = Some(DecodedFrame {
+                    encoded_hash,
+                    pixel_hash: hash.clone(),
+                    image: image.clone(),
+                });
+            }
+            (image, hash)
+        };
         let timestamp_ms = self.chunk_start + sample_offset_ms(index, self.fps);
-        Ok(FullFrame {
+        let frame = FullFrame {
             path,
             timestamp_ms,
             end_ms: (self.chunk_start + sample_offset_ms(index + 1, self.fps)).min(self.chunk_end),
             width: image.width as i64,
             height: image.height as i64,
-            pixel_hash: pixel_hash(&image),
+            pixel_hash: hash,
             source_ref: format!(
                 "segment:{}:offset:{}:frame:{}",
                 if let Some(track) = &self.track_id {
@@ -50,7 +97,19 @@ impl FullFrameSet {
                 timestamp_ms,
                 index
             ),
-        })
+        };
+        self.metadata
+            .lock()
+            .map_err(|_| file_error(std::io::Error::other("Frame metadata unavailable")))?
+            .insert(index, frame.clone());
+        Ok((frame, image))
+    }
+    pub(in crate::ai) fn file_bytes(&self) -> u64 {
+        self.paths
+            .iter()
+            .filter_map(|path| fs::metadata(path).ok())
+            .map(|metadata| metadata.len())
+            .sum()
     }
 }
 
@@ -127,10 +186,12 @@ fn extract_frames(
         chunk_start: start,
         chunk_end: end,
         fps: fps.unwrap_or(1.0),
+        metadata: Mutex::new(BTreeMap::new()),
+        decoded: Mutex::new(None),
     })
 }
 
-fn extract_to_directory(
+pub(super) fn extract_to_directory(
     directory: &Path,
     source: &str,
     stream: i64,
@@ -184,6 +245,26 @@ fn extract_to_directory(
 
 fn sample_offset_ms(index: usize, fps: f64) -> i64 {
     ((index as f64 / fps) * 1000.0).round() as i64
+}
+#[cfg(test)]
+pub(in crate::ai) fn synthetic_frames(
+    directory: PathBuf,
+    paths: Vec<PathBuf>,
+    start: i64,
+    end: i64,
+    fps: f64,
+) -> FullFrameSet {
+    FullFrameSet {
+        _directory: TempProcessingDirectory::new(directory),
+        paths,
+        segment_id: "synthetic".into(),
+        track_id: None,
+        chunk_start: start,
+        chunk_end: end,
+        fps,
+        metadata: Mutex::new(BTreeMap::new()),
+        decoded: Mutex::new(None),
+    }
 }
 fn pixel_hash(image: &super::super::visual::VisualImage) -> String {
     let mut hash = Sha256::new();
@@ -330,10 +411,14 @@ mod tests {
             chunk_start: 0,
             chunk_end: 2000,
             fps: 2.0,
+            metadata: Mutex::new(BTreeMap::new()),
+            decoded: Mutex::new(None),
         };
         assert_eq!(sampled.len(), 4);
+        let (_, first_image) = sampled.decode(0).unwrap();
         for index in 0..4 {
-            let frame = sampled.frame(index).unwrap();
+            let (frame, image) = sampled.decode(index).unwrap();
+            assert!(Arc::ptr_eq(&first_image, &image));
             assert_eq!((frame.width, frame.height), (64, 32));
             assert_eq!(frame.timestamp_ms, index as i64 * 500);
             assert_eq!(frame.pixel_hash, sampled.frame(0).unwrap().pixel_hash);

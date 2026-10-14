@@ -31,6 +31,7 @@ pub(crate) fn remove_processing_artifacts(
     app_data_dir: &Path,
     job_ids: &[String],
 ) -> Result<(), String> {
+    crate::ai::processing::discard_visual_cache(job_ids);
     for job_id in job_ids {
         uuid::Uuid::parse_str(job_id)
             .map_err(|_| "Invalid processing job identity.".to_string())?;

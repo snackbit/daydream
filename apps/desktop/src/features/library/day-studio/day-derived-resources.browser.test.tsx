@@ -1,7 +1,7 @@
 import type * as TauriCore from '@tauri-apps/api/core';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { useStudioResultWindowStore as windows } from '../components/studio/studio-result-window-store';
+import { useStudioResultWindowStore as windows } from '../components/studio/results/studio-result-window-store';
 import { buildDayTimeline } from './day-timeline';
 import { dayTimelineFixture } from './day-timeline-fixtures';
 import { useDayMutations, type DayPrivacyOperation } from './use-day-mutations';

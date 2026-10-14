@@ -25,6 +25,12 @@ export function CaptureScreen() {
   const captureSources = useRecorderWorkspaceStore(
     (state) => state.captureSources,
   );
+  const captureSelectionPending = useRecorderWorkspaceStore(
+    (state) => state.captureSelectionPending,
+  );
+  const previewStopInFlight = useRecorderWorkspaceStore(
+    (state) => state.previewStopInFlight,
+  );
   const desktopAudioSourceId = useRecorderWorkspaceStore(
     (state) => state.desktopAudioSourceId,
   );
@@ -165,6 +171,8 @@ export function CaptureScreen() {
   useEffect(() => {
     const canPreview =
       loadStatus === 'ready' &&
+      !captureSelectionPending &&
+      !previewStopInFlight &&
       !!scene &&
       scene.sources.length > 0 &&
       pendingLifecycleAction === null &&
@@ -187,6 +195,8 @@ export function CaptureScreen() {
     }
   }, [
     isDirty,
+    captureSelectionPending,
+    previewStopInFlight,
     loadStatus,
     pendingLifecycleAction,
     previewStatus?.sceneId,
@@ -233,6 +243,7 @@ export function CaptureScreen() {
     <SourceCaptureWorkspace
       audioSources={audioSources}
       captureSources={captureSources}
+      captureSelectionPending={captureSelectionPending}
       desktopAudioSourceId={desktopAudioSourceId}
       error={error}
       isDirty={isDirty}

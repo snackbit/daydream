@@ -32,6 +32,17 @@ make remote requests.
 
 ## Recognition and temporal identity
 
+Adaptive v1 is an explicitly selectable alternative to the full sampling contract
+below. New installations default to it; upgrades retain Full until the user changes
+preferences or chooses **Use fast local processing**. It checks candidates at the
+slower of the configured cadence and one frame every five seconds, recognizes
+material tile changes, and takes a full checkpoint every 30 seconds. Exact pixel
+reuse retains occurrences. Other omissions publish `gap` occurrences and never
+substitute earlier text. Privacy cuts, gaps, configuration changes and restart
+reset comparison history conservatively. Existing job snapshots decode as Full
+and keep their original cache fingerprints. Scoped retries keep that policy;
+explicit reprocessing captures the new policy.
+
 - Recognize the entire original-size decoded frame at every frame selected by the
   existing user-controlled recognition sampling policy. Do not introduce a new
   five-second cadence or turn recording FPS into an implicit OCR schedule.

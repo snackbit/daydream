@@ -81,6 +81,20 @@ real-writer native scenario. `test:recorder:coverage` is separate measurement;
 
 ## Resource and runtime limits
 
+The opt-in visual throughput check generates a 45-minute, 5120×1440 synthetic
+screen recording, runs production FFmpeg extraction, adaptive sampling, bilingual
+Tesseract, SQLite publication and the CPU embedding adapter, then checks search.
+It requires ImageMagick (`magick`), DejaVu Sans, Tesseract with `eng` and `deu`,
+and the pinned multilingual E5 weights already installed. Set
+`DAYDREAM_BENCHMARK_MODELS_DIR` to a model directory when using an isolated home.
+It reads model weights only; it never reads private recordings. Fixture generation
+is outside the reported processing time; the debug-build processing budget is
+15 minutes. Run alone so competing native workloads do not distort timing.
+
+```sh
+COREPACK_HOME=/tmp/corepack CARGO_HOME=/tmp/daydream-cargo-home corepack yarn rust:test synthetic_45_minute_local_processing_benchmark -- --ignored --nocapture --test-threads=1
+```
+
 - One coordinator schedules expensive native builds and full browser checks. Share
   two native build jobs; do not overlap Cargo builds. Reuse the target cache; do not
   build release or run `cargo clean` for normal validation.

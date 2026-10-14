@@ -1,5 +1,215 @@
 # Refactoring Tasks
 
+## Implemented: faster day opening and complete loading scaffold
+
+Day playback reads a consistent WAL metadata snapshot without queueing on the
+processing writer or recursively measuring recording directories. Shared detail
+disk usage is nullable only when deferred; recording-detail commands retain exact
+sizes, loaded by the visible Details field. Lazy size results never rebuild the
+playback model and are discarded after source changes or unmounting. Initial day
+loads use a full Studio scaffold; ordinary refreshes retain usable playback and
+show status in the existing toolbar. Privacy invalidation still clears content.
+
+Focused unit scenarios pass (31 tests), loading/recording-screen browser checks
+pass (108 tests), and native day checks pass (11 tests; two benchmarks ignored).
+Disk-usage browser branch coverage is 100% (19/19); the scaffold has no executable
+branches. Source-mapped size-reader and aggregate-size branches are 100% (10/10
+and 4/4); the day decoder is 96.07% (49/51). Whole-file unit coverage also includes
+older unexecuted Library-client exports and does not meet a 90% aggregate target;
+the changed-branch report isolates the owned changes without excluding them.
+The synthetic benchmark with eight recordings and 4096 generated
+artifacts measured previous detail assembly at 7.70 ms median / 7.96 ms p95 and
+the new day snapshot at 2.47 ms median / 2.51 ms p95 over 20 warm runs. This is
+metadata-path evidence, not a packaged startup latency guarantee. Rust formatting,
+warning-free Clippy and the full native gate pass (741 tests plus three resource
+tests; seven opt-in tests ignored). The initial actual Tauri journey passes,
+including deferred size in the day payload, exact size after opening Details and
+decoded playback 571.52 ms after navigation. Inspector-command timings include
+the native test driver's transport overhead. Immutable Yarn installation and the
+final JavaScript gate pass: 1143 desktop tests, nine shared-contract tests and one
+FFmpeg resolver test, with all workspace typechecks and lint. The existing
+TanStack Virtual React Compiler compatibility warning remains unsuppressed.
+Rust branch coverage is unavailable on this host (`cargo llvm-cov` is not installed).
+
+Evidence: `/tmp/daydream-day-{js-final,browser-final,native-final,clippy,benchmark,runtime}.log`,
+`/tmp/daydream-day-changed-coverage.json`,
+`/tmp/daydream-day-browser-coverage/coverage-summary.json` and
+`/tmp/daydream-native-e2e.gjCiVV/initial-day-opening-timings.json`. Loading screenshots
+cover light/dark desktop and narrow layouts; clipped desktop placeholders found
+in the first inspection were corrected and the final screenshots inspected.
+Reduced-motion animation is disabled through the shared skeleton's media variant;
+a separate emulated reduced-motion visual run was not performed. Restart/keyboard
+native phases are outside this focused initial journey.
+
+## Implemented: isolated transcription language repairs
+
+Confident speech returning to the established language schedules pending outliers
+before clearing them. Automatic detections keep their original decision state;
+correction provenance and a compatible checkpoint marker remain separate.
+Backward retries load each window through the current redaction-aware source path.
+Transcript/word replacement and repair-queue completion share one transaction.
+The three-detection threshold, five-minute history, eight-candidate limit, separate
+audio tracks, explicit-language behavior and public contracts remain unchanged.
+
+Verification covers German/isolated English or French/German, initial consensus,
+genuine English switches, silence and weak confidence; job/track/configuration
+boundaries; word-write rollback; cancellation; source/evidence redactions; SQLite
+reopen after failure and success; and invalidated staged-correction checkpoints.
+The native language journey uses synthetic speech, real VAD/FFmpeg and an isolated
+HTTP provider to check cross-run repair, failure/retry, successful-repair reuse,
+and Studio replacement/playback alignment. The intended regressions failed before
+their fixes. Final formatting and warning-free Clippy pass; the full native gate
+passes 733 tests plus three resource-staging tests, with six opt-in tests ignored.
+The initial and language Tauri journeys pass. The corrected Review entry seeks to
+its original source, advances playback and pauses; its screenshot was inspected.
+Native playback's stream-relative decoder time is checked with its source offset.
+Evidence: `/tmp/daydream-language-{native-final,clippy-final,runtime}.log` and
+`/tmp/daydream-native-e2e.oDMBno/language-{processing.json,replacement-playback.png}`.
+Rust branch coverage and live-provider accuracy remain unverified.
+
+## Active: Studio ownership and directory structure
+
+Reorganize Studio's 59 production modules and 13 root-level tests by responsibility,
+then split timeline composition, playback segment lifecycle, and Inspector sidebar
+ownership. Keep recording/day Studio behavior, hook/component contracts, store
+identity, privacy eligibility, and the portal-menu event boundary intact. Preserve
+unrelated workspace changes; update their imports only where modules move.
+
+- [x] Move modules and tests together; remove obsolete forwarding modules.
+- [x] Split timeline controller/surface, mixed timeline parts, playback segment
+      lifecycle, sidebar selection/mode/details, and editing sections.
+- [x] Separate timeline store, selection, and geometry tests by owner.
+- [x] Keep production files below 400 lines and direct source counts below ten.
+- [x] Verify exports/test discovery, browser/unit workflows, split-owner branch
+      coverage, inspected desktop/narrow themes, and the final JS gate.
+- [ ] Close native dense-transcript zoom, zoom/pan timing, and keyboard acceptance
+      gaps. Keep this entry active until the relevant native checks pass.
+
+Structure and JavaScript verification pass: Studio root count 72 to one; maximum
+folder count nine; production maximum 389 lines. The JS gate passes 1,113 desktop,
+nine shared, and one FFmpeg test. Each measured split owner exceeds 90% branch
+coverage; the final scoped run covers 191/197 (96.95%) across 357 scenarios.
+The initial native playback journey
+passes, and the sortable day-reader omission has a failing/passing browser
+regression plus native preview evidence. Dense native transcript zoom and the
+keyboard empty-search journey remain unresolved. A pre-split comparison also
+reproduces transcript zoom failure, while current zoom/pan timings remain above
+the native budget; timing acceptance is still open. See
+[Studio verification](studio-structure-validation.md) for exact limits and evidence.
+
+Baseline: the prior menu fix passed the JS gate (1,065 desktop, nine shared,
+one FFmpeg test) and 29 focused browser scenarios. Its changed event guards had
+16/16 covered branch outcomes. This refactor starts from the current workspace,
+which also contains collaborators' subsequent capture, library, and processing edits.
+
+## Implemented: Capture UI responsiveness and preview ownership
+
+Capture database commands and preview shutdown now use awaited blocking workers;
+audio, GPU and writer probes also leave the async executor. Preview lifecycle
+cleanup has a focused manager owner and a separate resource lock, leaving status
+reads available while resources close. Frontend operation generations fence late
+same-scene replies, and monitor selection owns cleanup before opening the picker.
+Queued empty-scene cleanup is generation-checked before cancelling a start.
+Automatic preview and existing IPC payloads/storage remain compatible.
+
+Regression evidence includes an observed red result for selection during cleanup
+and late preview success/failure; synthetic native IPC dispatch with a held SQLite
+lock and delayed preview shutdown; and Chromium journeys for cancellation,
+navigation, deleting/re-adding a source and decoded preview delivery in desktop
+light and narrow dark layouts. The native fixture deliberately includes the old
+synchronous read to prove assertion sensitivity. Screenshots were inspected in
+both themes. No physical capture or packaged WebKit journey was performed; the
+native dispatch fixture substitutes the OS window with Tauri MockRuntime while
+retaining the production handlers, storage and lifecycle. Real Wayland permission
+prompts and live preview latency remain unverified.
+
+Native formatting and warning-free Clippy pass. The final two-thread native gate
+passes 729 tests plus three resource-staging tests, with six opt-in tests ignored.
+An initial media-worker launch failure was sandbox-dependent; a later fragment
+rotation failure passed alone and the quiet final native gate passed. The broad
+JavaScript gate passes lint, workspace typechecks and 1,083 desktop tests but exits
+on an unrelated Settings model-suite module-load failure. The final focused run
+passes all 108 Capture regressions and that model suite's 11 tests; shared tests
+(nine) and FFmpeg tests (one) also pass separately. The broad JS command's exit is
+not reported as a successful full gate.
+
+Measured frontend branch coverage is 95% across the four recorder state owners:
+preview actions 98.27%, persistence actions 93.54%, lifecycle actions 94.28% and
+preview status/recovery helpers 90%. Remaining uncovered outcomes include an
+obsolete shared-stop promise cleanup and pre-existing draft/status fallback paths.
+Native branch instrumentation is unavailable; no Rust coverage percentage is
+claimed. Commands use pinned `corepack yarn`: `check`, `rust:fmt`, `rust:clippy`,
+`rust:test -- --test-threads=2`, focused recorder tests and desktop Vitest coverage
+with four explicit recorder-owner includes. Timings log operation/duration metadata
+at debug level (`RUST_LOG=daydream_desktop_lib=debug,warn`); tokens, frames and
+captured content are not added to timing logs.
+
+The pre-existing flat recorder frontend directory remains structural follow-up
+debt; this change adds no frontend production module. Capture production owners
+remain below 400 physical lines. Evidence is stored under
+`/tmp/daydream-capture-*`, with browser screenshots in the ignored test artifacts.
+
+## Implemented: Library metadata listing
+
+Separate Library cards from full Recall composition and evidence refresh. Keep
+the existing appearance and navigation, publish a narrow typed listing command,
+reuse capture/review calculations, and load older pages without rereading prior
+pages. Summary setup reads configuration presence without opening the keyring;
+counts reflect the published catalogue and refresh through existing state events.
+Read-only WAL snapshots avoid the primary writer mutex and recheck privacy after
+the snapshot closes. Existing review fingerprints and Recall APIs remain intact;
+only already-reviewed cards hash saved interpretation/correction data for freshness.
+
+Verification covers stalled Recall/preview work, read/retry and pagination,
+privacy changes during pending reads, read-only native listing without content
+tables, calendar boundaries, review freshness and preview eligibility. The JS
+gate passes 1,072 desktop, nine shared and one FFmpeg test. Forty-nine focused
+scenarios cover all 66 measured frontend branches; Rust branch instrumentation
+is unavailable. Native formatting, warning-free Clippy, 724 native tests and
+three resource-staging tests pass. An initial GStreamer timeout caused eight
+poisoned-lock failures; the writer passed alone and the quiet full gate passed.
+
+On a synthetic in-memory corpus of 300 recordings, 30 days and 60,000 published
+evidence rows, the full Recall listing takes 2.50 seconds and the metadata read
+takes 250 ms in a debug build (about 10× faster). This compares read paths rather
+than promising a latency budget on private libraries. Reports and logs are under
+`/tmp/daydream-library-*`.
+
+The actual Tauri initial journey passes empty/populated Library, the metadata
+command, navigation into Studio and playback. Its warm navigation-to-days time is
+335 ms; the direct command round trip is 116 ms, both including inspector/driver
+overhead. Native artifacts are in `/tmp/daydream-native-e2e.PRcc7Q`. Desktop and
+narrow screenshots were inspected in both themes. Capture is synthetic; restart,
+keyboard and real-device journeys were not rerun for this change. No schema,
+dependency or existing IPC payload changed; `listLibraryDays` is additive. The
+existing TanStack Virtual/React Compiler lint warning remains outside this scope.
+
+## Implemented: local visual processing and search recovery
+
+Replace expensive remote OCR with an explicit fast local recovery preset and
+versioned adaptive sampling. Keep saved jobs on their original policy, preserve
+timestamped exact-image reuse, and publish omitted samples as gaps. Separate
+observation capacity from local chunks, share bounded extraction, and bound the
+legacy extractor. Repair index admission after backend changes and embed actual
+privacy-owned batches. Extend native progress with frame counts, lane throughput
+estimates and current index failures; expose scoped visual recovery in Processing.
+
+Verification passes: native admission/batch/privacy regressions, adaptive and
+replacement tests, browser recovery workflow, shared decoding, native bootstrap
+and inference journeys, JS gate, native formatting and strict all-target Clippy.
+The native gate passes 717 tests. A 45-minute synthetic 5120×1440 recording becomes
+searchable in 8 min 39 sec using real local OCR and CPU embeddings. No real capture
+content is used in fixtures. Detailed scenarios, coverage, compatibility effects
+and measurement limits are in [local processing validation](local-processing-validation.md).
+Rust branch instrumentation is unavailable on this host.
+
+Follow-up review fixes preserve explicit adaptive OCR retries, count retained
+visual checkpoints, reconcile cached settings after the local preset and restore
+interrupted visual work when replacement admission fails. Verification passes:
+1,077 JavaScript tests, 720 native tests, formatting, strict Clippy and the actual
+Tauri recovery/settings round trip. The action hook has 100% measured branch
+coverage. Details are in the validation document's review follow-up section.
+
 ## Implemented: review findings in visual context and Studio reads
 
 Preserve transitive visual dependency ranges, restore pruned images without FPS

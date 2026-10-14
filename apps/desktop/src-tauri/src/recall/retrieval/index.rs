@@ -40,20 +40,40 @@ pub fn ensure_provider_current(
     Ok(())
 }
 
-async fn embed_document(
+async fn embed_batch(
     storage: &AppStorage,
     provider: &impl EmbeddingProvider,
-    evidence_id: &str,
-    recording_id: &str,
-    source_revision: &str,
-    text: &str,
+    rows: &[(String, String, String, String)],
     cancelled: &AtomicBool,
-) -> Result<Vec<f32>, String> {
+) -> Result<
+    (
+        Vec<Vec<f32>>,
+        Vec<crate::recording_privacy::ProcessingLease>,
+    ),
+    String,
+> {
     let space = provider.space();
     vector::check_cancelled(cancelled)?;
     // Validation and provider inputs share the recording's privacy owner.
     // Revalidate after waiting: a queued mutation may have removed this text.
-    let _privacy = crate::recording_privacy::processing_lease(recording_id).await;
+    let recordings = rows
+        .iter()
+        .map(|row| row.3.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut privacy = Vec::with_capacity(recordings.len());
+    for recording in recordings {
+        let acquiring = crate::recording_privacy::processing_lease(recording);
+        tokio::pin!(acquiring);
+        loop {
+            vector::check_cancelled(cancelled)?;
+            if let Ok(lease) =
+                tokio::time::timeout(std::time::Duration::from_millis(50), &mut acquiring).await
+            {
+                privacy.push(lease);
+                break;
+            }
+        }
+    }
     vector::check_cancelled(cancelled)?;
     let eligible = storage
         .with_connection(|connection| {
@@ -61,25 +81,31 @@ async fn embed_document(
             // The clean refresh checks source-file availability without
             // rebuilding unchanged text. Also cover files removed outside SQL.
             super::evidence::refresh_evidence(connection)?;
-            connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM recall_evidence WHERE id=?1 AND revision=?2 AND recording_id=?3)",
-                params![evidence_id, source_revision, recording_id],
-                |row| row.get::<_, bool>(0),
-            )
+            let mut query = connection.prepare("SELECT EXISTS(SELECT 1 FROM recall_evidence WHERE id=?1 AND revision=?2 AND recording_id=?3)")?;
+            for (id, revision, _, recording) in rows {
+                if !query.query_row(params![id, revision, recording], |row| row.get::<_, bool>(0))? { return Ok(false); }
+            }
+            Ok(true)
         })
         .map_err(|_| "Unable to revalidate recall indexing source")?;
     if !eligible {
-        return Err("Recall indexing source changed; retry indexing".into());
+        return Err("recall_index_inputs_changed".into());
     }
     let vectors = provider
-        .embed(EmbeddingPurpose::Document, &[text.to_owned()], cancelled)
+        .embed(
+            EmbeddingPurpose::Document,
+            &rows.iter().map(|row| row.2.clone()).collect::<Vec<_>>(),
+            cancelled,
+        )
         .await?;
-    if vectors.len() != 1 {
+    if vectors.len() != rows.len() {
         return Err("Embedding provider returned an invalid document batch".into());
     }
-    let mut embedding = vectors.into_iter().next().unwrap();
-    vector::normalize(&mut embedding, space.dimensions)?;
-    Ok(embedding)
+    let mut vectors = vectors;
+    for embedding in &mut vectors {
+        vector::normalize(embedding, space.dimensions)?;
+    }
+    Ok((vectors, privacy))
 }
 
 pub fn progress(connection: &Connection, space: &str) -> rusqlite::Result<IndexProgress> {
@@ -114,21 +140,7 @@ pub async fn index_pending(
                 .with_connection(|c| progress(c, &space.fingerprint))
                 .map_err(|_| "Unable to read recall indexing progress".into());
         }
-        let mut vectors = Vec::with_capacity(rows.len());
-        for (id, revision, text, recording_id) in &rows {
-            vectors.push(
-                embed_document(
-                    storage,
-                    provider,
-                    id,
-                    recording_id,
-                    revision,
-                    text,
-                    cancelled,
-                )
-                .await?,
-            );
-        }
+        let (vectors, _privacy) = embed_batch(storage, provider, &rows, cancelled).await?;
         vector::check_cancelled(cancelled)?;
         let state = storage.with_connection_mut(|connection| {
             ensure_provider_current(connection,provider)?;

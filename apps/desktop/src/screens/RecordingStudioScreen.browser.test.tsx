@@ -27,12 +27,13 @@ import {
   settleVisualTransitions,
   textContrast,
 } from '@/app/design-accessibility-audit';
-import { useStudioTimelineStore } from '@/features/library/components/studio/studio-timeline-store';
 import {
   TRACK_LABEL_WIDTH_PX,
   TRACK_LANE_HEIGHT_PX,
   TRACK_RULER_HEIGHT_PX,
-} from '@/features/library/components/studio/track-timeline-math';
+} from '@/features/library/components/studio/timeline/interactions/track-timeline-math';
+import { useStudioTimelineStore } from '@/features/library/components/studio/timeline/state/studio-timeline-store';
+import type * as LibraryClient from '@/features/library/library-client';
 import syntheticMedia from '@/features/library/recording-studio-route/stories/fixtures/synthetic-player.webm?url';
 import { RecordingStudioScreen } from './RecordingStudioScreen';
 
@@ -90,7 +91,10 @@ vi.mock('@/features/recall/recall-client', () => recallClient);
 let originalViewport: { height: number; width: number } | null = null;
 let layoutStylesheet: HTMLLinkElement | null = null;
 
-vi.mock('@/features/library/library-client', () => client);
+vi.mock('@/features/library/library-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LibraryClient>()),
+  ...client,
+}));
 vi.mock('@/features/ai/ai-client', () => aiClient);
 vi.mock('@/features/ai/ocr/ocr-client', () => ocrClient);
 vi.mock('@/features/settings/use-debug-enabled', () => ({

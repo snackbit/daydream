@@ -6,10 +6,10 @@ import type {
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
+import { StudioSidebarComponentSelection } from '../../components/studio/inspector/editing/studio-sidebar-component-selection';
+import { StudioSidebarRedactionSection } from '../../components/studio/inspector/editing/studio-sidebar-redaction-section';
 import { RecordingStudio } from '../../components/studio/recording-studio';
-import { StudioSidebarComponentSelection } from '../../components/studio/studio-sidebar-inspector-sections';
-import { StudioSidebarRedactionSection } from '../../components/studio/studio-sidebar-redaction-section';
-import { useStudioTimelineStore } from '../../components/studio/studio-timeline-store';
+import { useStudioTimelineStore } from '../../components/studio/timeline/state/studio-timeline-store';
 import {
   createLibraryRedactions,
   deleteLibraryRedaction,

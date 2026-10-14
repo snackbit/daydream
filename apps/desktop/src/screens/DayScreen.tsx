@@ -8,6 +8,7 @@ import {
   DayStudio,
   type DayStudioLocation,
 } from '@/features/library/day-studio/day-studio';
+import { DayStudioSkeleton } from '@/features/library/day-studio/day-studio-skeleton';
 import { buildDayTimeline } from '@/features/library/day-studio/day-timeline';
 import { useDayMutations } from '@/features/library/day-studio/use-day-mutations';
 import { RecallReadState } from '@/features/recall/components/recall-read-state';
@@ -33,7 +34,7 @@ export function DayScreen({ date, location = EMPTY_LOCATION }: DayScreenProps) {
     () => getLibraryDayTimeline({ dayId: date, timezone: recallTimezone }),
     [date],
   );
-  const { state, refresh } = useRecallRead(read);
+  const { state, refresh, isRefreshing } = useRecallRead(read);
   const mutations = useDayMutations(date, refresh);
   const manifest = state.status === 'ready' ? state.data : null;
   const signature = manifest ? JSON.stringify(manifest) : null;
@@ -64,7 +65,9 @@ export function DayScreen({ date, location = EMPTY_LOCATION }: DayScreenProps) {
           </Button>
         </Alert>
       ) : null}
-      {state.status !== 'ready' ? (
+      {state.status === 'loading' ? (
+        <DayStudioSkeleton date={date} />
+      ) : state.status !== 'ready' ? (
         <div className="p-6">
           <PageHeader title={recallDateLabel(date)} />
           <RecallReadState status={state.status} onRetry={refresh} />
@@ -75,6 +78,7 @@ export function DayScreen({ date, location = EMPTY_LOCATION }: DayScreenProps) {
           model={model}
           location={location}
           onRefresh={refresh}
+          isRefreshing={isRefreshing}
           mutations={mutations}
         />
       ) : (

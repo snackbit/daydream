@@ -13,7 +13,7 @@ import { useSettingsStore } from '@/features/settings/settings-store';
 import { defaultSettingsState } from '@/features/settings/testing/settings-browser-fixtures';
 import '@/index.css';
 import { RecordingStudioScreen } from '@/screens/RecordingStudioScreen';
-import { useStudioTimelineStore } from '../../components/studio/studio-timeline-store';
+import { useStudioTimelineStore } from '../../components/studio/timeline/state/studio-timeline-store';
 import { deferredStory, studioStoryRecording } from './studio-route-fixture';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));

@@ -57,9 +57,10 @@ pub use ai::{
     list_processing_chunks, list_processing_chunks_by_status, list_processing_jobs,
     list_processing_jobs_by_status, list_recording_tracks, list_transcript_segments,
     list_transcript_segments_in_range, list_transcript_segments_in_windows, list_transcript_words,
-    list_visual_frame_processing_states, list_vlm_observations, processing_job_chunk_progress,
-    recording_has_redactions, requeue_processing_chunks, retry_processing_job_chunks,
-    save_ai_model_asset, update_processing_chunk_progress, update_processing_chunk_result_code,
+    list_visual_frame_processing_states, list_visual_frame_processing_states_for_chunks,
+    list_vlm_observations, processing_job_chunk_progress, recording_has_redactions,
+    requeue_processing_chunks, retry_processing_job_chunks, save_ai_model_asset,
+    update_processing_chunk_progress, update_processing_chunk_result_code,
     update_processing_chunk_status, update_processing_chunk_status_if_active,
     update_processing_job_status, update_visual_frame_processing_state_status,
     upsert_recording_track, upsert_visual_frame_processing_state, ActivityIntervalRow,
@@ -80,7 +81,10 @@ pub use ai::{
     preceding_transcript_language, save_transcript_language_context, TranscriptLanguageContext,
     LANGUAGE_CONTEXT_MIN_CONFIDENCE,
 };
-pub use ai::{processing_chunk_config, processing_chunk_selection, set_processing_chunk_total};
+pub use ai::{
+    processing_chunk_config, processing_chunk_selection, set_processing_chunk_total,
+    set_processing_chunk_visual_total,
+};
 pub use ai::{
     OcrBlockInput, OcrCachedContent, OcrContentInput, OcrFrameInput, OcrWordHierarchy, OcrWordInput,
 };
@@ -139,6 +143,8 @@ const DATABASE_FILE_NAME: &str = "daydream.sqlite3";
 pub struct AppStorage {
     connection: Arc<Mutex<Connection>>,
     path: PathBuf,
+    #[cfg(test)]
+    in_memory: bool,
 }
 
 pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::error::Error>> {
@@ -153,6 +159,8 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
     let storage = AppStorage {
         connection: Arc::new(Mutex::new(connection)),
         path: db_path,
+        #[cfg(test)]
+        in_memory: false,
     };
     crate::settings::import_model_registry(&storage)
         .map_err(|_| "Model settings import failed; saved settings were not changed.")?;
@@ -161,14 +169,38 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
 }
 
 impl AppStorage {
+    /// WAL readers can inspect committed metadata while a background owner holds
+    /// the primary connection. This handle cannot write or run migrations.
+    pub(crate) fn with_read_connection<T>(
+        &self,
+        callback: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        #[cfg(test)]
+        if self.in_memory {
+            return self.with_connection(callback);
+        }
+        let connection = Connection::open_with_flags(
+            &self.path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.busy_timeout(std::time::Duration::from_millis(250))?;
+        callback(&connection)
+    }
+
     pub fn with_connection<T>(
         &self,
         callback: impl FnOnce(&Connection) -> rusqlite::Result<T>,
     ) -> rusqlite::Result<T> {
+        let lock_started = std::time::Instant::now();
         let connection = self
             .connection
             .lock()
             .map_err(|_error| rusqlite::Error::InvalidQuery)?;
+
+        tracing::debug!(
+            elapsed_ms = lock_started.elapsed().as_millis() as u64,
+            "storage_connection_lock_wait"
+        );
 
         callback(&connection)
     }
@@ -177,10 +209,16 @@ impl AppStorage {
         &self,
         callback: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
     ) -> rusqlite::Result<T> {
+        let lock_started = std::time::Instant::now();
         let mut connection = self
             .connection
             .lock()
             .map_err(|_error| rusqlite::Error::InvalidQuery)?;
+
+        tracing::debug!(
+            elapsed_ms = lock_started.elapsed().as_millis() as u64,
+            "storage_connection_lock_wait"
+        );
 
         callback(&mut connection)
     }
@@ -195,6 +233,7 @@ pub fn test_storage(path: PathBuf) -> AppStorage {
     AppStorage {
         connection: Arc::new(Mutex::new(connection)),
         path,
+        in_memory: true,
     }
 }
 
@@ -207,6 +246,7 @@ pub fn test_file_storage(path: PathBuf) -> AppStorage {
     AppStorage {
         connection: Arc::new(Mutex::new(connection)),
         path,
+        in_memory: false,
     }
 }
 

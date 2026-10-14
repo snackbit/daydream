@@ -1,6 +1,9 @@
 mod activity;
 mod audio;
 mod ocr_documents;
+pub(crate) fn discard_visual_cache(jobs: &[String]) {
+    ocr_documents::frame_cache::discard(jobs);
+}
 mod planning;
 pub(crate) mod reprocessing;
 mod source_planning;
@@ -11,9 +14,11 @@ pub(crate) use ocr_documents::capture_ocr_job_config;
 pub(in crate::ai) use ocr_documents::infer_or_reuse_frame;
 mod temp_files;
 mod visual;
+pub(crate) mod visual_recovery;
 mod worker;
 #[cfg(test)]
 pub(crate) use worker::cancel_job_if_inactive;
+pub(crate) use worker::observations_only;
 pub(crate) use worker::{chunk_dependency_wait_reason, ProcessingWorkerOwners};
 pub(crate) use worker::{retry_processing_units_for_action, RetryProcessingUnitsInput};
 

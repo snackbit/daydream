@@ -20,6 +20,7 @@ export type RecorderLifecycleAction = 'pause' | 'resume' | 'start' | 'stop';
 export interface RecorderWorkspaceState {
   audioSources: AudioSource[];
   captureSources: CaptureSource[];
+  captureSelectionPending: boolean;
   desktopAudioSourceId: string | null;
   error: string | null;
   isDirty: boolean;
@@ -35,6 +36,8 @@ export interface RecorderWorkspaceState {
   pendingDuplicateCaptureSources: DuplicateCaptureSourceCandidate[];
   previewFramesBySceneSourceId: Record<string, RecorderPreviewFrame>;
   previewStartInFlightSceneId: string | null;
+  previewOperationGeneration: number;
+  previewStopInFlight: boolean;
   previewStatus: RecorderPreviewStatus | null;
   recordingStats: RecorderRecordingStats | null;
   recordingStatsError: string | null;

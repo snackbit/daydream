@@ -3,6 +3,7 @@ import type { RecorderWorkspaceState } from './recorder-workspace-store-types';
 export const recorderWorkspaceInitialState = {
   audioSources: [],
   captureSources: [],
+  captureSelectionPending: false,
   desktopAudioSourceId: null,
   error: null,
   isDirty: false,
@@ -13,6 +14,8 @@ export const recorderWorkspaceInitialState = {
   pendingLifecycleAction: null,
   previewFramesBySceneSourceId: {},
   previewStartInFlightSceneId: null,
+  previewOperationGeneration: 0,
+  previewStopInFlight: false,
   previewStatus: null,
   recordingStats: null,
   recordingStatsError: null,
@@ -24,6 +27,7 @@ export const recorderWorkspaceInitialState = {
   RecorderWorkspaceState,
   | 'audioSources'
   | 'captureSources'
+  | 'captureSelectionPending'
   | 'desktopAudioSourceId'
   | 'error'
   | 'isDirty'
@@ -34,6 +38,8 @@ export const recorderWorkspaceInitialState = {
   | 'pendingLifecycleAction'
   | 'previewFramesBySceneSourceId'
   | 'previewStartInFlightSceneId'
+  | 'previewOperationGeneration'
+  | 'previewStopInFlight'
   | 'previewStatus'
   | 'recordingStats'
   | 'recordingStatsError'

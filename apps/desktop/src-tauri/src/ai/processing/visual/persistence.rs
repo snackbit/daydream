@@ -55,8 +55,8 @@ pub(super) fn frame_similarity_input(
     }
 }
 
-pub(super) fn queue_visual_frame_states(
-    app: &AppHandle,
+pub(super) fn queue_visual_frame_states<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     storage: &AppStorage,
     chunk: &ProcessingChunkRow,
     frames: &[ExtractedVisualFrame],
@@ -64,7 +64,7 @@ pub(super) fn queue_visual_frame_states(
     let timestamp_ms = now_ms();
     let rows = storage
         .with_connection(|connection| {
-            frames
+            let rows = frames
                 .iter()
                 .map(|frame| {
                     storage::upsert_visual_frame_processing_state(
@@ -91,7 +91,9 @@ pub(super) fn queue_visual_frame_states(
                         },
                     )
                 })
-                .collect::<rusqlite::Result<Vec<_>>>()
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            storage::set_processing_chunk_visual_total(connection, &chunk.id)?;
+            Ok(rows)
         })
         .map_err(storage_error)?;
     emit_processing_state(app, &chunk.recording_id);

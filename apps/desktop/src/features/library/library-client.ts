@@ -83,6 +83,31 @@ export async function getLibraryRecording(
   }));
 }
 
+/** Reads exact disk usage without retaining the response's private metadata. */
+export async function getLibraryRecordingSize(
+  recordingId: string,
+): Promise<number> {
+  return decodeResponse(
+    'getLibraryRecording',
+    await invoke<unknown>('getLibraryRecording', { recordingId }),
+    (value) => {
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !('id' in value) ||
+        value.id !== recordingId ||
+        !('sizeBytes' in value) ||
+        typeof value.sizeBytes !== 'number' ||
+        !Number.isSafeInteger(value.sizeBytes) ||
+        value.sizeBytes < 0
+      ) {
+        throw new Error('Recording disk usage is unavailable.');
+      }
+      return value.sizeBytes;
+    },
+  );
+}
+
 export async function deleteLibraryRecording(
   input: DeleteLibraryRecordingInput,
 ): Promise<void> {

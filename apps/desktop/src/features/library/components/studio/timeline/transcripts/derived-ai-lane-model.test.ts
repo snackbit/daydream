@@ -5,7 +5,7 @@ import type {
   RecordingTranscriptionTrackState,
 } from '@daydream/shared';
 import { expect, test } from 'vitest';
-import { buildDerivedLane } from '../../derived-ai-lane-model';
+import { buildDerivedLane } from './derived-ai-lane-model';
 
 const track: LibraryRecordingTrack = {
   id: 'microphone-2',

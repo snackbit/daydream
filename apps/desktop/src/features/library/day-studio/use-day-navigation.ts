@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LibraryPlaybackAssets } from '@daydream/shared';
-import type { RecordingPlaybackController } from '../components/studio/use-recording-playback-controller';
-import { useStudioEntryNavigation } from '../components/studio/use-studio-entry-navigation';
-import { useStudioRecallEvidence } from '../components/studio/use-studio-recall-evidence';
-import { useStudioSpacePlayback } from '../components/studio/use-studio-space-playback';
-import type { StudioVideoSources } from '../components/studio/use-studio-video-sources';
+import { useStudioSpacePlayback } from '../components/studio/interactions/use-studio-space-playback';
+import { useStudioRecallEvidence } from '../components/studio/navigation/recall/use-studio-recall-evidence';
+import { useStudioEntryNavigation } from '../components/studio/navigation/use-studio-entry-navigation';
+import type { StudioVideoSources } from '../components/studio/playback/sources/use-studio-video-sources';
+import type { RecordingPlaybackController } from '../components/studio/playback/use-recording-playback-controller';
 import { adjacentLibraryFrame } from '../library-client';
 import type { DayStudioLocation } from './day-studio';
 import {

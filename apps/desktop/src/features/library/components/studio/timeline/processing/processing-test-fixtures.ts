@@ -2,6 +2,7 @@ import type {
   LibraryRecordingDetail,
   ProcessingChunk,
   RecordingAiProcessingState,
+  VisualFrameProcessingState,
 } from '@daydream/shared';
 
 export const detail: LibraryRecordingDetail = {
@@ -90,6 +91,28 @@ export const detail: LibraryRecordingDetail = {
 };
 export const microphone = detail.tracks[2]!;
 export const monitor = detail.tracks[0]!;
+export function visualFrame(
+  changes: Partial<VisualFrameProcessingState> = {},
+): VisualFrameProcessingState {
+  return {
+    id: 'frame',
+    chunkId: 'ocr',
+    jobId: 'job',
+    recordingId: detail.id,
+    segmentId: 'segment-0',
+    sourceKind: 'ocr',
+    sourceFrameRef: `synthetic:stream:screen-a:${changes.frameTimestampMs ?? 0}`,
+    frameTimestampMs: 0,
+    status: 'succeeded',
+    progress: 1,
+    errorCode: null,
+    outputCount: 0,
+    region: { x: 0, y: 0, width: 64, height: 36 },
+    createdAtMs: 0,
+    updatedAtMs: 0,
+    ...changes,
+  };
+}
 export function chunk(changes: Partial<ProcessingChunk> = {}): ProcessingChunk {
   return {
     id: 'chunk-mic',

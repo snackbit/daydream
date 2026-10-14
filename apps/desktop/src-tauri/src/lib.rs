@@ -176,6 +176,7 @@ pub fn run() {
             library::commands::get_recording_waveform_tiles,
             library::commands::get_recording_waveforms,
             library::commands::list_library_recordings,
+            library::day::listing::list_library_days,
             library::commands::prepare_library_recording_thumbnail,
             library::commands::rename_library_recording,
             recorder::recovery::recover_library_recording,

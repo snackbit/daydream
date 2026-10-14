@@ -231,6 +231,15 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), AppSettingsError> {
             "Choose Background or Fast processing.",
         ));
     }
+    if !matches!(
+        settings.processing.visual_sampling_mode.as_str(),
+        "full" | "adaptive-v1"
+    ) {
+        return Err(validation_error(
+            "ai.processing.visualSamplingMode",
+            "Choose full or adaptive screen sampling.",
+        ));
+    }
     validate_u32_range(
         "ai.processing.maxParallelJobs",
         settings.processing.max_parallel_jobs,

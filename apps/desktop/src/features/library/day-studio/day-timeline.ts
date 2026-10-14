@@ -7,7 +7,7 @@ import type {
   LibraryRecordingSegment,
   LibraryRecordingTrack,
 } from '@daydream/shared';
-import { STUDIO_ACTIVITY_LANES } from '../components/studio/studio-activity-lanes';
+import { STUDIO_ACTIVITY_LANES } from '../components/studio/timeline/lanes/activity/studio-activity-lanes';
 
 export interface DayTimelineModel {
   manifest: LibraryDayTimeline;
@@ -155,7 +155,11 @@ export function buildDayTimeline(
     redactions,
     playableSegmentCount: segments.length,
     missingReasons: [],
-    sizeBytes: manifest.recordings.reduce((sum, r) => sum + r.sizeBytes, 0),
+    sizeBytes: manifest.recordings.reduce<number | null>(
+      (sum, r) =>
+        sum === null || r.sizeBytes === null ? null : sum + r.sizeBytes,
+      0,
+    ),
     status: 'completed',
     storageDir: '',
     thumbnailPath: null,

@@ -19,8 +19,8 @@ import {
   visibleAiProcessingState,
   visibleVisualObservations,
 } from '@/features/ai/results/derived-result-visibility';
-import { useStudioResultRange } from '../components/studio/studio-result-window-store';
-import { buildStudioVisualFrames } from '../components/studio/studio-visual-observations';
+import { buildStudioVisualFrames } from '../components/studio/observations/studio-visual-observations';
+import { useStudioResultRange } from '../components/studio/results/studio-result-window-store';
 import type { DayRecordingResults } from './day-results';
 import type { DayTimelineModel } from './day-timeline';
 

@@ -6,8 +6,37 @@ import {
   decodeRecallJob,
   decodeRecallSearchResult,
   decodeRecallStateChanged,
+  decodeLibraryDaysPage,
 } from './recall-decoders';
 import { recallDayFixture } from './testing/recall-browser-fixtures';
+
+test('Library metadata pages decode without Recall content and reject inconsistent revisions or cursors', () => {
+  const { startMs, endMs, timezone, inputFingerprint, summary, ...day } =
+    recallDayFixture.day;
+  void [startMs, endMs, timezone, inputFingerprint, summary];
+  const page = {
+    privacyRevision: day.privacyRevision,
+    days: [day],
+    nextBeforeDayId: day.dayId,
+    generationReady: true,
+    generationUnavailableReason: null,
+  };
+  expect(decodeLibraryDaysPage(page)).toEqual(page);
+  expect(
+    decodeLibraryDaysPage({ ...page, days: [], nextBeforeDayId: null }).days,
+  ).toEqual([]);
+  for (const invalid of [
+    null,
+    { ...page, days: null },
+    { ...page, privacyRevision: day.privacyRevision + 1 },
+    { ...page, nextBeforeDayId: '2026-01-01' },
+    { ...page, days: [], nextBeforeDayId: day.dayId },
+    { ...page, generationReady: undefined },
+    { ...page, days: [{ ...day, recordingCount: -1 }] },
+    { ...page, days: [{ ...day, status: 'unknown' }] },
+  ])
+    expect(() => decodeLibraryDaysPage(invalid)).toThrow('invalid response');
+});
 
 const evidence = {
   evidenceId: 'synthetic-evidence',
@@ -78,6 +107,15 @@ test('jobs and invalidation metadata reject malformed lifecycle responses', () =
   );
 });
 test('day nested content is validated before rendering generated sessions or tasks', () => {
+  const {
+    evidence: _evidence,
+    recordings: _recordings,
+    ...historical
+  } = recallDayFixture;
+  expect(decodeRecallDay(historical)).toMatchObject({
+    evidence: [],
+    recordings: [],
+  });
   expect(() =>
     decodeRecallDay({
       day: {},

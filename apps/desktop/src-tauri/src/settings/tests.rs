@@ -6,6 +6,56 @@ use super::validation::validate_settings;
 use super::*;
 
 #[test]
+fn fast_local_preset_preserves_unrelated_preferences_and_sensitive_settings() {
+    let storage = crate::storage::test_storage(std::env::temp_dir());
+    storage
+        .with_connection(|connection| {
+            crate::storage::save_app_setting(
+                connection,
+                &crate::storage::SaveAppSettingInput {
+                    key: "ai.ocr.engine".into(),
+                    value_json: "\"vision\"".into(),
+                    is_sensitive: false,
+                    timestamp_ms: 1,
+                },
+            )?;
+            crate::storage::save_app_setting(
+                connection,
+                &crate::storage::SaveAppSettingInput {
+                    key: "synthetic-sensitive-setting".into(),
+                    value_json: "\"synthetic-fixture-only\"".into(),
+                    is_sensitive: true,
+                    timestamp_ms: 1,
+                },
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let original = load_app_settings(&storage).unwrap();
+    use_fast_local_processing(&storage).unwrap();
+    let updated = load_app_settings(&storage).unwrap();
+    assert_eq!(updated.ai.ocr.engine, "tesseract");
+    assert_eq!(updated.ai.processing.visual_sampling_mode, "adaptive-v1");
+    assert_eq!(updated.ai.processing.resource_mode, "fast");
+    assert_eq!(updated.ai.processing.max_parallel_ocr_jobs, 4);
+    assert_eq!(updated.ai.vision, original.ai.vision);
+    assert_eq!(updated.ai.transcription, original.ai.transcription);
+    assert_eq!(updated.ai.recall, original.ai.recall);
+    assert_eq!(updated.record, original.record);
+    assert_eq!(updated.storage, original.storage);
+    assert!(
+        storage
+            .with_connection(|connection| crate::storage::get_app_setting(
+                connection,
+                "synthetic-sensitive-setting"
+            ))
+            .unwrap()
+            .unwrap()
+            .is_sensitive
+    );
+}
+
+#[test]
 fn incomplete_vision_profile_can_be_saved_before_credentials_are_entered() {
     let mut settings = default_settings();
     settings.ai.ocr.engine = "vision".into();

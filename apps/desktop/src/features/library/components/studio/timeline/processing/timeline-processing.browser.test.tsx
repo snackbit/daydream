@@ -9,10 +9,10 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
+import type { StudioInspectorSelection } from '../../navigation/studio-inspector-selection';
 import { ReprocessingDialog } from '../../reprocessing/reprocessing-dialog';
 import { useStudioReprocessing } from '../../reprocessing/use-studio-reprocessing';
-import type { StudioInspectorSelection } from '../../studio-inspector-selection';
-import { TrackLane } from '../../track-lane';
+import { TrackLane } from '../lanes/track-lane';
 import {
   chunk,
   detail,

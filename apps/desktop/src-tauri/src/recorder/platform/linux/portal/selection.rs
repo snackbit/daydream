@@ -105,6 +105,7 @@ pub(crate) async fn select_capture_sources(
 pub(super) async fn select_sources_once(
     restore_token: Option<&str>,
 ) -> Result<ashpd::desktop::screencast::Streams, RecorderError> {
+    let _timing = crate::recorder::operation_timing::OperationTimer::start("portal_selection");
     let proxy = Screencast::new().await.map_err(portal_error)?;
     let session = proxy
         .create_session(Default::default())
@@ -121,6 +122,8 @@ pub(super) async fn select_sources_for_session(
     session: &Session<Screencast>,
     restore_token: Option<&str>,
 ) -> Result<ashpd::desktop::screencast::Streams, RecorderError> {
+    let _timing =
+        crate::recorder::operation_timing::OperationTimer::start("portal_select_and_start");
     let cursor_mode = match proxy.available_cursor_modes().await {
         Ok(cursor_modes) => preferred_cursor_mode(cursor_modes),
         Err(_error) => None,

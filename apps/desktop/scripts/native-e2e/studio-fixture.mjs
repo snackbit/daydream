@@ -369,7 +369,7 @@ for (let r = 0; r < (process.argv[2] === 'inference' ? 0 : 4); r++) {
   }
 }
 const settings = db.prepare(
-  'INSERT INTO app_settings(key,value_json,created_at_ms,updated_at_ms) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at_ms=excluded.updated_at_ms',
+  'INSERT INTO app_settings(key,value_json,created_at_ms,updated_at_ms) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at_ms=MAX(app_settings.created_at_ms,excluded.updated_at_ms)',
 );
 const visionId = randomUUID(),
   visionStart = origin - 86_400_000;

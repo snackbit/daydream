@@ -16,8 +16,8 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
-import type { StudioTimeRangeSelection } from '../studio-timeline-store';
-import { TRACK_LABEL_WIDTH_PX } from '../track-timeline-math';
+import { TRACK_LABEL_WIDTH_PX } from '../timeline/interactions/track-timeline-math';
+import type { StudioTimeRangeSelection } from '../timeline/state/studio-timeline-store';
 import { reprocessingTargets } from './reprocessing-targets';
 
 export interface TimelineReprocessingContextMenuProps {

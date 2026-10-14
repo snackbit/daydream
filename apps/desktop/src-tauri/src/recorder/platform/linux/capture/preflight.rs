@@ -109,6 +109,8 @@ pub(crate) fn start_preview_session(
     app: AppHandle,
     prepared: PreparedLiveCapture,
 ) -> Result<RunningPreviewSession, RecorderError> {
+    let _timing =
+        crate::recorder::operation_timing::OperationTimer::start("pipewire_preview_startup");
     let source_ids = prepared
         .preflight
         .runtime_sources

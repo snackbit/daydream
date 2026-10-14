@@ -80,6 +80,7 @@ fn run_pipewire_preview_inner(
         .name("daydream-preview-encoder".into())
         .spawn(move || {
             let mut sequence = 0_u64;
+            let first_frame_started = std::time::Instant::now();
             while !worker_stopping.load(std::sync::atomic::Ordering::Acquire) {
                 let frame = match receiver.recv_timeout(Duration::from_millis(67)) {
                     Ok(frame) => frame,
@@ -129,6 +130,12 @@ fn run_pipewire_preview_inner(
                     }
                 };
                 sequence = sequence.saturating_add(1);
+                if sequence == 1 {
+                    tracing::debug!(
+                        elapsed_ms = first_frame_started.elapsed().as_millis() as u64,
+                        "preview_first_frame_ready"
+                    );
+                }
                 let _ = app.emit(
                     RECORDER_PREVIEW_FRAME_EVENT,
                     RecorderPreviewFrame {

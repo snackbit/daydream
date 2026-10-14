@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStudioTimelineStore } from '../studio-timeline-store';
+import { useStudioTimelineStore } from '../timeline/state/studio-timeline-store';
 
 export function useStudioSelectionDismissal(
   onClear: (reason: 'outside' | 'escape') => void,

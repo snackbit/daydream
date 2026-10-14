@@ -4,6 +4,7 @@ use super::{
     types::{RecorderError, RecorderScene},
 };
 use crate::storage::RecordingVideoSource;
+use tauri::Manager;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,37 +22,48 @@ pub(crate) struct CaptureSetup {
 }
 
 #[tauri::command(rename = "getCaptureSetup")]
-pub(crate) fn get_capture_setup(
-    storage: tauri::State<'_, crate::storage::AppStorage>,
+pub(crate) async fn get_capture_setup<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> Result<CaptureSetup, RecorderError> {
-    let settings = crate::settings::load_app_settings(&storage).map_err(|_| {
+    super::operation_timing::run_blocking("capture_setup_read", move || {
+        load_capture_setup(&app.state::<crate::storage::AppStorage>())
+    })
+    .await
+}
+
+fn load_capture_setup(storage: &crate::storage::AppStorage) -> Result<CaptureSetup, RecorderError> {
+    let settings = crate::settings::load_app_settings(storage).map_err(|_| {
         super::errors::storage_error_message("Recording settings could not be loaded.")
     })?;
     Ok(CaptureSetup {
-        scene: super::storage_mapping::latest_recorder_scene_for_storage(&storage)?,
+        scene: super::storage_mapping::latest_recorder_scene_for_storage(storage)?,
         fps: settings.record.fps,
         video_bitrate_kbps: settings.record.video_bitrate_kbps,
     })
 }
 
 #[tauri::command(rename = "saveCaptureSetup")]
-pub(crate) fn save_capture_setup(
+pub(crate) async fn save_capture_setup<R: tauri::Runtime>(
     input: SaveCaptureSetupInput,
-    app: tauri::AppHandle,
-    storage: tauri::State<'_, crate::storage::AppStorage>,
-    manager: tauri::State<'_, super::manager::RecorderManager>,
+    app: tauri::AppHandle<R>,
 ) -> Result<CaptureSetup, RecorderError> {
-    let _activity =
-        crate::maintenance::runtime::admit(&app, "capture-configure").map_err(|message| {
-            super::errors::lifecycle_error("recorder_maintenance_active", &message)
-        })?;
-    if manager.configuration_is_locked()? {
-        return Err(super::errors::lifecycle_error(
-            "recorder_configuration_locked",
-            "Stop recording before changing its sources.",
-        ));
-    }
-    persist_capture_setup(input, &storage)
+    super::operation_timing::run_blocking("capture_setup_save", move || {
+        let _activity =
+            crate::maintenance::runtime::admit(&app, "capture-configure").map_err(|message| {
+                super::errors::lifecycle_error("recorder_maintenance_active", &message)
+            })?;
+        if app
+            .state::<super::manager::RecorderManager>()
+            .configuration_is_locked()?
+        {
+            return Err(super::errors::lifecycle_error(
+                "recorder_configuration_locked",
+                "Stop recording before changing its sources.",
+            ));
+        }
+        persist_capture_setup(input, &app.state::<crate::storage::AppStorage>())
+    })
+    .await
 }
 
 pub(crate) fn persist_capture_setup(

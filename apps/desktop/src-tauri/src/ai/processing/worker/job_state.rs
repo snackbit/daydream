@@ -42,7 +42,7 @@ fn pause_processing_job(
                 ProcessingNotificationInput {
                     actions: &processing_paused_actions(job_id),
                     job_id: Some(job_id),
-                    message: "Audio transcription is paused.",
+                    message: "Recording processing is paused.",
                     recording_id,
                     status: "info",
                     timestamp_ms: now_ms(),
@@ -75,7 +75,7 @@ fn cancel_processing_job(
                 ProcessingNotificationInput {
                     actions: &processing_retry_actions(job_id),
                     job_id: Some(job_id),
-                    message: "Audio transcription was cancelled.",
+                    message: "Recording processing was cancelled.",
                     recording_id,
                     status: "cancelled",
                     timestamp_ms: now_ms(),

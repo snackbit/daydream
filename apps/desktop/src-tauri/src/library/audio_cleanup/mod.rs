@@ -12,7 +12,7 @@ mod service;
 pub(crate) use persistence::privacy_fingerprint;
 pub(crate) use persistence::{active_manifest, pin_job, pinned_manifest, recover_interrupted};
 pub(crate) use runtime::request_cancel;
-pub(crate) use service::{cancel_recording, read_state};
+pub(crate) use service::{cancel_recording, read_state, read_state_from_connection};
 
 pub(super) const ENGINE_VERSION: &str = "webrtc-apm-2.1.0-cleanup-v3";
 pub(super) const SAMPLE_RATE: usize = 48_000;

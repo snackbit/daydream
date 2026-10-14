@@ -8,6 +8,7 @@ import type {
   RecorderStatus,
 } from '@daydream/shared';
 import { beforeEach, expect, test, vi } from 'vitest';
+import { stopPreviewForRecording } from './recorder-preview-store';
 import { createRecorderWorkspaceStore } from './recorder-workspace-store';
 
 let useRecorderWorkspaceStore = createRecorderWorkspaceStore();
@@ -620,6 +621,455 @@ test('updateCaptureSources stops active preview before opening chooser', async (
   expect(
     useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId,
   ).toEqual({});
+});
+
+test('source selection owns the wait for preview cleanup and prevents duplicate choosers', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    scene,
+    status,
+    loadStatus: 'ready',
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+  });
+  let finishStop: ((value: RecorderPreviewStatus) => void) | undefined;
+  client.stopRecorderPreview.mockReturnValue(
+    new Promise<RecorderPreviewStatus>((resolve) => {
+      finishStop = resolve;
+    }),
+  );
+  const selecting = useRecorderWorkspaceStore.getState().updateCaptureSources();
+  expect(useRecorderWorkspaceStore.getState().loadStatus).toBe('loading');
+  await useRecorderWorkspaceStore.getState().updateCaptureSources();
+  expect(client.stopRecorderPreview).toHaveBeenCalledOnce();
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+  finishStop?.({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 2,
+  });
+  await selecting;
+  expect(client.selectCaptureSources).toHaveBeenCalledOnce();
+});
+
+test.each(['resolve', 'reject'] as const)(
+  'old preview start %s cannot overwrite a new request for the same scene',
+  async (settlement) => {
+    const scene = sceneWithSources(['main']);
+    useRecorderWorkspaceStore.setState({ scene, status });
+    let finishOld: ((value: RecorderPreviewStatus) => void) | undefined;
+    let failOld: ((error: Error) => void) | undefined;
+    let finishNew: ((value: RecorderPreviewStatus) => void) | undefined;
+    client.startRecorderPreview
+      .mockReturnValueOnce(
+        new Promise<RecorderPreviewStatus>((resolve, reject) => {
+          finishOld = resolve;
+          failOld = reject;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<RecorderPreviewStatus>((resolve) => {
+          finishNew = resolve;
+        }),
+      );
+    const old = useRecorderWorkspaceStore.getState().startPreview(scene.id);
+    await useRecorderWorkspaceStore.getState().stopPreview();
+    const current = useRecorderWorkspaceStore.getState().startPreview(scene.id);
+    if (settlement === 'resolve')
+      finishOld?.({
+        error: null,
+        sceneId: scene.id,
+        sourceIds: ['obsolete'],
+        state: 'live',
+        updatedAtMs: 2,
+      });
+    else failOld?.(new Error('Synthetic old startup failure'));
+    await old;
+    expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+      'starting',
+    );
+    expect(
+      useRecorderWorkspaceStore.getState().previewStartInFlightSceneId,
+    ).toBe(scene.id);
+    finishNew?.({
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 3,
+    });
+    await current;
+    expect(
+      useRecorderWorkspaceStore.getState().previewStatus?.sourceIds,
+    ).toEqual(['main']);
+  },
+);
+
+test('preview shutdown is shared and blocks new preview admission until cleanup replies', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    scene,
+    status,
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+  });
+  let finish: ((value: RecorderPreviewStatus) => void) | undefined;
+  client.stopRecorderPreview.mockReturnValue(
+    new Promise<RecorderPreviewStatus>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const first = useRecorderWorkspaceStore.getState().stopPreview();
+  const second = useRecorderWorkspaceStore.getState().stopPreview();
+  expect(second).toBe(first);
+  expect(useRecorderWorkspaceStore.getState().previewStopInFlight).toBe(true);
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  expect(client.startRecorderPreview).not.toHaveBeenCalled();
+  finish?.({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 2,
+  });
+  await first;
+  expect(client.stopRecorderPreview).toHaveBeenCalledOnce();
+  expect(useRecorderWorkspaceStore.getState().previewStopInFlight).toBe(false);
+});
+
+test.each(['resolve', 'reject'] as const)(
+  'stale shutdown %s cannot overwrite a reset workspace preview',
+  async (settlement) => {
+    const scene = sceneWithSources(['main']);
+    useRecorderWorkspaceStore.setState({
+      scene,
+      status,
+      previewStatus: {
+        error: null,
+        sceneId: scene.id,
+        sourceIds: ['main'],
+        state: 'live',
+        updatedAtMs: 1,
+      },
+    });
+    let finish: ((value: RecorderPreviewStatus) => void) | undefined;
+    let fail: ((error: Error) => void) | undefined;
+    client.stopRecorderPreview.mockReturnValueOnce(
+      new Promise<RecorderPreviewStatus>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      }),
+    );
+    const old = useRecorderWorkspaceStore.getState().stopPreview();
+    useRecorderWorkspaceStore.getState().invalidatePreferences();
+    useRecorderWorkspaceStore.setState({ scene, status });
+    client.startRecorderPreview.mockResolvedValue({
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['fresh'],
+      state: 'live',
+      updatedAtMs: 3,
+    });
+    await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+    if (settlement === 'resolve')
+      finish?.({
+        error: null,
+        sceneId: null,
+        sourceIds: [],
+        state: 'idle',
+        updatedAtMs: 2,
+      });
+    else fail?.(new Error('Synthetic obsolete cleanup failure'));
+    await old;
+    expect(
+      useRecorderWorkspaceStore.getState().previewStatus?.sourceIds,
+    ).toEqual(['fresh']);
+    expect(useRecorderWorkspaceStore.getState().error).toBeNull();
+  },
+);
+
+test('failed preview cleanup keeps source configuration and prevents chooser admission', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    scene,
+    status,
+    loadStatus: 'ready',
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+  });
+  client.stopRecorderPreview.mockRejectedValue(
+    new Error('Synthetic cleanup failure'),
+  );
+  await expect(
+    useRecorderWorkspaceStore.getState().updateCaptureSources(),
+  ).rejects.toThrow();
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState().scene).toBe(scene);
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+    'error',
+  );
+  expect(useRecorderWorkspaceStore.getState().captureSelectionPending).toBe(
+    false,
+  );
+});
+
+test('source reselection recovers from an existing preview startup error', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    scene,
+    status,
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: [],
+      state: 'error',
+      updatedAtMs: 1,
+    },
+  });
+  await useRecorderWorkspaceStore.getState().updateCaptureSources();
+  expect(client.selectCaptureSources).toHaveBeenCalledOnce();
+  expect(client.stopRecorderPreview).not.toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState().captureSelectionPending).toBe(
+    false,
+  );
+});
+
+test('current preview failure and mismatched scene replies remain recoverable errors', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({ scene, status });
+  const error = {
+    category: 'permission',
+    code: 'recorder_portal_restore_token_invalid',
+    message: 'Screen permission expired.',
+  };
+  client.startRecorderPreview.mockRejectedValueOnce(error);
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.error).toEqual(
+    error,
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().previewStartInFlightSceneId,
+  ).toBeNull();
+  client.startRecorderPreview.mockResolvedValueOnce({
+    error: null,
+    sceneId: 'other-scene',
+    sourceIds: [],
+    state: 'live',
+    updatedAtMs: 2,
+  });
+  await useRecorderWorkspaceStore.getState().startPreview(scene.id);
+  expect(useRecorderWorkspaceStore.getState().previewStatus?.state).toBe(
+    'error',
+  );
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId,
+  ).toEqual({});
+});
+
+test.each(['start', 'saveScene'] as const)(
+  'failed preview shutdown blocks %s and preserves its failure',
+  async (action) => {
+    const scene = sceneWithSources(action === 'saveScene' ? [] : ['main']);
+    useRecorderWorkspaceStore.setState({
+      scene,
+      status,
+      previewStatus: {
+        error: null,
+        sceneId: scene.id,
+        sourceIds: ['main'],
+        state: 'live',
+        updatedAtMs: 1,
+      },
+    });
+    client.stopRecorderPreview.mockRejectedValueOnce(
+      new Error('Synthetic cleanup failure'),
+    );
+    await useRecorderWorkspaceStore.getState()[action]();
+    expect(client.startRecording).not.toHaveBeenCalled();
+    expect(client.saveRecorderScene).not.toHaveBeenCalled();
+    expect(useRecorderWorkspaceStore.getState().error).toBe(
+      'Synthetic cleanup failure',
+    );
+    expect(
+      useRecorderWorkspaceStore.getState().pendingLifecycleAction,
+    ).toBeNull();
+    if (action === 'saveScene')
+      expect(useRecorderWorkspaceStore.getState().saveStatus).toBe('error');
+  },
+);
+
+test('recording stop precondition exposes a recovery message when preview failure has no native details', async () => {
+  useRecorderWorkspaceStore.setState({
+    previewStatus: {
+      error: null,
+      sceneId: 'synthetic',
+      sourceIds: [],
+      state: 'error',
+      updatedAtMs: 1,
+    },
+  });
+  const allowed = await stopPreviewForRecording(
+    useRecorderWorkspaceStore.setState,
+    useRecorderWorkspaceStore.getState,
+  );
+  expect(allowed).toBe(false);
+  expect(useRecorderWorkspaceStore.getState().error).toBeTruthy();
+});
+
+test('preference invalidation during cleanup prevents an obsolete chooser from opening', async () => {
+  const scene = sceneWithSources(['main']);
+  useRecorderWorkspaceStore.setState({
+    scene,
+    status,
+    previewStatus: {
+      error: null,
+      sceneId: scene.id,
+      sourceIds: ['main'],
+      state: 'live',
+      updatedAtMs: 1,
+    },
+  });
+  const stop = deferred<RecorderPreviewStatus>();
+  client.stopRecorderPreview.mockReturnValueOnce(stop.promise);
+  const selection = useRecorderWorkspaceStore.getState().updateCaptureSources();
+  useRecorderWorkspaceStore.getState().invalidatePreferences();
+  stop.resolve({
+    error: null,
+    sceneId: null,
+    sourceIds: [],
+    state: 'idle',
+    updatedAtMs: 2,
+  });
+  await selection;
+  expect(client.selectCaptureSources).not.toHaveBeenCalled();
+  expect(useRecorderWorkspaceStore.getState().scene).toBeNull();
+});
+
+test('preview frame ordering ignores old generations and sequences while accepting new frames', async () => {
+  const scene = sceneWithSources(['main']);
+  let publish: ((frame: RecorderPreviewFrame) => void) | undefined;
+  client.listenToRecorderPreviewFrames.mockImplementation(async (listener) => {
+    publish = listener;
+    return () => undefined;
+  });
+  useRecorderWorkspaceStore.setState({ scene });
+  await useRecorderWorkspaceStore.getState().subscribeToPreviewFrames();
+  const frame: RecorderPreviewFrame = {
+    sceneSourceId: scene.sources[0]?.id ?? '',
+    sourceId: 'main',
+    dataUrl: 'synthetic-frame',
+    width: 1,
+    height: 1,
+    timestampMs: 1,
+    generation: 3,
+    sequence: 2,
+  };
+  publish?.(frame);
+  publish?.({ ...frame, generation: 2, sequence: 100 });
+  publish?.({ ...frame, sequence: 1 });
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId[
+      frame.sceneSourceId
+    ],
+  ).toEqual(frame);
+  publish?.({ ...frame, sequence: 3 });
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId[
+      frame.sceneSourceId
+    ]?.sequence,
+  ).toBe(3);
+  publish?.({ ...frame, generation: 4, sequence: 1 });
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId[
+      frame.sceneSourceId
+    ]?.generation,
+  ).toBe(4);
+  publish?.({ ...frame, sceneSourceId: 'deleted' });
+  expect(
+    useRecorderWorkspaceStore.getState().previewFramesBySceneSourceId.deleted,
+  ).toBeUndefined();
+});
+
+test('failed status subscription can reconnect without retaining its rejected listener', async () => {
+  client.listenToRecorderStatusChanged.mockRejectedValueOnce(
+    new Error('Synthetic subscription failure'),
+  );
+  await expect(
+    useRecorderWorkspaceStore.getState().subscribeToStatusEvents(),
+  ).rejects.toThrow('Synthetic subscription failure');
+  const unsubscribe = await useRecorderWorkspaceStore
+    .getState()
+    .subscribeToStatusEvents();
+  unsubscribe();
+  expect(client.listenToRecorderStatusChanged).toHaveBeenCalledTimes(2);
+});
+
+test('failed recording stats refresh reports a recoverable error', async () => {
+  useRecorderWorkspaceStore.setState({
+    status: { ...status, state: 'recording', activeRecordingId: 'synthetic' },
+  });
+  client.getRecorderRecordingStats.mockRejectedValueOnce(
+    new Error('Synthetic stats failure'),
+  );
+  await useRecorderWorkspaceStore.getState().refreshRecordingStats();
+  expect(useRecorderWorkspaceStore.getState().recordingStatsError).toBe(
+    'Synthetic stats failure',
+  );
+});
+
+test('Capture status refresh failure remains visible until the next successful refresh', async () => {
+  client.getRecorderStatus.mockRejectedValueOnce(
+    new Error('Synthetic readiness failure'),
+  );
+  const unsubscribe = await useRecorderWorkspaceStore
+    .getState()
+    .subscribeToStatusEvents();
+  await vi.waitFor(() =>
+    expect(useRecorderWorkspaceStore.getState().error).toBe(
+      'Synthetic readiness failure',
+    ),
+  );
+  unsubscribe();
+  const reconnected = await useRecorderWorkspaceStore
+    .getState()
+    .subscribeToStatusEvents();
+  await vi.waitFor(() =>
+    expect(useRecorderWorkspaceStore.getState().status).toEqual(status),
+  );
+  expect(useRecorderWorkspaceStore.getState().error).toBeNull();
+  reconnected();
+});
+
+test('stats for a recording stopped during the read do not return to the workspace', async () => {
+  const stats =
+    deferred<Awaited<ReturnType<typeof client.getRecorderRecordingStats>>>();
+  client.getRecorderRecordingStats.mockReturnValueOnce(stats.promise);
+  useRecorderWorkspaceStore.setState({
+    status: { ...status, state: 'recording', activeRecordingId: 'synthetic' },
+  });
+  const refresh = useRecorderWorkspaceStore.getState().refreshRecordingStats();
+  useRecorderWorkspaceStore.setState({ status });
+  stats.resolve(null);
+  await refresh;
+  expect(useRecorderWorkspaceStore.getState().recordingStats).toBeNull();
+  expect(useRecorderWorkspaceStore.getState().recordingStatsError).toBeNull();
 });
 
 test('updateCaptureSources queues likely duplicate monitor matches for resolution', async () => {

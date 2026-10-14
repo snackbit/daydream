@@ -12,7 +12,7 @@ import '@/index.css';
 import { studioStoryRecording } from '../../../recording-studio-route/stories/studio-route-fixture';
 import { ReprocessingDialog } from '../reprocessing/reprocessing-dialog';
 import { useStudioReprocessing } from '../reprocessing/use-studio-reprocessing';
-import { TrackLaneHeader } from '../track-lane-header';
+import { TrackLaneHeader } from '../timeline/lanes/track-lane-header';
 import { AudioCleanupDialog } from './audio-cleanup-dialog';
 import { useAudioCleanup } from './use-audio-cleanup';
 

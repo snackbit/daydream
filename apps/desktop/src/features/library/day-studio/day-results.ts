@@ -6,8 +6,8 @@ import type {
   RecordingTranscriptionProgress,
   VisualFrameProcessingState,
 } from '@daydream/shared';
-import type { StudioResultRange } from '../components/studio/studio-result-window-store';
-import type { StudioVisualFrame } from '../components/studio/studio-visual-observations';
+import type { StudioVisualFrame } from '../components/studio/observations/studio-visual-observations';
+import type { StudioResultRange } from '../components/studio/results/studio-result-window-store';
 import {
   dayPosition,
   projectSourceRange as range,

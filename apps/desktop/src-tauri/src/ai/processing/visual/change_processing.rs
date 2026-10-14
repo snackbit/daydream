@@ -1,6 +1,13 @@
-use super::super::ocr_documents::extraction::{extract_full_frames, FullFrame, FullFrameSet};
+use super::super::ocr_documents::{
+    extraction::{FullFrame, FullFrameSet},
+    frame_cache, sampling,
+};
 use super::change_protocol::{ChangeStatus, VERSION};
 use super::*;
+
+#[cfg(test)]
+#[path = "change_processing_tests.rs"]
+mod tests;
 
 pub(super) async fn process(
     app: &AppHandle,
@@ -34,33 +41,54 @@ pub(super) async fn process(
             Ok((segment, base, fps))
         })
         .map_err(storage_error)?;
-    let extraction_app = app.clone();
-    let extraction_chunk = chunk.clone();
-    let extraction_cancel = cancel.clone();
-    let extraction_lease = lease.clone();
-    let frames = if let Some(frames) = cached_frames(&storage, chunk, &config, fps)? {
+    let adaptive = settings.ai.processing.visual_sampling_mode == "adaptive-v1";
+    let fps = if adaptive { fps.min(0.2) } else { fps };
+    let frames = if let Some(frames) = cached_frames(&storage, chunk, &config, fps, adaptive)? {
         ObservationFrames::Cached(frames)
     } else {
         ObservationFrames::Extracted(
-            tauri::async_runtime::spawn_blocking(move || {
-                let _lease = extraction_lease;
-                extract_full_frames(
-                    &extraction_app,
-                    &extraction_chunk,
-                    &segment,
-                    base,
-                    fps,
-                    &extraction_cancel,
-                )
-            })
-            .await
-            .map_err(|_| {
-                ai_error(
-                    "ai_ocr_frame_extract_failed",
-                    "Screen extraction worker stopped.",
-                )
-            })??,
+            frame_cache::extract(
+                app,
+                chunk,
+                segment,
+                base,
+                fps,
+                cancel.clone(),
+                lease.clone(),
+            )
+            .await?,
         )
+    };
+    let selected = if adaptive {
+        if let ObservationFrames::Extracted(extracted) = &frames {
+            let worker_app = app.clone();
+            let worker_chunk = chunk.clone();
+            let worker_frames = extracted.clone();
+            let worker_cancel = cancel.clone();
+            let worker_lease = lease.clone();
+            let fingerprint = shared_inference::fingerprint(&config);
+            Some(
+                tauri::async_runtime::spawn_blocking(move || {
+                    let _lease = worker_lease;
+                    sampling::select(
+                        &worker_app,
+                        &worker_chunk,
+                        &worker_frames,
+                        &fingerprint,
+                        true,
+                        &worker_cancel,
+                    )
+                })
+                .await
+                .map_err(|_| {
+                    ai_error("ai_ocr_decode_worker_failed", "Sampling worker stopped.")
+                })??,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
     };
     let selection = super::super::worker::load_unit_selection(&storage, &chunk.id)?;
     let succeeded = storage.with_connection(|connection| {
@@ -68,29 +96,57 @@ pub(super) async fn process(
         let rows = query.query_map([&chunk.id], |row| row.get::<_,i64>(0))?.collect::<rusqlite::Result<BTreeSet<_>>>()?;
         Ok(rows)
     }).map_err(storage_error)?;
+    let pending = prepare_observation_frames(
+        app,
+        &storage,
+        chunk,
+        &frames,
+        &selection.frame_timestamps,
+        &succeeded,
+        &cancel,
+    )?;
     let mut failure = None;
-    for index in 0..frames.len() {
-        let timestamp = frames.timestamp(index);
-        if succeeded.contains(&timestamp)
-            || selection
-                .frame_timestamps
-                .as_ref()
-                .is_some_and(|timestamps| !timestamps.contains(&timestamp))
-        {
-            continue;
-        }
+    for (index, frame, state) in pending {
         check_processing_cancel(&cancel)?;
         ensure_chunk_active(&storage, chunk)?;
-        let frame = frames.frame(index)?;
         let visual = visual_frame(&frame);
-        let state = queue_visual_frame_states(app, &storage, chunk, std::slice::from_ref(&visual))?
-            .remove(0);
+        if !should_observe(
+            selected.as_deref(),
+            index,
+            selection.frame_timestamps.as_deref(),
+        ) {
+            mark_visual_frame_state(
+                app,
+                &storage,
+                chunk,
+                &state.id,
+                VisualFrameUpdate::Succeeded(0),
+            )?;
+            super::frame_jobs::update_visual_chunk_progress(
+                app,
+                &storage,
+                chunk,
+                index + 1,
+                frames.len(),
+            )?;
+            continue;
+        }
+        storage
+            .with_connection(|connection| {
+                storage::set_processing_chunk_phase(connection, &chunk.id, "waiting-for-model")
+            })
+            .map_err(storage_error)?;
         mark_visual_frame_state(app, &storage, chunk, &state.id, VisualFrameUpdate::Running)?;
         let _permit = acquire_vlm_cancellable(
             settings.ai.processing.max_parallel_vlm_jobs.max(1) as usize,
             cancel.clone(),
         )
         .await?;
+        storage
+            .with_connection(|connection| {
+                storage::set_processing_chunk_phase(connection, &chunk.id, "observing-screen")
+            })
+            .map_err(storage_error)?;
         let result =
             shared_inference::infer(app, chunk, &frame, &config, false, true, cancel.clone()).await;
         match result {
@@ -133,7 +189,7 @@ pub(super) async fn process(
                 persistence::persist_vlm_frame(&storage, chunk, &state.id, &visual, inputs)?;
                 storage.with_connection(|connection| {
                     for id in &ids { connection.execute("UPDATE vlm_observations SET context_start_ms=?2,confirmed_end_ms=?3 WHERE id=?1", rusqlite::params![id,output.context_start,frame.timestamp_ms.saturating_add(1)])?; }
-                    if change.status == ChangeStatus::Unchanged {
+                    if change.status == ChangeStatus::Unchanged && !adaptive {
                         connection.execute("UPDATE vlm_observations SET confirmed_end_ms=?4 WHERE id=(SELECT o.id FROM vlm_observations o JOIN processing_chunks c ON c.id=o.chunk_id WHERE o.job_id=?1 AND c.track_id=?2 AND o.prompt_version=?5 AND o.confirmed_end_ms>=?7 AND o.frame_timestamp_ms=(SELECT frame_ms FROM studio_visual_samples WHERE job_id=?1 AND source_id=?2 AND fingerprint=?6 AND frame_ms<?3 AND json_extract(observation_json,'$.status') IN ('initial','changed') ORDER BY frame_ms DESC LIMIT 1))", rusqlite::params![chunk.job_id,chunk.track_id,frame.timestamp_ms,frame.timestamp_ms.saturating_add(1),VERSION,shared_inference::fingerprint(&config),output.context_start])?;
                     }
                     Ok(())
@@ -165,6 +221,49 @@ pub(super) async fn process(
     }
     Ok(())
 }
+fn should_observe(
+    samples: Option<&[sampling::Sample]>,
+    index: usize,
+    retry_timestamps: Option<&[i64]>,
+) -> bool {
+    samples.is_none_or(|samples| samples[index].should_recognize(retry_timestamps))
+}
+
+fn prepare_observation_frames<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    storage: &AppStorage,
+    chunk: &ProcessingChunkRow,
+    frames: &ObservationFrames,
+    retry_timestamps: &Option<Vec<i64>>,
+    succeeded: &BTreeSet<i64>,
+    cancel: &AtomicBool,
+) -> Result<Vec<(usize, FullFrame, VisualFrameProcessingStateRow)>, AiError> {
+    let mut pending = Vec::new();
+    for index in 0..frames.len() {
+        let timestamp = frames.timestamp(index);
+        if succeeded.contains(&timestamp)
+            || retry_timestamps
+                .as_ref()
+                .is_some_and(|timestamps| !timestamps.contains(&timestamp))
+        {
+            continue;
+        }
+        check_processing_cancel(cancel)?;
+        ensure_chunk_active(storage, chunk)?;
+        let frame = frames.frame(index)?;
+        pending.push((index, frame));
+    }
+    let visuals = pending
+        .iter()
+        .map(|(_, frame)| visual_frame(frame))
+        .collect::<Vec<_>>();
+    let states = queue_visual_frame_states(app, storage, chunk, &visuals)?;
+    Ok(pending
+        .into_iter()
+        .zip(states)
+        .map(|((index, frame), state)| (index, frame, state))
+        .collect())
+}
 fn visual_frame(frame: &FullFrame) -> ExtractedVisualFrame {
     ExtractedVisualFrame {
         abrupt_transition: false,
@@ -187,7 +286,7 @@ fn visual_frame(frame: &FullFrame) -> ExtractedVisualFrame {
 }
 
 enum ObservationFrames {
-    Extracted(FullFrameSet),
+    Extracted(Arc<FullFrameSet>),
     Cached(Vec<FullFrame>),
 }
 impl ObservationFrames {
@@ -217,7 +316,13 @@ fn cached_frames(
     chunk: &ProcessingChunkRow,
     config: &VisionRequestConfig,
     fps: f64,
+    adaptive: bool,
 ) -> Result<Option<Vec<FullFrame>>, AiError> {
+    // Adaptive selection needs pixels and its own history. Shared extraction
+    // and inference still reuse OCR work after the observation sampler runs.
+    if adaptive {
+        return Ok(None);
+    }
     let Some(source) = chunk.track_id.as_deref() else {
         return Ok(None);
     };

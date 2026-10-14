@@ -79,7 +79,8 @@ pub(super) fn extract_visual_frames(
         "ai_processing_visual_extract_started"
     );
     let ffmpeg_started = Instant::now();
-    let output = Command::new(ffmpeg::binary_path())
+    let mut command = Command::new(ffmpeg::binary_path());
+    command
         .args([
             "-hide_banner",
             "-v",
@@ -97,9 +98,18 @@ pub(super) fn extract_visual_frames(
             "-fps_mode",
             "passthrough",
         ])
-        .arg(&output_pattern)
-        .output()
-        .map_err(file_error)?;
+        .arg(&output_pattern);
+    let output = crate::subprocess::run(&mut command, cancel, Duration::from_secs(60), 1_000_000)
+        .map_err(|error| {
+        ai_error(
+            match error.kind() {
+                std::io::ErrorKind::Interrupted => "ai_processing_cancelled",
+                std::io::ErrorKind::TimedOut => "ai_ocr_frame_extract_timeout",
+                _ => "ai_processing_visual_extract_failed",
+            },
+            "Visual frame extraction did not finish.",
+        )
+    })?;
     let ffmpeg_elapsed_ms = elapsed_ms(ffmpeg_started);
     check_processing_cancel(cancel)?;
     if !output.status.success() {

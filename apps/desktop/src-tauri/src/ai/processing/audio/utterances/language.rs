@@ -36,6 +36,9 @@ pub(super) struct Decision {
     pub output_language: Option<String>,
     pub correction: Option<String>,
     pub repairs: Vec<String>,
+    // Correction provenance never replaces the automatic detection's state.
+    #[serde(default)]
+    pub output_evidence: Option<State>,
 }
 
 pub(super) fn normalize(value: &str) -> Option<String> {
@@ -94,7 +97,7 @@ pub(super) fn plan(
             if state.confirmed.as_ref() == Some(language) {
                 state.candidate = None;
                 state.votes = 0;
-                state.pending.clear();
+                repairs = std::mem::take(&mut state.pending);
                 state.candidate_evidence.clear();
                 state.confirmed_evidence.push(unit_id.into());
                 if state.confirmed_evidence.len() > usize::from(CONFIRMATIONS) {
@@ -134,6 +137,7 @@ pub(super) fn plan(
         detected,
         correction,
         repairs,
+        output_evidence: None,
     }
 }
 
@@ -145,6 +149,41 @@ mod tests {
         result.language = Some(language.into());
         result.language_confidence = Some(0.9);
         result
+    }
+    #[test]
+    fn returning_confident_speech_repairs_isolated_detections() {
+        for outlier in ["en", "fr"] {
+            let mut state = State::default();
+            for number in 0..3 {
+                state = plan(
+                    state,
+                    &format!("de-{number}"),
+                    number * 1000,
+                    number * 1000 + 1000,
+                    &sample("de", "Dies ist ein synthetischer Beispielsatz."),
+                )
+                .state;
+            }
+            let mismatch = plan(
+                state,
+                "outlier",
+                3000,
+                4000,
+                &sample(outlier, "Synthetic substantial speech."),
+            );
+            assert_eq!(mismatch.detected.as_deref(), Some(outlier));
+            assert_eq!(mismatch.correction.as_deref(), Some("de"));
+            let returned = plan(
+                mismatch.state,
+                "returned",
+                4000,
+                5000,
+                &sample("de", "Dies ist wieder ein synthetischer Beispielsatz."),
+            );
+            assert_eq!(returned.repairs, ["outlier"]);
+            assert_eq!(returned.state.confirmed.as_deref(), Some("de"));
+            assert!(returned.state.pending.is_empty());
+        }
     }
     #[test]
     fn ambiguous_acknowledgement_does_not_pin_after_a_gap_and_is_repaired_after_consensus() {
@@ -210,14 +249,19 @@ mod tests {
             assert!(decision.state.pending.len() <= 8);
             state = decision.state;
         }
+        let silent = plan(state.clone(), "silence", 20_000, 21_000, &sample("de", " "));
+        assert_eq!(silent.state.votes, 0);
+        assert!(silent.correction.is_none());
         let mut invalid = sample("de", "Synthetic substantial speech.");
-        invalid.language_confidence = Some(f64::NAN);
-        assert_eq!(
-            plan(state.clone(), "invalid", 20_000, 21_000, &invalid)
-                .state
-                .votes,
-            0
-        );
+        for confidence in [f64::NAN, f64::INFINITY, 0.59, 1.01] {
+            invalid.language_confidence = Some(confidence);
+            assert_eq!(
+                plan(state.clone(), "invalid", 20_000, 21_000, &invalid)
+                    .state
+                    .votes,
+                0
+            );
+        }
         invalid.language_confidence = Some(0.9);
         invalid.language = Some("unsupported".into());
         assert_eq!(

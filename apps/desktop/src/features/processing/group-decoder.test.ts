@@ -39,6 +39,9 @@ test('validates current activity, global counts and nullable timing without trea
     { phaseStartedAtMs: -1 },
     { workerActive: 'true' },
     { startOffsetMs: 2000, endOffsetMs: 1000 },
+    { totalUnits: 5, completedUnits: 6 },
+    { totalUnits: -1 },
+    { completedUnits: '4' },
   ]) {
     expect(() =>
       decodeRecordingLaneDetail({
@@ -48,6 +51,40 @@ test('validates current activity, global counts and nullable timing without trea
       }),
     ).toThrow();
   }
+});
+
+test('preserves measured frame progress and index errors while rejecting unknown index states', () => {
+  const value = groupPage([
+    group({
+      lanes: group().lanes.map((lane) => ({
+        ...lane,
+        etaMs: 60_000,
+        activity: [activity({ totalUnits: 5, completedUnits: 4 })],
+      })),
+      indexCoverage: {
+        applicability: 'available',
+        indexed: 0,
+        total: 5,
+        pending: 5,
+        status: 'blocked',
+        errorCode: 'recall_embedding_vulkan_unavailable',
+      },
+    }),
+  ]);
+  expect(decodeRecordingGroupPage(value)).toEqual(value);
+  const first = value.groups[0];
+  if (!first) throw new Error('Missing synthetic group');
+  expect(() =>
+    decodeRecordingGroupPage({
+      ...value,
+      groups: [
+        {
+          ...first,
+          indexCoverage: { ...first.indexCoverage, status: 'invented' },
+        },
+      ],
+    }),
+  ).toThrow();
 });
 
 test('accepts complete native groups and reconciled groups including waveform work', () => {

@@ -16,7 +16,8 @@ const recordingsRoot = join(root, 'data/com.snackbit.daydream/recordings');
 const directory = join(recordingsRoot, id);
 await mkdir(directory, { recursive: true });
 const clips = [];
-for (let index = 0; index < 4; index++) {
+const speechStarts = [1, 10, 26, 35, 43, 60, 68, 87, 95, 113, 121];
+for (let index = 0; index < 11; index++) {
   const path = join(directory, `speech-${index}.wav`);
   const speech = spawnSync(
     'espeak-ng',
@@ -24,10 +25,10 @@ for (let index = 0; index < 4; index++) {
       '-v',
       'de',
       '-s',
-      '150',
+      String(140 + index * 3),
       '-w',
       path,
-      'Dies ist eine vollständig synthetische deutsche Sprachaufnahme für einen lokalen Test.',
+      'Dies ist eine synthetische Aufnahme.',
     ],
     { encoding: 'utf8' },
   );
@@ -49,22 +50,22 @@ const encoder = spawnSync(
     '-f',
     'lavfi',
     '-i',
-    'color=c=0x547266:size=320x180:rate=1/5:duration=50',
+    'color=c=0x547266:size=320x180:rate=1/5:duration=128',
     ...clips.flatMap((path) => ['-i', path]),
     '-filter_complex',
     clips
       .map(
         (_, index) =>
-          `[${index + 1}:a]adelay=${(1 + index * 11) * 1000}:all=1[a${index}]`,
+          `[${index + 1}:a]adelay=${speechStarts[index] * 1000}:all=1[a${index}]`,
       )
       .join(';') +
-      ';[a0][a1][a2][a3]amix=inputs=4:normalize=0,apad=whole_dur=50[speech]',
+      `;${clips.map((_, index) => `[a${index}]`).join('')}amix=inputs=${clips.length}:normalize=0,apad=whole_dur=128[speech]`,
     '-map',
     '0:v',
     '-map',
     '[speech]',
     '-t',
-    '50',
+    '128',
     '-c:v',
     'libx264',
     '-threads',
@@ -78,6 +79,43 @@ const encoder = spawnSync(
   { encoding: 'utf8' },
 );
 assert.equal(encoder.status, 0, encoder.stderr);
+// Two source runs, separated by a wall-clock gap. The first two tentative
+// detections must be repaired from their own earlier segment and chunks.
+const sources = [
+  { id: segmentId, from: 0, duration: 22, base: 0 },
+  { id: randomUUID(), from: 22, duration: 106, base: 27_000 },
+];
+for (const [index, source] of sources.entries()) {
+  source.path = join(directory, `segment-${index}.mkv`);
+  const split = spawnSync(
+    process.env.DAYDREAM_FFMPEG_PATH,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-ss',
+      String(source.from),
+      '-i',
+      media,
+      '-t',
+      String(source.duration),
+      '-map',
+      '0',
+      '-c:v',
+      'libx264',
+      '-threads',
+      '1',
+      '-preset',
+      'ultrafast',
+      '-c:a',
+      'libopus',
+      source.path,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(split.status, 0, split.stderr);
+}
 const date = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10),
   start = Date.parse(`${date}T08:00:00Z`);
 const db = new DatabaseSync(
@@ -99,7 +137,7 @@ try {
     id,
     start,
     start,
-    start + 50_000,
+    start + 133_000,
     'completed',
     0.2,
     'balanced-ocr',
@@ -113,28 +151,30 @@ try {
   db.prepare(
     'INSERT INTO recording_video_sources(track_id,recording_id,source_id,label,width,height,config_json) VALUES(?,?,?,?,?,?,?)',
   ).run(videoId, id, 'synthetic-language', 'Synthetic screen', 320, 180, '{}');
-  db.prepare(
-    'INSERT INTO recording_segments(id,recording_id,segment_index,file_path,started_at_ms,ended_at_ms,duration_ms,state,video_stream_index,desktop_audio_stream_index,microphone_audio_stream_index,created_at_ms,updated_at_ms,timeline_base_ms,timeline_basis_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-  ).run(
-    segmentId,
-    id,
-    1,
-    media,
-    start,
-    start + 50_000,
-    50_000,
-    'finalized',
-    0,
-    1,
-    null,
-    start,
-    start,
-    0,
-    1,
-  );
-  db.prepare(
-    'INSERT INTO recording_segment_videos(segment_id,track_id,stream_index,width,height,fps) VALUES(?,?,?,?,?,?)',
-  ).run(segmentId, videoId, 0, 320, 180, 0.2);
+  for (const [index, source] of sources.entries()) {
+    db.prepare(
+      'INSERT INTO recording_segments(id,recording_id,segment_index,file_path,started_at_ms,ended_at_ms,duration_ms,state,video_stream_index,desktop_audio_stream_index,microphone_audio_stream_index,created_at_ms,updated_at_ms,timeline_base_ms,timeline_basis_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    ).run(
+      source.id,
+      id,
+      index + 1,
+      source.path,
+      start + source.base,
+      start + source.base + source.duration * 1000,
+      source.duration * 1000,
+      'finalized',
+      0,
+      1,
+      null,
+      start,
+      start,
+      source.base,
+      1,
+    );
+    db.prepare(
+      'INSERT INTO recording_segment_videos(segment_id,track_id,stream_index,width,height,fps) VALUES(?,?,?,?,?,?)',
+    ).run(source.id, videoId, 0, 320, 180, 0.2);
+  }
   db.exec('COMMIT');
 } catch (error) {
   db.exec('ROLLBACK');
@@ -148,7 +188,7 @@ await writeFile(
     {
       id,
       date,
-      durationMs: 50_000,
+      durationMs: 133_000,
       source: 'espeak-ng synthetic speech; actual native VAD',
     },
     null,

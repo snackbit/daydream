@@ -15,6 +15,18 @@ export interface ProcessingErrorDescription {
 export function describeProcessingError(
   code: string,
 ): ProcessingErrorDescription {
+  if (code.startsWith('recall_embedding_'))
+    return {
+      summary:
+        code === 'recall_embedding_vulkan_unavailable'
+          ? 'The Vulkan embedding worker is unavailable. Choose CPU in Recall settings or install a build with Vulkan support.'
+          : code === 'recall_embedding_model_missing'
+            ? 'The local embedding model is missing. Download it in Models, then return to Recall settings.'
+            : 'Semantic indexing needs a working embedding model. Review its model and backend in Recall settings.',
+      settingsTab: 'ai',
+      settingsSection: 'recall',
+      settingsLabel: 'Review Recall settings',
+    };
   if (code.includes('subscription_'))
     return {
       summary: code.includes('usage_limit')

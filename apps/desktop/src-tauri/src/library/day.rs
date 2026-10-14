@@ -2,6 +2,8 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod listing;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryDayTimelineInput {
@@ -50,32 +52,37 @@ pub(crate) fn read_day(
 ) -> Result<LibraryDayTimeline, String> {
     let (start_ms, end_ms) = crate::recall::day::day_bounds(&input.day_id, &input.timezone)?;
     let (rows, revision) = storage
-        .with_connection(|connection| {
-            Ok((
-                storage::list_recordings_in_range(connection, start_ms, end_ms)?,
-                storage::recall_privacy_revision(connection)?,
-            ))
+        .with_read_connection(|connection| {
+            let snapshot = connection.unchecked_transaction()?;
+            let revision = storage::recall_privacy_revision(&snapshot)?;
+            let mut rows = Vec::new();
+            for recording in storage::list_recordings_in_range(&snapshot, start_ms, end_ms)? {
+                if storage::is_active_recording_status(&recording.status)
+                    || storage::list_recording_protection_spans(&snapshot, &recording.id)?
+                        .iter()
+                        .any(|span| span.status != "materialized")
+                {
+                    continue;
+                }
+                let segments = storage::list_recording_segments(&snapshot, &recording.id)?;
+                let redactions = storage::list_redactions(&snapshot, &recording.id)?;
+                let mappings = storage::recording_video_streams(&snapshot, &recording.id)?;
+                let cleanup =
+                    audio_cleanup::read_state_from_connection(&snapshot, &recording.id, &segments)?;
+                rows.push((recording, segments, redactions, mappings, cleanup));
+            }
+            snapshot.commit()?;
+            Ok((rows, revision))
         })
         .map_err(|_| "Day recordings could not be read.")?;
     let mut recordings = Vec::new();
     let mut spans = Vec::new();
-    for recording in rows {
-        if storage::is_active_recording_status(&recording.status) {
-            continue;
-        }
-        let protected = storage
-            .with_connection(|connection| {
-                Ok(
-                    storage::list_recording_protection_spans(connection, &recording.id)?
-                        .iter()
-                        .any(|span| span.status != "materialized"),
-                )
-            })
-            .map_err(|_| "Recording privacy state could not be read.")?;
-        if protected {
-            continue;
-        }
-        let detail = detail_for_recording(storage, &recording.id)?;
+    // Availability checks touch only known media paths, outside the snapshot.
+    // Recursive disk usage is intentionally deferred to recording details.
+    for (recording, segments, redactions, mappings, cleanup) in rows {
+        let mut detail = detail_metadata_from_rows(&recording, &segments, &redactions);
+        apply_source_metadata(&mut detail, &segments, &redactions, &mappings);
+        detail.audio_cleanup = Some(cleanup);
         let before = spans.len();
         for segment in &detail.segments {
             if let Some((from, duration, trim)) = slice(segment, start_ms, end_ms) {
@@ -94,7 +101,7 @@ pub(crate) fn read_day(
         }
     }
     let current = storage
-        .with_connection(storage::recall_privacy_revision)
+        .with_read_connection(storage::recall_privacy_revision)
         .map_err(|_| "Recording privacy state could not be read.")?;
     if current != revision {
         return Err("Recording privacy state changed. Reload the day.".into());
@@ -104,12 +111,13 @@ pub(crate) fn read_day(
             .cmp(&b.start_ms)
             .then(a.segment_id.cmp(&b.segment_id))
     });
-    recordings.sort_by_key(|r| {
-        spans
-            .iter()
-            .find(|s| s.recording_id == r.id)
-            .map(|s| s.start_ms)
-    });
+    let mut first_starts = BTreeMap::new();
+    for span in &spans {
+        first_starts
+            .entry(&span.recording_id)
+            .or_insert(span.start_ms);
+    }
+    recordings.sort_by_key(|r| first_starts.get(&r.id).copied());
     Ok(LibraryDayTimeline {
         day_id: input.day_id,
         start_ms,

@@ -84,6 +84,7 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
   const setup = useSourceCaptureSetup();
   const locked =
     recorderConfigurationLocked(props.pendingLifecycleAction, props.status) ||
+    props.captureSelectionPending === true ||
     setup.busy;
   const review = useMemo(
     () =>
@@ -184,6 +185,7 @@ export function SourceCaptureWorkspace(props: CaptureWorkspaceProps) {
   return (
     <FullHeightLayout className="bg-background text-foreground">
       <CaptureToolbar
+        captureSelectionPending={props.captureSelectionPending === true}
         setupBlocker={
           review.error ??
           (!defaults

@@ -97,7 +97,7 @@ function detail(value: unknown): LibraryRecordingDetail {
     missingReasons: list(r.missingReasons, str),
     playableSegmentCount: num(r.playableSegmentCount),
     segments: list(r.segments, segment),
-    sizeBytes: num(r.sizeBytes),
+    sizeBytes: nullableNum(r.sizeBytes),
     startedAtMs: nullableNum(r.startedAtMs),
     status: str(r.status),
     storageDir: str(r.storageDir),

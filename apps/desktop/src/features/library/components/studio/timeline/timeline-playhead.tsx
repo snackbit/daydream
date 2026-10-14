@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { TRACK_LABEL_WIDTH_PX } from '../track-timeline-math';
+import { TRACK_LABEL_WIDTH_PX } from './interactions/track-timeline-math';
 
 export interface TimelinePlayheadProps {
   time: number;

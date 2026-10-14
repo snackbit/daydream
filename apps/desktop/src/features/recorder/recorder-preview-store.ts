@@ -1,43 +1,22 @@
+import type { RecorderPreviewStatus } from '@daydream/shared';
+import { isRecorderError } from './recorder-error-utils';
 import type {
-  RecorderPreviewFrame,
-  RecorderPreviewStatus,
-} from '@daydream/shared';
-import { stopRecorderPreview } from './recorder-client';
-import { errorMessage, isRecorderError } from './recorder-error-utils';
-
-type PreviewMutation = {
-  error?: string | null;
-  previewFramesBySceneSourceId?: Record<string, RecorderPreviewFrame>;
-  previewStartInFlightSceneId?: null;
-  previewStatus?: RecorderPreviewStatus | null;
-};
+  RecorderWorkspaceGet,
+  RecorderWorkspaceSet,
+} from './recorder-workspace-store-types';
 
 export function previewIsActive(status: RecorderPreviewStatus | null): boolean {
   return status?.state === 'starting' || status?.state === 'live';
 }
 
 export async function stopPreviewForRecording(
-  set: (partial: PreviewMutation) => void,
-  sceneId: string | null,
+  set: RecorderWorkspaceSet,
+  get: RecorderWorkspaceGet,
 ): Promise<boolean> {
-  try {
-    const previewStatus = await stopRecorderPreview();
-    set({
-      previewFramesBySceneSourceId: {},
-      previewStartInFlightSceneId: null,
-      previewStatus,
-    });
-
-    return true;
-  } catch (error) {
-    set({
-      error: errorMessage(error),
-      previewStartInFlightSceneId: null,
-      previewStatus: previewErrorStatus(sceneId, error),
-    });
-
-    return false;
-  }
+  await get().stopPreview();
+  if (get().previewStatus?.state !== 'error') return true;
+  set({ error: get().error ?? 'Preview could not stop. Try again.' });
+  return false;
 }
 
 export function previewErrorStatus(

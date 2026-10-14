@@ -4,6 +4,7 @@ import {
   startRecorderPreview,
   stopRecorderPreview,
 } from './recorder-client';
+import { errorMessage } from './recorder-error-utils';
 import { recorderLifecycleLocked } from './recorder-lifecycle-state';
 import { previewErrorStatus, previewIsActive } from './recorder-preview-store';
 import type {
@@ -21,9 +22,18 @@ export function createRecorderWorkspacePreviewActions(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ): PreviewActions {
+  let pendingStop: Promise<void> | null = null;
+  function stopCurrentPreview() {
+    if (pendingStop && get().previewStopInFlight) return pendingStop;
+    const operation = stopPreview(set, get).finally(() => {
+      if (pendingStop === operation) pendingStop = null;
+    });
+    pendingStop = operation;
+    return operation;
+  }
   return {
     startPreview: (sceneId) => startPreview(set, get, sceneId),
-    stopPreview: () => stopPreview(set, get),
+    stopPreview: stopCurrentPreview,
     subscribeToPreviewFrames: () => subscribeToPreviewFrames(set),
   };
 }
@@ -36,6 +46,8 @@ async function startPreview(
   const state = get();
   if (
     recorderLifecycleLocked(state.pendingLifecycleAction, state.status) ||
+    state.captureSelectionPending ||
+    state.previewStopInFlight ||
     state.previewStartInFlightSceneId !== null ||
     (state.previewStatus?.sceneId === sceneId &&
       previewIsActive(state.previewStatus))
@@ -43,10 +55,16 @@ async function startPreview(
     return;
   }
 
+  const generation = state.previewOperationGeneration + 1;
+  const revision = state.workspaceRevision;
+  const current = () =>
+    get().previewOperationGeneration === generation &&
+    get().workspaceRevision === revision;
   await runAsyncStoreAction({
     before: () =>
       set({
         previewStartInFlightSceneId: sceneId,
+        previewOperationGeneration: generation,
         previewStatus: {
           error: null,
           sceneId,
@@ -56,12 +74,12 @@ async function startPreview(
         },
       }),
     cleanup: () => {
-      if (get().previewStartInFlightSceneId === sceneId) {
+      if (current()) {
         set({ previewStartInFlightSceneId: null });
       }
     },
     failure: (error) => {
-      if (get().previewStartInFlightSceneId !== sceneId) {
+      if (!current()) {
         return false;
       }
 
@@ -79,7 +97,7 @@ async function startPreview(
         ...(state.scene && state.isDirty ? { scene: state.scene } : {}),
       }),
     success: (previewStatus) => {
-      if (get().previewStartInFlightSceneId !== sceneId) return;
+      if (!current()) return;
       if (previewStatus.sceneId !== sceneId) {
         set({
           previewFramesBySceneSourceId: {},
@@ -97,19 +115,40 @@ async function stopPreview(
   set: RecorderWorkspaceSet,
   get: RecorderWorkspaceGet,
 ) {
-  if (!previewIsActive(get().previewStatus)) {
+  const state = get();
+  if (state.previewStopInFlight || !previewIsActive(state.previewStatus)) {
     return;
   }
 
+  const generation = state.previewOperationGeneration + 1;
+  const revision = state.workspaceRevision;
+  const current = () =>
+    get().previewOperationGeneration === generation &&
+    get().workspaceRevision === revision;
   await runAsyncStoreAction({
-    failure: (error) =>
+    before: () =>
       set({
+        previewOperationGeneration: generation,
+        previewStopInFlight: true,
         previewStartInFlightSceneId: null,
-        previewStatus: previewErrorStatus(get().previewStatus?.sceneId, error),
       }),
+    cleanup: () => {
+      if (current()) set({ previewStopInFlight: false });
+    },
+    failure: (error) => {
+      if (current())
+        set({
+          error: errorMessage(error),
+          previewStatus: previewErrorStatus(
+            state.previewStatus?.sceneId,
+            error,
+          ),
+        });
+    },
     rethrow: false,
     run: () => stopRecorderPreview(),
     success: (previewStatus) => {
+      if (!current()) return;
       set({
         previewFramesBySceneSourceId: {},
         previewStartInFlightSceneId: null,

@@ -6,8 +6,8 @@ import type {
 } from '@daydream/shared';
 import { AppWindow } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { StudioInspectorSelection } from '../studio-inspector-selection';
-import type { StudioLaneDraft } from '../studio-timeline-store';
+import type { StudioInspectorSelection } from '../navigation/studio-inspector-selection';
+import type { StudioLaneDraft } from '../timeline/state/studio-timeline-store';
 
 export interface FocusAnnotationStripProps {
   events: ActivityEvent[];

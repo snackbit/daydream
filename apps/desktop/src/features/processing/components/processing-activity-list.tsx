@@ -31,6 +31,14 @@ export function ProcessingActivityList({
             </p>
           ) : null}
           <p className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums">
+            {item.totalUnits !== undefined &&
+            item.totalUnits !== null &&
+            item.completedUnits !== undefined &&
+            item.completedUnits !== null ? (
+              <span>
+                {item.completedUnits}/{item.totalUnits} frames processed
+              </span>
+            ) : null}
             {item.status === 'running' && item.phaseStartedAtMs !== null ? (
               <span>
                 This phase: {formatElapsed(now - item.phaseStartedAtMs)}

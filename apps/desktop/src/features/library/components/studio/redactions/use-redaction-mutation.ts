@@ -4,8 +4,8 @@ import { unknownErrorMessage } from '@/lib/async-store-action';
 import {
   useStudioTimelineStore,
   type StudioTimeRangeSelection,
-} from '../studio-timeline-store';
-import { redactionRangesFromSelection } from '../track-timeline-redaction-actions';
+} from '../timeline/state/studio-timeline-store';
+import { redactionRangesFromSelection } from './track-timeline-redaction-actions';
 
 /** Owns user-visible completion of a privacy write, without swallowing client failures upstream. */
 export function useRedactionMutation() {
