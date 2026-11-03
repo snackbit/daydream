@@ -1,11 +1,5 @@
 # Full-frame OCR documents
 
-Approved implementation contract for the OCR work after main `51ad981`, aligned
-with the implemented storage, provider and UI boundaries. JavaScript gates,
-native verification and independent UI acceptance passed. This
-is ordinary feature work, not a new milestone. The final UI verification record is
-[OCR review](ocr-review.md).
-
 ## User workflow
 
 Recognized text is internal retrieval input. Day review, search results and Studio
@@ -44,8 +38,8 @@ and keep their original cache fingerprints. Scoped retries keep that policy;
 explicit reprocessing captures the new policy.
 
 - Recognize the entire original-size decoded frame at every frame selected by the
-  existing user-controlled recognition sampling policy. Do not introduce a new
-  five-second cadence or turn recording FPS into an implicit OCR schedule.
+  existing user-controlled recognition sampling policy. Keep full sampling distinct from adaptive sampling; recording FPS alone does
+  not determine OCR cadence.
 - Tesseract keeps TSV block/paragraph/line/word hierarchy and geometry for reading
   order. The document boundary retains the full recognized text and uncertain words.
 - Literal VLM OCR has a separately validated output section from descriptive observations.
@@ -138,54 +132,13 @@ compatibility correction applies to the existing observation extractor; it does 
 change observation sampling or resize policy. [Official FFmpeg options](https://ffmpeg.org/ffmpeg.html#Main-options)
 define passthrough timestamp behavior.
 
-The current Linux managed-development binary resolved by `ffmpeg-static@5.3.0` is
-FFmpeg `7.0.2-static`; its `-h full` lists `-fps_mode` and marks `-vsync` deprecated.
-The host FFmpeg 9 extraction failure was observed before this correction. This
-feature adds no FFmpeg package/version upgrade; other packaged platform binaries
-still need their normal distribution validation.
+## Verification
 
-## Ownership and acceptance
+Test document/occurrence storage, legacy reconstruction, exact-image reuse,
+sampling gaps, provider validation and retry. Privacy tests must cover extraction,
+upload, persistence, result display and deletion. Browser workflows cover source
+navigation, loading, errors and recovery without exposing raw OCR.
 
-| Owner | Responsibility and evidence |
-| --- | --- |
-| Native storage/contracts | Explicit migration, selected-frame/history queries, ordered document/occurrence mapping, legacy reconstruction, deletion and redaction eligibility tests. |
-| Processing | Full-frame runners, literal VLM validation, exact-image reuse, whitespace-only revisions, pinned jobs, retry/reprocess and failure/recovery tests. |
-| Frontend | Source-linked recognition metadata, no raw OCR presentation, loading/error/retry and keyboard/browser workflows. |
-| Settings | Engine selection, independent OCR/observations controls, remote disclosure, dirty/save and unavailable-provider states. |
-| Independent review | Actual desktop/narrow workflows in both themes, source navigation and failure recovery, with synthetic media and visible assertions. |
-
-Final gates run once after the coherent source batch settles: coordinated native
-full tests, formatting and strict all-target Clippy with two build jobs; root
-JavaScript autofix/lint/typecheck/tests and desktop production build; independent
-UI grade at least 4/5 for the changed workflow. Exact commands and runtime limits:
-[validation map](agent-validation.md). Do not mark implementation or cleanup complete
-until the owning evidence and integrated gates pass.
-
-Focused evidence currently includes 33 OCR-filtered tests (including 13 storage
-cases) and AI 98/settings 11 ownership checks. These sets overlap and must not be
-summed as unique coverage. The migration was observed failing because the new table
-was missing, and actual extraction was observed failing on removed `-vsync` before
-the fixes. Other new runner features were implemented before compilation; do not
-claim every new case had an observed red-first run.
-
-Final main-thread verification passed autofix, lint, all workspace typechecks and
-348 tests: desktop 338, shared 9 and FFmpeg 1. The production build passed with its
-existing eager-chunk advisory (947.76 kB / 277.18 kB gzip). Independent Inspector
-review passed 4/5 in both themes in three passes; Settings passed 4/5 in one.
-The native suite passed 381 unit tests before the finishing permit/cache/index
-changes; the final OCR namespace passed 40 tests covering those changes, and the
-two permit tests passed separately. These overlapping sets are not summed.
-Doc-only retry passed (0 examples), formatting passed, and strict all-target
-Clippy passed after its two diagnostics were corrected.
-
-Timeline navigation uses every eligible occurrence from the lightweight index,
-including reconstructed legacy samples, rather than processing progress or
-coalesced text history. Filled cells extend to the next observation in the same
-source/segment; the final cell extends to the segment boundary. Physical clicks
-inside cells select their own observation timestamp. Main-thread styled Browser
-tests and public-app checks passed in both themes and at desktop/narrow widths;
-actual evidence bounds remain separate from navigation geometry.
-
-Real private recordings, hosted provider reliability, native permissions and model
-OCR accuracy are separate manual risks. Existing GTK/GLib advisory and dependency
-maintenance limits are unchanged by this feature; no dependency upgrade is implied.
+See [processing privacy](processing-privacy-boundaries.md) and
+[validation commands](agent-validation.md). Real-provider OCR accuracy and native
+permissions need separate checks.

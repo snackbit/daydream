@@ -68,9 +68,9 @@ upstream boundary when the task requires it.
   timeline/canvas/playback, preview frames and storage scans. Avoid unnecessary
   cloning, repeated large-array filtering/sorting and unstable dense-tree inputs.
 - Record active major cleanups and verification in
-  [docs/refactoring-tasks.md](docs/refactoring-tasks.md). Its completed history is
-  evidence, not an instruction to restart old work. Do not mark a split complete
-  until its relevant checks pass.
+  [docs/refactoring-tasks.md](docs/refactoring-tasks.md). Keep only open work there
+  and remove resolved entries. Do not mark a split complete until its relevant
+  checks pass.
 
 ## Tools, dependencies and verification
 
@@ -98,11 +98,7 @@ upstream boundary when the task requires it.
 
 - [UI quality runbook](.agents/runbooks/ui-quality-and-scenario-testing.md):
   user-facing workflow, accessibility and manual regression work.
-- [Planning runbook](.agents/runbooks/planning.md): only when the user explicitly
-  requests milestone, gate, scratchpad or approved milestone-style work. Ordinary
-  implementation remains ad-hoc. Milestones use the plan/scratchpad pair and
-  [template](docs/milestone-template.md).
+- [Planning runbook](.agents/runbooks/planning.md): use for explicitly requested
+  plans. Keep working decisions in the conversation unless the user requests a file.
 - [Protected-window contract](docs/protected-window-recording-rules.md): protection
   matching, automatic pause/resume, metadata failures or protection redactions.
-- [Master review](docs/reviews/master-review.md): immutable audit findings and
-  separate fix/verification status.

@@ -1,17 +1,50 @@
 # Processing privacy boundaries
 
-Library redactions remain reversible metadata. They do not rewrite recorded MKV bytes. Derived result visibility and processing eligibility use the same source role and stream index mapping as Library tracks (`video-0`, `desktop-audio-1`, `microphone-2`), while durable processing track foreign keys remain UUIDs. Legacy UUID targets remain readable.
+Redactions are reversible metadata masks. They exclude content from processing
+and derived results but do not erase the original MKV bytes. Recording deletion
+removes media and derived artifacts.
 
-Processing and recording mutations synchronize through a per-recording lease. A worker holds a read lease during extraction, model requests, persistence and temporary-file cleanup. Redaction and explicit deletion cancel active work before waiting for the exclusive mutation lease. The database mutex is never held across that wait. Once the mutation succeeds, older work cannot upload content, persist stale results or recreate deleted artifacts. A request already sent to an explicitly enabled remote provider cannot be retracted; a cut waits for that request to stop or finish before reporting success.
+## Eligibility and ownership
 
-Pending chunks are checked against current redactions before claim. Execution and persistence recheck eligibility and active status. Open or closed-unmaterialized protected-window spans block processing until recorder recovery resolves them. Materialized spans remain resolved if a later explicit unredaction removes their metadata.
+Library and processing use stable source identities such as `video-0`,
+`desktop-audio-1` and `microphone-2`. Processing foreign keys remain UUIDs;
+legacy UUID redaction targets remain readable.
 
-Retention defers recordings that still have a processing lease rather than deleting files beneath active work. Explicit deletion cancels work and waits. Both deletion paths remove the recording's extracted job artifacts before removing relational ownership. Startup removes abandoned processing scratch data before workers start; durable metadata remains available for deterministic re-extraction and restart recovery.
+Workers check current redactions before claiming work, extracting inputs,
+uploading content and persisting results. Open or unmaterialized protection spans
+block processing. See [window protection](protected-window-recording-rules.md).
 
-An OS advisory lock on `recording-data.lock` is held for the app lifetime before SQLite recovery or scratch cleanup. A second process using that data directory fails startup. The OS releases the lock after a crash, so recovery does not depend on stale PID files. The process-local processing/mutation leases rely on this single-owner storage invariant.
+Each recording has a read/write lease. Processing holds a read lease through
+extraction, inference, persistence and temporary-file cleanup. Redaction and
+explicit deletion cancel active work and wait for the exclusive mutation lease.
+They do not hold the database mutex while waiting. A remote request already sent
+cannot be retracted; the mutation waits for its owner to stop or finish.
 
-Internal local transcription requests have registered receipts. A receipt shares the chunk's existing read lease rather than reacquiring it behind a waiting writer. Pending requests are revoked on failure/cancellation; a later handler rejects their identity before creating a WAV copy. Active handlers retain their receipt through copy cleanup and acknowledge completion before the client returns. Dropping the client also cancels the receipt while the handler keeps the lease. Registry locks are released before network/model work or acknowledgement waits.
+A job may continue model work only while its durable parent is running. A failed,
+paused, cancelled, completed, missing or unreadable parent cancels the old request.
 
-Local WAV copies live in an owned job/request scratch directory. Nested Whisper subprocess requests reuse that directory; cancellation, timeout or transport failure terminates and joins the subprocess before outer cleanup. Explicit deletion removes local transcription scratch alongside other job artifacts after draining handlers. A runner that delays cancellation keeps the mutation pending until it drains; it cannot silently outlive a successful deletion. Handler unwinding also drops scratch and acknowledges its receipt. This is a local protocol and does not change remote-provider consent.
+## Files and recovery
 
-The job cancellation poll continues model work only while its durable parent is `running`. Failed, completed, queued, paused, cancelled, missing or unreadable parent state cancels the old request. In particular, failure in a parallel chunk promptly drains the remaining model request rather than leaving its processing lease held through full inference.
+An app-lifetime OS lock on `recording-data.lock` prevents two processes from
+opening the same data directory. The OS releases it after a crash.
+
+Retention defers recordings with active processing leases. Explicit deletion
+drains owners before removing their artifacts and relational metadata. Startup
+removes abandoned processing scratch files before workers start.
+
+Prepared playback excludes tracks whose source range overlaps a redaction.
+Sessions and in-flight requests hold file leases; superseded prepared files are
+reclaimed after their final owner releases them. Changed privacy fingerprints
+revoke old sessions. Source media remains available for reversible unhide.
+
+## Local transcription
+
+Internal transcription requests register receipts that share the processing
+lease. Pending receipts are revoked on cancellation. Active handlers keep their
+receipt until WAV copies and model children have stopped and cleanup completes.
+Dropping the client cancels the receipt without releasing the handler's ownership.
+
+WAV copies live in job/request scratch directories. Nested Whisper requests reuse
+that directory. Cancellation, timeout and transport failure terminate and join
+the subprocess before cleanup. A delayed runner keeps deletion pending until it
+drains. These local requests do not change remote-provider consent.

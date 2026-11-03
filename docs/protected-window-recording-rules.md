@@ -1,252 +1,58 @@
-# Protected Window Recording Rules
+# Protected-window recording
 
-Date: 2026-06-13
+Window protection can pause recording or mask all tracks when a protected window
+has focus. Users configure rules in Recording settings, either manually or through
+the open-window picker. Rules affect future capture, not existing recordings.
 
-Status: Implemented for settings, X11 focused-window detection, Wayland
-focused-window detection through wlr metadata or KDE KWin scripting, automatic
-pause/redaction span handling, and redaction-aware AI planning. Windows, macOS,
-physical media cutting, and an audit view remain follow-ups.
+## Rules and timing
 
-## Summary
+Settings live under `record.windowProtection`: enablement, default action,
+dwell time, merge gap and rules. Each rule can inherit the default action or
+select pause/redact. Matchers use app/process identity and optional contains or
+regular-expression title matching.
 
-Add recording settings that pause recording or create automatic redactions when
-protected windows are focused. Rules apply only to future recordings. Users can
-set a global default action and override it per rule.
+The default dwell is two seconds; the merge gap is five seconds. A pause rule
+masks the recorded dwell interval before pausing. A redact rule creates an
+all-track metadata mask. Neither action physically cuts media.
 
-Default timing:
+Switching between protected rules keeps one continuous protected span. Pause
+takes precedence for the remainder of that span. The span retains its initial
+rule attribution and closes only after reliable metadata reports no match for
+the merge gap.
 
-- Focus dwell: `2s`
-- Protected span merge gap: `5s`
-- Manual pause wins over automatic resume.
+## User control and failures
 
-## Decisions
+The backend owns pause authority. Protection continues monitoring while paused.
+Automatic resume applies only to the automatic pause that created it. Manual
+pause claims that authority; manual resume revokes it. A newer pause invalidates
+an older pending resume, including while a segment is being prepared.
 
-- Support both automatic pause and automatic redaction.
-- Settings include a global default behavior: `pause` or `redact`.
-- Each rule can inherit the global default or explicitly use `pause` or
-  `redact`.
-- Rule matching uses app/process identity plus optional window-title matching.
-- Users can add rules manually or through a picker of currently open
-  windows/processes.
-- Automatic redaction targets all tracks by default: video, desktop audio, and
-  microphone.
-- Rule changes are future-only. They do not retroactively edit existing
-  recordings.
-- V1 automatic redaction is metadata plus AI-skip. Physical media byte cutting
-  is out of scope for this feature.
+Unknown focus is not a safe nonmatch. If metadata becomes unavailable during
+protected capture, the backend stops recording with a typed error. Protection
+persistence failure also stops capture and blocks processing. Span closure and
+redaction materialization share a SQLite transaction. Recovery must resolve
+unfinished protection before processing resumes.
 
-## Key Changes
+Capture workers and the media writer are supervised. Their failure stops the
+remaining resources and publishes an error rather than leaving recording active.
 
-### Shared Settings And Types
+## Platform boundary
 
-Add shared settings and Rust DTOs under `record.windowProtection`:
+Linux X11 uses EWMH focused-window and inventory metadata. Supported Wayland
+sessions use wlr foreign-toplevel metadata or the KDE KWin session D-Bus bridge.
+Other sessions report an unavailable provider. Windows and macOS providers are
+not implemented. ScreenCast source selection is separate from window metadata.
 
-- `enabled: boolean`
-- `defaultAction: 'pause' | 'redact'`
-- `dwellMs: number`
-- `mergeGapMs: number`
-- `rules: ProtectedWindowRule[]`
+`listProtectableWindows` and `getWindowProtectionStatus` expose typed availability
+states. Titles and inventories are private content and must not enter normal logs.
+Activity capture has its own metadata settings.
 
-Rule shape:
+## Verification
 
-- `id: string`
-- `enabled: boolean`
-- `label: string`
-- `action: 'inherit' | 'pause' | 'redact'`
-- `appIdentity?: string | null`
-- `processName?: string | null`
-- `titleMatcher?: WindowTitleMatcher | null`
+Regressions cover rule matching, dwell/merge timing, continuous matches, manual
+pause precedence, stale resumes, missing metadata, failed persistence, recovery
+and processing exclusion. Picker workflows cover save failures and unavailable
+providers. Real compositor permissions and capture require operator checks.
 
-Title matcher shape:
-
-- `kind: 'contains' | 'regex'`
-- `value: string`
-- `caseSensitive: boolean`
-
-Add validation limits for dwell, merge, matcher length, and rule count.
-
-### Settings UI
-
-Add a focused protected-window section in the Record settings tab:
-
-- Global enable toggle.
-- Radio-style default behavior: pause or redact.
-- Numeric dwell and merge controls.
-- Rule list with enable, delete, label, process/app matcher, title matcher, and
-  action override.
-- Picker dialog populated from currently open windows/processes.
-- Unavailable states for unsupported platforms, unsupported desktop sessions,
-  permission denial, and provider failure.
-
-Use existing shadcn components from `apps/desktop/src/components/ui` where
-available.
-
-### Tauri Commands
-
-Add typed commands:
-
-- `listProtectableWindows`
-- `getWindowProtectionStatus`
-
-Returned errors should be typed, not string-only guesses:
-
-- `unsupported_platform`
-- `session_unsupported`
-- `permission_denied`
-- `provider_unavailable`
-
-Do not log raw window titles, window inventories, OCR text, transcript text, or
-private payloads.
-
-### Platform Boundary
-
-Add a native active-window provider behind a typed interface.
-
-Linux first:
-
-- X11: use EWMH `_NET_ACTIVE_WINDOW`, `_NET_CLIENT_LIST`, `_NET_WM_NAME`,
-  `_NET_WM_PID`, and class/process metadata where available.
-- Wayland: use `wlr-foreign-toplevel-management` where the compositor advertises
-  it. On KDE/Plasma Wayland sessions without that protocol, load a KWin script
-  bridge that sends focused/open-window snapshots to Daydream over session
-  D-Bus. Return a typed provider-unavailable state when the session does not
-  expose either supported focused-window metadata path.
-- Return typed unavailable errors when the session does not expose active
-  window metadata.
-
-Windows and macOS:
-
-- Add typed stubs for this task.
-- Do not fake success.
-- Keep the boundary ready for real implementations.
-
-Do not use XDG ScreenCast as the active-window inventory API. It is a capture
-source API, not a focused-window metadata API.
-
-## Recording Behavior
-
-Window protection starts with a recording and continues while the recording is
-paused, so it can auto-resume after a protected window is no longer active.
-
-Matching:
-
-- Evaluate rules in memory against current focused-window metadata.
-- Prefer app/process identity over title matching.
-- Treat titles as sensitive metadata.
-- Do not persist full open-window inventories by default.
-
-Automatic pause:
-
-- If a matching rule remains focused for `dwellMs`, begin recorder pause.
-- The initial dwell interval that was recorded is materialized as an all-track
-  redaction.
-- Resume only after no protected match exists for `mergeGapMs`.
-- Never auto-resume a recording that the user manually paused.
-
-Recorder pause authority belongs to the backend manager. A manual pause can
-claim an existing automatic pause, including a pause that is still finalizing.
-Manual resume revokes the earlier automatic pause authority, so a later manual
-pause cannot be undone by the monitor.
-An automatic resume waiting for pause finalization carries that pause's
-generation. A newer manual or protected pause cancels the old resume request,
-including a segment already being prepared but not yet activated.
-
-Once a protected span opens, switching to another protected rule keeps that span
-open. A pause rule takes precedence over redaction for the remainder of this
-continuous protected interval. The span retains the initial rule's attribution;
-it closes only after reliable metadata shows no protected match for the merge
-gap.
-
-If focused-window metadata becomes unavailable during a protected recording,
-the backend stops the recording with a typed error. Unknown focus never counts
-as a safe window. A protection write failure also stops the recording and blocks
-processing. Closure and redaction materialization run in one SQLite transaction;
-the monitor must stop before the final processing barrier runs. Failed recordings
-remain unavailable to processing until their protection state is repaired.
-
-Active capture workers and the media writer are supervised every 250 ms. Native
-failure stops the remaining capture resources and emits the recorder error state;
-the user does not need to click Stop to discover a failed recording.
-
-Automatic redaction:
-
-- Keep recording.
-- Open a protected span after dwell.
-- Close the span after no protected match exists for `mergeGapMs`.
-- Materialize closed spans as all-track redactions with a reason such as
-  `Protected window: <rule label>`.
-
-Add durable `recording_protection_spans` storage so crash/recovery can close or
-materialize automatic spans before AI processing starts. Existing manual
-redactions stay unchanged.
-
-## Processing And Privacy
-
-Current AI processing blocks redacted recordings. This feature must include
-redaction-aware processing chunk planning or automatic redactions would block
-auto-processing.
-
-Required processing changes:
-
-- Remove the broad "redactions unsupported" AI-processing block.
-- Split or omit audio, visual, OCR, VLM, transcript, and activity chunks that
-  overlap redacted spans.
-- For activity processing, any redaction overlapping the time range excludes
-  that activity slice because activity can reveal private use.
-- Ensure automatic redactions are materialized before auto-processing is
-  enqueued after recording stop.
-- Keep query-time redaction filtering in place for existing derived data.
-
-V1 does not rewrite existing media files. Physical media cutting is a later
-privacy-hardening task.
-
-## Implementation Notes
-
-- Store settings in the existing app settings key/value persistence layer.
-- Keep React out of SQLite and native focus APIs; use typed Tauri commands.
-- Keep route/screen files thin. Put feature UI under
-  `apps/desktop/src/features/settings/`.
-- Keep the active-window monitor separate from recorder lifecycle logic. The
-  recorder should consume protection decisions, not OS-specific window data.
-- Privacy-sensitive telemetry should report provider status and rule IDs only,
-  not raw titles or process/window inventories.
-
-## Test Plan
-
-Rust tests:
-
-- Settings defaults, validation, persistence, and reset behavior.
-- Rule matching for process/app identity and title matcher combinations.
-- Dwell timing and merge-gap grouping.
-- Action inheritance and per-rule overrides.
-- Manual pause precedence over automatic resume.
-- Auto-pause lifecycle: pause, dwell redaction, merge-gap resume.
-- Auto-redact lifecycle: span open, span close, all-track redaction creation.
-- Crash/recovery behavior for open protection spans.
-- Redaction-aware AI chunk planning and processing enqueue with redactions.
-- Typed unavailable errors from platform providers.
-
-Frontend tests:
-
-- Record settings shows protected-window controls.
-- User can enable protection, set default behavior, add/edit/delete a rule.
-- User can add a rule from the open-window/process picker.
-- User sees unsupported or permission-denied provider states.
-- Validation errors block save and identify the broken setting.
-
-Manual checks:
-
-- Linux X11 active-window detection.
-- Linux Wayland supported compositor path through wlr metadata or KDE KWin
-  scripting.
-- Linux Wayland unsupported compositor state.
-- Recording does not auto-resume after a user manual pause.
-
-## Open Follow-Ups
-
-- Implement real Windows and macOS providers.
-- Add physical media cutting for redacted spans.
-- Consider an explicit "apply to existing recordings" workflow once focus
-  events are durable and safe to inspect.
-- Add an audit view for automatic protection spans without exposing private
-  window titles by default.
+See [processing privacy](processing-privacy-boundaries.md) and the
+[validation commands](agent-validation.md).

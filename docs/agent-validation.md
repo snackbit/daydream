@@ -1,8 +1,7 @@
 # Validation commands and budgets
 
 Run from the repository root unless stated otherwise. Use pinned Yarn through
-Corepack. [README](../README.md) lists setup and native prerequisites. This file
-is the command source of truth for contributors and agents.
+Corepack. [README](../README.md) lists setup and native prerequisites.
 
 ## Choose the owning check
 

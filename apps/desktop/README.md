@@ -30,3 +30,45 @@ at the IPC boundary. Real portal consent, window/input access, audio devices, me
 writing and packaged behavior require native/manual checks.
 
 Ownership: [frontend](src/AGENTS.md), [native](src-tauri/AGENTS.md).
+
+## Linux prerequisites
+
+On Debian or Ubuntu, the native development packages include:
+
+```bash
+sudo apt install \
+  libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libpipewire-0.3-dev \
+  libpulse-dev \
+  libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev \
+  libgstreamer-plugins-bad1.0-dev \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav \
+  gstreamer1.0-tools \
+  gstreamer1.0-pulseaudio \
+  cmake \
+  meson \
+  ninja-build \
+  libabsl-dev \
+  clang \
+  libclang-dev \
+  tesseract-ocr
+```
+
+Package names vary by distribution.
+
+On Arch Linux or CachyOS, install the echo-cancellation build prerequisites with
+`sudo pacman -S --needed meson ninja abseil-cpp`. They must be on `PATH` before
+running `yarn dev`; the launcher checks Meson and Ninja before starting the build.

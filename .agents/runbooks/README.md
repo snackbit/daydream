@@ -21,8 +21,7 @@ and shared resource limits. Keep command details in that canonical map.
 
 ### [Planning](./planning.md)
 
-Use when creating, refining, executing, reviewing, or closing milestone-scoped
-work.
+Use for explicitly requested implementation plans.
 
 ### [UI Quality and Scenario Testing](./ui-quality-and-scenario-testing.md)
 

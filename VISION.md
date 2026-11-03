@@ -284,7 +284,5 @@ direction and provides design context; it does not authorize implementation scop
 or commit the project to a release schedule.
 
 - [README: implemented capabilities and current limits](README.md)
-- [Daily-driver hardening](docs/daily-driver-hardening.md)
-- [Source capture and Settings redesign](docs/source-capture-redesign.md)
-- [Library as a private day index](docs/wip-library-day-index-design.md)
-- [Day Index MVP milestone](docs/milestones/m3-day-index-mvp.md)
+- [Recall behavior and architecture](docs/recall-redesign-implementation.md)
+- [Processing privacy boundaries](docs/processing-privacy-boundaries.md)
