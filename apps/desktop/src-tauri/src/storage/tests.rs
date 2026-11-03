@@ -47,7 +47,7 @@ fn migration_creates_core_tables_and_schema_version() {
     let (schema_version, table_counts) = collect_database_diagnostics_from_connection(&connection)
         .expect("collect database diagnostics");
 
-    assert_eq!(schema_version, 40);
+    assert_eq!(schema_version, 41);
     assert_eq!(table_counts["app_settings"], 0);
     assert_eq!(table_counts["ai_model_assets"], 0);
     assert_eq!(table_counts["notifications"], 0);
@@ -1526,12 +1526,30 @@ fn existing_v1_database_migrates_to_v2_without_losing_recordings() {
         .expect("collect database diagnostics");
     let migrated = get_recording(&connection, &recording_id).expect("read migrated recording");
 
-    assert_eq!(schema_version, 40);
+    assert_eq!(schema_version, 41);
     assert_eq!(table_counts["recordings"], 1);
     assert_eq!(migrated.quality_label, "ocr");
     assert_eq!(migrated.active_scene_id, None);
     assert_eq!(migrated.output_root, None);
     assert_eq!(migrated.title, None);
+    let queued: (String, i64) = connection
+        .query_row(
+            "SELECT status,priority FROM studio_media_queue WHERE recording_id=?1",
+            [&recording_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(queued, ("queued".into(), 0));
+    connection
+        .execute("DELETE FROM recordings WHERE id=?1", [&recording_id])
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM studio_media_queue", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -1959,6 +1977,7 @@ fn app_storage_exposes_mutable_connection_for_scene_transactions() {
     let scene_id = Uuid::now_v7().to_string();
     let storage = AppStorage {
         connection: Arc::new(Mutex::new(connection)),
+        readers: Arc::default(),
         path: PathBuf::from("/tmp/daydream.sqlite3"),
         in_memory: true,
     };

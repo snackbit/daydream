@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export async function checkModelSettings({ native, button, checkbox, click }) {
   let requests = 0;
@@ -88,8 +89,22 @@ export async function checkModelSettings({ native, button, checkbox, click }) {
       `document.querySelector('[role="dialog"]')?.textContent.includes('Check Diagnostics') && !Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Test model')?.disabled`,
       'failed synthetic model test',
     );
-    const bundle = await native.invoke('get_debug_log_bundle');
-    const events = bundle.logTailLines.map((line) => JSON.parse(line));
+    let bundle;
+    let events = [];
+    // Visible failure and asynchronous diagnostic publication settle separately.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      bundle = await native.invoke('get_debug_log_bundle');
+      events = bundle.logTailLines.map((line) => JSON.parse(line));
+      if (
+        events.some(
+          (event) =>
+            event.fields.message === 'frontend_operation_failed' &&
+            event.fields.operation === 'test_configured_model',
+        )
+      )
+        break;
+      await delay(50);
+    }
     assert(
       events.some(
         (event) =>

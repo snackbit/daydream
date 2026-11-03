@@ -64,6 +64,7 @@ let failPreparation = false,
   failResults = false,
   failDelete = false,
   failProcessing = false;
+let preparedMedia = false;
 const writes: Array<{
   recordingId: string;
   ranges: CreateLibraryRedactionRangeInput[];
@@ -74,16 +75,17 @@ function assets(recordingId: string): LibraryPlaybackAssets {
   const url = new URL(syntheticMedia, window.location.origin).href;
   return {
     recordingId,
-    sessionId: `session-${recordingId}`,
+    sessionId: `session-${recordingId}${preparedMedia ? '-prepared' : ''}`,
     error: null,
     segments: recording.segments.map((s) => ({
+      canSeekInStream: preparedMedia,
       segmentId: s.id,
-      videoUrl: url,
+      videoUrl: `${url}${preparedMedia ? '?prepared=1' : ''}`,
       thumbnails: [],
       videos: (s.videoStreams ?? []).map((v) => ({
         trackId: v.trackId,
         streamIndex: v.streamIndex,
-        url: `${url}?source=${v.trackId}`,
+        url: `${url}?source=${v.trackId}${preparedMedia ? '&prepared=1' : ''}`,
         thumbnails: [],
       })),
       audio: recording.tracks
@@ -105,6 +107,7 @@ beforeEach(async () => {
   cleanupState = null;
   failRecording = null;
   failPreparation = false;
+  preparedMedia = false;
   failResults = false;
   failDelete = false;
   failProcessing = false;
@@ -349,6 +352,68 @@ async function openStudio(location?: DayStudioLocation) {
   );
   return view;
 }
+
+test('paused Studio defers the next recording decoder until current playback advances', async () => {
+  const view = await openStudio();
+  const nextLoaded = () =>
+    [...view.container.querySelectorAll('video')].some((video) =>
+      video.src.includes('source=b-screen-0'),
+    );
+  expect(nextLoaded()).toBe(false);
+  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+  await waitFor(() =>
+    expect(view.container.querySelector('video')?.paused).toBe(false),
+  );
+  await waitFor(() => expect(nextLoaded()).toBe(true));
+  await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  expect(nextLoaded()).toBe(false);
+  const media = [...view.container.querySelectorAll('video,audio')];
+  view.unmount();
+  expect(media.every((element) => !element.hasAttribute('src'))).toBe(true);
+});
+test.each(['paused', 'playing'])(
+  'prepared media upgrades %s playback without autoplay or interrupting intent',
+  async (mode) => {
+    const view = await openStudio();
+    if (mode === 'playing') {
+      await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+      await waitFor(() =>
+        expect(view.container.querySelector('video')?.paused).toBe(false),
+      );
+    }
+    const listener = native.listen.mock.calls.find(
+      ([name]) => name === 'library-media-prepared',
+    )?.[1];
+    if (!listener) throw new Error('Preparation subscription missing');
+    const count = native.invoke.mock.calls.filter(
+      ([name]) => name === 'createLibraryPlaybackSession',
+    ).length;
+    preparedMedia = true;
+    act(() => listener({ payload: { recordingId: 'a' } }));
+    if (mode === 'playing') {
+      expect(
+        native.invoke.mock.calls.filter(
+          ([name]) => name === 'createLibraryPlaybackSession',
+        ),
+      ).toHaveLength(count);
+      await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    }
+    await waitFor(() =>
+      expect(view.container.querySelector('video')?.currentSrc).toContain(
+        'prepared=1',
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('video')?.readyState,
+      ).toBeGreaterThanOrEqual(2),
+    );
+    expect(view.container.querySelector('video')?.paused).toBe(true);
+    expect(native.invoke).toHaveBeenCalledWith('closeLibraryPlaybackSession', {
+      input: { sessionId: 'session-a' },
+    });
+  },
+);
 
 async function openRecordings() {
   const trigger = await screen.findByRole('button', { name: 'Recordings' });
@@ -692,10 +757,22 @@ test('real media progresses at the selected speed across all monitor and audio s
   if (!video) throw new Error('Video missing');
   await waitFor(() => expect(video.currentTime).toBeGreaterThan(0.25));
   async function sample(rate: number) {
+    await waitFor(() => {
+      for (const element of view.container.querySelectorAll('video,audio')) {
+        if (
+          !(element instanceof HTMLMediaElement) ||
+          element.closest('[hidden]')
+        )
+          continue;
+        expect(element.playbackRate).toBeCloseTo(rate, 1);
+        expect(element.seeking).toBe(false);
+      }
+    });
     const wall = performance.now(),
       start = video!.currentTime;
-    await waitFor(() =>
-      expect(video!.currentTime - start).toBeGreaterThan(0.65),
+    await waitFor(
+      () => expect(video!.currentTime - start).toBeGreaterThan(1.2),
+      { timeout: 3000 },
     );
     const elapsed = (performance.now() - wall) / 1000;
     expect((video!.currentTime - start) / elapsed).toBeGreaterThan(rate * 0.8);
@@ -889,38 +966,43 @@ test('playback preparation and derived reads recover on Refresh without requirin
   });
 });
 
-test('preloads the next recording and pauses its gap countdown without playing prepared media', async () => {
-  const view = await openStudio();
-  await waitFor(() =>
-    expect(view.container.querySelectorAll('video').length).toBeGreaterThan(2),
-  );
-  const active = view.container.querySelector('video');
-  if (!active) throw new Error('Video missing');
-  await userEvent.click(screen.getByRole('button', { name: 'Play' }));
-  await waitFor(() => expect(active.paused).toBe(false));
-  fireEvent.ended(active);
-  await screen.findByText(/Not recorded. Next recording at/);
-  await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
-  const countdown = screen.getByText(/Skipping in/).textContent;
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-  });
-  expect(screen.getByText(/Skipping in/).textContent).toBe(countdown);
-  const prepared = view.container.querySelector('div[hidden] video');
-  expect(prepared).toBeTruthy();
-  await userEvent.click(screen.getByRole('button', { name: 'Play now' }));
-  await openRecordings();
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: /Recording b/ })).toHaveAttribute(
-      'aria-current',
-      'true',
-    ),
-  );
-  expect(view.container.querySelector('video')).toBe(prepared);
-  if (!(prepared instanceof HTMLVideoElement))
-    throw new Error('Prepared video missing');
-  expect(prepared.paused).toBe(true);
-});
+test.each([false, true])(
+  'preloads the next recording and pauses its gap countdown without playing it (indexed: %s)',
+  async (indexed) => {
+    preparedMedia = indexed;
+    const view = await openStudio();
+    const active = view.container.querySelector('video');
+    if (!active) throw new Error('Video missing');
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(active.paused).toBe(false));
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('video').length).toBeGreaterThan(
+        2,
+      ),
+    );
+    fireEvent.ended(active);
+    await screen.findByText(/Not recorded. Next recording at/);
+    await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    const countdown = screen.getByText(/Skipping in/).textContent;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    expect(screen.getByText(/Skipping in/).textContent).toBe(countdown);
+    const prepared = view.container.querySelector('div[hidden] video');
+    expect(prepared).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Play now' }));
+    await openRecordings();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Recording b/ }),
+      ).toHaveAttribute('aria-current', 'true'),
+    );
+    expect(view.container.querySelector('video')).toBe(prepared);
+    if (!(prepared instanceof HTMLVideoElement))
+      throw new Error('Prepared video missing');
+    expect(prepared.paused).toBe(true);
+  },
+);
 
 test('privacy invalidation immediately removes player content and rejects late preparation', async () => {
   const view = await openStudio();

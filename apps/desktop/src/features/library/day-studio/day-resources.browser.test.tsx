@@ -6,7 +6,8 @@ import { buildDayTimeline } from './day-timeline';
 import { dayTimelineFixture } from './day-timeline-fixtures';
 import { useDayPlaybackSessions } from './use-day-playback-sessions';
 
-const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: native.listen }));
 vi.mock('@tauri-apps/api/core', async (importOriginal) => ({
   ...(await importOriginal<typeof TauriCore>()),
   invoke: native.invoke,
@@ -28,6 +29,7 @@ function assets(id: string): LibraryPlaybackAssets {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  native.listen.mockResolvedValue(() => undefined);
   native.invoke.mockImplementation(
     async (command: string, args: { input: { recordingId: string } }) => {
       if (command === 'createLibraryPlaybackSession')
@@ -42,6 +44,79 @@ beforeEach(() => {
   );
 });
 afterEach(cleanup);
+test('a newer upgrade intent never publishes the candidate retired by an earlier intent', async () => {
+  const model = buildDayTimeline(dayTimelineFixture());
+  const view = renderHook(() => useDayPlaybackSessions(model));
+  await act(async () => view.result.current.ensure('a'));
+  expect(native.invoke).toHaveBeenCalledWith('createLibraryPlaybackSession', {
+    input: { recordingId: 'a', lazyThumbnails: true, includeRuns: false },
+  });
+  let release: (value: LibraryPlaybackAssets) => void = () => {
+    throw new Error('Upgrade not requested');
+  };
+  let requests = 0;
+  native.invoke.mockImplementation(async (command: string) => {
+    if (command !== 'createLibraryPlaybackSession') return;
+    requests++;
+    if (requests === 1)
+      return new Promise<LibraryPlaybackAssets>((resolve) => {
+        release = resolve;
+      });
+    return { ...assets('a'), sessionId: 'newer-candidate' };
+  });
+  let earlier: Promise<LibraryPlaybackAssets>,
+    newer: Promise<LibraryPlaybackAssets>;
+  act(() => {
+    earlier = view.result.current.ensure('a', true, () => false);
+    newer = view.result.current.ensure('a', true, () => true);
+  });
+  await act(async () => {
+    release({ ...assets('a'), sessionId: 'retired-candidate' });
+    await Promise.all([earlier, newer]);
+  });
+  expect(view.result.current.sessions.get('a')?.sessionId).toBe(
+    'newer-candidate',
+  );
+  expect(native.invoke).toHaveBeenCalledWith('closeLibraryPlaybackSession', {
+    input: { sessionId: 'retired-candidate' },
+  });
+  expect(native.invoke).not.toHaveBeenCalledWith(
+    'closeLibraryPlaybackSession',
+    { input: { sessionId: 'newer-candidate' } },
+  );
+});
+test('prepared-session upgrades defer to newer playback intent and retire the old session only after acceptance', async () => {
+  const model = buildDayTimeline(dayTimelineFixture());
+  const view = renderHook(() => useDayPlaybackSessions(model));
+  await act(async () => view.result.current.ensure('a'));
+  const old = view.result.current.sessions.get('a');
+  const listener = native.listen.mock.calls[0]?.[1];
+  if (!listener) throw new Error('Preparation listener missing');
+  act(() => listener({ payload: { recordingId: 'a' } }));
+  expect(view.result.current.preparedIds.has('a')).toBe(true);
+  native.invoke.mockImplementation(async (command: string) =>
+    command === 'createLibraryPlaybackSession'
+      ? {
+          ...assets('a'),
+          sessionId: 'prepared-a',
+          segments: assets('a').segments.map((segment) => ({
+            ...segment,
+            canSeekInStream: true,
+          })),
+        }
+      : undefined,
+  );
+  await act(async () => view.result.current.ensure('a', true, () => false));
+  expect(view.result.current.sessions.get('a')).toBe(old);
+  expect(view.result.current.preparedIds.has('a')).toBe(true);
+  native.invoke.mockClear();
+  await act(async () => view.result.current.ensure('a', true, () => true));
+  expect(view.result.current.sessions.get('a')?.sessionId).toBe('prepared-a');
+  expect(view.result.current.preparedIds.has('a')).toBe(false);
+  expect(native.invoke).toHaveBeenCalledWith('closeLibraryPlaybackSession', {
+    input: { sessionId: 'session-a' },
+  });
+});
 test('recording admission shares pending preparation, retains sessions through renames, and retires removed records', async () => {
   const fixture = dayTimelineFixture(),
     model = buildDayTimeline(fixture);

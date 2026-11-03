@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LibraryPlaybackAssets } from '@daydream/shared';
+import { useStudioResultRange } from '../components/studio/results/studio-result-window-store';
 import {
   closeLibraryPlaybackSession,
   createLibraryPlaybackSession,
+  listenLibraryMediaPrepared,
 } from '../library-client';
 import type { DayTimelineModel } from './day-timeline';
 
 /** Session metadata is cheap; only the current and next media groups decode. */
 export function useDayPlaybackSessions(model: DayTimelineModel) {
+  const viewport = useStudioResultRange(model.view.id);
+  const [preparedIds, setPreparedIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [sessions, setSessions] = useState(
       new Map<string, LibraryPlaybackAssets>(),
     ),
@@ -32,6 +38,7 @@ export function useDayPlaybackSessions(model: DayTimelineModel) {
     };
     owner.current = current;
     setSessions(new Map());
+    setPreparedIds(new Set());
     setError(null);
     return () => {
       current.active = false;
@@ -73,16 +80,54 @@ export function useDayPlaybackSessions(model: DayTimelineModel) {
     current.audioRevisions = revisions;
     if (removed) setSessions(new Map(current.values));
   }, [model.manifest.recordings]);
-  const ensure = useCallback(async (recordingId: string) => {
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listenLibraryMediaPrepared((event) => {
+      const current = owner.current;
+      if (
+        !active ||
+        !current?.active ||
+        !current.allowed.has(event.recordingId)
+      )
+        return;
+      const value = current.values.get(event.recordingId);
+      if (value?.segments.some((segment) => segment.canSeekInStream !== true))
+        setPreparedIds((ids) => new Set(ids).add(event.recordingId));
+    })
+      .then((cleanup) => {
+        if (active) unlisten = cleanup;
+        else cleanup();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [ownershipKey]);
+  const ensure = useCallback(async function ensureRecording(
+    recordingId: string,
+    refresh = false,
+    accept?: () => boolean,
+  ): Promise<LibraryPlaybackAssets> {
     const current = owner.current;
     if (!current || !current.active || !current.allowed.has(recordingId))
       throw new Error('Day playback has closed');
     const saved = current.values.get(recordingId);
-    if (saved) return saved;
+    if (saved && !refresh) return saved;
+    const preceding = current.pending.get(recordingId);
+    if (refresh && preceding) {
+      await preceding.catch(() => undefined);
+      return ensureRecording(recordingId, true, accept);
+    }
     const revision = current.audioRevisions.get(recordingId);
     let request = current.pending.get(recordingId);
     if (!request) {
-      request = createLibraryPlaybackSession({ recordingId });
+      request = createLibraryPlaybackSession({
+        recordingId,
+        lazyThumbnails: true,
+        includeRuns: false,
+      });
       current.pending.set(recordingId, request);
     }
     try {
@@ -109,9 +154,30 @@ export function useDayPlaybackSessions(model: DayTimelineModel) {
         }
         throw new Error('Playback preparation failed');
       }
-      if (!current.values.has(recordingId)) {
+      if (saved && refresh && accept && !accept()) {
+        if (value.sessionId && !current.retired.has(value.sessionId)) {
+          current.retired.add(value.sessionId);
+          void closeLibraryPlaybackSession({ sessionId: value.sessionId });
+        }
+        return saved;
+      }
+      if (!current.values.has(recordingId) || refresh) {
         current.values.set(recordingId, value);
         setSessions(new Map(current.values));
+        setPreparedIds((ids) => {
+          if (!ids.has(recordingId)) return ids;
+          const next = new Set(ids);
+          next.delete(recordingId);
+          return next;
+        });
+        if (
+          saved?.sessionId &&
+          saved.sessionId !== value.sessionId &&
+          !current.retired.has(saved.sessionId)
+        ) {
+          current.retired.add(saved.sessionId);
+          void closeLibraryPlaybackSession({ sessionId: saved.sessionId });
+        }
       }
       setError(null);
       return value;
@@ -128,5 +194,44 @@ export function useDayPlaybackSessions(model: DayTimelineModel) {
         current.pending.delete(recordingId);
     }
   }, []);
-  return { sessions, error, ensure };
+  useEffect(() => {
+    if (!viewport.ready) return;
+    let active = true;
+    const ids = [
+      ...new Set(
+        model.spans
+          .filter((span) => {
+            const start = span.startMs - model.originMs;
+            return (
+              start < viewport.endOffsetMs &&
+              start + span.durationMs > viewport.startOffsetMs
+            );
+          })
+          .map((span) => span.recordingId),
+      ),
+    ];
+    let index = 0;
+    async function worker() {
+      while (active) {
+        const id = ids[index++];
+        if (!id) return;
+        try {
+          await ensure(id);
+        } catch {
+          /* The session owner exposes the error. */
+        }
+      }
+    }
+    void Promise.all([worker(), worker()]);
+    return () => {
+      active = false;
+    };
+  }, [
+    model,
+    viewport.ready,
+    viewport.startOffsetMs,
+    viewport.endOffsetMs,
+    ensure,
+  ]);
+  return { sessions, error, ensure, preparedIds };
 }

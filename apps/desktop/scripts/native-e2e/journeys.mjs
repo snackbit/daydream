@@ -10,6 +10,7 @@ import {
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { checkDayReview } from './day-review.mjs';
+import { writeNativeFailureDiagnostics } from './failure-diagnostics.mjs';
 import { connectInspector } from './inspector.mjs';
 import { checkLanguageContinuity } from './language.mjs';
 import { checkLibraryDays } from './library.mjs';
@@ -20,6 +21,9 @@ import { checkSearchKeyboard } from './search-keyboard.mjs';
 import { checkStudioControls } from './studio-controls.mjs';
 import { checkStudioInference } from './studio-inference.mjs';
 import { checkStudioLoad } from './studio-load.mjs';
+import { checkPreparedStudioDay } from './studio-prepared-day.mjs';
+import { checkPreparedStudioTiming } from './studio-ready-timing.mjs';
+import { checkSeekedStudioTranscripts } from './transcripts/studio-transcript-groups.mjs';
 import { connectNativeKeyboard } from './webdriver.mjs';
 
 const phase = process.argv[2] ?? 'initial';
@@ -180,6 +184,7 @@ try {
     return selector;
   }
 
+  const studioJourney = { native, navigate, click, viewer, artifacts };
   if (phase === 'bootstrap') {
     const settings = (await native.invoke('getAppSettings')).settings;
     assert.equal(settings.ai.vision.provider, 'disabled');
@@ -237,15 +242,13 @@ try {
       viewer,
     });
     stories.push('NATIVE-AUTO-LANGUAGE-CONSENSUS-RETROACTIVE-CORRECTION');
+  } else if (phase === 'studio-transcripts') {
+    await checkSeekedStudioTranscripts(studioJourney);
+    stories.push('NATIVE-STUDIO-SEEKED-TRANSCRIPT-GROUPS');
+  } else if (phase === 'studio-ready') {
+    stories.push(await checkPreparedStudioDay(studioJourney));
   } else if (phase === 'studio') {
-    const diagnostic = await checkStudioLoad({
-      native,
-      click,
-      button,
-      navigate,
-      viewer,
-      artifacts,
-    });
+    const diagnostic = await checkStudioLoad({ ...studioJourney, button });
     stories.push(
       diagnostic === 'diagnostic'
         ? 'NATIVE-STUDIO-LAYOUT-DIAGNOSTIC'
@@ -347,7 +350,15 @@ try {
         const detail = await native.invoke('getLibraryRecording', {
           recordingId: recording.id,
         });
-        assert.ok(detail.playableSegmentCount >= 2);
+        const before = preservedRecordings.find(
+          (before) => before.id === recording.id,
+        );
+        assert.ok(before, 'reset retains the original recording');
+        assert.equal(
+          detail.playableSegmentCount,
+          before.playableSegmentCount,
+          'reset preserves every playable fragment',
+        );
         for (const segment of detail.segments) {
           assert.equal(segment.fileExists, true);
           assert.ok(segment.filePath.startsWith(`${artifacts}/data/`));
@@ -543,6 +554,13 @@ try {
         await native.evaluate('document.querySelector("video").videoWidth > 0'),
       );
       stories.push('NATIVE-RECORDED-MEDIA-LIBRARY-STUDIO');
+      await checkPreparedStudioTiming({
+        native,
+        navigate,
+        click,
+        artifacts,
+        recordingId: recordings[0].id,
+      });
       await viewer.screenshot({ path: `${artifacts}/initial-studio.png` });
       await checkStudioControls({ native, button, click, artifacts });
       stories.push('NATIVE-STUDIO-TABS-AND-SPEED');
@@ -567,35 +585,7 @@ try {
   process.stdout.write(`${JSON.stringify({ phase, passed: stories })}\n`);
 } catch (error) {
   failure = error.message;
-  if (native) {
-    const state = await native
-      .evaluate(
-        `JSON.stringify({
-      pathname: location.pathname,
-      dialogs: [...document.querySelectorAll('[role=dialog]')].map(element => ({ state: element.dataset.state, text: element.textContent })),
-      statuses: [...document.querySelectorAll('[role=status]')].map(element => element.textContent),
-      checkboxes: [...document.querySelectorAll('[role=checkbox]')].map(element => ({ id:element.id, checked:element.getAttribute('aria-checked') })),
-      inputs: [...document.querySelectorAll('main input:not([type=password])')].map(element => ({ id:element.id, value:element.value })),
-      keyboard: window.__nativeE2eKeys,
-      pointer: window.__nativeE2ePointer,
-      headings: [...document.querySelectorAll('main h1')].map(element => element.textContent)
-    })`,
-      )
-      .catch((diagnosticError) =>
-        JSON.stringify({ diagnosticFailure: diagnosticError.message }),
-      );
-    await writeFile(`${artifacts}/${phase}-failure-state.json`, state);
-  }
-  await viewer?.screenshot({ path: `${artifacts}/${phase}-failure.png` });
-  if (viewer)
-    await writeFile(
-      `${artifacts}/${phase}-viewer-keys.json`,
-      JSON.stringify(
-        await viewer.evaluate(() => window.__broadwayE2eKeys),
-        null,
-        2,
-      ) ?? 'null',
-    );
+  await writeNativeFailureDiagnostics({ native, viewer, artifacts, phase });
   throw error;
 } finally {
   await writeFile(

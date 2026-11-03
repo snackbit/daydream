@@ -50,7 +50,6 @@ impl RuntimeCancellation {
         self.cancelled.store(true, Ordering::Release);
         self.changed.notify_waiters();
     }
-    #[cfg(test)]
     pub(crate) async fn cancelled(&self) {
         loop {
             let notified = self.changed.notified();

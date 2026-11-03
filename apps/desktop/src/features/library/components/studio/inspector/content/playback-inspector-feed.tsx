@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
+  STUDIO_REVIEW_STEP_MS,
   useStudioResultRange,
   useStudioResultWindowStore,
 } from '../../results/studio-result-window-store';
@@ -39,6 +40,14 @@ export function PlaybackInspectorFeed({
 }: PlaybackInspectorFeedProps) {
   const readWindow = useStudioResultRange(ownerId ?? 'standalone');
   const publishReview = useStudioResultWindowStore((store) => store.setReview);
+  const publishActive = useStudioResultWindowStore(
+    (store) => store.setReviewActive,
+  );
+  useEffect(() => {
+    if (!ownerId) return;
+    if (!active) publishActive(ownerId, false);
+    return () => publishActive(ownerId, false);
+  }, [ownerId, active, publishActive]);
   const [categories, setCategories] = useState<ReadonlySet<ReviewCategory>>(
     () => new Set(['speech', 'observation', 'activity']),
   );
@@ -129,13 +138,19 @@ export function PlaybackInspectorFeed({
     browse();
     publishReview(
       ownerId,
-      Math.max(0, (readWindow.reviewStartOffsetMs ?? 0) - 90_000),
+      Math.max(
+        0,
+        (readWindow.reviewStartOffsetMs ?? 0) - STUDIO_REVIEW_STEP_MS / 2,
+      ),
     );
   }, [ownerId, browse, publishReview, readWindow.reviewStartOffsetMs]);
   const later = useCallback(() => {
     if (!ownerId) return;
     browse();
-    publishReview(ownerId, (readWindow.reviewEndOffsetMs ?? 0) + 90_000);
+    publishReview(
+      ownerId,
+      (readWindow.reviewEndOffsetMs ?? 0) - STUDIO_REVIEW_STEP_MS / 2,
+    );
   }, [ownerId, browse, publishReview, readWindow.reviewEndOffsetMs]);
   return (
     <section

@@ -5,7 +5,10 @@ import type {
   LibraryRecordingTrack,
   LibraryWaveformTileTrack,
 } from '@daydream/shared';
+import { Skeleton } from '@/components/ui/skeleton';
 import { STUDIO_OVERVIEW_PIXELS_PER_MS } from '../results/studio-result-window-store';
+import { timelineThumbnailWindow } from './thumbnails/timeline-thumbnail-window';
+import { VideoTimelineThumbnail } from './video-timeline-thumbnail';
 
 export interface ContinuousTrackMediaProps {
   detail: LibraryRecordingDetail;
@@ -62,19 +65,41 @@ export function ContinuousTrackMedia({
       )
         continue;
       const asset = byId.get(segment.id);
-      const thumbnails =
-        asset?.videos?.find((video) => video.trackId === track.id)
-          ?.thumbnails ?? (asset?.videos ? [] : (asset?.thumbnails ?? []));
+      const video = asset?.videos?.find((video) => video.trackId === track.id);
+      const baseUrl =
+        video?.thumbnailBaseUrl ??
+        (asset?.videos ? undefined : asset?.thumbnailBaseUrl);
+      const thumbnails = baseUrl
+        ? timelineThumbnailWindow({
+            baseUrl,
+            streamIndex: video?.streamIndex ?? null,
+            segmentStartMs: segment.playbackOffsetMs,
+            mediaStartMs: segment.mediaStartMs ?? 0,
+            durationMs: segment.durationMs ?? 0,
+            startMs: range.startTimelineMs,
+            endMs: range.endTimelineMs,
+            pixelsPerMs,
+            thumbnailWidth,
+          })
+        : (
+            video?.thumbnails ??
+            (asset?.videos ? [] : (asset?.thumbnails ?? []))
+          ).map((thumbnail) => ({
+            ...thumbnail,
+            sampleOffsetMs: thumbnail.offsetMs,
+          }));
       for (const thumbnail of thumbnails) {
         const time = segment.playbackOffsetMs + thumbnail.offsetMs;
+        const sampleTime = segment.playbackOffsetMs + thumbnail.sampleOffsetMs;
         if (
           time < range.startTimelineMs ||
           time >= range.endTimelineMs ||
           detail.redactions.some(
             (cut) =>
               (cut.trackIds.length === 0 || cut.trackIds.includes(track.id)) &&
-              time >= cut.startOffsetMs &&
-              time < cut.endOffsetMs,
+              ((time >= cut.startOffsetMs && time < cut.endOffsetMs) ||
+                (sampleTime >= cut.startOffsetMs &&
+                  sampleTime < cut.endOffsetMs)),
           )
         )
           continue;
@@ -170,13 +195,13 @@ export function ContinuousTrackMedia({
     >
       {track.kind === 'video' ? (
         previews.map((preview) => (
-          <img
+          <div
             key={preview.id}
-            alt=""
-            src={preview.url}
-            className="absolute inset-y-0 h-full object-cover"
+            className="absolute inset-y-0 flex h-full"
             style={{ left: preview.left - left, width: thumbnailWidth }}
-          />
+          >
+            <VideoTimelineThumbnail key={preview.url} url={preview.url} />
+          </div>
         ))
       ) : (
         <canvas
@@ -192,12 +217,18 @@ export function ContinuousTrackMedia({
         />
       )}
       {track.kind !== 'video' && !waveform ? (
-        <span
-          className="text-muted-foreground absolute px-3 py-2 text-xs"
-          style={{ left: 0 }}
-        >
-          Preparing waveform…
-        </span>
+        <>
+          <Skeleton
+            aria-hidden
+            className="absolute top-1/2 right-3 left-3 h-8 -translate-y-1/2"
+          />
+          <span
+            className="text-muted-foreground absolute px-3 py-2 text-xs"
+            style={{ left: 0 }}
+          >
+            Loading waveform…
+          </span>
+        </>
       ) : null}
     </div>
   );

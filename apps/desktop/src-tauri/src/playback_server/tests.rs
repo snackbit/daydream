@@ -262,6 +262,7 @@ fn software_encoder_is_available_as_fallback() {
 
 fn thumbnail_key(session_id: &str, segment_id: &str, offset_ms: i64) -> ThumbnailKey {
     ThumbnailKey {
+        cache_namespace: "synthetic".into(),
         video_stream_index: 0,
         offset_ms,
         segment_id: segment_id.to_string(),

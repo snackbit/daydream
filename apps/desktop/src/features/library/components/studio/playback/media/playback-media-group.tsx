@@ -1,4 +1,10 @@
-import { useCallback, type ReactNode, type SyntheticEvent } from 'react';
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react';
 import type {
   LibraryPlaybackSegment,
   LibraryRecordingDetail,
@@ -16,6 +22,7 @@ export function playbackStreamUrl(
   return `${url}${url.includes('?') ? '&' : '?'}startMs=${Math.max(0, Math.floor(startMs))}&request=${Math.max(0, Math.floor(revision))}${durationMs === undefined ? '' : `&durationMs=${Math.max(1, Math.floor(durationMs))}`}`;
 }
 export interface PlaybackMediaGroupProps {
+  seekable?: boolean;
   active: boolean;
   asset: LibraryPlaybackSegment;
   startMs: number;
@@ -31,6 +38,7 @@ export interface PlaybackMediaGroupProps {
 }
 /** The prepared group's DOM and buffers survive its promotion to active media. */
 export function PlaybackMediaGroup({
+  seekable = false,
   active,
   asset,
   startMs,
@@ -45,6 +53,41 @@ export function PlaybackMediaGroup({
   streamOffsetMs,
 }: PlaybackMediaGroupProps) {
   const { actions } = playback;
+  const group = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = group.current;
+    return () => {
+      // WebKit can retain detached pipelines until GC. Retire them with the group.
+      for (const media of element?.querySelectorAll('video,audio') ?? []) {
+        if (!(media instanceof HTMLMediaElement)) continue;
+        // Transport owns pause; load() cancels and releases the retired source.
+        media.removeAttribute('src');
+        media.load();
+      }
+    };
+  }, []);
+  const prepareElement = useCallback(
+    (element: HTMLMediaElement) => {
+      if (!seekable) return;
+      const target = Math.max(0, startMs / 1000);
+      if (Math.abs(element.currentTime - target) > 0.01)
+        element.currentTime = target;
+    },
+    [seekable, startMs],
+  );
+  const loadedMetadata = useCallback(
+    (event: SyntheticEvent<HTMLDivElement>) => {
+      if (event.target instanceof HTMLMediaElement)
+        prepareElement(event.target);
+    },
+    [prepareElement],
+  );
+  useLayoutEffect(() => {
+    if (!seekable) return;
+    for (const element of group.current?.querySelectorAll('video,audio') ?? [])
+      if (element instanceof HTMLMediaElement && element.readyState > 0)
+        prepareElement(element);
+  }, [seekable, startMs, revision, prepareElement]);
   const slice = detail.segments.find(
     (segment) => segment.id === asset.segmentId,
   );
@@ -67,6 +110,8 @@ export function PlaybackMediaGroup({
   );
   return (
     <div
+      ref={group}
+      onLoadedMetadataCapture={loadedMetadata}
       hidden={!active}
       data-grid={grid}
       className="h-full min-h-0 bg-black data-[grid=true]:grid data-[grid=true]:auto-rows-fr data-[grid=true]:grid-cols-1 data-[grid=true]:overflow-auto lg:data-[grid=true]:grid-cols-2 [&[hidden]]:hidden"
@@ -85,7 +130,11 @@ export function PlaybackMediaGroup({
           className="min-h-0 w-full flex-1 object-contain"
           preload="auto"
           muted={!active}
-          src={playbackStreamUrl(asset.videoUrl, startMs, revision, durationMs)}
+          src={
+            seekable
+              ? asset.videoUrl
+              : playbackStreamUrl(asset.videoUrl, startMs, revision, durationMs)
+          }
           onPause={active ? actions.handleVideoPause : undefined}
           onPlay={active ? actions.handleVideoPlay : undefined}
           onTimeUpdate={update}
@@ -101,8 +150,13 @@ export function PlaybackMediaGroup({
             key={audio.trackId}
             active={active}
             audio={audio}
+            preload={active && !playback.state.playRequested ? 'none' : 'auto'}
             actions={actions}
-            src={playbackStreamUrl(audio.url, startMs, revision, durationMs)}
+            src={
+              seekable
+                ? audio.url
+                : playbackStreamUrl(audio.url, startMs, revision, durationMs)
+            }
           />
         ))}
         {active ? children : null}
@@ -114,6 +168,7 @@ export function PlaybackMediaGroup({
               <PlaybackSourceVideo
                 key={video.trackId}
                 active={active}
+                seekable={seekable}
                 video={video}
                 label={labels?.get(video.trackId) ?? 'Monitor'}
                 redactions={detail.redactions}

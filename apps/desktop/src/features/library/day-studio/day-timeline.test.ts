@@ -26,7 +26,17 @@ describe('Day playback provenance', () => {
       segmentIndex: index + 1,
       pauseAfterMs: 0,
     }));
-    fixture.recordings = [{ ...recording, segments }];
+    fixture.endMs = base + segments.length * 30_000;
+    fixture.recordings = [
+      {
+        ...recording,
+        startedAtMs: base,
+        endedAtMs: fixture.endMs,
+        durationMs: fixture.endMs - base,
+        playableSegmentCount: segments.length,
+        segments,
+      },
+    ];
     fixture.spans = segments.map((segment, index) => ({
       recordingId: recording.id,
       segmentId: segment.id,
@@ -36,7 +46,30 @@ describe('Day playback provenance', () => {
       sourceOffsetMs: index * 30_000,
     }));
     fixture.spans.splice(500, 1);
+    expect(decodeDayTimeline(fixture)).toEqual(fixture);
     const model = buildDayTimeline(fixture);
+    const assets = dayPlaybackAssets(
+      model,
+      new Map([
+        [
+          recording.id,
+          {
+            recordingId: recording.id,
+            sessionId: 'synthetic-dense-session',
+            error: null,
+            segments: segments.map((segment) => ({
+              segmentId: segment.id,
+              videoUrl: `http://localhost/synthetic/${segment.id}`,
+              audio: [],
+              thumbnails: [],
+            })),
+          },
+        ],
+      ]),
+    );
+    expect(assets.segments).toHaveLength(959);
+    expect(assets.segments[500]?.segmentId).toBe('fragment-501');
+    expect(assets.segments.at(-1)?.videoUrl).toContain('fragment-959');
     expect(projectSourceRange(model, recording.id, 29_000, 31_000)).toEqual([
       { start: 29_000, end: 31_000, shift: 0 },
     ]);
@@ -186,6 +219,7 @@ describe('Day playback provenance', () => {
     expect(dayPosition(model, 'b', 1500)).toBe(11500);
     expect(sourcePosition(model, 7500)).toBeNull();
     expect(dayPosition(model, 'a', 100)).toBeNull();
+    expect(dayPosition(model, 'deleted-recording', 100)).toBeNull();
   });
   test('splits a range spanning recordings and a gap into source-local mutations', () => {
     const model = buildDayTimeline(dayTimelineFixture());
@@ -277,6 +311,10 @@ describe('Day playback provenance', () => {
   test('handles an empty day and legacy video metadata', () => {
     const manifest = dayTimelineFixture();
     manifest.recordings[0]!.segments[0]!.videoStreams = [];
+    expect(
+      buildDayTimeline(manifest).view.segments[0]!.videoStreams,
+    ).toHaveLength(2);
+    delete manifest.recordings[0]!.segments[0]!.videoStreams;
     expect(
       buildDayTimeline(manifest).view.segments[0]!.videoStreams,
     ).toHaveLength(2);

@@ -188,3 +188,20 @@ pub fn list_transcript_words(
 
     rows.collect()
 }
+
+pub fn list_transcript_words_for_segments(
+    connection: &Connection,
+    ids: &[&str],
+) -> rusqlite::Result<std::collections::BTreeMap<String, Vec<TranscriptWordRow>>> {
+    let json = serde_json::to_string(ids).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let mut query=connection.prepare("SELECT id,transcript_segment_id,start_offset_ms,end_offset_ms,text,probability FROM transcript_words WHERE transcript_segment_id IN(SELECT value FROM json_each(?1)) ORDER BY transcript_segment_id,start_offset_ms,end_offset_ms,id")?;
+    let mut result = std::collections::BTreeMap::<String, Vec<TranscriptWordRow>>::new();
+    for row in query.query_map([json], transcript_word_row)? {
+        let word = row?;
+        result
+            .entry(word.transcript_segment_id.clone())
+            .or_default()
+            .push(word);
+    }
+    Ok(result)
+}

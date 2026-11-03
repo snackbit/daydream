@@ -35,11 +35,32 @@ embedding/VAD resources are produced by the debug build. The runner
 builds fresh frontend assets and the custom-protocol executable by default and
 does not download models. `--reuse-validated-build` skips builds for a coordinated
 QA iteration only when that exact source and artifact state was already checked.
+Run the custom-protocol build after Rust tests: Cargo's test builds can replace
+the executable with a development binary that expects a running Vite server.
 `PLAYWRIGHT_BROWSERS_PATH` may select an existing browser cache.
 The default phase order is `initial restart keyboard`. For targeted diagnosis,
 `DAYDREAM_E2E_PHASES=keyboard` selects only keyboard transport, and
 `DAYDREAM_E2E_PHASES='initial restart'` selects capture/persistence. These are
 partial runs; the final gate uses all default phases and reports each separately.
+
+The optional `studio` phase seeds an eight-hour synthetic day and exercises dense
+results, waveform preparation, zoom, pan, decoded playback and both themes.
+`studio-ready` checks an existing fixture's prepared content without repeating
+cold generation. It measures twenty openings through decoded frames, thumbnails
+and visible results, plus prepared seeks, against a one-second budget. Pass
+`DAYDREAM_E2E_REUSE_DIR` with the isolated fixture directory when selecting it.
+`studio-transcripts` targets the seeked count-tooltip and transcript drilldown
+workflow on that same fixture. Very short utterances may remain grouped at the
+existing ten-second zoom limit in a narrow pane; their eligible text must remain
+readable in the count tooltip.
+`DAYDREAM_E2E_DIAGNOSTIC=1` instead records three diagnostic openings and a WebKit
+timeline; its report explicitly does not constitute acceptance.
+
+The startup decoder warmup is a single synthetic black frame (no audio), embedded
+in the native binary and served by a fixed loopback endpoint. Native WebKit rejects
+the bundled custom-protocol media URL. Timing reports record the decoder warmup
+mark; diagnostic runs also probe native decoding directly. Rebuild
+it with `COREPACK_HOME=/tmp/corepack corepack yarn workspace @daydream/desktop exec node scripts/generate-playback-warmup.mjs`.
 
 `DAYDREAM_E2E_LONG_PLAYBACK=1` extends the initial capture to 103 seconds. It
 checks actual storage rollovers, full player duration and native seek/play after

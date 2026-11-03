@@ -176,6 +176,15 @@ pub fn list_vlm_observations(
     connection: &Connection,
     recording_id: &str,
 ) -> rusqlite::Result<Vec<VlmObservationRow>> {
+    list_vlm_observations_in_windows(connection, recording_id, None, None)
+}
+
+pub fn list_vlm_observations_in_windows(
+    connection: &Connection,
+    recording_id: &str,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> rusqlite::Result<Vec<VlmObservationRow>> {
     let mut statement = connection.prepare(
         r#"
         SELECT
@@ -198,11 +207,22 @@ pub fn list_vlm_observations(
             ,context_start_ms, confirmed_end_ms
         FROM vlm_observations
         WHERE recording_id = ?1
+        AND (?2 IS NULL OR (frame_timestamp_ms<?3 AND COALESCE(confirmed_end_ms,frame_timestamp_ms+1)>?2)
+         OR (?4 IS NOT NULL AND frame_timestamp_ms<?5 AND COALESCE(confirmed_end_ms,frame_timestamp_ms+1)>?4))
         AND (NOT EXISTS(SELECT 1 FROM processing_replacement_chunks rc JOIN processing_replacement_groups rg ON rg.id=rc.group_id WHERE rc.chunk_id=vlm_observations.chunk_id AND rg.committed=0) OR EXISTS(SELECT 1 FROM processing_replacement_frames rf WHERE rf.chunk_id=vlm_observations.chunk_id AND rf.frame_ms=vlm_observations.frame_timestamp_ms))
         ORDER BY frame_timestamp_ms ASC, observation_kind ASC, id ASC
         "#,
     )?;
-    let rows = statement.query_map([recording_id], vlm_observation_row)?;
+    let rows = statement.query_map(
+        params![
+            recording_id,
+            range.map(|r| r.0),
+            range.map(|r| r.1),
+            review.map(|r| r.0),
+            review.map(|r| r.1)
+        ],
+        vlm_observation_row,
+    )?;
 
     rows.collect()
 }

@@ -50,11 +50,27 @@ function pause(set: MediaSet | null) {
   for (const element of set?.elements ?? []) element.pause();
 }
 function ready(set: MediaSet) {
-  return set.elements.every(
-    (element) =>
-      element.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA &&
-      !element.seeking,
-  );
+  return set.elements.every(hasFutureData);
+}
+function hasFutureData(element: HTMLMediaElement) {
+  if (element.seeking) return false;
+  if (element.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return true;
+  // WebKit can report waiting between sparse frames in a fully buffered MP4.
+  // Pausing that pipeline prevents the event we would otherwise wait to resume on.
+  if (
+    element instanceof HTMLVideoElement &&
+    element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+  ) {
+    const time = element.currentTime;
+    for (let index = 0; index < element.buffered.length; index++) {
+      if (
+        element.buffered.start(index) <= time &&
+        element.buffered.end(index) > time
+      )
+        return true;
+    }
+  }
+  return false;
 }
 
 /** Each stream owns its starts. Retired promises cannot change current playback. */
@@ -228,7 +244,7 @@ export function usePlaybackTransport({
   function handleBuffering(event: SyntheticEvent<HTMLMediaElement>) {
     if (
       !isCurrentMedia(event.currentTarget) ||
-      event.currentTarget.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA ||
+      hasFutureData(event.currentTarget) ||
       !playbackIntentRef.current ||
       resumeProgress !== null
     )

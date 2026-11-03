@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 
 use super::*;
@@ -69,19 +70,70 @@ pub(super) fn detail_for_recording(
     storage: &AppStorage,
     recording_id: &str,
 ) -> Result<LibraryRecordingDetail, String> {
+    detail_for_recording_with_size(storage, recording_id, true, false)
+}
+
+pub(super) fn detail_for_recording_with_size(
+    storage: &AppStorage,
+    recording_id: &str,
+    include_disk_usage: bool,
+    cached_disk_usage: bool,
+) -> Result<LibraryRecordingDetail, String> {
     let recording = storage
-        .with_connection(|connection| storage::get_recording(connection, recording_id))
+        .with_read_connection(|connection| storage::get_recording(connection, recording_id))
         .map_err(|error| error.to_string())?;
     let segments = storage
-        .with_connection(|connection| storage::list_recording_segments(connection, recording_id))
+        .with_read_connection(|connection| {
+            storage::list_recording_segments(connection, recording_id)
+        })
         .map_err(|error| error.to_string())?;
     let redactions = storage
-        .with_connection(|connection| storage::list_redactions(connection, recording_id))
+        .with_read_connection(|connection| storage::list_redactions(connection, recording_id))
         .map_err(|error| error.to_string())?;
 
-    let mut detail = detail_from_rows(&recording, &segments, &redactions);
+    let mut detail = if include_disk_usage && !cached_disk_usage {
+        detail_from_rows(&recording, &segments, &redactions)
+    } else {
+        detail_metadata_from_rows(&recording, &segments, &redactions)
+    };
+    if include_disk_usage && cached_disk_usage {
+        let cached = if cached_disk_usage {
+            storage
+                .with_read_connection(|c| {
+                    c.query_row(
+                        "SELECT size_bytes FROM recording_disk_usage WHERE recording_id=?1",
+                        [recording_id],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .optional()
+                })
+                .map_err(|_| "Recording size could not be read.")?
+                .and_then(|bytes| u64::try_from(bytes).ok())
+        } else {
+            None
+        };
+        detail.size_bytes =
+            Some(cached.unwrap_or_else(|| recording_size_bytes(&recording, &segments)));
+        if cached_disk_usage
+            && cached.is_none()
+            && !storage::is_active_recording_status(&recording.status)
+        {
+            let stats = storage.clone();
+            let id = recording_id.to_owned();
+            let bytes = detail
+                .size_bytes
+                .and_then(|bytes| i64::try_from(bytes).ok());
+            if let Some(bytes) = bytes {
+                tauri::async_runtime::spawn_blocking(move || {
+                    if stats.with_connection(|c|c.execute("INSERT INTO recording_disk_usage(recording_id,size_bytes,measured_at_ms) VALUES(?1,?2,?3) ON CONFLICT(recording_id) DO UPDATE SET size_bytes=excluded.size_bytes,measured_at_ms=excluded.measured_at_ms",rusqlite::params![id,bytes,now_ms()])).is_err(){tracing::warn!(error_code="studio_size_snapshot_failed","studio_size_snapshot_failed");}
+                });
+            }
+        }
+    }
     let mappings = storage
-        .with_connection(|connection| storage::recording_video_streams(connection, recording_id))
+        .with_read_connection(|connection| {
+            storage::recording_video_streams(connection, recording_id)
+        })
         .map_err(|_| "Video source metadata could not be read.".to_string())?;
     apply_source_metadata(&mut detail, &segments, &redactions, &mappings);
     detail.audio_cleanup = Some(audio_cleanup::read_state(storage, recording_id)?);

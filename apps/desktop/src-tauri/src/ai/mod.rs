@@ -103,7 +103,7 @@ use results::*;
 pub(crate) use results::{
     emit_processing_state, processing_job_from_row, processing_state_for_recording,
     visible_transcript_segments_for_recording, visible_visual_observation_rows_for_recording,
-    visual_observations_for_recording, visual_observations_for_recording_with_regions,
+    visual_observations_for_recording,
 };
 pub use types::{
     ActivityEvent, ActivityInterval, AiBackendStatus, AiError, AiLocalTranscriptionStatus,

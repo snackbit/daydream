@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 test.each([0, 4096])(
-  'exact recording disk usage accepts %i bytes',
+  'last measured recording disk usage accepts %i bytes',
   async (sizeBytes) => {
     invokeMock.mockResolvedValue({ id: 'recording-1', sizeBytes });
     await expect(getLibraryRecordingSize('recording-1')).resolves.toBe(
@@ -33,6 +33,7 @@ test.each([0, 4096])(
     );
     expect(invokeMock).toHaveBeenCalledWith('getLibraryRecording', {
       recordingId: 'recording-1',
+      cachedDiskUsage: true,
     });
   },
 );

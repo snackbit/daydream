@@ -198,14 +198,14 @@ test('seeking across Review pages keeps combined screen indicator boundaries and
   slider.focus();
   await userEvent.keyboard('{ArrowRight}');
   await waitFor(() =>
-    expect(reads().at(-1)?.[1].input.reviewStartOffsetMs).toBe(90000),
+    expect(reads().at(-1)?.[1].input.reviewStartOffsetMs).toBe(165000),
   );
   expect(slider).toHaveAttribute('aria-valuenow', '180000');
   expect(indicator()).toEqual(before);
   expect(useStudioResultWindowStore.getState().range).toEqual(viewport);
   await userEvent.keyboard('{ArrowLeft}');
   await waitFor(() =>
-    expect(reads().at(-1)?.[1].input.reviewStartOffsetMs).toBe(0),
+    expect(reads().at(-1)?.[1].input.reviewStartOffsetMs).toBe(135000),
   );
   expect(indicator()).toEqual(before);
   expect(slider).toHaveAttribute('aria-valuenow', '175000');

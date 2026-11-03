@@ -38,6 +38,9 @@ function reply(command: string, id: string): unknown {
 }
 beforeEach(() => {
   windows.setState(windows.getInitialState(), true);
+  windows
+    .getState()
+    .setWindow(buildDayTimeline(dayTimelineFixture()).view.id, 0, 540_000);
   vi.resetAllMocks();
   native.listen.mockImplementation(
     async (_name: string, handler: (event: { payload: unknown }) => void) => {
@@ -51,6 +54,183 @@ beforeEach(() => {
   );
 });
 afterEach(cleanup);
+test.each(['queued', 'running', 'chunk'])(
+  'reconciliation refreshes cached %s work without waiting for a native event',
+  async (status) => {
+    const clock = vi.spyOn(window, 'setInterval');
+    let completed = false;
+    native.invoke.mockImplementation(
+      async (command: string, args: { input: { recordingId: string } }) => {
+        const recordingId = args.input.recordingId;
+        if (command !== 'getRecordingAiProcessingState')
+          return reply(command, recordingId);
+        const job = {
+          id: 'synthetic-job',
+          recordingId,
+          kind: 'ai-processing',
+          status: completed
+            ? 'succeeded'
+            : status === 'chunk'
+              ? 'succeeded'
+              : status,
+          progress: completed ? 1 : 0,
+          errorCode: null,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+        };
+        return {
+          recordingId,
+          job,
+          chunks:
+            status === 'chunk' && !completed
+              ? [
+                  {
+                    id: 'synthetic-chunk',
+                    recordingId,
+                    jobId: job.id,
+                    status: 'running',
+                    sourceKind: 'transcription',
+                    attemptCount: 1,
+                    progress: 0,
+                    errorCode: null,
+                    resultCode: null,
+                    segmentId: null,
+                    trackId: null,
+                    startOffsetMs: null,
+                    endOffsetMs: null,
+                    createdAtMs: 1,
+                    updatedAtMs: 1,
+                  },
+                ]
+              : [],
+          transcript: { recordingId, tracks: [] },
+        };
+      },
+    );
+    const model = buildDayTimeline(dayTimelineFixture());
+    const view = renderHook(() => useDayResults(model));
+    try {
+      await waitFor(() =>
+        expect(view.result.current.results.get('a')?.pending).toBe(false),
+      );
+      const reconcile = clock.mock.calls.find(
+        ([, interval]) => interval === 5000,
+      )?.[0];
+      if (typeof reconcile !== 'function')
+        throw new Error('Reconciliation clock missing');
+      completed = true;
+      act(() => reconcile());
+      await waitFor(() =>
+        expect(view.result.current.results.get('a')?.ai?.job?.progress).toBe(1),
+      );
+      expect(view.result.current.error).toBe(false);
+    } finally {
+      view.unmount();
+      clock.mockRestore();
+    }
+  },
+);
+test('long-day viewport reads reuse recent pages and evict old windows instead of accumulating them', async () => {
+  const fixture = dayTimelineFixture();
+  const recording = fixture.recordings[0],
+    span = fixture.spans[0],
+    segment = recording?.segments[0];
+  if (!recording || !span || !segment)
+    throw new Error('Synthetic source missing');
+  recording.durationMs = 7_200_000;
+  segment.durationMs = 7_200_000;
+  segment.endedAtMs = segment.startedAtMs + segment.durationMs;
+  recording.endedAtMs = segment.endedAtMs;
+  span.durationMs = 7_199_000;
+  fixture.endMs = span.startMs + span.durationMs;
+  fixture.recordings = [recording];
+  fixture.spans = [span];
+  const model = buildDayTimeline(fixture);
+  windows.getState().setWindow(model.view.id, 0, 30_000);
+  const view = renderHook(() => useDayResults(model));
+  async function windowReady(page: number) {
+    await waitFor(() => {
+      expect(view.result.current.results.get('a')?.request?.startOffsetMs).toBe(
+        page * 30_000,
+      );
+      expect(view.result.current.results.get('a')?.pending).toBe(false);
+    });
+  }
+  await windowReady(0);
+  for (let page = 1; page < 34; page++) {
+    act(() =>
+      windows
+        .getState()
+        .setWindow(model.view.id, page * 30_000, (page + 1) * 30_000),
+    );
+    await windowReady(page);
+  }
+  const reads = native.invoke.mock.calls.length;
+  act(() =>
+    windows.getState().setWindow(model.view.id, 32 * 30_000, 33 * 30_000),
+  );
+  await windowReady(32);
+  expect(native.invoke.mock.calls).toHaveLength(reads);
+  act(() => windows.getState().setWindow(model.view.id, 0, 30_000));
+  await windowReady(0);
+  expect(native.invoke.mock.calls.length).toBeGreaterThan(reads);
+});
+test('repeated OCR cursors stop pagination and retain independently loaded results', async () => {
+  native.invoke.mockImplementation(
+    async (command: string, args: { input: { recordingId: string } }) =>
+      command === 'getOcrTimelineFrames'
+        ? {
+            recordingId: args.input.recordingId,
+            frames: [],
+            nextCursor: { timestampMs: 1, id: 'synthetic-repeated-cursor' },
+          }
+        : reply(command, args.input.recordingId),
+  );
+  const model = buildDayTimeline(dayTimelineFixture());
+  const view = renderHook(() => useDayResults(model));
+  await waitFor(() =>
+    expect(view.result.current.failedIds.has('a')).toBe(true),
+  );
+  expect(view.result.current.results.get('a')?.ai?.recordingId).toBe('a');
+  expect(view.result.current.results.get('a')?.pending).toBe(false);
+  expect(
+    native.invoke.mock.calls.filter(
+      ([command]) => command === 'getOcrTimelineFrames',
+    ),
+  ).toHaveLength(4);
+});
+
+test('day results wait for the measured viewport and publish speech while visual details are pending', async () => {
+  windows.setState(windows.getInitialState(), true);
+  const model = buildDayTimeline(dayTimelineFixture());
+  let finish: (value: unknown) => void = () => {
+    throw new Error('Visual request not started');
+  };
+  native.invoke.mockImplementation(
+    async (command: string, args: { input: { recordingId: string } }) => {
+      if (
+        command === 'getRecordingVisualObservations' &&
+        args.input.recordingId === 'a'
+      )
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      return reply(command, args.input.recordingId);
+    },
+  );
+  const view = renderHook(() => useDayResults(model));
+  expect(native.invoke).not.toHaveBeenCalled();
+  act(() => windows.getState().setWindow(model.view.id, 0, 30_000));
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')?.ai?.recordingId).toBe('a'),
+  );
+  expect(view.result.current.results.get('a')?.activity?.recordingId).toBe('a');
+  expect(view.result.current.results.get('a')?.pending).toBe(true);
+  await act(async () => finish(reply('getRecordingVisualObservations', 'a')));
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')?.pending).toBe(false),
+  );
+});
 
 test('recording processing refresh retains other published reads and rejects a late OCR page before recovering', async () => {
   let finishOld: (value: unknown) => void = () => {
@@ -77,12 +257,63 @@ test('recording processing refresh retains other published reads and rejects a l
   await act(async () => {
     finishOld(reply('getOcrTimelineFrames', 'a'));
   });
-  expect(view.result.current.results.has('a')).toBe(false);
+  expect(view.result.current.results.get('a')?.pending).toBe(true);
   await waitFor(() => expect(view.result.current.results.size).toBe(2));
   expect(view.result.current.error).toBe(false);
 });
 
-test('repeated OCR pagination fails visibly without publishing the broken recording, then Refresh retries it', async () => {
+test.each(['event', 'focus'])(
+  'same-window %s refresh retains speech through a failed read and recovers on retry',
+  async (trigger) => {
+    const model = buildDayTimeline(dayTimelineFixture());
+    const view = renderHook(() => useDayResults(model));
+    await waitFor(() =>
+      expect(view.result.current.results.get('a')?.pending).toBe(false),
+    );
+    const previous = view.result.current.results.get('a')?.ai;
+    let fail: (error: Error) => void = () => {
+      throw new Error('Speech read not started');
+    };
+    let started = false;
+    native.invoke.mockImplementation(
+      (command: string, args: { input: { recordingId: string } }) => {
+        if (
+          command === 'getRecordingAiProcessingState' &&
+          args.input.recordingId === 'a'
+        ) {
+          started = true;
+          return new Promise((_resolve, reject) => {
+            fail = reject;
+          });
+        }
+        return Promise.resolve(reply(command, args.input.recordingId));
+      },
+    );
+    act(() => {
+      if (trigger === 'event') changed({ payload: { recordingId: 'a' } });
+      else window.dispatchEvent(new Event('focus'));
+    });
+    await waitFor(() => expect(started).toBe(true));
+    await waitFor(() =>
+      expect(view.result.current.results.get('a')?.pending).toBe(true),
+    );
+    expect(view.result.current.results.get('a')?.ai).toEqual(previous);
+    await act(async () => fail(new Error('Synthetic speech read failure')));
+    await waitFor(() => expect(view.result.current.error).toBe(true));
+    expect(view.result.current.results.get('a')?.ai).toEqual(previous);
+    native.invoke.mockImplementation(
+      async (command: string, args: { input: { recordingId: string } }) =>
+        reply(command, args.input.recordingId),
+    );
+    act(() => view.result.current.reload());
+    await waitFor(() => expect(view.result.current.error).toBe(false));
+    await waitFor(() =>
+      expect(view.result.current.results.get('a')?.pending).toBe(false),
+    );
+  },
+);
+
+test('repeated OCR pagination fails visibly while successful sources remain available, then Refresh retries it', async () => {
   const model = buildDayTimeline(dayTimelineFixture());
   let repeat = true;
   native.invoke.mockImplementation(
@@ -99,7 +330,8 @@ test('repeated OCR pagination fails visibly without publishing the broken record
   );
   const view = renderHook(() => useDayResults(model));
   await waitFor(() => expect(view.result.current.error).toBe(true));
-  expect(view.result.current.results.has('a')).toBe(false);
+  expect(view.result.current.results.get('a')?.ai?.recordingId).toBe('a');
+  expect(view.result.current.results.get('a')?.frames).toEqual([]);
   expect(
     native.invoke.mock.calls.filter(
       ([cmd, args]) =>
@@ -279,12 +511,37 @@ test('redacting earlier comparison context withholds its cached observation befo
 
 test('a missing invalidation subscription preserves readable results, reports the degraded state and reconciles on focus; a late subscription is cleaned up', async () => {
   const model = buildDayTimeline(dayTimelineFixture());
+  const clock = vi.spyOn(window, 'setInterval');
   native.listen.mockRejectedValue(new Error('Synthetic subscription failed'));
   const view = renderHook(() => useDayResults(model));
   await waitFor(() => expect(view.result.current.error).toBe(true));
   await waitFor(() =>
     expect(view.result.current.results.size).toBeGreaterThan(0),
   );
+  const reconcile = clock.mock.calls.find(
+    ([, interval]) => interval === 5000,
+  )?.[0];
+  if (typeof reconcile !== 'function')
+    throw new Error('Reconciliation clock missing');
+  native.invoke.mockImplementation(
+    async (command: string, args: { input: { recordingId: string } }) =>
+      command === 'getRecordingAiProcessingState'
+        ? {
+            recordingId: args.input.recordingId,
+            job: null,
+            chunks: [],
+            resultsRevision: 'synthetic-new-publication',
+            transcript: { recordingId: args.input.recordingId, tracks: [] },
+          }
+        : reply(command, args.input.recordingId),
+  );
+  act(() => reconcile());
+  await waitFor(() =>
+    expect(view.result.current.results.get('a')?.ai?.resultsRevision).toBe(
+      'synthetic-new-publication',
+    ),
+  );
+  clock.mockRestore();
   const previousReads = native.invoke.mock.calls.length;
   window.dispatchEvent(new Event('focus'));
   await waitFor(() =>

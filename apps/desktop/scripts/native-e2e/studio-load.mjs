@@ -3,6 +3,7 @@ import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { cpus, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { checkPreparedStudioTiming } from './studio-ready-timing.mjs';
 import { checkStudioTranscriptGroups } from './transcripts/studio-transcript-groups.mjs';
 
 const percentile95 = (values) =>
@@ -22,6 +23,13 @@ export async function checkStudioLoad({
     window.__studioPerf = {events:[],ipc:[],draws:0};
     const draw=CanvasRenderingContext2D.prototype.fillRect;
     CanvasRenderingContext2D.prototype.fillRect=function(...args) { window.__studioPerf.draws++; return draw.apply(this,args); };
+    window.__studioPerf.media=[];
+    if (${process.env.DAYDREAM_E2E_DIAGNOSTIC === '1'}) {
+    const pause=HTMLMediaElement.prototype.pause;
+    function trace(media,type){if(window.__studioPerf.media.length>100)return;window.__studioPerf.media.push({type,kind:media.tagName,time:media.currentTime,ready:media.readyState,paused:media.paused,buffered:Array.from({length:media.buffered.length},(_,i)=>[media.buffered.start(i),media.buffered.end(i)]),stack:type==='pause-call'?new Error().stack:undefined});}
+    HTMLMediaElement.prototype.pause=function(){trace(this,'pause-call');return pause.call(this);};
+    for(const type of ['waiting','canplay','pause'])document.addEventListener(type,event=>{if(event.target instanceof HTMLMediaElement)trace(event.target,type);},true);
+    }
     return true;
   })()`);
   await navigate('Library', '/library');
@@ -120,6 +128,9 @@ export async function checkStudioLoad({
       JSON.stringify(
         {
           acceptance: false,
+          media: JSON.parse(
+            await native.evaluate('JSON.stringify(window.__studioPerf.media)'),
+          ),
           layouts,
           events: JSON.parse(
             await native.evaluate('JSON.stringify(window.__studioPerf.events)'),
@@ -295,6 +306,17 @@ export async function checkStudioLoad({
     join(artifacts, 'studio-performance.json'),
     JSON.stringify(report, null, 2),
   );
+  await checkPreparedStudioTiming({
+    native,
+    navigate,
+    click,
+    artifacts,
+    recordingId: fixture.recordings[0],
+    daySelector: `a[href="/day/${fixture.date}"]`,
+    reportName: 'studio-eight-hour-opening-timings',
+    preparationBudgetMs: 1_200_000,
+    seekFractions: [0.03, 0.12, 0.22],
+  });
   await checkStudioTranscriptGroups({ native, click, viewer, artifacts });
   for (const theme of ['Light', 'Dark']) {
     await click('[aria-label="Color appearance"]');

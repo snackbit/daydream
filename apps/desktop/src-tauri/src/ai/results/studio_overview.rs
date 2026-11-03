@@ -17,7 +17,7 @@ pub(crate) fn read(
             "Choose a valid overview resolution.",
         ));
     }
-    storage.with_connection(|connection| {
+    storage.with_read_connection(|connection| {
         let segments = storage::list_recording_segments(connection, id)?;
         let media = crate::timeline_lanes::media_track_ids_from_segments(&segments);
         let cuts = storage::list_redactions(connection, id)?.into_iter().map(|cut| serde_json::json!({
@@ -50,7 +50,7 @@ pub(crate) fn read(
     }).map_err(storage_error).and_then(|mut buckets| {
         // Existing visibility owns committed replacements and context lineage.
         // Screen sampling is bounded independently from high-volume speech/input.
-        let rows = super::visual::visible_visual_rows(storage, id, false)?;
+        let rows = super::visual::visible_visual_rows_in_windows(storage, id, false,Some((start,end)),None)?;
         let mut scenes = BTreeMap::<(String, i64), StudioTimelineBucket>::new();
         for row in rows.vlm_observations {
             let to = row.confirmed_end_ms.unwrap_or(row.frame_timestamp_ms + 1);

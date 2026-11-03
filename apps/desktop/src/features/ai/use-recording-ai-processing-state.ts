@@ -10,7 +10,7 @@ type AiProcessingStateStatus = 'error' | 'idle' | 'loading' | 'ready';
 export function useRecordingAiProcessingState(
   recordingId: string,
   visibilityRevision = '',
-  range?: { startOffsetMs: number; endOffsetMs: number },
+  range?: { startOffsetMs: number; endOffsetMs: number; ready?: boolean },
 ): {
   applyState: (state: RecordingAiProcessingState) => void;
   error: string | null;
@@ -44,6 +44,7 @@ export function useRecordingAiProcessingState(
   );
 
   const reload = useCallback(async () => {
+    if (range?.ready === false) return null;
     const loadRunId = loadRunRef.current + 1;
     loadRunRef.current = loadRunId;
     setRefreshing(true);

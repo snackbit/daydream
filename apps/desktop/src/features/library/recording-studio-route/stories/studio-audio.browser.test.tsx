@@ -855,6 +855,9 @@ test('buffered playback survives a stalled download and genuine buffering resume
   expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
 
   ready = HTMLMediaElement.HAVE_CURRENT_DATA;
+  Object.defineProperty(video, 'buffered', {
+    value: { length: 0, start: () => 0, end: () => 0 },
+  });
   fireEvent.waiting(video);
   expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
   vi.mocked(HTMLMediaElement.prototype.play).mockClear();
@@ -1029,11 +1032,14 @@ test('STU-13 Retry playback clears the rejected play and resumes the same source
   if (!video) throw new Error('Synthetic video element missing');
   await userEvent.click(screen.getByRole('button', { name: 'Retry playback' }));
   expect(screen.queryByText('Playback could not start. Try again.')).toBeNull();
-  fireEvent.canPlay(video);
-  fireEvent.play(video);
+  const replacement = view.container.querySelector('video');
+  if (!replacement) throw new Error('Retry media missing');
+  fireEvent.canPlay(replacement);
+  fireEvent.play(replacement);
   expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();
   expect(
     screen.getByRole('slider', { name: 'Playback position' }),
   ).toHaveAttribute('aria-valuenow', '0');
-  expect(video.getAttribute('src')).toContain('synthetic-player.webm');
+  expect(replacement.getAttribute('src')).toContain('synthetic-player.webm');
+  expect(video.getAttribute('src')).toBeNull();
 });

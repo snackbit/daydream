@@ -32,7 +32,7 @@ pub(super) fn activity_for_recording_in_windows(
     let history_end = review.map_or(end, |(_, review_end)| end.max(review_end));
     let (intervals, focus_events, window_events, capture_state_events, segments, redactions) =
         storage
-            .with_connection(|connection| {
+            .with_read_connection(|connection| {
                 Ok((
                     storage::list_activity_intervals_in_windows(
                         connection,

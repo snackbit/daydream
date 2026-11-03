@@ -74,19 +74,38 @@ fn dropping_inflight_future_discards_unread_worker_reply() {
         .unwrap()
         .block_on(async {
             let settings = RecallSettings::default().embedding;
-            let worker = boundary_worker("read request; while :; do :; done").await;
+            let marker = std::env::temp_dir().join(format!(
+                "daydream-embedding-request-{}",
+                uuid::Uuid::now_v7()
+            ));
+            let marker_argument = marker.to_string_lossy().replace('\'', "'\\''");
+            let worker = boundary_worker(&format!(
+                "read request; printf ready > '{marker_argument}'; while :; do :; done"
+            ))
+            .await;
             let cancelled = AtomicBool::new(false);
-            let result = tokio::time::timeout(
-                Duration::from_millis(50),
-                worker.embed(
+            let texts = ["synthetic fixture".into()];
+            {
+                let request = worker.embed(
                     &settings,
                     EmbeddingPurpose::Query,
-                    &["synthetic fixture".into()],
+                    &texts,
                     &cancelled,
-                ),
-            )
-            .await;
-            assert!(result.is_err());
+                );
+                tokio::pin!(request);
+                // Another test can own the shared inference slot. Wait for the
+                // child to receive this request before cancelling its future.
+                tokio::select! {
+                    biased;
+                    result = &mut request => panic!("Synthetic worker should remain in flight: {result:?}"),
+                    result = tokio::time::timeout(Duration::from_secs(10), async {
+                        while !marker.exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }) => result.expect("Synthetic worker did not receive request"),
+                }
+            }
+            std::fs::remove_file(marker).unwrap();
             assert!(
                 worker.state.lock().await.is_none(),
                 "An unread reply must not survive cancellation by future drop"

@@ -132,6 +132,10 @@ fn directory_size_bytes(path: &Path) -> Result<u64, String> {
     Ok(total)
 }
 
+pub(crate) fn recording_directory_size(path: &Path) -> Result<u64, String> {
+    directory_size_bytes(path)
+}
+
 fn file_fingerprint(path: &str) -> Option<(u64, i64)> {
     let metadata = fs::metadata(path).ok()?;
     let modified_ms = metadata

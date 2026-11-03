@@ -104,9 +104,11 @@ pub(crate) async fn processing_lease(recording_id: &str) -> Arc<OwnedRwLockReadG
     Arc::new(recording_lock(recording_id).read_owned().await)
 }
 pub(crate) async fn mutation_lease(recording_id: &str) -> OwnedRwLockWriteGuard<()> {
+    crate::playback_server::prepared::cancel(recording_id);
     recording_lock(recording_id).write_owned().await
 }
 pub(crate) fn try_mutation_lease(recording_id: &str) -> Option<OwnedRwLockWriteGuard<()>> {
+    crate::playback_server::prepared::cancel(recording_id);
     recording_lock(recording_id).try_write_owned().ok()
 }
 
@@ -211,32 +213,51 @@ pub(crate) fn range_protection_ready(
     start: i64,
     end: i64,
 ) -> rusqlite::Result<bool> {
-    let recording = storage::get_recording(connection, recording_id)?;
-    if !matches!(recording.status.as_str(), "recording" | "paused") {
-        return protection_ready(connection, recording_id);
+    Ok(protection_readiness(connection, recording_id)?.allows(start, end))
+}
+
+pub(crate) struct ProtectionReadiness {
+    active: bool,
+    watermark: Option<i64>,
+    spans: Vec<storage::RecordingProtectionSpanRow>,
+}
+impl ProtectionReadiness {
+    pub(crate) fn allows(&self, start: i64, end: i64) -> bool {
+        if !self.active {
+            return self.spans.iter().all(|s| s.status == "materialized");
+        }
+        self.watermark.is_some_and(|watermark| end <= watermark)
+            && self.spans.iter().all(|span| {
+                span.status == "materialized"
+                    || end <= span.start_offset_ms
+                    || span.end_offset_ms.is_some_and(|boundary| start >= boundary)
+            })
     }
-    if matches!(recording.status.as_str(), "recording" | "paused") {
-        use rusqlite::OptionalExtension;
-        let watermark: Option<i64> = connection
+}
+
+pub(crate) fn protection_readiness(
+    connection: &Connection,
+    recording_id: &str,
+) -> rusqlite::Result<ProtectionReadiness> {
+    use rusqlite::OptionalExtension;
+    let recording = storage::get_recording(connection, recording_id)?;
+    let active = matches!(recording.status.as_str(), "recording" | "paused");
+    let watermark = if active {
+        connection
             .query_row(
                 "SELECT classified_through_ms FROM recording_live_state WHERE recording_id=?1",
                 [recording_id],
                 |row| row.get(0),
             )
-            .optional()?;
-        if watermark.is_none_or(|watermark| end > watermark) {
-            return Ok(false);
-        }
-    }
-    Ok(
-        storage::list_recording_protection_spans(connection, recording_id)?
-            .iter()
-            .all(|span| {
-                span.status == "materialized"
-                    || end <= span.start_offset_ms
-                    || span.end_offset_ms.is_some_and(|boundary| start >= boundary)
-            }),
-    )
+            .optional()?
+    } else {
+        None
+    };
+    Ok(ProtectionReadiness {
+        active,
+        watermark,
+        spans: storage::list_recording_protection_spans(connection, recording_id)?,
+    })
 }
 
 pub(crate) fn chunk_active(

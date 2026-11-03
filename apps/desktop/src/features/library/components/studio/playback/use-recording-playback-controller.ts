@@ -65,8 +65,13 @@ export function useRecordingPlaybackController({
       )
     : null;
   const totalDurationMs = timelineDurationMs(playableSegments);
+  const canSeekInStream = currentPlaybackSegment?.canSeekInStream === true;
+  const mediaClockOffsetMs = canSeekInStream
+    ? -(currentSegment?.mediaStartMs ?? 0)
+    : streamStartMs;
   const media = usePlaybackMediaElements({
-    canSeekInStream: playbackAssets?.canSeekInStream === true,
+    canSeekInStream:
+      canSeekInStream || playbackAssets?.canSeekInStream === true,
     isMuted,
     mutedTrackIds,
     redactedTrackIdsRef,
@@ -86,7 +91,7 @@ export function useRecordingPlaybackController({
     usePlaybackTimelineClock({
       playbackOffsetMs: currentSegment?.playbackOffsetMs ?? null,
       currentTimeSeconds: currentTime,
-      streamStartMs,
+      streamStartMs: mediaClockOffsetMs,
       scrubTimelineMs,
       totalDurationMs,
       isPlaying,
@@ -94,8 +99,8 @@ export function useRecordingPlaybackController({
       clockTime,
     });
   const sampleBoundary = useCallback(
-    () => setCurrentTime(streamStartMs / 1000 + clockTime()),
-    [streamStartMs, clockTime],
+    () => setCurrentTime(mediaClockOffsetMs / 1000 + clockTime()),
+    [mediaClockOffsetMs, clockTime],
   );
   const redaction = usePlaybackRedactionController({
     onBoundary: sampleBoundary,
@@ -107,7 +112,7 @@ export function useRecordingPlaybackController({
     detail,
     isPlaying,
     redactedTrackIdsRef,
-    streamStartMs,
+    streamStartMs: mediaClockOffsetMs,
     totalDurationMs,
     videoRef,
     playbackRate,
@@ -293,7 +298,7 @@ export function useRecordingPlaybackController({
     currentSegment,
     currentIndex,
     streamRevision,
-    streamStartMs,
+    streamStartMs: mediaClockOffsetMs,
     playbackRate,
     isPlaying,
     resumeProgress,
@@ -364,6 +369,7 @@ export function useRecordingPlaybackController({
       togglePlayback,
     },
     state: {
+      canSeekInStream,
       seekRevision,
       currentPlaybackSegment,
       currentSegment,

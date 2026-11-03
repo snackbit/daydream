@@ -17,7 +17,7 @@ export function useRecordingResult<Result extends { recordingId: string }>({
     startOffsetMs?: number;
     endOffsetMs?: number;
   }) => Promise<Result>;
-  range?: { startOffsetMs: number; endOffsetMs: number };
+  range?: { startOffsetMs: number; endOffsetMs: number; ready?: boolean };
 }) {
   const requestRef = useRef(0);
   const [result, setResult] = useState<{
@@ -30,6 +30,7 @@ export function useRecordingResult<Result extends { recordingId: string }>({
   );
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
+    if (range?.ready === false) return null;
     const request = ++requestRef.current;
     setResult((current) =>
       current?.recordingId === recordingId &&

@@ -171,6 +171,8 @@ pub struct LibraryWaveformTileRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackAssetRequest {
     pub(crate) recording_id: String,
+    pub(crate) lazy_thumbnails: Option<bool>,
+    pub(crate) include_runs: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -232,6 +234,9 @@ pub struct LibraryPlaybackRun {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackSegment {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thumbnail_base_url: Option<String>,
+    pub(crate) can_seek_in_stream: bool,
     pub(crate) videos: Vec<LibraryPlaybackVideoAsset>,
     pub(crate) audio: Vec<LibraryPlaybackAudioAsset>,
     pub(crate) segment_id: String,
@@ -242,6 +247,8 @@ pub struct LibraryPlaybackSegment {
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryPlaybackVideoAsset {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thumbnail_base_url: Option<String>,
     pub(crate) track_id: String,
     pub(crate) stream_index: i64,
     pub(crate) url: String,

@@ -19,6 +19,7 @@ pub(crate) mod maintenance;
 mod notifications;
 mod portal_tokens;
 mod protection_spans;
+mod read_connections;
 mod recall;
 mod recall_fragments;
 mod recordings;
@@ -57,8 +58,9 @@ pub use ai::{
     list_processing_chunks, list_processing_chunks_by_status, list_processing_jobs,
     list_processing_jobs_by_status, list_recording_tracks, list_transcript_segments,
     list_transcript_segments_in_range, list_transcript_segments_in_windows, list_transcript_words,
-    list_visual_frame_processing_states, list_visual_frame_processing_states_for_chunks,
-    list_vlm_observations, processing_job_chunk_progress, recording_has_redactions,
+    list_transcript_words_for_segments, list_visual_frame_processing_states,
+    list_visual_frame_processing_states_for_chunks, list_vlm_observations,
+    list_vlm_observations_in_windows, processing_job_chunk_progress, recording_has_redactions,
     requeue_processing_chunks, retry_processing_job_chunks, save_ai_model_asset,
     update_processing_chunk_progress, update_processing_chunk_result_code,
     update_processing_chunk_status, update_processing_chunk_status_if_active,
@@ -142,6 +144,7 @@ const DATABASE_FILE_NAME: &str = "daydream.sqlite3";
 #[derive(Clone)]
 pub struct AppStorage {
     connection: Arc<Mutex<Connection>>,
+    readers: Arc<read_connections::ReadConnections>,
     path: PathBuf,
     #[cfg(test)]
     in_memory: bool,
@@ -158,6 +161,7 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
 
     let storage = AppStorage {
         connection: Arc::new(Mutex::new(connection)),
+        readers: Arc::default(),
         path: db_path,
         #[cfg(test)]
         in_memory: false,
@@ -169,6 +173,9 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<AppStorage, Box<dyn std::err
 }
 
 impl AppStorage {
+    pub(crate) fn same_database(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.connection, &other.connection)
+    }
     /// WAL readers can inspect committed metadata while a background owner holds
     /// the primary connection. This handle cannot write or run migrations.
     pub(crate) fn with_read_connection<T>(
@@ -179,12 +186,7 @@ impl AppStorage {
         if self.in_memory {
             return self.with_connection(callback);
         }
-        let connection = Connection::open_with_flags(
-            &self.path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        connection.busy_timeout(std::time::Duration::from_millis(250))?;
-        callback(&connection)
+        self.readers.read(&self.path, callback)
     }
 
     pub fn with_connection<T>(
@@ -232,6 +234,7 @@ pub fn test_storage(path: PathBuf) -> AppStorage {
 
     AppStorage {
         connection: Arc::new(Mutex::new(connection)),
+        readers: Arc::default(),
         path,
         in_memory: true,
     }
@@ -245,6 +248,7 @@ pub fn test_file_storage(path: PathBuf) -> AppStorage {
     schema::apply_migrations(&mut connection).expect("apply fixture migrations");
     AppStorage {
         connection: Arc::new(Mutex::new(connection)),
+        readers: Arc::default(),
         path,
         in_memory: false,
     }

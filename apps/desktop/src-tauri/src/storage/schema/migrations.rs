@@ -23,6 +23,7 @@ mod settings_processing;
 mod source_video;
 mod speech_languages;
 mod speech_units;
+mod studio_media;
 mod studio_processing;
 mod transcript_languages;
 mod visual_context_lineage;
@@ -68,5 +69,6 @@ pub(crate) fn migrations() -> Migrations<'static> {
     migrations.extend(processing_overview::migrations());
     migrations.extend(visual_context_lineage::migrations());
     migrations.extend(adaptive_sampling::migrations());
+    migrations.extend(studio_media::migrations());
     Migrations::new(migrations)
 }

@@ -5,29 +5,26 @@ import {
   useMemo,
   useState,
 } from 'react';
-import type { OcrHistoryCursor, OcrTimelineFrame } from '@daydream/shared';
-import {
-  getRecordingActivity,
-  getRecordingAiProcessingState,
-  getRecordingVisualObservations,
-  listenToAiProcessingChanged,
-} from '@/features/ai/ai-client';
-import { getOcrTimelineFrames } from '@/features/ai/ocr/ocr-client';
-import { visibleOcrTimelineFrames } from '@/features/ai/ocr/ocr-timeline-visibility';
+import { listenToAiProcessingChanged } from '@/features/ai/ai-client';
 import {
   visibleActivity,
   visibleAiProcessingState,
-  visibleVisualObservations,
 } from '@/features/ai/results/derived-result-visibility';
-import { buildStudioVisualFrames } from '../components/studio/observations/studio-visual-observations';
 import { useStudioResultRange } from '../components/studio/results/studio-result-window-store';
 import type { DayRecordingResults } from './day-results';
 import type { DayTimelineModel } from './day-timeline';
+import { readDayResultWindow } from './results/read-day-result-window';
 
 export function useDayResults(model: DayTimelineModel) {
   const resultRange = useStudioResultRange(model.view.id);
   const [revision, setRevision] = useState(0);
   const [failedIds, setFailedIds] = useState<ReadonlySet<string>>(new Set());
+  // Retain only snapshots from this exact model/privacy scope. Unlike completed
+  // read caching, event invalidation must not discard readable source state.
+  const snapshots = useMemo(
+    () => new Map<string, { key: string; data: DayRecordingResults }>(),
+    [model],
+  );
   const reload = useCallback(() => setRevision((value) => value + 1), []);
   const cachedReads = useMemo(
     () => new Map<string, { recordingId: string; data: DayRecordingResults }>(),
@@ -38,6 +35,7 @@ export function useDayResults(model: DayTimelineModel) {
     ),
     [error, setError] = useState(false);
   useEffect(() => {
+    if (!resultRange.ready) return;
     let active = true,
       timer = 0,
       unlisten: (() => void) | undefined;
@@ -102,7 +100,7 @@ export function useDayResults(model: DayTimelineModel) {
             : startOffsetMs;
           const reviewEndOffsetMs = reviewRanges.length
             ? Math.ceil(Math.max(...reviewRanges.map((range) => range.to)))
-            : Math.min(endOffsetMs, startOffsetMs + 360_000);
+            : Math.min(endOffsetMs, startOffsetMs + 30_000);
           const request = (generations.get(recording.id) ?? 0) + 1;
           generations.set(recording.id, request);
           const current = () =>
@@ -121,6 +119,7 @@ export function useDayResults(model: DayTimelineModel) {
             const key = JSON.stringify(input);
             const cached = cachedReads.get(key);
             if (cached) {
+              snapshots.set(recording.id, { key, data: cached.data });
               if (current())
                 startTransition(() =>
                   setResults((values) =>
@@ -131,51 +130,32 @@ export function useDayResults(model: DayTimelineModel) {
                 );
               continue;
             }
-            const [ai, activity, visual] = await Promise.all([
-              getRecordingAiProcessingState(input),
-              getRecordingActivity(input),
-              getRecordingVisualObservations({
-                ...input,
-                includeOcrRegions: false,
-              }),
-            ]);
-            const frames: OcrTimelineFrame[] = [];
-            let cursor: OcrHistoryCursor | null = null;
-            const cursors = new Set<string>();
-            if (!resultRange.bucketMs)
-              do {
-                const page = await getOcrTimelineFrames({
-                  ...input,
-                  cursor,
-                  limit: 1000,
-                  startTimestampMs: startOffsetMs,
-                  endTimestampMs: endOffsetMs,
-                });
-                if (!current()) break;
-                frames.push(...page.frames);
-                cursor = page.nextCursor;
-                if (cursor) {
-                  const key = JSON.stringify(cursor);
-                  if (cursors.has(key)) throw new Error('Repeated OCR cursor');
-                  cursors.add(key);
-                }
-              } while (cursor);
+            const { data: next, failed } = await readDayResultWindow(
+              recording,
+              input,
+              resultRange,
+              current,
+              (data) => {
+                snapshots.set(recording.id, { key, data });
+                startTransition(() =>
+                  setResults((values) =>
+                    current()
+                      ? new Map(values).set(recording.id, data)
+                      : values,
+                  ),
+                );
+              },
+              snapshots.get(recording.id)?.key === key
+                ? snapshots.get(recording.id)?.data
+                : undefined,
+            );
             if (!current()) continue;
+            if (failed) throw new Error('Some Studio sources could not load');
             setFailedIds((ids) => {
               const next = new Set(ids);
               next.delete(recording.id);
               return next;
             });
-            const next = {
-              request: resultRange,
-              ai: visibleAiProcessingState(recording, ai),
-              activity: visibleActivity(recording, activity),
-              frames: buildStudioVisualFrames(
-                visibleVisualObservations(recording, visual),
-                recording,
-                visibleOcrTimelineFrames(recording, frames),
-              ),
-            };
             cachedReads.set(key, { recordingId: recording.id, data: next });
             retryReads.delete(recording.id);
             if (!retryReads.size && !eventsUnavailable) setError(false);
@@ -272,7 +252,7 @@ export function useDayResults(model: DayTimelineModel) {
       window.removeEventListener('focus', focus);
       unlisten?.();
     };
-  }, [model, revision, resultRange, cachedReads]);
+  }, [model, revision, resultRange, cachedReads, snapshots]);
   const visible = useMemo(() => {
     const next = new Map<string, DayRecordingResults>();
     for (const recording of model.manifest.recordings) {

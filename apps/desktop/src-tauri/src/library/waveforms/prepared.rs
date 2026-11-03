@@ -94,7 +94,7 @@ impl PreparedSource {
     }
     pub(crate) fn prepare(&self, cancel: &AtomicBool) -> Result<(), String> {
         if self.maximum().is_ok() {
-            return Ok(());
+            return super::pyramid::prepare(self, cancel);
         }
         let directory = self.path.parent().ok_or("waveform_cache_invalid")?;
         fs::create_dir_all(directory).map_err(|_| "waveform_cache_write_failed")?;
@@ -194,7 +194,8 @@ impl PreparedSource {
         if result.is_err() {
             let _ = fs::remove_file(temporary);
         }
-        result
+        result?;
+        super::pyramid::prepare(self, cancel)
     }
 
     pub(crate) fn tile(
@@ -207,14 +208,20 @@ impl PreparedSource {
         self.maximum()?;
         let start = from.max(self.start_ms);
         let end = to.min(self.end_ms);
-        let first = (start - self.start_ms) / BASE_BIN_MS;
-        let last = (end - self.start_ms + BASE_BIN_MS - 1) / BASE_BIN_MS;
-        let mut file = File::open(&self.path).map_err(|_| "waveform_cache_invalid")?;
-        file.seek(SeekFrom::Start(HEADER_BYTES + first as u64 * 8))
-            .map_err(|_| "waveform_cache_invalid")?;
-        let mut data = vec![0; (last - first).max(0) as usize * 8];
-        file.read_exact(&mut data)
-            .map_err(|_| "waveform_cache_invalid")?;
+        let (source_bin, first, data) =
+            if let Some(coarse) = super::pyramid::read(self, start, end, bin_ms) {
+                coarse
+            } else {
+                let first = (start - self.start_ms) / BASE_BIN_MS;
+                let last = (end - self.start_ms + BASE_BIN_MS - 1) / BASE_BIN_MS;
+                let mut file = File::open(&self.path).map_err(|_| "waveform_cache_invalid")?;
+                file.seek(SeekFrom::Start(HEADER_BYTES + first as u64 * 8))
+                    .map_err(|_| "waveform_cache_invalid")?;
+                let mut data = vec![0; (last - first).max(0) as usize * 8];
+                file.read_exact(&mut data)
+                    .map_err(|_| "waveform_cache_invalid")?;
+                (BASE_BIN_MS, first, data)
+            };
         let count = ((end - start + bin_ms - 1) / bin_ms).max(0) as usize;
         let mut peaks = vec![0f64; count];
         let mut energy = vec![0f64; count];
@@ -231,14 +238,19 @@ impl PreparedSource {
                     .map_err(|_| "waveform_cache_invalid")?,
             ) as f64;
             if !peak.is_finite() || !rms.is_finite() || peak < 0.0 || rms < 0.0 {
-                return Err("waveform_cache_invalid".into());
+                return Err(if source_bin == BASE_BIN_MS {
+                    "waveform_cache_invalid"
+                } else {
+                    "waveform_pyramid_invalid"
+                }
+                .into());
             }
-            let time = (self.start_ms + (first + index as i64) * BASE_BIN_MS).max(start);
+            let time = (self.start_ms + (first + index as i64) * source_bin).max(start);
             let bin = ((time - start) / bin_ms) as usize;
             if bin >= count {
                 continue;
             }
-            let weight = BASE_BIN_MS.min(end - time).max(0) as f64;
+            let weight = source_bin.min(end - time).max(0) as f64;
             peaks[bin] = peaks[bin].max(peak);
             energy[bin] += rms * rms * weight;
             weights[bin] += weight;

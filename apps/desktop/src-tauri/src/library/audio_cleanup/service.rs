@@ -17,7 +17,7 @@ pub(crate) async fn cancel_recording(storage: &AppStorage, id: &str) -> Result<(
 
 pub(crate) fn read_state(storage: &AppStorage, id: &str) -> Result<AudioCleanupState, String> {
     storage
-        .with_connection(|c| {
+        .with_read_connection(|c| {
             let segments = storage::list_recording_segments(c, id)?;
             read_state_from_connection(c, id, &segments)
         })

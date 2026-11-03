@@ -5,7 +5,7 @@ pub(in crate::ai) fn transcript_for_recording(
     recording_id: &str,
 ) -> Result<RecordingTranscript, AiError> {
     storage
-        .with_connection(|connection| transcript_from_connection(connection, recording_id))
+        .with_read_connection(|connection| transcript_from_connection(connection, recording_id))
         .map_err(storage_error)
 }
 
@@ -33,11 +33,8 @@ pub(super) fn transcript_from_connection_in_windows(
         &storage::list_redactions(connection, recording_id)?,
         &storage::list_recording_segments(connection, recording_id)?,
     );
-    let mut words_by_segment = BTreeMap::new();
-    for segment in &segments {
-        let words = storage::list_transcript_words(connection, &segment.id)?;
-        words_by_segment.insert(segment.id.clone(), words);
-    }
+    let ids = segments.iter().map(|s| s.id.as_str()).collect::<Vec<_>>();
+    let words_by_segment = storage::list_transcript_words_for_segments(connection, &ids)?;
     Ok(transcript_from_rows(
         recording_id,
         segments,
@@ -50,7 +47,7 @@ pub(crate) fn visible_transcript_segments_for_recording(
     recording_id: &str,
 ) -> Result<Vec<TranscriptSegmentRow>, AiError> {
     let (segments, redactions, source_segments) = storage
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             Ok((
                 storage::list_transcript_segments(connection, recording_id)?,
                 storage::list_redactions(connection, recording_id)?,

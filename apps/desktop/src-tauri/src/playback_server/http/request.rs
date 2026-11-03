@@ -1,6 +1,10 @@
 use std::{io::Read, net::TcpStream};
 
 pub(in crate::playback_server) enum PlaybackRequest {
+    File {
+        segment_id: String,
+        asset_key: String,
+    },
     Audio {
         segment_id: String,
         start_ms: i64,
@@ -50,7 +54,7 @@ pub(in crate::playback_server) fn parse_request(
     let mut parts = first_line.split_whitespace();
     let method = parts.next()?;
     let url = parts.next()?;
-    if method != "GET" {
+    if method != "GET" && method != "HEAD" {
         return None;
     }
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
@@ -64,6 +68,9 @@ pub(in crate::playback_server) fn parse_request(
     let session_id = segments[1].to_string();
     let token = segments[2].to_string();
     let segment_id = segments[4].to_string();
+    if method == "HEAD" && segments[5] != "file" {
+        return None;
+    }
     let start_ms = query_value(query, "startMs").unwrap_or(0).max(0);
     let duration_ms = if query.split('&').any(|pair| {
         pair.split_once('=')
@@ -79,6 +86,23 @@ pub(in crate::playback_server) fn parse_request(
     };
 
     match segments.get(5).copied()? {
+        "file" => {
+            let key = segments.get(6)?;
+            let (role, index) = key.rsplit_once('-')?;
+            if !matches!(role, "video" | "desktop-audio" | "microphone")
+                || index.parse::<u32>().is_err()
+            {
+                return None;
+            }
+            Some((
+                session_id,
+                token,
+                PlaybackRequest::File {
+                    segment_id,
+                    asset_key: (*key).into(),
+                },
+            ))
+        }
         "video" => Some((
             session_id,
             token,

@@ -98,6 +98,7 @@ pub fn run() {
             app.manage(recorder_manager);
             app.manage(playback_server);
             app.manage(startup_manager);
+            playback_server::prepared::start(app.handle().clone());
             app.manage(recall::search_service::SearchControl::default());
             if !maintenance_pending {
                 ai::recover_model_downloads(app.handle().clone());
@@ -149,6 +150,7 @@ pub fn run() {
             startup::retry_app_startup,
             library::commands::close_library_playback_session,
             library::commands::create_library_playback_session,
+            library::commands::get_playback_decoder_warmup_url,
             library::commands::create_library_redactions,
             library::redaction_resize::resize_library_redaction,
             library::frame_navigation::adjacent_library_frame,

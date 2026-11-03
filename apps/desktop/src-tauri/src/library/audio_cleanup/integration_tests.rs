@@ -338,6 +338,8 @@ fn real_playback_serves_cleaned_microphone_and_rejects_a_new_redaction() {
             &segments,
             &Default::default(),
             f.storage.clone(),
+            false,
+            true,
         )
         .unwrap();
     let url = assets.segments[0]
@@ -443,6 +445,8 @@ fn rejected_cleanup_playback_retries_do_not_retain_sessions() {
             &segments,
             &Default::default(),
             f.storage.clone(),
+            false,
+            true,
         )
     };
     let existing = create().unwrap();

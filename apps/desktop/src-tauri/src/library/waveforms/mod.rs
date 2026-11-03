@@ -3,11 +3,13 @@ use std::{collections::BTreeMap, path::Path};
 use super::{playable_segments, LibraryTrackKind, LibraryWaveformTrack, LibraryWaveforms};
 use crate::{ffmpeg, storage::RecordingRow, storage::RecordingSegmentRow};
 
+mod admission_requests;
 mod cache;
 mod ffmpeg_source;
 pub(crate) mod jobs;
 mod math;
 mod prepared;
+mod pyramid;
 #[cfg(test)]
 mod tests;
 mod tiles;

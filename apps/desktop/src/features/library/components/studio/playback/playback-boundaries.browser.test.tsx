@@ -1,16 +1,119 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { LibraryRecordingDetail } from '@daydream/shared';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 import {
   workflowAssets,
   workflowDetail,
 } from '../testing/studio-workflow-fixture';
+import { StudioPlayer } from './controls/studio-player';
 import { useRecordingPlaybackController } from './use-recording-playback-controller';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 const muted = new Set<string>();
+function PreparedPlayback() {
+  const assets = useMemo(
+    () => ({
+      ...workflowAssets(workflowDetail),
+      segments: workflowAssets(workflowDetail).segments.map((segment) => ({
+        ...segment,
+        canSeekInStream: true,
+      })),
+    }),
+    [],
+  );
+  const playback = useRecordingPlaybackController({
+    detail: workflowDetail,
+    playbackAssets: assets,
+    mutedTrackIds: muted,
+  });
+  const seek = useCallback(
+    () => playback.actions.seekTimeline(500),
+    [playback.actions],
+  );
+  const refresh = useCallback(() => undefined, []);
+  return (
+    <>
+      <button onClick={seek}>Seek prepared media</button>
+      <StudioPlayer
+        detail={workflowDetail}
+        playbackAssets={assets}
+        playback={playback}
+        onRefreshPlayback={refresh}
+      />
+    </>
+  );
+}
+
+test('prepared media seeks in the existing decoded element and preserves its URL', async () => {
+  const view = render(<PreparedPlayback />);
+  await waitFor(() =>
+    expect(
+      view.container.querySelector('video')?.readyState,
+    ).toBeGreaterThanOrEqual(2),
+  );
+  const video = view.container.querySelector('video');
+  if (!video) throw new Error('Prepared video missing');
+  const url = video.currentSrc;
+  expect(url).not.toContain('startMs=');
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Seek prepared media' }),
+  );
+  await waitFor(() => expect(video.currentTime).toBeCloseTo(0.5, 1));
+  expect(view.container.querySelector('video')).toBe(video);
+  expect(video.currentSrc).toBe(url);
+  await userEvent.click(screen.getByRole('button', { name: /^Play$/ }));
+  await waitFor(() => expect(video.currentTime).toBeGreaterThan(0.5));
+});
+
+test.each(['buffered', 'empty', 'behind', 'seeking'])(
+  'a sparse video waiting event respects %s data before pausing playback',
+  async (mode) => {
+    const view = render(<PreparedPlayback />);
+    await userEvent.click(screen.getByRole('button', { name: /^Play$/ }));
+    const video = view.container.querySelector('video');
+    if (!video) throw new Error('Prepared video missing');
+    await waitFor(() => expect(video.currentTime).toBeGreaterThan(0.05));
+    const pause = vi.spyOn(video, 'pause');
+    let waiting = true;
+    Object.defineProperties(video, {
+      readyState: { configurable: true, get: () => (waiting ? 2 : 4) },
+      seeking: { configurable: true, get: () => waiting && mode === 'seeking' },
+      buffered: {
+        configurable: true,
+        get: () => ({
+          length: mode === 'empty' ? 0 : 1,
+          start: () => 0,
+          end: () => (mode === 'behind' ? 0.01 : 10),
+        }),
+      },
+    });
+    fireEvent.waiting(video);
+    if (mode === 'buffered') {
+      expect(pause).not.toHaveBeenCalled();
+      const time = video.currentTime;
+      await waitFor(() =>
+        expect(video.currentTime).toBeGreaterThan(time + 0.05),
+      );
+    } else {
+      expect(pause).toHaveBeenCalled();
+      expect(video.paused).toBe(true);
+      waiting = false;
+      fireEvent.canPlay(video);
+      await waitFor(() => expect(video.paused).toBe(false));
+    }
+  },
+);
 function UnattachedPlayback({ detail }: { detail: LibraryRecordingDetail }) {
   const playback = useRecordingPlaybackController({
     detail,

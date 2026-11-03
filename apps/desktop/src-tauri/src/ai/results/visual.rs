@@ -12,8 +12,19 @@ pub(crate) fn visual_observations_for_recording_with_regions(
     recording_id: &str,
     include_ocr_regions: bool,
 ) -> Result<RecordingVisualObservations, AiError> {
+    visual_observations_in_windows(storage, recording_id, include_ocr_regions, None, None)
+}
+
+pub(crate) fn visual_observations_in_windows(
+    storage: &AppStorage,
+    recording_id: &str,
+    include_ocr_regions: bool,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> Result<RecordingVisualObservations, AiError> {
     let app_settings = settings::load_app_settings(storage).map_err(settings_error)?;
-    let visible_rows = visible_visual_rows(storage, recording_id, include_ocr_regions)?;
+    let visible_rows =
+        visible_visual_rows_in_windows(storage, recording_id, include_ocr_regions, range, review)?;
     let vlm_chunks = visible_rows
         .visual_chunks
         .iter()
@@ -59,9 +70,19 @@ pub(super) fn visible_visual_rows(
     recording_id: &str,
     include_ocr_regions: bool,
 ) -> Result<VisibleVisualObservationRows, AiError> {
+    visible_visual_rows_in_windows(storage, recording_id, include_ocr_regions, None, None)
+}
+
+pub(super) fn visible_visual_rows_in_windows(
+    storage: &AppStorage,
+    recording_id: &str,
+    include_ocr_regions: bool,
+    range: Option<(i64, i64)>,
+    review: Option<(i64, i64)>,
+) -> Result<VisibleVisualObservationRows, AiError> {
     let (ocr_regions, vlm_observations, visual_chunks, recording_tracks, redactions, segments,committed_frames) =
         storage
-            .with_connection(|connection| {
+            .with_read_connection(|connection| {
                 let mut statement=connection.prepare("SELECT f.chunk_id,f.frame_timestamp_ms FROM visual_frame_processing_states f JOIN processing_chunks c ON c.id=f.chunk_id JOIN processing_jobs j ON j.id=c.job_id WHERE f.recording_id=?1 AND f.status='succeeded' AND c.status='running' AND j.status='running' UNION SELECT rf.chunk_id,rf.frame_ms FROM processing_replacement_frames rf JOIN processing_chunks c ON c.id=rf.chunk_id WHERE c.recording_id=?1")?;
                 let mut committed=BTreeMap::<String,BTreeSet<i64>>::new();
                 for row in statement.query_map([recording_id],|row|Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)))? {let (chunk,timestamp)=row?;committed.entry(chunk).or_default().insert(timestamp);}
@@ -71,7 +92,7 @@ pub(super) fn visible_visual_rows(
                     } else {
                         Vec::new()
                     },
-                    storage::list_vlm_observations(connection, recording_id)?,
+                    storage::list_vlm_observations_in_windows(connection, recording_id,range,review)?,
                     list_visual_chunks_for_recording(connection, recording_id)?,
                     storage::list_recording_tracks(connection, recording_id)?,
                     storage::list_redactions(connection, recording_id)?,

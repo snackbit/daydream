@@ -23,7 +23,7 @@ test('overview ranges stay bounded and stable while panning within one page', ()
 test('Review browsing pages are independent of timeline zoom and change ownership on navigation', () => {
   store.getState().setReview('day', 600_000);
   const page = store.getState().review;
-  expect(page).toEqual({ startOffsetMs: 450_000, endOffsetMs: 810_000 });
+  expect(page).toEqual({ startOffsetMs: 585_000, endOffsetMs: 645_000 });
   store.getState().setReview('day', 610_000);
   expect(store.getState().review).toBe(page);
   store.getState().setWindow('day', 5_000_000, 7_200_000, 0.0001);

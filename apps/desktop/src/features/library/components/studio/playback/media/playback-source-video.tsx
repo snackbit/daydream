@@ -8,6 +8,7 @@ import type { RecordingPlaybackController } from '../use-recording-playback-cont
 import { playbackStreamUrl } from './playback-media-group';
 
 export interface PlaybackSourceVideoProps {
+  seekable?: boolean;
   active: boolean;
   video: LibraryPlaybackVideoAsset;
   label: string;
@@ -20,6 +21,7 @@ export interface PlaybackSourceVideoProps {
   durationMs?: number | undefined;
 }
 export function PlaybackSourceVideo({
+  seekable = false,
   active,
   video,
   label,
@@ -94,7 +96,11 @@ export function PlaybackSourceVideo({
         muted
         playsInline
         preload="auto"
-        src={playbackStreamUrl(video.url, startMs, revision, durationMs)}
+        src={
+          seekable
+            ? video.url
+            : playbackStreamUrl(video.url, startMs, revision, durationMs)
+        }
         className="min-h-0 w-full flex-1 object-contain"
         onCanPlay={active ? playback.actions.handleVideoCanPlay : undefined}
         onWaiting={active ? playback.actions.handleBuffering : undefined}

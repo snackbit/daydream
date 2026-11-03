@@ -2,8 +2,10 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 
 export const STUDIO_OVERVIEW_PIXELS_PER_MS = 0.01;
+export const STUDIO_REVIEW_STEP_MS = 30_000;
 
 export interface StudioResultRange {
+  ready?: boolean;
   startOffsetMs: number;
   endOffsetMs: number;
   bucketMs?: number;
@@ -11,6 +13,8 @@ export interface StudioResultRange {
   reviewEndOffsetMs?: number;
 }
 interface StudioResultWindowState {
+  reviewActive: boolean;
+  setReviewActive: (owner: string, active: boolean) => void;
   owner: string | null;
   range: StudioResultRange;
   reviewOwner: string | null;
@@ -25,21 +29,36 @@ interface StudioResultWindowState {
 }
 export const INITIAL_STUDIO_RESULT_RANGE: StudioResultRange = {
   startOffsetMs: 0,
-  endOffsetMs: 540_000,
+  endOffsetMs: 30_000,
 };
 export const useStudioResultWindowStore = create<StudioResultWindowState>(
   (set, get) => ({
+    reviewActive: false,
+    setReviewActive(owner, active) {
+      if (get().reviewOwner === owner && get().reviewActive === active) return;
+      set({ reviewOwner: owner, reviewActive: active });
+    },
     owner: null,
     range: INITIAL_STUDIO_RESULT_RANGE,
     reviewOwner: null,
     review: INITIAL_STUDIO_RESULT_RANGE,
     setReview(owner, time) {
-      const from = Math.max(0, Math.floor(time / 180_000) * 180_000 - 90_000);
-      const to = from + 360_000;
-      if (get().reviewOwner === owner && get().review.startOffsetMs === from)
+      const from = Math.max(
+        0,
+        Math.floor(time / STUDIO_REVIEW_STEP_MS) * STUDIO_REVIEW_STEP_MS -
+          STUDIO_REVIEW_STEP_MS / 2,
+      );
+      const to = from + STUDIO_REVIEW_STEP_MS * 2;
+      if (
+        get().reviewOwner === owner &&
+        get().reviewActive &&
+        get().review.startOffsetMs === from &&
+        get().review.endOffsetMs === to
+      )
         return;
       set({
         reviewOwner: owner,
+        reviewActive: true,
         review: { startOffsetMs: from, endOffsetMs: to },
       });
     },
@@ -76,12 +95,21 @@ export function useStudioResultRange(owner: string) {
   const review = useStudioResultWindowStore((state) =>
     state.reviewOwner === owner ? state.review : INITIAL_STUDIO_RESULT_RANGE,
   );
+  const ready = useStudioResultWindowStore((state) => state.owner === owner);
+  const reviewActive = useStudioResultWindowStore(
+    (state) => state.reviewOwner === owner && state.reviewActive,
+  );
   return useMemo(
     () => ({
       ...range,
-      reviewStartOffsetMs: review.startOffsetMs,
-      reviewEndOffsetMs: review.endOffsetMs,
+      ready,
+      ...(reviewActive
+        ? {
+            reviewStartOffsetMs: review.startOffsetMs,
+            reviewEndOffsetMs: review.endOffsetMs,
+          }
+        : {}),
     }),
-    [range, review],
+    [range, review, ready, reviewActive],
   );
 }

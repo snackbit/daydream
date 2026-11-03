@@ -1,5 +1,99 @@
 # Refactoring Tasks
 
+## Implemented: sub-second prepared Studio loading
+
+Separate Studio reads from the processing writer; load viewport and active-panel
+data independently; persist seekable playback and timeline thumbnails; preserve
+privacy invalidation, source timing, and recording deletion. Reuse current
+waveform peaks and prepare missing media in bounded, resumable local work.
+Prepared-content acceptance is under one second for opening, seeking, visible
+timeline media/results, and inspector panels in the native WebKit journey.
+Skeletons provide immediate feedback and do not count as completed loading.
+
+Implemented: two pooled WAL readers; independent result publication; bounded
+viewport thumbnail URLs and waveform tiles; coarse levels derived from existing
+peaks; durable versioned playback/thumbnail preparation; indexed byte-range media;
+privacy-scoped cache reuse and session revocation; cached storage accounting.
+Review uses one-minute moving pages. Paused opening prioritizes visible video;
+audio and neighboring decoders prepare when playback needs them. Media teardown
+releases WebKit pipelines explicitly. The primary Studio route loads eagerly to
+avoid React's first-use lazy fallback delay, and day metadata uses indexed lookups.
+Buffered sparse video no longer pauses all streams while waiting between frames.
+A bundled synthetic frame warms the decoder without opening captured media.
+WebKit rejects the bundled custom-protocol video URI, so the frame uses a fixed
+loopback route;
+the endpoint serves compiled synthetic bytes only. Warmup validation and lifecycle
+coverage is 100% (12 tests), including late completion after unmount.
+
+Migration 41 adds preparation/admission catalogs and cached storage accounting;
+existing source recordings and raw waveform caches remain usable. Optional IPC
+fields preserve eager-thumbnail, continuous-run and exact-size defaults for existing
+callers; day sessions omit continuous-run assets they do not use.
+Missing or invalid prepared files fall back to the existing streaming path while
+bounded local work repairs the cache; cold generation has no sub-second guarantee.
+
+Writer-contention regression was confirmed red against the original writer path
+and passes with WAL readers. Prepared native tests cover sparse-frame duration,
+reused files, byte ranges, cancellation, privacy revocation and hidden thumbnails;
+cached thumbnails bypass a decoder queue even with no workers. Browser workflows
+cover progressive publication, paging, stale reads, privacy recovery, current seek
+ownership, deferred decoders and teardown. Loading/session coverage measures
+93.65% branches across six owners, each above 90%, with 102 scoped tests passing.
+Day-timeline and decoder branch coverage is 90.81% and 97.95%; playback transport
+is 95.58%. Native branch instrumentation is unavailable on this host.
+
+Final JavaScript lint/typechecks and tests pass (1,179 desktop tests, nine shared
+tests and one FFmpeg resolver test). Rust formatting, Clippy and the native gate
+pass (747 tests plus three resource-staging tests; seven opt-in tests ignored).
+The packaged capture/Studio/restart/keyboard journey passes: initial navigation
+to a decoded frame took 275 ms, and twenty prepared openings took 224–265 ms.
+The eight-hour synthetic fixture (960 fragments, four sources, 50,000 speech
+entries and 100,000 activity intervals) passes twenty complete openings at
+505–767 ms, including the first opening in a fresh process. Three prepared seeks
+took 748–852 ms. These measurements wait for a decoded video frame, decoded
+visible thumbnails, waveforms and visible results; skeletons are not counted.
+The focused native transcript-group workflow also passes after reselecting the
+current control when asynchronous preview publication replaces its DOM node.
+Private user recordings were not used or manually benchmarked.
+
+The optional dense interaction benchmark retains its stricter 100 ms budget.
+Its latest 50-sample p95 measurements are controls 73 ms, zoom 105 ms and pan
+91 ms: zoom still exceeds that separate budget. The long optional journey also
+remains incomplete because a transcript count can be replaced between native
+pointer-driver commands; the focused transcript scenario passes, but reselecting
+the count does not eliminate that intermittent harness race. Its loading/seek
+checks pass before that failure. No assertion or performance limit was relaxed.
+That run repeated twenty complete openings at 470–584 ms and three complete
+seeks at 675–716 ms; the separate fresh-process run above covers first opening.
+Evidence is `/tmp/daydream-studio-dense-delivery.log` and the fixture's
+`studio-performance.json`. Existing TanStack Virtual React
+Compiler and large-entry-bundle warnings remain unsuppressed. Loading scaffolds
+were inspected in both themes at desktop and narrow widths; reduced-motion uses
+the shared skeleton variant, without a separate emulated visual run.
+Evidence:
+`/tmp/daydream-studio-release-{js,rust}.log`,
+`/tmp/daydream-studio-delivery-native.log`,
+`/tmp/daydream-studio-delivery-eight-hour.log`,
+`/tmp/daydream-studio-transcript-marker.log`,
+`/tmp/daydream-studio-{settled,day,warmup}-coverage/coverage-summary.json`,
+`/tmp/daydream-studio-sparse-coverage-gate.json`, and isolated synthetic journey
+artifacts under `/tmp/daydream-native-e2e.t0VFoe` and
+`/tmp/daydream-native-e2e.iSLBPt`.
+
+Remaining source-structure debt: `library/mapping.rs` (437 lines),
+`playback_server/http.rs` (412), `storage/ai/visual.rs` (455), and
+`day-studio/day-studio.tsx` (490) retain their existing mapping, HTTP routing,
+visual-result persistence and Studio composition responsibilities. Playback
+commands, prepared generation, session construction, thumbnail persistence and
+result-window reads were split into their own owners in this change; further
+splits of those four files are deferred to avoid expanding the performance work.
+Touched folders still above the ten-direct-source-file review threshold are
+native `src` (15), `library` (11), `library/waveforms` (10), `ai/results` (11),
+`settings` (12), `storage/ai` (14), `storage/schema/migrations` (27), frontend
+`day-studio` (16), `screens` (12), and shared `src` (11). Migration history and
+public screen/contract entry points keep their established organization; no
+general folder reorganization is included.
+
 ## Implemented: faster day opening and complete loading scaffold
 
 Day playback reads a consistent WAL metadata snapshot without queueing on the

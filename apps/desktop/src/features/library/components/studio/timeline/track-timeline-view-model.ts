@@ -116,11 +116,9 @@ export function useTrackTimelineViewModel({
         totalDurationMs,
       totalDurationMs,
     );
-    const visibleRangeMs = Math.max(1, visibleEndMs - visibleStartMs);
-
     return {
-      endTimelineMs: Math.min(totalDurationMs, visibleEndMs + visibleRangeMs),
-      startTimelineMs: Math.max(0, visibleStartMs - visibleRangeMs),
+      endTimelineMs: Math.max(visibleStartMs + 1, visibleEndMs),
+      startTimelineMs: visibleStartMs,
     };
   }, [scrollLeft, timelineViewportWidth, timelineWidthPx, totalDurationMs]);
   // Read ahead for smooth panning, but keep painted nodes close to the viewport.

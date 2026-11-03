@@ -23,6 +23,7 @@ mod day_slice_tests;
 mod encoders;
 mod ffmpeg_args;
 mod http;
+pub(crate) mod prepared;
 #[cfg(test)]
 mod resource_tests;
 mod resources;
@@ -52,36 +53,14 @@ pub struct PlaybackServer {
     resources: resources::PlaybackResources,
 }
 
-#[derive(Clone)]
-pub(super) struct PlaybackSession {
-    segments: HashMap<String, PlaybackSegment>,
-    token: String,
-    cleanup_dir: Option<std::path::PathBuf>,
-    cleanup_guard: Option<CleanupGuard>,
-}
-
-#[derive(Clone)]
-struct CleanupGuard {
-    storage: crate::storage::AppStorage,
-    recording_id: String,
-    fingerprint: String,
-    revision: Option<String>,
-}
-
-#[derive(Clone)]
-pub(super) struct PlaybackSegment {
-    fragments: Vec<(String, i64)>,
-    microphone_fragments: Vec<(String, i64)>,
-    duration_ms: i64,
-    video_streams: Vec<crate::storage::SegmentVideoStream>,
-    desktop_audio_stream_index: Option<i64>,
-    file_path: String,
-    microphone_audio_stream_index: Option<i64>,
-    playback_fps: f64,
-    video_stream_index: Option<i64>,
-}
+mod sessions;
+use sessions::{CleanupGuard, PlaybackSegment, PlaybackSession};
 
 impl PlaybackServer {
+    pub(crate) fn decoder_warmup_url(&self) -> String {
+        format!("{}/decoder-warmup.mp4", self.address)
+    }
+
     pub fn start() -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let address = format!("http://{}", listener.local_addr()?);
@@ -140,11 +119,23 @@ impl PlaybackServer {
         })
     }
 
+    #[cfg(test)]
     pub fn create_source_session(
         &self,
         recording: &RecordingRow,
         segments: &[RecordingSegmentRow],
         sources: &std::collections::BTreeMap<String, Vec<crate::storage::SegmentVideoStream>>,
+    ) -> Result<LibraryPlaybackAssets, String> {
+        self.create_source_session_with_options(recording, segments, sources, false, true)
+    }
+
+    fn create_source_session_with_options(
+        &self,
+        recording: &RecordingRow,
+        segments: &[RecordingSegmentRow],
+        sources: &std::collections::BTreeMap<String, Vec<crate::storage::SegmentVideoStream>>,
+        lazy_thumbnails: bool,
+        include_runs: bool,
     ) -> Result<LibraryPlaybackAssets, String> {
         let _admission = self.resources.admit()?;
         let session_id = Uuid::now_v7().to_string();
@@ -198,35 +189,47 @@ impl PlaybackServer {
             }
 
             response_segments.push(LibraryPlaybackSegment {
+                thumbnail_base_url: lazy_thumbnails.then(|| format!("{thumbnail_base}/thumbnail")),
+                can_seek_in_stream: false,
                 videos: sources
                     .get(&segment.id)
                     .into_iter()
                     .flatten()
                     .map(|video| crate::library::LibraryPlaybackVideoAsset {
+                        thumbnail_base_url: lazy_thumbnails
+                            .then(|| format!("{thumbnail_base}/thumbnail")),
                         track_id: video.track_id.clone(),
                         stream_index: video.stream_index,
                         url: format!("{base}/video/{}", video.stream_index),
-                        thumbnails: thumbnail_offsets(duration_ms)
-                            .into_iter()
-                            .map(|offset_ms| LibraryPlaybackThumbnail {
-                                offset_ms,
-                                url: format!(
-                                    "{thumbnail_base}/thumbnail/{offset_ms}.jpg/{}",
-                                    video.stream_index
-                                ),
-                            })
-                            .collect(),
+                        thumbnails: (if lazy_thumbnails {
+                            vec![]
+                        } else {
+                            thumbnail_offsets(duration_ms)
+                        })
+                        .into_iter()
+                        .map(|offset_ms| LibraryPlaybackThumbnail {
+                            offset_ms,
+                            url: format!(
+                                "{thumbnail_base}/thumbnail/{offset_ms}.jpg/{}",
+                                video.stream_index
+                            ),
+                        })
+                        .collect(),
                     })
                     .collect(),
                 audio,
                 segment_id: segment.id.clone(),
-                thumbnails: thumbnail_offsets(duration_ms)
-                    .into_iter()
-                    .map(|offset_ms| LibraryPlaybackThumbnail {
-                        offset_ms,
-                        url: format!("{thumbnail_base}/thumbnail/{offset_ms}.jpg"),
-                    })
-                    .collect(),
+                thumbnails: (if lazy_thumbnails {
+                    vec![]
+                } else {
+                    thumbnail_offsets(duration_ms)
+                })
+                .into_iter()
+                .map(|offset_ms| LibraryPlaybackThumbnail {
+                    offset_ms,
+                    url: format!("{thumbnail_base}/thumbnail/{offset_ms}.jpg"),
+                })
+                .collect(),
                 video_url: format!("{base}/video"),
             });
         }
@@ -237,7 +240,11 @@ impl PlaybackServer {
             .zip(crate::storage::segment_playback_bases(segments))
             .map(|(segment, base)| (segment.id.as_str(), base))
             .collect::<HashMap<_, _>>();
-        for group in runs::groups(segments, sources) {
+        for group in if include_runs {
+            runs::groups(segments, sources)
+        } else {
+            vec![]
+        } {
             let first = group[0];
             let last = group.last().expect("run fragment");
             let offset = bases[first.id.as_str()];
@@ -269,8 +276,10 @@ impl PlaybackServer {
                 self.address, session_id, token, id
             );
             assets.segment_id = id.clone();
+            assets.thumbnail_base_url = None;
             assets.video_url = assets.video_url.replace(&old_base, &new_base);
             for video in &mut assets.videos {
+                video.thumbnail_base_url = None;
                 video.url = video.url.replace(&old_base, &new_base);
             }
             for audio in &mut assets.audio {
@@ -366,38 +375,5 @@ impl PlaybackServer {
             .clear();
         self.thumbnails.close_all();
         self.resources.cancel_and_drain(timeout)
-    }
-}
-
-impl PlaybackSession {
-    fn new(segments: HashMap<String, PlaybackSegment>, token: String) -> Self {
-        Self {
-            segments,
-            token,
-            cleanup_dir: None,
-            cleanup_guard: None,
-        }
-    }
-
-    pub(super) fn segment_for_token(
-        &self,
-        token: &str,
-        segment_id: &str,
-    ) -> Option<PlaybackSegment> {
-        if let Some(guard) = &self.cleanup_guard {
-            let valid=guard.storage.with_connection(|c|{
-                if let Some(revision)=&guard.revision {
-                    let ready:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM audio_cleanup_generations WHERE id=?1 AND status='ready')",[revision],|r|r.get(0))?;
-                    if !ready {return Ok(false);}
-                }
-                Ok(crate::library::audio_cleanup::privacy_fingerprint(c,&guard.recording_id)?==guard.fingerprint)
-            }).unwrap_or(false);
-            if !valid {
-                return None;
-            }
-        }
-        (self.token == token)
-            .then(|| self.segments.get(segment_id).cloned())
-            .flatten()
     }
 }

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { ImageOff } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export interface VideoTimelineThumbnailProps {
   url: string;
@@ -7,7 +8,9 @@ export interface VideoTimelineThumbnailProps {
 
 export function VideoTimelineThumbnail({ url }: VideoTimelineThumbnailProps) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const handleError = useCallback(() => setFailed(true), []);
+  const handleLoad = useCallback(() => setLoaded(true), []);
   return (
     <span className="bg-muted relative h-full min-w-0 flex-1 overflow-hidden border-r last:border-r-0">
       {failed ? (
@@ -21,14 +24,20 @@ export function VideoTimelineThumbnail({ url }: VideoTimelineThumbnailProps) {
           <span className="truncate">Preview unavailable</span>
         </span>
       ) : (
-        <img
-          alt=""
-          aria-label="Video timeline thumbnail"
-          className="h-full w-full object-cover"
-          draggable={false}
-          onError={handleError}
-          src={url}
-        />
+        <>
+          {!loaded ? (
+            <Skeleton aria-hidden className="absolute inset-0 rounded-none" />
+          ) : null}
+          <img
+            alt=""
+            aria-label="Video timeline thumbnail"
+            className="h-full w-full object-cover"
+            draggable={false}
+            onError={handleError}
+            onLoad={handleLoad}
+            src={url}
+          />
+        </>
       )}
     </span>
   );

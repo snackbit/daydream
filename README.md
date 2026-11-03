@@ -25,7 +25,9 @@ then turns that evidence into a timeline you can review and process locally.
   a separate action and uses the applied audio revision.
 - Explicit start, pause, resume, and stop controls.
 - Local Library playback with thumbnails, waveforms, track lanes, and source
-  timestamps.
+  timestamps. A durable local queue prepares indexed playback files and timeline
+  thumbnails; compatible video is copied without re-encoding. Prepared playback
+  supports byte-range seeking without starting a decoder for each seek.
 - Timeline redactions that exclude or invalidate overlapping derived results.
 - Protected-window rules that can pause capture or create automatic redactions.
 - Mouse, keyboard, frame-change, and window activity lanes without recording
@@ -51,7 +53,11 @@ then turns that evidence into a timeline you can review and process locally.
   continuous source tracks. Review and Details retain their state during processing;
   dense annotations group when zoomed out, and selected ranges support padded zoom.
 - Durable local waveform jobs prepare reusable audio envelopes independently of AI.
-  Timeline reads use cached viewport tiles rather than decoding media on demand.
+  Timeline reads use cached viewport tiles and coarse waveform levels rather than
+  decoding media on demand. Offscreen previews and result windows load as needed;
+  speech, activity and visual results appear independently. Foreground database
+  reads use separate WAL connections from background processing. Details reuses
+  the last measured storage size when available.
 - New visual-processing jobs describe material screen changes. Matching Vision OCR
   and observations share one frame request when their provider and model agree;
   each response section is validated independently. Existing jobs keep their protocol.

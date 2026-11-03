@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { FullHeightLayout, PageHeader } from '@/app/PageLayout';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -37,7 +37,10 @@ export function DayScreen({ date, location = EMPTY_LOCATION }: DayScreenProps) {
   const { state, refresh, isRefreshing } = useRecallRead(read);
   const mutations = useDayMutations(date, refresh);
   const manifest = state.status === 'ready' ? state.data : null;
-  const signature = manifest ? JSON.stringify(manifest) : null;
+  const signature = useMemo(
+    () => (manifest ? JSON.stringify(manifest) : null),
+    [manifest],
+  );
   const [cached, setCached] = useState(() => ({
     signature,
     model: manifest ? buildDayTimeline(manifest) : null,

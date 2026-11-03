@@ -288,6 +288,7 @@ test('privacy invalidation removes details and rejects a late disk-usage result'
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith('getLibraryRecording', {
       recordingId: 'a',
+      cachedDiskUsage: true,
     }),
   );
   const stale = { ...manifest.recordings[0], sizeBytes: 999999 };
@@ -324,6 +325,7 @@ test.each([
     await waitFor(() =>
       expect(native.invoke).toHaveBeenCalledWith('getLibraryRecording', {
         recordingId: 'a',
+        cachedDiskUsage: true,
       }),
     );
     pending.resolve({ ...manifest.recordings[0], sizeBytes: 100, ...invalid });
@@ -356,6 +358,7 @@ test('a late disk-usage result cannot replace a different recording or create an
   await waitFor(() =>
     expect(native.invoke).toHaveBeenCalledWith('getLibraryRecording', {
       recordingId: first.id,
+      cachedDiskUsage: true,
     }),
   );
   view.rerender(<RecordingDiskUsage active detail={second} />);

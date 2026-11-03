@@ -10,7 +10,12 @@ export function useOcrTimelineFrames(
   recordingId: string,
   privacyRevision: string,
   processingState: RecordingAiProcessingState | null,
-  range?: { startOffsetMs: number; endOffsetMs: number; bucketMs?: number },
+  range?: {
+    startOffsetMs: number;
+    endOffsetMs: number;
+    bucketMs?: number;
+    ready?: boolean;
+  },
 ) {
   const key = JSON.stringify([recordingId, privacyRevision]);
   const revision = JSON.stringify([
@@ -32,6 +37,7 @@ export function useOcrTimelineFrames(
   );
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
+    if (range?.ready === false) return;
     const request = ++requestRef.current;
     if (range?.bucketMs) {
       setResult({ key, frames: [] });

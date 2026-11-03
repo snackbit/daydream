@@ -18,7 +18,7 @@ use super::{
 
 pub fn load_app_settings(storage: &AppStorage) -> Result<AppSettings, AppSettingsError> {
     let rows = storage
-        .with_connection(storage::list_app_settings)
+        .with_read_connection(storage::list_app_settings)
         .map_err(storage_error)?;
 
     settings_from_storage_rows(rows)

@@ -169,8 +169,13 @@ export function StudioPlayer({
       >
         <div className="h-full min-h-0">
           <PlaybackMediaGroup
-            key={`${currentPlaybackSegment.segmentId}-${currentStart}-${state.streamRevision}`}
+            key={
+              state.canSeekInStream
+                ? currentPlaybackSegment.segmentId
+                : `${currentPlaybackSegment.segmentId}-${currentStart}-${state.streamRevision}`
+            }
             active
+            seekable={state.canSeekInStream}
             asset={currentPlaybackSegment}
             startMs={currentStart}
             revision={state.streamRevision}
@@ -180,7 +185,11 @@ export function StudioPlayer({
             detail={detail}
             labels={sourceLabels}
             timelineOffsetMs={state.currentSegment.playbackOffsetMs}
-            streamOffsetMs={state.streamStartMs}
+            streamOffsetMs={
+              state.canSeekInStream
+                ? -(state.currentSegment.mediaStartMs ?? 0)
+                : state.streamStartMs
+            }
           >
             {state.redactedVideoActive ? (
               <div
@@ -211,10 +220,17 @@ export function StudioPlayer({
               </div>
             ) : null}
           </PlaybackMediaGroup>
-          {nextAsset && nextSegment ? (
+          {nextAsset &&
+          nextSegment &&
+          (state.isPlaying || state.resumeProgress !== null) ? (
             <PlaybackMediaGroup
-              key={`${nextAsset.segmentId}-${nextSegment.mediaStartMs ?? 0}-${state.streamRevision + 1}`}
+              key={
+                nextAsset.canSeekInStream
+                  ? nextAsset.segmentId
+                  : `${nextAsset.segmentId}-${nextSegment.mediaStartMs ?? 0}-${state.streamRevision + 1}`
+              }
               active={false}
+              seekable={nextAsset.canSeekInStream === true}
               asset={nextAsset}
               startMs={nextSegment.mediaStartMs ?? 0}
               revision={state.streamRevision + 1}
@@ -223,7 +239,9 @@ export function StudioPlayer({
               detail={detail}
               labels={sourceLabels}
               timelineOffsetMs={nextSegment.playbackOffsetMs}
-              streamOffsetMs={0}
+              streamOffsetMs={
+                nextAsset.canSeekInStream ? -(nextSegment.mediaStartMs ?? 0) : 0
+              }
             />
           ) : null}
         </div>

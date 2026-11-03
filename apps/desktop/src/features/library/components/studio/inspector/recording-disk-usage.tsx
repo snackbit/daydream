@@ -40,7 +40,10 @@ export function RecordingDiskUsage({
   if (detail.id.startsWith('day:')) return 'Select a recording for disk usage';
   const current = read?.owner === owner ? read : null;
   return (
-    <span className="inline-flex min-h-5 items-center gap-2">
+    <span
+      title="Last measured local storage usage"
+      className="inline-flex min-h-5 items-center gap-2"
+    >
       {current?.status === 'ready' ? (
         formatFileSize(current.bytes)
       ) : current?.status === 'error' ? (

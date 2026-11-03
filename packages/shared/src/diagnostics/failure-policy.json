@@ -9,6 +9,7 @@
     "ai-processing-changed",
     "app-startup-status-changed",
     "background-tasks-changed",
+    "library-media-prepared",
     "cancelAiModelDownload",
     "cancelAudioCleanup",
     "cancelProcessingJob",
@@ -139,6 +140,9 @@
     "window_error"
   ],
   "errorCodes": [
+    "studio_media_preparation_failed",
+    "studio_media_admission_failed",
+    "studio_size_snapshot_failed",
     "playback_start_failed",
     "playback_media_failed",
     "ai_frame_index_failed",

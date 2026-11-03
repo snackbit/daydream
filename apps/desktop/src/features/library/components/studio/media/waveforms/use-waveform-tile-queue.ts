@@ -12,6 +12,7 @@ export interface WaveformRequestRange {
 }
 interface CachedWaveformTiles {
   promise: Promise<LibraryWaveformTiles>;
+  bytes?: number;
   data?: LibraryWaveformTiles;
 }
 const caches = new WeakMap<
@@ -19,6 +20,7 @@ const caches = new WeakMap<
   Map<string, CachedWaveformTiles>
 >();
 const RESOLUTIONS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
+const CACHE_BYTE_LIMIT = 16 * 1024 * 1024;
 
 export function useWaveformTileQueue({
   detail,
@@ -105,9 +107,12 @@ export function useWaveformTileQueue({
       caches.get(readTiles) ?? new Map<string, CachedWaveformTiles>();
     caches.set(readTiles, cache);
     let reading = false;
+    let awaitingPreparation = false;
     let invalidatedDuringRead = false;
     function refresh() {
-      if (!active || cache.get(key)?.data || timer) return;
+      if (!active || cache.get(key)?.data) return;
+      window.clearTimeout(timer);
+      timer = 0;
       if (reading) {
         invalidatedDuringRead = true;
         return;
@@ -119,6 +124,7 @@ export function useWaveformTileQueue({
     }
     async function load() {
       reading = true;
+      awaitingPreparation = false;
       try {
         let pending = cache.get(key);
         if (!pending) {
@@ -131,12 +137,37 @@ export function useWaveformTileQueue({
           }
         }
         const data = await pending.promise;
+        awaitingPreparation = data.pending === true && data.error === null;
         if (data.recordingId !== input.recordingId)
           throw new Error(
             'Waveform response belongs to a different recording.',
           );
         if (data.pending || data.error) cache.delete(key);
-        else pending.data = data;
+        else {
+          pending.data = data;
+          pending.bytes = data.tracks.reduce(
+            (bytes, track) =>
+              bytes +
+              track.tiles.reduce(
+                (bytes, tile) =>
+                  bytes +
+                  (tile.peakSamples.length + tile.rmsSamples.length) * 8,
+                0,
+              ),
+            0,
+          );
+          let bytes = [...cache.values()].reduce(
+            (bytes, entry) => bytes + (entry.bytes ?? 0),
+            0,
+          );
+          for (const [oldKey, entry] of cache) {
+            if (bytes <= CACHE_BYTE_LIMIT) break;
+            if (oldKey === key) continue;
+            cache.delete(oldKey);
+            bytes -= entry.bytes ?? 0;
+          }
+          if (pending.bytes > CACHE_BYTE_LIMIT) cache.delete(key);
+        }
         if (active && data.recordingId === input.recordingId)
           startTransition(() =>
             setSample((current) =>
@@ -156,6 +187,12 @@ export function useWaveformTileQueue({
           setSample({ key, revision: sourceRevision, data: null, error: true });
       } finally {
         reading = false;
+        if (active && awaitingPreparation && !cache.get(key)?.data && !timer) {
+          timer = window.setTimeout(() => {
+            timer = 0;
+            void load();
+          }, 1000);
+        }
         if (invalidatedDuringRead) {
           invalidatedDuringRead = false;
           refresh();

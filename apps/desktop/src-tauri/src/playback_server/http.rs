@@ -15,6 +15,7 @@ use super::{
     PlaybackSegment, PlaybackSession,
 };
 
+mod files;
 mod request;
 use request::read_request;
 pub(super) use request::{parse_request, PlaybackRequest};
@@ -37,25 +38,67 @@ pub(super) fn handle_stream(
         write_response(&mut stream, 400, "text/plain", b"Bad request");
         return;
     };
+    if files::serve_warmup(&mut stream, &request) {
+        return;
+    }
     let Some((session_id, token, playback_request)) = parse_request(&request) else {
         write_response(&mut stream, 404, "text/plain", b"Not found");
         return;
     };
     resource.set_session(&session_id);
-    let Some(segment) = sessions.lock().ok().and_then(|sessions| {
-        let session = sessions.get(&session_id)?;
-        let segment_id = match &playback_request {
-            PlaybackRequest::Audio { segment_id, .. }
-            | PlaybackRequest::Thumbnail { segment_id, .. }
-            | PlaybackRequest::Video { segment_id, .. } => segment_id,
-        };
-        session.segment_for_token(&token, segment_id)
-    }) else {
+    let segment_id = match &playback_request {
+        PlaybackRequest::Audio { segment_id, .. }
+        | PlaybackRequest::Thumbnail { segment_id, .. }
+        | PlaybackRequest::Video { segment_id, .. }
+        | PlaybackRequest::File { segment_id, .. } => segment_id,
+    };
+    let asset_key = match &playback_request {
+        PlaybackRequest::File { asset_key, .. } => Some(asset_key.as_str()),
+        _ => None,
+    };
+    let snapshot = sessions.lock().ok().and_then(|sessions| {
+        sessions
+            .get(&session_id)?
+            .request_snapshot(&token, segment_id, asset_key)
+    });
+    let Some(snapshot) = snapshot.filter(|snapshot| snapshot.authorized()) else {
         write_response(&mut stream, 403, "text/plain", b"Forbidden");
         return;
     };
+    let namespace = snapshot.thumbnail_namespace().to_owned();
+    if let PlaybackRequest::Thumbnail {
+        segment_id,
+        stream_index,
+        offset_ms,
+    } = &playback_request
+    {
+        if selected_video_stream(&snapshot.segment, *stream_index)
+            .is_some_and(|index| !snapshot.allows_thumbnail(segment_id, index, *offset_ms))
+        {
+            write_response(&mut stream, 403, "text/plain", b"Thumbnail is hidden");
+            return;
+        }
+    }
+    let segment = snapshot.segment;
 
     match playback_request {
+        PlaybackRequest::File { asset_key, .. } => {
+            if let Some(path) = snapshot.prepared_path {
+                files::serve(
+                    &mut stream,
+                    &path,
+                    &request,
+                    asset_key.starts_with("video-"),
+                );
+            } else {
+                write_response(
+                    &mut stream,
+                    404,
+                    "text/plain",
+                    b"Prepared media unavailable",
+                );
+            }
+        }
         PlaybackRequest::Audio {
             start_ms,
             track_id,
@@ -75,15 +118,29 @@ pub(super) fn handle_stream(
             stream_index,
             offset_ms,
             segment_id,
-        } => stream_thumbnail(
-            &mut stream,
-            &thumbnails,
-            session_id,
-            segment_id,
-            &segment,
-            offset_ms,
-            stream_index,
-        ),
+        } => {
+            if let Some(index) = selected_video_stream(&segment, stream_index) {
+                stream_thumbnail(
+                    &mut stream,
+                    &thumbnails,
+                    ThumbnailKey {
+                        cache_namespace: namespace,
+                        video_stream_index: index,
+                        offset_ms,
+                        segment_id,
+                        session_id,
+                    },
+                    &segment,
+                );
+            } else {
+                write_response(
+                    &mut stream,
+                    404,
+                    "text/plain",
+                    b"Segment has no video stream",
+                );
+            }
+        }
         PlaybackRequest::Video {
             start_ms,
             stream_index,
@@ -257,22 +314,11 @@ pub(super) fn playback_input_args(
 fn stream_thumbnail(
     stream: &mut TcpStream,
     thumbnails: &ThumbnailService,
-    session_id: String,
-    segment_id: String,
+    key: ThumbnailKey,
     segment: &PlaybackSegment,
-    offset_ms: i64,
-    requested_stream: Option<i64>,
 ) {
-    let Some(video_stream_index) = selected_video_stream(segment, requested_stream) else {
-        write_response(stream, 404, "text/plain", b"Segment has no video stream");
-        return;
-    };
-    let key = ThumbnailKey {
-        video_stream_index,
-        offset_ms,
-        segment_id,
-        session_id,
-    };
+    let video_stream_index = key.video_stream_index;
+    let offset_ms = key.offset_ms;
     match thumbnails.request_thumbnail(key, segment.clone(), video_stream_index, offset_ms) {
         Ok(bytes) => write_response(stream, 200, "image/jpeg", &bytes),
         Err(ThumbnailError::StaleSession) => {

@@ -12,7 +12,7 @@ fn invalid_input() -> AiError {
         message: "OCR query requires a recording, source, and valid timeline position.".into(),
     }
 }
-fn storage_error(_: rusqlite::Error) -> AiError {
+fn query_failed() -> AiError {
     AiError {
         code: "ai_ocr_query_failed".into(),
         message: "OCR documents could not be loaded.".into(),
@@ -20,7 +20,7 @@ fn storage_error(_: rusqlite::Error) -> AiError {
 }
 
 #[tauri::command(rename = "getOcrTimelineFrames")]
-pub fn get_ocr_timeline_frames(
+pub async fn get_ocr_timeline_frames(
     input: GetOcrTimelineFramesInput,
     storage: State<'_, AppStorage>,
 ) -> Result<OcrTimelineFramePage, AiError> {
@@ -35,25 +35,35 @@ pub fn get_ocr_timeline_frames(
     {
         return Err(invalid_input());
     }
-    storage
-        .with_connection(|connection| storage::get_ocr_timeline_frames(connection, &input))
-        .map_err(storage_error)
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .with_read_connection(|connection| storage::get_ocr_timeline_frames(connection, &input))
+            .map_err(|_| query_failed())
+    })
+    .await
+    .map_err(|_| query_failed())?
 }
 
 #[tauri::command(rename = "getOcrDocument")]
-pub fn get_ocr_document(
+pub async fn get_ocr_document(
     input: GetOcrDocumentInput,
     storage: State<'_, AppStorage>,
 ) -> Result<OcrDocumentSelection, AiError> {
     if input.recording_id.is_empty() || input.source_track_id.is_empty() || input.timestamp_ms < 0 {
         return Err(invalid_input());
     }
-    storage
-        .with_connection(|connection| storage::get_ocr_document(connection, &input))
-        .map_err(storage_error)
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .with_read_connection(|connection| storage::get_ocr_document(connection, &input))
+            .map_err(|_| query_failed())
+    })
+    .await
+    .map_err(|_| query_failed())?
 }
 #[tauri::command(rename = "getOcrHistory")]
-pub fn get_ocr_history(
+pub async fn get_ocr_history(
     input: GetOcrHistoryInput,
     storage: State<'_, AppStorage>,
 ) -> Result<OcrHistoryPage, AiError> {
@@ -65,9 +75,14 @@ pub fn get_ocr_history(
     {
         return Err(invalid_input());
     }
-    storage
-        .with_connection(|connection| storage::get_ocr_history(connection, &input))
-        .map_err(storage_error)
+    let storage = storage.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .with_read_connection(|connection| storage::get_ocr_history(connection, &input))
+            .map_err(|_| query_failed())
+    })
+    .await
+    .map_err(|_| query_failed())?
 }
 
 #[tauri::command(rename = "reprocessRecordingOcr")]

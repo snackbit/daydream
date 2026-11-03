@@ -44,7 +44,7 @@ pub(crate) fn read(
         ));
     }
     let entries = storage
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             storage::transcript_preview_entries(
                 connection,
                 &input.recording_id,

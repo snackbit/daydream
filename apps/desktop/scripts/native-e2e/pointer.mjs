@@ -16,7 +16,7 @@ export function createNativePointer({ native, viewer, origin }) {
       `enabled control: ${selector}`,
     );
     await native.evaluate(
-      `document.querySelector(${query}).scrollIntoView({block:'center',behavior:'instant'}); true`,
+      `(() => { const element=document.querySelector(${query}),rect=element.getBoundingClientRect(); const visible=rect.left>=0&&rect.top>=0&&rect.right<=innerWidth&&rect.bottom<=innerHeight&&element.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)); if(!visible)element.scrollIntoView({block:'center',behavior:'instant'}); return true; })()`,
     );
     await native.wait(
       `(() => { const element = document.querySelector(${query}); const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight && element.contains(document.elementFromPoint(rect.x + rect.width/2, rect.y + rect.height/2)); })()`,

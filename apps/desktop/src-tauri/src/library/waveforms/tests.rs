@@ -14,6 +14,9 @@ impl Drop for Fixture {
     }
 }
 fn fixture() -> Fixture {
+    fixture_with_database(false)
+}
+fn fixture_with_database(file_backed: bool) -> Fixture {
     let root =
         std::env::temp_dir().join(format!("daydream-studio-waveform-{}", uuid::Uuid::now_v7()));
     let id = uuid::Uuid::now_v7().to_string();
@@ -22,7 +25,11 @@ fn fixture() -> Fixture {
     let segment = crate::ffmpeg::audio_timeline_tests::gap_fixture();
     let path = dir.join("source.mkv");
     fs::rename(&segment.file_path, &path).unwrap();
-    let storage = storage::test_storage(root.join("database"));
+    let storage = if file_backed {
+        storage::test_file_storage(root.join("database"))
+    } else {
+        storage::test_storage(root.join("database"))
+    };
     storage
         .with_connection(|connection| {
             storage::create_recording(
@@ -74,6 +81,117 @@ fn query(fixture: &Fixture, width: f64) -> LibraryWaveformTileRequest {
         start_timeline_ms: 0,
         end_timeline_ms: 12_000,
         viewport_width_px: width,
+    }
+}
+
+#[test]
+fn cached_studio_waveforms_do_not_queue_behind_the_processing_writer() {
+    use std::{sync::mpsc, thread, time::Duration};
+    let fixture = fixture_with_database(true);
+    jobs::admit_recording(&fixture.storage, &fixture.id).unwrap();
+    for source in jobs::sources(&fixture.storage, &fixture.id).unwrap().1 {
+        source.prepare(&AtomicBool::new(false)).unwrap();
+        fs::remove_file(source.path.with_extension("pyramid-v1")).unwrap();
+    }
+    let writer = fixture.storage.clone();
+    let (locked, wait) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let owner = thread::spawn(move || {
+        writer
+            .with_connection(|_| {
+                locked.send(()).unwrap();
+                released.recv().unwrap();
+                Ok(())
+            })
+            .unwrap();
+    });
+    wait.recv().unwrap();
+    let storage = fixture.storage.clone();
+    let input = query(&fixture, 1200.0);
+    let (done, result) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        done.send(viewport::read(&storage, &input)).unwrap();
+    });
+    let ready = result.recv_timeout(Duration::from_millis(500));
+    release.send(()).unwrap();
+    owner.join().unwrap();
+    reader.join().unwrap();
+    let tiles = ready
+        .expect("cached waveforms must finish while the writer is occupied")
+        .unwrap();
+    assert!(!tiles.pending);
+    assert_eq!(tiles.tracks.len(), 2);
+    assert!(tiles.tracks.iter().all(|track| !track.tiles.is_empty()));
+    jobs::admit_batch(&fixture.storage).unwrap();
+}
+
+#[test]
+fn coarse_waveforms_reuse_raw_peaks_and_preserve_peak_and_rms_values() {
+    let fixture = fixture();
+    for source in jobs::sources(&fixture.storage, &fixture.id).unwrap().1 {
+        source.prepare(&AtomicBool::new(false)).unwrap();
+        let before = fs::metadata(&source.path).unwrap().modified().unwrap();
+        let scale = source.maximum().unwrap();
+        let coarse = source.tile(0, 12_000, 100, scale).unwrap();
+        let pyramid = source.path.with_extension("pyramid-v1");
+        fs::remove_file(&pyramid).unwrap();
+        let fine = source.tile(0, 12_000, 100, scale).unwrap();
+        assert_eq!(coarse.peak_samples, fine.peak_samples);
+        assert!(coarse
+            .rms_samples
+            .iter()
+            .zip(&fine.rms_samples)
+            .all(|(a, b)| (a - b).abs() < 1e-6));
+        source.prepare(&AtomicBool::new(false)).unwrap();
+        assert!(pyramid.is_file());
+        assert_eq!(
+            fs::metadata(&source.path).unwrap().modified().unwrap(),
+            before,
+            "adding resolution levels must not decode or replace valid raw peaks"
+        );
+    }
+}
+
+#[test]
+fn pyramid_keeps_boundary_peaks_and_unaligned_viewports_in_their_original_bins() {
+    let fixture = fixture();
+    let source = jobs::sources(&fixture.storage, &fixture.id)
+        .unwrap()
+        .1
+        .remove(0);
+    // Synthetic base envelope: a single 5ms impulse beginning at 260ms.
+    let duration = source.end_ms - source.start_ms;
+    let mut bytes = b"DWFM0001".to_vec();
+    bytes.extend(5i64.to_le_bytes());
+    bytes.extend(duration.to_le_bytes());
+    bytes.extend(1f64.to_le_bytes());
+    bytes.extend(0i64.to_le_bytes());
+    for time in (0..duration).step_by(5) {
+        let value = if time == 260 { 1f32 } else { 0f32 };
+        bytes.extend(value.to_le_bytes());
+        bytes.extend(value.to_le_bytes());
+    }
+    fs::create_dir_all(source.path.parent().unwrap()).unwrap();
+    fs::write(&source.path, bytes).unwrap();
+    for (start, end, bin) in [
+        (0, 1000, 250),
+        (25, 1000, 250),
+        (3, 998, 100),
+        (0, 999, 500),
+    ] {
+        pyramid::prepare(&source, &AtomicBool::new(false)).unwrap();
+        let coarse = source.tile(start, end, bin, 1.).unwrap();
+        fs::remove_file(source.path.with_extension("pyramid-v1")).unwrap();
+        let fine = source.tile(start, end, bin, 1.).unwrap();
+        assert_eq!(coarse.peak_samples, fine.peak_samples);
+        assert!(coarse
+            .rms_samples
+            .iter()
+            .zip(fine.rms_samples)
+            .all(|(a, b)| (a - b).abs() < 1e-6));
+        if start == 0 && bin == 250 {
+            assert_eq!(coarse.peak_samples, vec![0., 1., 0., 0.]);
+        }
     }
 }
 

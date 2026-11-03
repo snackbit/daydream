@@ -267,6 +267,12 @@ export interface LibraryWaveformTiles {
 
 export interface LibraryPlaybackAssetRequest {
   recordingId: string;
+  lazyThumbnails?: boolean;
+  /** Defaults to true; day timelines use physical segments without duplicate runs. */
+  includeRuns?: boolean;
+}
+export interface LibraryMediaPrepared {
+  recordingId: string;
 }
 
 export interface CloseLibraryPlaybackSessionRequest {
@@ -301,6 +307,9 @@ export interface LibraryPlaybackRun {
 }
 
 export interface LibraryPlaybackSegment {
+  thumbnailBaseUrl?: string;
+  /** A prepared, indexed file supports seeking without replacing its URL. */
+  canSeekInStream?: boolean;
   videos?: LibraryPlaybackVideoAsset[];
   audio: LibraryPlaybackAudioAsset[];
   segmentId: string;
@@ -309,6 +318,7 @@ export interface LibraryPlaybackSegment {
 }
 
 export interface LibraryPlaybackVideoAsset {
+  thumbnailBaseUrl?: string;
   trackId: string;
   streamIndex: number;
   url: string;

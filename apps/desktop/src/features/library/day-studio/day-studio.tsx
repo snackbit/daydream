@@ -42,6 +42,7 @@ import {
   splitDayRanges,
   type DayTimelineModel,
 } from './day-timeline';
+import { usePreparedSessionUpgrades } from './playback/use-prepared-session-upgrades';
 import { readDayTranscriptPreview } from './transcripts/read-day-transcript-preview';
 import type {
   DayMutationController,
@@ -122,6 +123,7 @@ export function DayStudio({
     ) ?? model.spans[0];
   const active =
     model.manifest.recordings.find((r) => r.id === span?.recordingId) ?? null;
+  usePreparedSessionUpgrades(active?.id ?? null, playback, sessions);
   const [cleanupRequest, setCleanupRequest] = useState<{
     recordingId: string;
     revision: number;

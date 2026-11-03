@@ -1,4 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { LibraryMediaPrepared } from '@daydream/shared';
 import type {
   CloseLibraryPlaybackSessionRequest,
   CreateLibraryRedactionsInput,
@@ -22,10 +24,13 @@ import type {
   ResizeLibraryRedactionInput,
 } from '@daydream/shared';
 import { invoke, decodeResponse } from '@/lib/diagnostics/invoke';
+import { listen } from '@/lib/diagnostics/listen';
 import { decodeAudioCleanupState } from './components/studio/audio-cleanup/audio-cleanup-client';
 import {
   decodeVideoAssets,
   decodePlaybackRuns,
+  decodeSeekCapability,
+  decodeThumbnailBase,
   decodeVideoStreams,
 } from './video-metadata-decoder';
 
@@ -65,9 +70,11 @@ export async function listLibraryRecordings(): Promise<
 
 export async function getLibraryRecording(
   recordingId: string,
+  options?: { includeDiskUsage: boolean },
 ): Promise<LibraryRecordingDetail> {
   const detail = await invoke<LibraryRecordingDetail>('getLibraryRecording', {
     recordingId,
+    ...(options ? { includeDiskUsage: options.includeDiskUsage } : {}),
   });
   return decodeResponse('getLibraryRecording', detail, (detail) => ({
     ...detail,
@@ -83,13 +90,16 @@ export async function getLibraryRecording(
   }));
 }
 
-/** Reads exact disk usage without retaining the response's private metadata. */
+/** Reads the last measured disk usage without retaining private metadata. */
 export async function getLibraryRecordingSize(
   recordingId: string,
 ): Promise<number> {
   return decodeResponse(
     'getLibraryRecording',
-    await invoke<unknown>('getLibraryRecording', { recordingId }),
+    await invoke<unknown>('getLibraryRecording', {
+      recordingId,
+      cachedDiskUsage: true,
+    }),
     (value) => {
       if (
         typeof value !== 'object' ||
@@ -182,6 +192,8 @@ export async function createLibraryPlaybackSession(
       : { runs: decodePlaybackRuns(assets.runs) }),
     segments: assets.segments.map((segment) => ({
       ...segment,
+      ...decodeSeekCapability(segment.canSeekInStream),
+      ...decodeThumbnailBase(segment.thumbnailBaseUrl),
       ...(segment.videos === undefined
         ? {}
         : { videos: decodeVideoAssets(segment.videos) }),
@@ -193,6 +205,23 @@ export async function closeLibraryPlaybackSession(
   input: CloseLibraryPlaybackSessionRequest,
 ): Promise<void> {
   return invoke<void>('closeLibraryPlaybackSession', { input });
+}
+
+export function listenLibraryMediaPrepared(
+  handler: (event: LibraryMediaPrepared) => void,
+): Promise<UnlistenFn> {
+  return listen<unknown>('library-media-prepared', (event) => {
+    const value = event.payload;
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      !('recordingId' in value) ||
+      typeof value.recordingId !== 'string' ||
+      value.recordingId.length === 0
+    )
+      throw new Error('Invalid playback preparation event');
+    handler({ recordingId: value.recordingId });
+  });
 }
 
 export async function prepareLibraryRecordingThumbnail(

@@ -20,7 +20,7 @@ pub(crate) fn processing_state_with_review(
     review: Option<(i64, i64)>,
 ) -> Result<RecordingAiProcessingState, AiError> {
     storage
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let tx = connection.unchecked_transaction()?;
             let job_row = storage::get_latest_processing_job_for_recording(
                 &tx,

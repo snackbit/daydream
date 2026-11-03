@@ -15,6 +15,7 @@ import {
 } from './day-timeline';
 
 export interface DayRecordingResults {
+  pending?: boolean;
   ai: RecordingAiProcessingState | null;
   activity: RecordingActivity | null;
   frames: StudioVisualFrame[];
@@ -71,6 +72,7 @@ export function projectDayResults(
       const request = results.get(span.recordingId)?.request;
       if (
         !request ||
+        results.get(span.recordingId)?.pending ||
         request.startOffsetMs !== requestedRange.startOffsetMs ||
         request.endOffsetMs !== requestedRange.endOffsetMs ||
         request.bucketMs !== requestedRange.bucketMs

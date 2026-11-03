@@ -3,6 +3,7 @@ import type { LibraryPlaybackAudioAsset } from '@daydream/shared';
 import type { RecordingPlaybackController } from '../use-recording-playback-controller';
 
 export interface PlaybackAudioProps {
+  preload?: 'none' | 'metadata' | 'auto';
   audio: LibraryPlaybackAudioAsset;
   src: string;
   actions: Pick<
@@ -19,6 +20,7 @@ export function PlaybackAudio({
   src,
   actions,
   active = true,
+  preload = 'auto',
 }: PlaybackAudioProps) {
   const { registerAudioElement } = actions;
   const attach = useCallback(
@@ -31,7 +33,7 @@ export function PlaybackAudio({
     <audio
       ref={attach}
       src={src}
-      preload="auto"
+      preload={preload}
       muted={!active}
       onCanPlay={active ? actions.handleVideoCanPlay : undefined}
       onSeeked={active ? actions.handleVideoCanPlay : undefined}

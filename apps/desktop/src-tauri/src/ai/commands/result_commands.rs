@@ -104,10 +104,12 @@ pub async fn get_recording_visual_observations(
     read_recording(storage, id, move |storage| {
         let range = content_range(&input)?;
         let review = review_range(&input)?;
-        let mut result = visual_observations_for_recording_with_regions(
+        let mut result = visual_observations_in_windows(
             storage,
             &input.recording_id,
             input.include_ocr_regions.unwrap_or(true),
+            range,
+            review,
         )?;
         if let Some((start, end)) = range {
             result.ocr_regions.retain(|region| {

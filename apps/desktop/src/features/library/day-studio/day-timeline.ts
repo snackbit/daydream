@@ -23,6 +23,17 @@ export function buildDayTimeline(
   manifest: LibraryDayTimeline,
 ): DayTimelineModel {
   const originMs = manifest.spans[0]?.startMs ?? manifest.startMs;
+  const recordings = new Map(
+    manifest.recordings.map((recording) => [
+      recording.id,
+      {
+        recording,
+        segments: new Map(
+          recording.segments.map((segment) => [segment.id, segment]),
+        ),
+      },
+    ]),
+  );
   const trackIds = new Map<string, Map<string, string>>(),
     tracks = new Map<string, LibraryRecordingTrack>();
   for (const recording of manifest.recordings) {
@@ -71,10 +82,9 @@ export function buildDayTimeline(
       sourceStartMs: original.sourceStartMs + trim,
       sourceOffsetMs: original.sourceOffsetMs + trim,
     };
-    const recording = manifest.recordings.find(
-      (r) => r.id === span.recordingId,
-    );
-    const segment = recording?.segments.find((s) => s.id === span.segmentId);
+    const source = recordings.get(span.recordingId);
+    const recording = source?.recording;
+    const segment = source?.segments.get(span.segmentId);
     const ids = trackIds.get(span.recordingId);
     if (!recording || !segment || !ids) continue;
     const videos = segment.videoStreams?.length
@@ -258,6 +268,15 @@ export function dayPlaybackAssets(
   model: DayTimelineModel,
   sessions: Map<string, LibraryPlaybackAssets>,
 ): LibraryPlaybackAssets {
+  const recordings = new Map(
+    model.manifest.recordings.map((recording) => [recording.id, recording]),
+  );
+  const assets = new Map(
+    [...sessions].map(([id, session]) => [
+      id,
+      new Map(session.segments.map((segment) => [segment.segmentId, segment])),
+    ]),
+  );
   return {
     recordingId: model.view.id,
     canSeekInStream: [...sessions.values()].every(
@@ -266,13 +285,9 @@ export function dayPlaybackAssets(
     sessionId: '',
     error: null,
     segments: model.spans.flatMap((span) => {
-      const asset = sessions
-        .get(span.recordingId)
-        ?.segments.find((s) => s.segmentId === span.segmentId);
+      const asset = assets.get(span.recordingId)?.get(span.segmentId);
       const ids = model.trackIds.get(span.recordingId);
-      const recording = model.manifest.recordings.find(
-        (r) => r.id === span.recordingId,
-      );
+      const recording = recordings.get(span.recordingId);
       const thumbnails = (
         values: LibraryPlaybackAssets['segments'][number]['thumbnails'],
         trackId: string | undefined,

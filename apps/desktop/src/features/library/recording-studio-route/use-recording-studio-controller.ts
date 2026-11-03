@@ -116,14 +116,16 @@ export function useRecordingStudioController({
     setThumbnailStatus('idle');
     setPlaybackAssets(null);
     try {
-      const nextDetail = await getLibraryRecording(recordingId);
+      const nextDetail = await getLibraryRecording(recordingId, {
+        includeDiskUsage: false,
+      });
       if (!isCurrentLoad()) {
         return;
       }
       setDetail(nextDetail);
       setStatus('ready');
       if (nextDetail.availability === 'available') {
-        createLibraryPlaybackSession({ recordingId })
+        createLibraryPlaybackSession({ recordingId, lazyThumbnails: true })
           .then((assets) => {
             if (!isCurrentLoad() || assets.recordingId !== recordingId) {
               if (assets.sessionId) {

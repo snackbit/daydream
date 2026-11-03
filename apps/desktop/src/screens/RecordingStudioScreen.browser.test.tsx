@@ -874,6 +874,7 @@ test('RecordingStudioScreen renders player controls, metadata sidebar, and track
   expect(screen.queryByRole('button', { name: /Video segment/i })).toBeNull();
   expect(client.createLibraryPlaybackSession).toHaveBeenCalledWith({
     recordingId: 'recording-1',
+    lazyThumbnails: true,
   });
   expect(document.querySelector('video')?.getAttribute('src')).toContain(
     playbackAssets.segments[0]!.videoUrl,
@@ -1763,13 +1764,11 @@ test('RecordingStudioScreen renders activity lanes and seeks from focus markers'
 });
 
 test('RecordingStudioScreen reloads activity after creating redactions', async () => {
-  ocrClient.getOcrDocument
-    .mockResolvedValueOnce({
-      document: legacyOcrDocument('private screen secret', 1_700),
-      recordingId: detail.id,
-      sourceTrackId: 'video-0',
-    })
-    .mockRejectedValue(new Error('Reload unavailable'));
+  ocrClient.getOcrDocument.mockResolvedValue({
+    document: legacyOcrDocument('private screen secret', 1_700),
+    recordingId: detail.id,
+    sourceTrackId: 'video-0',
+  });
   const redactedDetail = {
     ...detail,
     redactions: [
@@ -1784,105 +1783,102 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
       },
     ],
   } satisfies LibraryRecordingDetail;
-  aiClient.getRecordingAiProcessingState
-    .mockResolvedValueOnce({
-      chunks: [
-        {
-          attemptCount: 1,
-          createdAtMs: 1,
-          endOffsetMs: 2_000,
-          errorCode: null,
-          id: 'private-chunk',
-          jobId: 'private-job',
-          progress: 1,
-          recordingId: detail.id,
-          resultCode: null,
-          segmentId: 'segment-1',
-          sourceKind: 'audio',
-          startOffsetMs: 0,
-          status: 'succeeded',
-          trackId: 'desktop-audio-1',
-          updatedAtMs: 1,
-        },
-      ],
-      job: null,
-      recordingId: detail.id,
-      transcript: {
-        recordingId: detail.id,
-        tracks: [
-          {
-            sourceRole: 'desktop-audio',
-            trackId: 'stored-audio-uuid',
-            segments: [
-              {
-                confidence: null,
-                endOffsetMs: 1_800,
-                id: 'private-text',
-                model: 'small',
-                provider: 'local-whisper-cpp',
-                segmentId: 'segment-1',
-                startOffsetMs: 1_700,
-                text: 'private spoken secret',
-                words: [],
-              },
-            ],
-          },
-        ],
-      },
-    } satisfies RecordingAiProcessingState)
-    .mockRejectedValue(new Error('reload unavailable'));
-  aiClient.getRecordingVisualObservations
-    .mockResolvedValueOnce({
-      recordingId: detail.id,
-      ocrRegions: [
-        {
-          chunkId: 'private-ocr',
-          confidence: 1,
-          frameTimestampMs: 1_700,
-          id: 'private-region',
-          jobId: 'private-job',
-          model: 'tesseract',
-          provider: 'tesseract',
-          recordingId: detail.id,
-          region: { x: 0, y: 0, width: 100, height: 20 },
-          sourceFrameRef: 'segment:segment-1:offset:1700:frame:1',
-          text: 'private screen secret',
-        },
-      ],
-      vlmObservations: [],
-      vlmState: {
+  aiClient.getRecordingAiProcessingState.mockResolvedValue({
+    chunks: [
+      {
+        attemptCount: 1,
+        createdAtMs: 1,
+        endOffsetMs: 2_000,
         errorCode: null,
-        providerStatus: 'disabled',
-        status: 'disabled',
+        id: 'private-chunk',
+        jobId: 'private-job',
+        progress: 1,
+        recordingId: detail.id,
+        resultCode: null,
+        segmentId: 'segment-1',
+        sourceKind: 'audio',
+        startOffsetMs: 0,
+        status: 'succeeded',
+        trackId: 'desktop-audio-1',
+        updatedAtMs: 1,
       },
-    } satisfies RecordingVisualObservations)
-    .mockRejectedValue(new Error('reload unavailable'));
-  aiClient.getRecordingActivity
-    .mockResolvedValueOnce({
-      captureStates: [],
-      events: [
+    ],
+    job: null,
+    recordingId: detail.id,
+    transcript: {
+      recordingId: detail.id,
+      tracks: [
         {
-          applicationName: 'Editor',
-          id: 'focus-1',
-          kind: 'focused-window',
-          occurredAtMs: 2_200,
-          offsetMs: 1_700,
-          recordingId: 'recording-1',
-          title: 'Notes.md',
+          sourceRole: 'desktop-audio',
+          trackId: 'stored-audio-uuid',
+          segments: [
+            {
+              confidence: null,
+              endOffsetMs: 1_800,
+              id: 'private-text',
+              model: 'small',
+              provider: 'local-whisper-cpp',
+              segmentId: 'segment-1',
+              startOffsetMs: 1_700,
+              text: 'private spoken secret',
+              words: [],
+            },
+          ],
         },
       ],
-      intervals: [],
-      recordingId: 'recording-1',
-      windowSnapshots: [],
-    } satisfies RecordingActivity)
-    .mockResolvedValue({
-      captureStates: [],
-      events: [],
-      intervals: [],
-      recordingId: 'recording-1',
-      windowSnapshots: [],
-    } satisfies RecordingActivity);
-  client.createLibraryRedactions.mockResolvedValue(redactedDetail);
+    },
+  } satisfies RecordingAiProcessingState);
+  aiClient.getRecordingVisualObservations.mockResolvedValue({
+    recordingId: detail.id,
+    ocrRegions: [
+      {
+        chunkId: 'private-ocr',
+        confidence: 1,
+        frameTimestampMs: 1_700,
+        id: 'private-region',
+        jobId: 'private-job',
+        model: 'tesseract',
+        provider: 'tesseract',
+        recordingId: detail.id,
+        region: { x: 0, y: 0, width: 100, height: 20 },
+        sourceFrameRef: 'segment:segment-1:offset:1700:frame:1',
+        text: 'private screen secret',
+      },
+    ],
+    vlmObservations: [],
+    vlmState: {
+      errorCode: null,
+      providerStatus: 'disabled',
+      status: 'disabled',
+    },
+  } satisfies RecordingVisualObservations);
+  aiClient.getRecordingActivity.mockResolvedValue({
+    captureStates: [],
+    events: [
+      {
+        applicationName: 'Editor',
+        id: 'focus-1',
+        kind: 'focused-window',
+        occurredAtMs: 2_200,
+        offsetMs: 1_700,
+        recordingId: 'recording-1',
+        title: 'Notes.md',
+      },
+    ],
+    intervals: [],
+    recordingId: 'recording-1',
+    windowSnapshots: [],
+  } satisfies RecordingActivity);
+  client.createLibraryRedactions.mockImplementation(async () => {
+    for (const read of [
+      ocrClient.getOcrDocument,
+      aiClient.getRecordingAiProcessingState,
+      aiClient.getRecordingVisualObservations,
+      aiClient.getRecordingActivity,
+    ])
+      read.mockRejectedValue(new Error('Reload unavailable'));
+    return redactedDetail;
+  });
   render(<RecordingStudioScreen />);
 
   expect(
@@ -1920,16 +1916,27 @@ test('RecordingStudioScreen reloads activity after creating redactions', async (
     clientY: 12,
     pointerId: 1,
   });
+  const beforeReads = {
+    activity: aiClient.getRecordingActivity.mock.calls.length,
+    ai: aiClient.getRecordingAiProcessingState.mock.calls.length,
+    visual: aiClient.getRecordingVisualObservations.mock.calls.length,
+  };
   fireEvent.click(screen.getAllByRole('button', { name: /^Redact$/i })[0]!);
 
   await waitFor(() =>
-    expect(aiClient.getRecordingActivity).toHaveBeenCalledTimes(2),
+    expect(aiClient.getRecordingActivity.mock.calls.length).toBeGreaterThan(
+      beforeReads.activity,
+    ),
   );
   await waitFor(() =>
-    expect(aiClient.getRecordingAiProcessingState).toHaveBeenCalledTimes(2),
+    expect(
+      aiClient.getRecordingAiProcessingState.mock.calls.length,
+    ).toBeGreaterThan(beforeReads.ai),
   );
   await waitFor(() =>
-    expect(aiClient.getRecordingVisualObservations).toHaveBeenCalledTimes(2),
+    expect(
+      aiClient.getRecordingVisualObservations.mock.calls.length,
+    ).toBeGreaterThan(beforeReads.visual),
   );
   expect(screen.queryByText('private spoken secret')).toBeNull();
   expect(screen.queryByText('private screen secret')).toBeNull();
@@ -1975,23 +1982,17 @@ test('RecordingStudioScreen reloads activity after deleting redactions', async (
     windowSnapshots: [],
   } satisfies RecordingActivity;
   client.getLibraryRecording.mockResolvedValue(redactedDetail);
-  client.deleteLibraryRedaction.mockResolvedValue(detail);
-  aiClient.getRecordingActivity
-    .mockResolvedValueOnce({
-      captureStates: [],
-      events: [],
-      intervals: [],
-      recordingId: 'recording-1',
-      windowSnapshots: [],
-    } satisfies RecordingActivity)
-    .mockResolvedValueOnce({
-      captureStates: [],
-      events: [],
-      intervals: [],
-      recordingId: 'recording-1',
-      windowSnapshots: [],
-    } satisfies RecordingActivity)
-    .mockResolvedValue(restoredActivity);
+  client.deleteLibraryRedaction.mockImplementation(async () => {
+    aiClient.getRecordingActivity.mockResolvedValue(restoredActivity);
+    return detail;
+  });
+  aiClient.getRecordingActivity.mockResolvedValue({
+    captureStates: [],
+    events: [],
+    intervals: [],
+    recordingId: 'recording-1',
+    windowSnapshots: [],
+  } satisfies RecordingActivity);
   render(<RecordingStudioScreen />);
 
   fireEvent.click(
@@ -1999,10 +2000,13 @@ test('RecordingStudioScreen reloads activity after deleting redactions', async (
       name: 'Video redacted range',
     }),
   );
+  const beforeReads = aiClient.getRecordingActivity.mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: /^Unredact$/i }));
 
   await waitFor(() =>
-    expect(aiClient.getRecordingActivity).toHaveBeenCalledTimes(3),
+    expect(aiClient.getRecordingActivity.mock.calls.length).toBeGreaterThan(
+      beforeReads,
+    ),
   );
   expect(
     await screen.findByRole('button', {
@@ -3167,6 +3171,7 @@ test('RecordingStudioScreen ignores stale playback assets after route changes', 
   await waitFor(() =>
     expect(client.createLibraryPlaybackSession).toHaveBeenCalledWith({
       recordingId: 'recording-1',
+      lazyThumbnails: true,
     }),
   );
 
@@ -3197,6 +3202,7 @@ test('RecordingStudioScreen closes playback sessions that resolve after unmount'
   await waitFor(() =>
     expect(client.createLibraryPlaybackSession).toHaveBeenCalledWith({
       recordingId: 'recording-1',
+      lazyThumbnails: true,
     }),
   );
 
@@ -4341,7 +4347,11 @@ test('RecordingStudioScreen toggles playback from focused Space and ignores edit
   pauseButton.focus();
   await userEvent.keyboard(' ');
   expect(screen.getByRole('button', { name: /^Play$/i })).toBeTruthy();
-  expect(window.HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(2);
+  expect(
+    vi
+      .mocked(window.HTMLMediaElement.prototype.pause)
+      .mock.contexts.filter((element) => element === video),
+  ).toHaveLength(1);
   expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
 });
 

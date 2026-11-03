@@ -10,24 +10,40 @@ pub(crate) fn sources(
     storage: &AppStorage,
     id: &str,
 ) -> Result<(RecordingRow, Vec<PreparedSource>), String> {
-    recording_sources(storage, id, None)
+    recording_sources(storage, id, None, None)
+}
+
+pub(super) fn sources_in_range(
+    storage: &AppStorage,
+    id: &str,
+    start: i64,
+    end: i64,
+) -> Result<(RecordingRow, Vec<PreparedSource>), String> {
+    recording_sources(storage, id, None, Some((start, end)))
 }
 
 fn recording_sources(
     storage: &AppStorage,
     id: &str,
     selected: Option<&storage::ProcessingChunkRow>,
+    range: Option<(i64, i64)>,
 ) -> Result<(RecordingRow, Vec<PreparedSource>), String> {
     storage
-        .with_connection(|connection| {
+        .with_read_connection(|connection| {
             let recording = storage::get_recording(connection, id)?;
             let segments = storage::list_recording_segments(connection, id)?;
             let bases = storage::segment_playback_bases(&segments);
-            let mut tracks = storage::list_recording_tracks(connection, id)?;
+            let tracks = storage::list_recording_tracks(connection, id)?;
             let redactions = storage::list_redactions(connection, id)?;
             let cleanup = crate::library::audio_cleanup::active_manifest(connection, id)?;
+            let readiness = crate::recording_privacy::protection_readiness(connection, id)?;
             let mut sources = Vec::new();
             for (segment, base) in segments.iter().zip(bases) {
+                if range.is_some_and(|(start, end)| {
+                    base >= end || base + segment.duration_ms.unwrap_or(0) <= start
+                }) {
+                    continue;
+                }
                 if selected
                     .is_some_and(|chunk| chunk.segment_id.as_deref() != Some(segment.id.as_str()))
                 {
@@ -52,42 +68,22 @@ fn recording_sources(
                     let Some(stream) = stream else {
                         continue;
                     };
-                    let track = if let Some(track) = tracks.iter().find(|track| track.kind == role)
-                    {
-                        track.clone()
-                    } else {
-                        let track = storage::upsert_recording_track(
-                            connection,
-                            &storage::UpsertRecordingTrackInput {
-                                id: uuid::Uuid::now_v7().to_string(),
-                                recording_id: id.into(),
-                                kind: role.into(),
-                                label: if role == "microphone" {
-                                    "Microphone"
-                                } else {
-                                    "Desktop audio"
-                                }
-                                .into(),
-                                codec: None,
-                                path: None,
-                                source_id: None,
-                                created_at_ms: super::super::now_ms(),
-                            },
-                        )?;
-                        tracks.push(track.clone());
-                        track
-                    };
+                    let track_id = tracks
+                        .iter()
+                        .find(|track| track.kind == role)
+                        .map(|track| track.id.clone())
+                        .unwrap_or_else(|| role.into());
                     let canonical = crate::recording_privacy::source_track_id(segment, role)
                         .unwrap_or_default();
                     if selected
-                        .is_some_and(|chunk| chunk.track_id.as_deref() != Some(track.id.as_str()))
+                        .is_some_and(|chunk| chunk.track_id.as_deref() != Some(track_id.as_str()))
                     {
                         continue;
                     }
                     let mut cuts = redactions
                         .iter()
                         .filter(|cut| {
-                            storage::redaction_applies_to_track_range(cut, &track.id, base, end)
+                            storage::redaction_applies_to_track_range(cut, &track_id, base, end)
                                 || storage::redaction_applies_to_track_range(
                                     cut, &canonical, base, end,
                                 )
@@ -107,9 +103,7 @@ fn recording_sources(
                         ranges.push((cursor, end));
                     }
                     for (start, end) in ranges {
-                        if !crate::recording_privacy::range_protection_ready(
-                            connection, id, start, end,
-                        )? {
+                        if !readiness.allows(start, end) {
                             continue;
                         }
                         let source = cleanup_source(segment, &kind, cleanup.as_ref());
@@ -122,7 +116,7 @@ fn recording_sources(
                             PreparedSource::new(
                                 &recording,
                                 source,
-                                track.id.clone(),
+                                track_id.clone(),
                                 role.into(),
                                 source_stream,
                                 base,
@@ -140,6 +134,45 @@ fn recording_sources(
 
 /// Admission is cheap metadata work. It neither decodes media nor needs AI consent.
 pub(crate) fn admit_recording(storage: &AppStorage, id: &str) -> Result<(), String> {
+    storage
+        .with_connection(|connection| {
+            let tracks = storage::list_recording_tracks(connection, id)?;
+            let segments = storage::list_recording_segments(connection, id)?;
+            for (role, label, present) in [
+                (
+                    "desktop-audio",
+                    "Desktop audio",
+                    segments
+                        .iter()
+                        .any(|s| s.desktop_audio_stream_index.is_some()),
+                ),
+                (
+                    "microphone",
+                    "Microphone",
+                    segments
+                        .iter()
+                        .any(|s| s.microphone_audio_stream_index.is_some()),
+                ),
+            ] {
+                if present && !tracks.iter().any(|track| track.kind == role) {
+                    storage::upsert_recording_track(
+                        connection,
+                        &storage::UpsertRecordingTrackInput {
+                            id: uuid::Uuid::now_v7().to_string(),
+                            recording_id: id.into(),
+                            kind: role.into(),
+                            label: label.into(),
+                            codec: None,
+                            path: None,
+                            source_id: None,
+                            created_at_ms: super::super::now_ms(),
+                        },
+                    )?;
+                }
+            }
+            Ok(())
+        })
+        .map_err(|_| "waveform_admission_failed")?;
     let (recording, sources) = sources(storage, id)?;
     let input_open = matches!(recording.status.as_str(), "recording" | "paused");
     storage.with_connection(|connection| {
@@ -150,7 +183,7 @@ pub(crate) fn admit_recording(storage: &AppStorage, id: &str) -> Result<(), Stri
     }).map_err(|_| "waveform_admission_failed")?;
     let missing = sources
         .into_iter()
-        .filter(|source| source.maximum().is_err())
+        .filter(|source| source.maximum().is_err() || !super::pyramid::ready(source))
         .collect::<Vec<_>>();
     if missing.is_empty() {
         return Ok(());
@@ -198,7 +231,7 @@ pub(crate) fn prepare_chunk(
     chunk: &storage::ProcessingChunkRow,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let (_, sources) = recording_sources(storage, &chunk.recording_id, Some(chunk))?;
+    let (_, sources) = recording_sources(storage, &chunk.recording_id, Some(chunk), None)?;
     let source = sources
         .into_iter()
         .find(|source| {
@@ -208,10 +241,13 @@ pub(crate) fn prepare_chunk(
                 && Some(source.end_ms) == chunk.end_offset_ms
         })
         .ok_or("waveform_source_unavailable")?;
-    source.prepare(cancel)
+    source.prepare(cancel)?;
+    let maximum = source.maximum()?;
+    storage.with_connection(|c|c.execute("INSERT INTO waveform_cache_entries(source_key,recording_id,source_kind,maximum) VALUES(?1,?2,?3,?4) ON CONFLICT(source_key) DO UPDATE SET maximum=excluded.maximum",rusqlite::params![source.path.to_string_lossy(),chunk.recording_id,source.source_kind,maximum]).map(|_|())).map_err(|_|"waveform_cache_write_failed".into())
 }
 
 pub(crate) fn admit_batch(storage: &AppStorage) -> Result<(), String> {
+    super::admission_requests::flush(storage)?;
     let ids = storage
         .with_connection(|connection| {
             let mut query = connection.prepare(

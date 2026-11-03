@@ -9,22 +9,88 @@ impl PlaybackServer {
         segments: &[RecordingSegmentRow],
         sources: &std::collections::BTreeMap<String, Vec<crate::storage::SegmentVideoStream>>,
         storage: crate::storage::AppStorage,
+        lazy_thumbnails: bool,
+        include_runs: bool,
     ) -> Result<LibraryPlaybackAssets, String> {
         let cleanup = storage
-            .with_connection(|c| crate::library::audio_cleanup::active_manifest(c, &recording.id))
+            .with_read_connection(|c| {
+                crate::library::audio_cleanup::active_manifest(c, &recording.id)
+            })
             .map_err(|_| "Cleanup is unavailable. Retry cleanup or turn it off.")?;
-        let assets = self.create_source_session(recording, segments, sources)?;
+        let mut assets = self.create_source_session_with_options(
+            recording,
+            segments,
+            sources,
+            lazy_thumbnails,
+            include_runs,
+        )?;
+        let prepared = (|| {
+            let privacy = storage
+                .with_read_connection(|c| {
+                    crate::library::audio_cleanup::privacy_fingerprint(c, &recording.id)
+                })
+                .map_err(|_| "Playback privacy is unavailable.")?;
+            let prepared = super::prepared::attach(
+                &storage,
+                recording,
+                segments,
+                &mut assets,
+                cleanup.as_ref(),
+            )?;
+            let masks = Arc::new(super::prepared::privacy::RecordingMasks::load(
+                &storage,
+                &recording.id,
+            )?);
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "Playback session is unavailable.")?;
+            let session = sessions
+                .get_mut(&assets.session_id)
+                .ok_or("Playback session is unavailable.")?;
+            session.prepared_files = prepared.paths;
+            session.prepared_leases = prepared.leases;
+            session.cleanup_guard = Some(CleanupGuard {
+                masks,
+                storage: storage.clone(),
+                recording_id: recording.id.clone(),
+                fingerprint: privacy,
+                revision: cleanup.as_ref().map(|c| c.revision.clone()),
+            });
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = prepared {
+            self.close_session(&assets.session_id)?;
+            return Err(error);
+        }
         if let Some(cleanup) = cleanup {
             if let Err(error) = self.use_cleaned_audio(
                 &assets.session_id,
                 segments,
                 &cleanup,
-                storage,
+                storage.clone(),
                 &recording.id,
             ) {
                 self.close_session(&assets.session_id)?;
                 return Err(error);
             }
+        }
+        if assets
+            .segments
+            .iter()
+            .any(|segment| !segment.can_seek_in_stream)
+            || assets.runs.iter().any(|run| !run.assets.can_seek_in_stream)
+        {
+            let admission = storage.clone();
+            let recording_id = recording.id.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if super::prepared::prioritize(&admission, &recording_id).is_err() {
+                    tracing::warn!(
+                        error_code = "studio_media_admission_failed",
+                        "studio_media_preparation_failed"
+                    );
+                }
+            });
         }
         Ok(assets)
     }
@@ -43,10 +109,14 @@ impl PlaybackServer {
         recording_id: &str,
     ) -> Result<(), String> {
         let fingerprint = storage
-            .with_connection(|c| {
+            .with_read_connection(|c| {
                 crate::library::audio_cleanup::privacy_fingerprint(c, recording_id)
             })
             .map_err(|_| "Cleanup sources are unavailable.")?;
+        let masks = Arc::new(super::prepared::privacy::RecordingMasks::load(
+            &storage,
+            recording_id,
+        )?);
         let mut sessions = self
             .sessions
             .lock()
@@ -55,6 +125,7 @@ impl PlaybackServer {
             .get_mut(session_id)
             .ok_or("Playback session is unavailable.")?;
         session.cleanup_guard = Some(CleanupGuard {
+            masks,
             storage,
             recording_id: recording_id.into(),
             fingerprint,
@@ -112,6 +183,10 @@ impl PlaybackServer {
                 crate::library::audio_cleanup::privacy_fingerprint(c, recording_id)
             })
             .map_err(|_| "Preview sources are unavailable.")?;
+        let masks = Arc::new(super::prepared::privacy::RecordingMasks::load(
+            &storage,
+            recording_id,
+        )?);
         let id = Uuid::now_v7().to_string();
         let token = Uuid::now_v7().to_string();
         let segment = |path: &Path| PlaybackSegment {
@@ -131,6 +206,7 @@ impl PlaybackServer {
         let mut session = PlaybackSession::new(parts, token.clone());
         session.cleanup_dir = Some(dir);
         session.cleanup_guard = Some(CleanupGuard {
+            masks,
             storage,
             recording_id: recording_id.into(),
             fingerprint,

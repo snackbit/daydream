@@ -30,6 +30,18 @@ function nullableNumber(value: unknown): number | null {
 function list<T>(value: unknown, decode: (value: unknown) => T): T[] {
   return Array.isArray(value) ? value.map(decode) : invalid();
 }
+export function decodeSeekCapability(value: unknown): {
+  canSeekInStream?: boolean;
+} {
+  if (value === undefined) return {};
+  if (typeof value !== 'boolean') invalid();
+  return { canSeekInStream: value };
+}
+export function decodeThumbnailBase(value: unknown): {
+  thumbnailBaseUrl?: string;
+} {
+  return value === undefined ? {} : { thumbnailBaseUrl: text(value) };
+}
 export function decodeVideoStreams(value: unknown): SegmentVideoStream[] {
   return list(value, (value) => {
     const r = record(value);
@@ -55,6 +67,7 @@ export function decodeVideoAssets(value: unknown): LibraryPlaybackVideoAsset[] {
       trackId: text(r.trackId),
       streamIndex: number(r.streamIndex),
       url: text(r.url),
+      ...decodeThumbnailBase(r.thumbnailBaseUrl),
       thumbnails: list(r.thumbnails, thumbnail),
     };
   });
@@ -69,6 +82,8 @@ export function decodePlaybackRuns(value: unknown): LibraryPlaybackRun[] {
       durationMs: number(r.durationMs),
       playbackOffsetMs: number(r.playbackOffsetMs),
       assets: {
+        ...decodeThumbnailBase(assets.thumbnailBaseUrl),
+        ...decodeSeekCapability(assets.canSeekInStream),
         segmentId: text(assets.segmentId),
         videoUrl: text(assets.videoUrl),
         thumbnails: list(assets.thumbnails, thumbnail),

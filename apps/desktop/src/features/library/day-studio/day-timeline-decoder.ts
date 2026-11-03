@@ -138,6 +138,13 @@ export function decodeDayTimeline(value: unknown): LibraryDayTimeline {
       };
     }),
   };
+  const segmentKeys = new Set(
+    result.recordings.flatMap((recording) =>
+      recording.segments.map((segment) =>
+        JSON.stringify([recording.id, segment.id]),
+      ),
+    ),
+  );
   if (
     result.endMs <= result.startMs ||
     result.spans.some(
@@ -147,11 +154,7 @@ export function decodeDayTimeline(value: unknown): LibraryDayTimeline {
         s.sourceOffsetMs < 0 ||
         s.startMs < result.startMs ||
         s.startMs + s.durationMs > result.endMs ||
-        !result.recordings.some(
-          (r) =>
-            r.id === s.recordingId &&
-            r.segments.some((segment) => segment.id === s.segmentId),
-        ),
+        !segmentKeys.has(JSON.stringify([s.recordingId, s.segmentId])),
     )
   )
     return invalid();

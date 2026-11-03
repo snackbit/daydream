@@ -8,6 +8,8 @@ use std::{
 use crate::ffmpeg;
 
 use super::{ffmpeg_args::thumbnail_ffmpeg_args, PlaybackSegment, PlaybackSession};
+mod disk_cache;
+pub(super) use disk_cache::prepare_segment_thumbnails;
 
 pub(super) const THUMBNAIL_WORKER_COUNT: usize = 2;
 const THUMBNAIL_INTERVAL_MS: i64 = 3_000;
@@ -21,6 +23,7 @@ pub(super) struct ThumbnailService {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ThumbnailKey {
+    pub(super) cache_namespace: String,
     pub(super) video_stream_index: i64,
     pub(super) offset_ms: i64,
     pub(super) segment_id: String,
@@ -84,6 +87,17 @@ impl ThumbnailService {
         video_stream_index: i64,
         offset_ms: i64,
     ) -> ThumbnailResult {
+        if let Ok(path) = disk_cache::path(
+            &segment.file_path,
+            segment.duration_ms,
+            video_stream_index,
+            offset_ms,
+            &key.cache_namespace,
+        ) {
+            if let Some(bytes) = disk_cache::read(&path) {
+                return Ok(Arc::new(bytes));
+            }
+        }
         let (sender, receiver) = mpsc::channel();
         let job = ThumbnailJob {
             key: key.clone(),
@@ -165,6 +179,7 @@ impl ThumbnailService {
                             &job.segment,
                             job.video_stream_index,
                             job.offset_ms,
+                            &job.key.cache_namespace,
                             &resource,
                         )
                         .map_err(|_| ThumbnailError::Failed)
@@ -250,7 +265,19 @@ impl ThumbnailState {
     ) -> Vec<mpsc::Sender<ThumbnailResult>> {
         self.running_keys.remove(&key);
         if let Ok(bytes) = &result {
-            self.cache.insert(key.clone(), Arc::clone(bytes));
+            const CACHE_BYTES: usize = 16 * 1024 * 1024;
+            if bytes.len() <= CACHE_BYTES {
+                let mut retained: usize = self.cache.values().map(|bytes| bytes.len()).sum();
+                while retained + bytes.len() > CACHE_BYTES {
+                    let Some(oldest) = self.cache.keys().next().cloned() else {
+                        break;
+                    };
+                    if let Some(removed) = self.cache.remove(&oldest) {
+                        retained -= removed.len();
+                    }
+                }
+                self.cache.insert(key.clone(), Arc::clone(bytes));
+            }
         }
         self.in_progress.remove(&key).unwrap_or_default()
     }
@@ -282,9 +309,20 @@ fn generate_thumbnail(
     segment: &PlaybackSegment,
     video_stream_index: i64,
     offset_ms: i64,
+    namespace: &str,
     resource: &super::resources::ResourceLease,
 ) -> Result<Vec<u8>, String> {
     use std::io::Read;
+    let cache = disk_cache::path(
+        &segment.file_path,
+        segment.duration_ms,
+        video_stream_index,
+        offset_ms,
+        namespace,
+    )?;
+    if let Some(bytes) = disk_cache::read(&cache) {
+        return Ok(bytes);
+    }
     let mut command = Command::new(ffmpeg::binary_path());
     command
         .args(thumbnail_ffmpeg_args(
@@ -311,6 +349,7 @@ fn generate_thumbnail(
         .wait()
         .map_err(|_| "Unable to finish thumbnail worker.")?;
     if status.success() && !bytes.is_empty() {
+        disk_cache::write(&cache, &bytes)?;
         Ok(bytes)
     } else {
         Err("Unable to generate thumbnail".to_string())

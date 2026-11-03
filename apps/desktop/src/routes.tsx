@@ -24,12 +24,8 @@ import {
   type SettingsDetail,
 } from '@/features/settings/settings-location';
 import { reportFrontendFailure } from '@/lib/diagnostics/failure-logging';
+import { DayScreen } from '@/screens/DayScreen';
 
-const DayScreen = lazy(() =>
-  import('@/screens/DayScreen').then(({ DayScreen }) => ({
-    default: DayScreen,
-  })),
-);
 const SearchScreen = lazy(() =>
   import('@/screens/SearchScreen').then(({ SearchScreen }) => ({
     default: SearchScreen,
@@ -97,7 +93,9 @@ const libraryRoute = createRoute({
 
 const recordingStudioRoute = createRoute({
   beforeLoad: async ({ params, search }) => {
-    const detail = await getLibraryRecording(params.recordingId);
+    const detail = await getLibraryRecording(params.recordingId, {
+      includeDiskUsage: false,
+    });
     const offset = search.seek ?? 0;
     const segment =
       detail.segments.find(
